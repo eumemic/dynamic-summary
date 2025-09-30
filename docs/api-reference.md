@@ -436,26 +436,30 @@ asyncio.run(main())
 ### Advanced Usage
 
 ```python
-from ragzoom import Store, TreeBuilder, Retriever, IndexConfig, QueryConfig, OperationalConfig
+from ragzoom.client import GrpcRagzoomClient
 
-# Custom configuration
-index_config = IndexConfig(
-    target_chunk_tokens=300
-)
-query_config = QueryConfig(
-    budget_tokens=10000,
-    mmr_lambda=0.8
-)
-operational_config = OperationalConfig()
+with GrpcRagzoomClient("localhost:50051") as client:
+    # Rebuild the document (clear + append)
+    client.append_text(
+        document_id="my-doc",
+        content=b"Document content...",
+        collect_telemetry=False,
+        replace_existing=True,
+    )
 
-# Initialize components
-store = Store(operational_config)
-builder = TreeBuilder(index_config, store, operational_config.openai_api_key)
-retriever = Retriever(query_config, index_config, store, operational_config.openai_api_key)
+    # Issue an ad-hoc query with custom parameters
+    output = client.execute_query(
+        query="What is this about?",
+        document_id="my-doc",
+        budget_tokens=6000,
+        num_seeds=None,
+        embedding_model=None,
+        debug=False,
+        viz_width=120,
+        use_token_coords=False,
+    )
 
-# Direct component usage
-nodes = store.get_leaf_nodes(document_id="my-doc")
-result = retriever.retrieve("query", document_id="my-doc")
+print(output.query_result.summary)
 ```
 
 ## Configuration
