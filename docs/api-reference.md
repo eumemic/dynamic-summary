@@ -244,12 +244,12 @@ Currently no authentication is required. In production, implement appropriate au
 
 #### `POST /index`
 
-Index a new document.
+Append text to a document.
 
 **Request Body:**
 ```json
 {
-  "text": "Document content to index",
+  "text": "Text to append to the document",
   "document_id": "my-doc",
   "file_path": "path/used/for/metadata.json"
 }
@@ -264,9 +264,30 @@ Index a new document.
 }
 ```
 
-The endpoint clears any existing nodes for the document before invoking the same patch
-engine used by CLI indexing. Append-style updates are currently surfaced via the CLI and
-service layer (`IndexingService.append_to_document`).
+If the document does not exist it will be created automatically. Existing nodes remain
+in place—new content is appended to the rightmost leaf and the gRPC worker service takes
+care of rebuilding summaries. To start over from scratch, call the `/clear` endpoint
+before appending new content.
+
+#### `POST /clear`
+
+Clear a document and delete all of its nodes.
+
+**Request Body:**
+```json
+{
+  "document_id": "my-doc"
+}
+```
+
+**Response:**
+```json
+{
+  "document_id": "my-doc",
+  "deleted_nodes": 127,
+  "document_existed": true
+}
+```
 
 #### `GET /documents`
 
