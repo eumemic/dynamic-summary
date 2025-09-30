@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Sequence
-from contextlib import AbstractContextManager, nullcontext, suppress
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Protocol, TypeVar, cast
 
@@ -20,13 +20,10 @@ from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.retrieve import Retriever
 from ragzoom.rpc import dynamic_summary_pb2 as pb2
 from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
-from ragzoom.server.append_executor import AppendOutcome
-from ragzoom.server.run_manager import IndexRunContext
 from ragzoom.server.state import ServerState
 from ragzoom.server.worker_coordinator import WorkerCoordinator, WorkerStatus
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.tree_viz import build_ascii_tree
-from ragzoom.utils.tokenization import tokenizer
 from ragzoom.validate import validate_tiling
 from ragzoom.vector_factory import create_vector_index
 
@@ -107,46 +104,6 @@ def json_dumps(data: object) -> str:
     import json
 
     return json.dumps(data)
-
-
-async def _clear_document_state(
-    state: ServerState, document_id: str
-) -> tuple[int, bool]:
-    await state.worker_coordinator.cancel_document(document_id)
-
-    lock_fn = getattr(state.store, "lock_document", None)
-    candidate = lock_fn(document_id) if callable(lock_fn) else None
-    if candidate and hasattr(candidate, "__enter__") and hasattr(candidate, "__exit__"):
-        lock_cm = cast(AbstractContextManager[object], candidate)
-    else:
-        lock_cm = cast(AbstractContextManager[object], nullcontext())
-
-    with lock_cm:
-        doc_record = state.store.get_document_by_id(document_id)
-        if doc_record is None:
-            return 0, False
-
-        embedding_model = (
-            getattr(doc_record, "embedding_model", None)
-            or state.index_config.embedding_model
-        )
-
-        try:
-            vector_index = create_vector_index(
-                state.operational_config.vector_backend,
-                state.operational_config.database_url,
-                embedding_model,
-            )
-            vector_index.delete(filter={"document_id": document_id})
-        except Exception:  # pragma: no cover - defensive logging
-            logger.exception(
-                "Failed to clear vectors for document %s during ClearDocument",
-                document_id,
-            )
-
-        deleted_nodes = state.store.clear_document(document_id)
-
-    return deleted_nodes, True
 
 
 async def _abort(
@@ -258,148 +215,7 @@ class Retrievable:
 class IndexerServicer(pb2_grpc.IndexerServiceServicer):
     def __init__(self, state: ServerState) -> None:
         self._state = state
-
-    async def _append_document(
-        self,
-        *,
-        document_id: str,
-        text: str,
-        file_path: str | None,
-        replace_existing: bool,
-        collect_telemetry: bool,
-    ) -> tuple[IndexingResult, str | None]:
-        telemetry_manager = self._state.telemetry_run_manager
-        run_context: IndexRunContext | None = None
-
-        existing_record = self._state.store.get_document_by_id(document_id)
-        embedding_model = (
-            existing_record.embedding_model
-            if existing_record and getattr(existing_record, "embedding_model", None)
-            else self._state.index_config.embedding_model
-        )
-        summary_model = (
-            existing_record.summary_model
-            if existing_record and getattr(existing_record, "summary_model", None)
-            else self._state.index_config.summary_model
-        )
-        stored_file_path = getattr(existing_record, "file_path", None)
-        resolved_file_path = file_path if file_path is not None else stored_file_path
-
-        if replace_existing:
-            await _clear_document_state(self._state, document_id)
-            existing_record = None
-
-        lock_fn = getattr(self._state.store, "lock_document", None)
-        lock_candidate = lock_fn(document_id) if callable(lock_fn) else None
-        if (
-            lock_candidate
-            and hasattr(lock_candidate, "__enter__")
-            and hasattr(lock_candidate, "__exit__")
-        ):
-            lock_cm = cast(AbstractContextManager[object], lock_candidate)
-        else:
-            lock_cm = cast(AbstractContextManager[object], nullcontext())
-
-        outcome: AppendOutcome | None = None
-        result: IndexingResult | None = None
-        previous_leaf_count = 0
-
-        try:
-            with lock_cm:
-                doc_record = self._state.store.get_document_by_id(document_id)
-                if doc_record is None:
-                    self._state.store.add_document(
-                        document_id=document_id,
-                        file_path=resolved_file_path,
-                        embedding_model=embedding_model,
-                        summary_model=summary_model,
-                    )
-                    doc_record = self._state.store.get_document_by_id(document_id)
-
-                document_store = self._state.store.for_document(document_id)
-                previous_leaf_count = document_store.nodes.leaf_count()
-
-                if collect_telemetry and telemetry_manager is not None:
-                    existing_tokens = sum(
-                        int(getattr(node, "token_count", 0))
-                        for node in document_store.nodes.get_leaves()
-                    )
-                    new_tokens = tokenizer.count_tokens(text)
-                    source_tokens = existing_tokens + new_tokens
-                    run_context = await telemetry_manager.start_run(
-                        document_id,
-                        collect=True,
-                        source_tokens=source_tokens,
-                        document_path=(
-                            file_path
-                            if file_path is not None
-                            else getattr(doc_record, "file_path", None)
-                        ),
-                    )
-
-                vector_index = create_vector_index(
-                    self._state.operational_config.vector_backend,
-                    self._state.operational_config.database_url,
-                    embedding_model,
-                )
-
-                outcome = await self._state.append_executor.append(
-                    store=document_store,
-                    vector_index=vector_index,
-                    document_id=document_id,
-                    new_text=text,
-                    reporter=run_context.telemetry_collector if run_context else None,
-                )
-
-                root = document_store.tree.get_root()
-                tree_depth = int(getattr(root, "height", 0) or 0) if root else 0
-
-                mutated_nodes = len(outcome.new_leaf_ids) + len(
-                    outcome.deleted_node_ids
-                )
-                new_leaves = len(outcome.new_leaf_ids)
-
-                result = IndexingResult(
-                    document_id=outcome.document_id,
-                    chunks_created=outcome.total_leaves,
-                    tree_depth=tree_depth,
-                    mutated_nodes=mutated_nodes,
-                    resummarized_nodes=0,
-                    new_leaves=new_leaves,
-                    telemetry=None,
-                    telemetry_run_id=run_context.run_id if run_context else None,
-                )
-
-                if run_context is not None:
-                    run_context.register_append_outcome(
-                        span_start=outcome.appended_span_start,
-                        span_end=outcome.appended_span_end,
-                        mutated_nodes=mutated_nodes,
-                        new_leaves=new_leaves,
-                        previous_leaf_count=previous_leaf_count,
-                        total_leaves=outcome.total_leaves,
-                    )
-
-            if run_context is not None:
-                await self._state.worker_coordinator.attach_run(run_context)
-
-            await self._state.worker_coordinator.enqueue_document(
-                document_id,
-                deleted_node_ids=outcome.deleted_node_ids if outcome else None,
-                new_root_ids=outcome.new_leaf_ids if outcome else None,
-            )
-        except Exception as exc:  # pragma: no cover - defensive logging
-            logger.exception(
-                "Append failed for document %s", document_id, exc_info=True
-            )
-            if run_context is not None and telemetry_manager is not None:
-                await telemetry_manager.complete_run(run_context.run_id, error=str(exc))
-                await self._state.worker_coordinator.detach_run(document_id)
-            raise
-
-        assert result is not None and outcome is not None
-        telemetry_run_id = result.telemetry_run_id
-        return result, telemetry_run_id
+        self._runtime = state.index_runtime
 
     async def IndexDocument(  # noqa: N802
         self,
@@ -441,15 +257,14 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
                     message="IndexDocument requires `document_id` when no file path is provided.",
                 )
 
-        stats, _ = await self._append_document(
-            document_id=resolved_document_id,
-            text=text,
-            file_path=file_path,
+        session = self._runtime.get_session(resolved_document_id, file_path=file_path)
+        result = await session.append_text(
+            text,
             replace_existing=True,
             collect_telemetry=request.collect_telemetry,
         )
 
-        return pb2.IndexDocumentResponse(stats=_stats_to_proto(stats))
+        return pb2.IndexDocumentResponse(stats=_stats_to_proto(result))
 
     async def AppendText(  # noqa: N802
         self,
@@ -465,20 +280,15 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
 
         text = await _decode_text(request.content, context)
 
-        document_id = request.document_id
-
-        replace_existing = bool(getattr(request, "replace_existing", False))
-
-        result, telemetry_run_id = await self._append_document(
-            document_id=document_id,
-            text=text,
-            file_path=None,
-            replace_existing=replace_existing,
+        session = self._runtime.get_session(request.document_id)
+        result = await session.append_text(
+            text,
+            replace_existing=bool(getattr(request, "replace_existing", False)),
             collect_telemetry=request.collect_telemetry,
         )
 
         response = pb2.AppendTextResponse(stats=_stats_to_proto(result))
-        setattr(response, "telemetry_run_id", telemetry_run_id or "")
+        setattr(response, "telemetry_run_id", result.telemetry_run_id or "")
         return response
 
 
@@ -794,7 +604,9 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         return response_type(results=results)
 
     async def _clear_document(self, document_id: str) -> tuple[int, bool]:
-        return await _clear_document_state(self._state, document_id)
+        session = self._state.index_runtime.get_session(document_id)
+        result = await session.clear()
+        return result.deleted_nodes, result.document_existed
 
     def _format_status(self, status: WorkerStatus) -> str:
         parts = [

@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Callable
 from contextlib import suppress
 from types import SimpleNamespace
 from typing import NoReturn, cast
@@ -11,7 +12,9 @@ from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
+from ragzoom.indexing import IndexerRuntime
 from ragzoom.rpc import dynamic_summary_pb2 as pb2
+from ragzoom.server.append_executor import AppendExecutor
 from ragzoom.server.run_manager import TelemetryRunManager
 from ragzoom.server.servicers import WorkerServicer
 from ragzoom.server.state import ServerState
@@ -77,6 +80,38 @@ class StubVectorIndex(VectorIndex):
         ids: list[str] | None = None,
     ) -> int:  # pragma: no cover
         return 0
+
+
+class _NoopAppendExecutor:
+    async def append(
+        self,
+        *,
+        store: DocumentStore,
+        vector_index: VectorIndex,
+        document_id: str,
+        new_text: str,
+        reporter: object | None = None,
+    ) -> object:
+        raise AssertionError("append should not be invoked in worker tests")
+
+
+def _make_runtime(
+    store: SQLiteStorageBackend,
+    index_config: IndexConfig,
+    coordinator: WorkerCoordinator,
+    telemetry_manager: TelemetryRunManager,
+    *,
+    vector_factory: Callable[[str], VectorIndex] | None = None,
+) -> IndexerRuntime:
+    factory = vector_factory or (lambda _model: StubVectorIndex())
+    return IndexerRuntime(
+        store=store,
+        index_config=index_config,
+        append_executor=cast(AppendExecutor, _NoopAppendExecutor()),
+        worker_coordinator=coordinator,
+        telemetry_manager=telemetry_manager,
+        vector_index_factory=factory,
+    )
 
 
 class BlockingLLMService:
@@ -154,10 +189,11 @@ async def test_run_workers_until_idle_streams_status() -> None:
 
         llm = BlockingLLMService()
         vector_index = StubVectorIndex()
+        index_config = IndexConfig.load()
 
         coordinator = WorkerCoordinator(
             store=backend,
-            index_config=IndexConfig.load(),
+            index_config=index_config,
             operational_config=OperationalConfig(
                 openai_api_key=SecretStr("test"),
                 vector_backend="python",
@@ -170,9 +206,20 @@ async def test_run_workers_until_idle_streams_status() -> None:
 
         await coordinator.start()
 
+        telemetry_manager = TelemetryRunManager(index_config)
+        runtime = _make_runtime(
+            backend,
+            index_config,
+            coordinator,
+            telemetry_manager,
+            vector_factory=lambda _model: vector_index,
+        )
+
         state = SimpleNamespace(
             store=backend,
             worker_coordinator=coordinator,
+            telemetry_run_manager=telemetry_manager,
+            index_runtime=runtime,
         )
         servicer = WorkerServicer(cast(ServerState, state))
 
@@ -258,6 +305,13 @@ async def test_clear_document_rpc_clears_existing_document() -> None:
         await coordinator.start()
 
         telemetry_manager = TelemetryRunManager(index_config)
+        runtime = _make_runtime(
+            backend,
+            index_config,
+            coordinator,
+            telemetry_manager,
+            vector_factory=lambda _model: vector_index,
+        )
         state = SimpleNamespace(
             store=backend,
             worker_coordinator=coordinator,
@@ -265,6 +319,7 @@ async def test_clear_document_rpc_clears_existing_document() -> None:
             index_config=index_config,
             operational_config=operational_config,
             append_executor=None,
+            index_runtime=runtime,
         )
         servicer = WorkerServicer(cast(ServerState, state))
 
@@ -309,6 +364,12 @@ async def test_clear_document_rpc_handles_missing_document() -> None:
         await coordinator.start()
 
         telemetry_manager = TelemetryRunManager(index_config)
+        runtime = _make_runtime(
+            backend,
+            index_config,
+            coordinator,
+            telemetry_manager,
+        )
         state = SimpleNamespace(
             store=backend,
             worker_coordinator=coordinator,
@@ -316,6 +377,7 @@ async def test_clear_document_rpc_handles_missing_document() -> None:
             index_config=index_config,
             operational_config=operational_config,
             append_executor=None,
+            index_runtime=runtime,
         )
         servicer = WorkerServicer(cast(ServerState, state))
 
@@ -374,6 +436,13 @@ async def test_clear_document_rpc_cancels_inflight_work() -> None:
         await coordinator.start()
 
         telemetry_manager = TelemetryRunManager(index_config)
+        runtime = _make_runtime(
+            backend,
+            index_config,
+            coordinator,
+            telemetry_manager,
+            vector_factory=lambda _model: vector_index,
+        )
         state = SimpleNamespace(
             store=backend,
             worker_coordinator=coordinator,
@@ -381,6 +450,7 @@ async def test_clear_document_rpc_cancels_inflight_work() -> None:
             index_config=index_config,
             operational_config=operational_config,
             append_executor=None,
+            index_runtime=runtime,
         )
         servicer = WorkerServicer(cast(ServerState, state))
 
@@ -433,9 +503,10 @@ async def test_get_document_reflects_pending_work() -> None:
 
         llm = BlockingLLMService()
         vector_index = StubVectorIndex()
+        index_config = IndexConfig.load()
         coordinator = WorkerCoordinator(
             store=backend,
-            index_config=IndexConfig.load(),
+            index_config=index_config,
             operational_config=OperationalConfig(
                 openai_api_key=SecretStr("test"),
                 vector_backend="python",
@@ -447,9 +518,19 @@ async def test_get_document_reflects_pending_work() -> None:
         )
 
         await coordinator.start()
+        telemetry_manager = TelemetryRunManager(index_config)
+        runtime = _make_runtime(
+            backend,
+            index_config,
+            coordinator,
+            telemetry_manager,
+            vector_factory=lambda _model: vector_index,
+        )
         state = SimpleNamespace(
             store=backend,
             worker_coordinator=coordinator,
+            telemetry_run_manager=telemetry_manager,
+            index_runtime=runtime,
         )
         servicer = WorkerServicer(cast(ServerState, state))
 

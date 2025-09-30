@@ -6,12 +6,14 @@ from dataclasses import dataclass
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.indexing import IndexerRuntime
 from ragzoom.server.append_executor import AppendExecutor
 from ragzoom.server.run_manager import TelemetryRunManager
 from ragzoom.server.worker_coordinator import WorkerCoordinator
 from ragzoom.services.llm_service import LLMService
 from ragzoom.services.query_service import QueryService
 from ragzoom.store import create_store_with_docker
+from ragzoom.vector_factory import create_vector_index
 
 
 @dataclass(slots=True)
@@ -27,6 +29,7 @@ class ServerState:
     telemetry_run_manager: TelemetryRunManager
     append_executor: AppendExecutor
     worker_coordinator: WorkerCoordinator
+    index_runtime: IndexerRuntime
 
     @classmethod
     def create(
@@ -59,6 +62,19 @@ class ServerState:
             llm_service=llm_service,
             run_manager=telemetry_run_manager,
         )
+        vector_factory = lambda model: create_vector_index(  # noqa: E731
+            operational_cfg.vector_backend,
+            operational_cfg.database_url,
+            model,
+        )
+        index_runtime = IndexerRuntime(
+            store=store,
+            index_config=index_cfg,
+            append_executor=append_executor,
+            worker_coordinator=worker_coordinator,
+            telemetry_manager=telemetry_run_manager,
+            vector_index_factory=vector_factory,
+        )
 
         return cls(
             index_config=index_cfg,
@@ -70,4 +86,5 @@ class ServerState:
             telemetry_run_manager=telemetry_run_manager,
             append_executor=append_executor,
             worker_coordinator=worker_coordinator,
+            index_runtime=index_runtime,
         )

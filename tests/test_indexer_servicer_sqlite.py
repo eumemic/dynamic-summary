@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from types import SimpleNamespace
 from typing import NoReturn, cast
 from unittest.mock import patch
@@ -8,11 +9,13 @@ from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
+from ragzoom.indexing import IndexerRuntime
 from ragzoom.rpc import dynamic_summary_pb2 as pb2
-from ragzoom.server.append_executor import AppendOutcome
+from ragzoom.server.append_executor import AppendExecutor, AppendOutcome
 from ragzoom.server.run_manager import TelemetryRunManager
 from ragzoom.server.servicers import IndexerServicer
 from ragzoom.server.state import ServerState
+from ragzoom.server.worker_coordinator import WorkerCoordinator, WorkerStatus
 
 
 class StubAppendExecutor:
@@ -67,6 +70,15 @@ class StubWorkerCoordinator:
     async def wait_until_idle(self, document_id: str | None = None) -> None:
         return None
 
+    async def status(self) -> WorkerStatus:
+        return WorkerStatus(
+            queue_depth=0,
+            in_flight=0,
+            pending_by_document={},
+            inflight_by_document={},
+            completed_by_document={},
+        )
+
 
 class StubContext:
     async def abort(self, code: object, details: str) -> NoReturn:
@@ -96,6 +108,44 @@ async def test_append_text_uses_append_executor() -> None:
 
         append_executor = StubAppendExecutor(outcome)
         worker_coordinator = StubWorkerCoordinator()
+        telemetry_manager = TelemetryRunManager(index_config)
+
+        class VectorIndexStub:
+            def delete(
+                self,
+                filter: dict[str, object] | None = None,
+                ids: list[str] | None = None,
+            ) -> int:
+                return 0
+
+            def upsert(
+                self,
+                items: list[tuple[str, list[float], dict[str, object]]],
+            ) -> None:
+                return None
+
+            def search_similar(
+                self,
+                query_embedding: object,
+                k: int,
+                where: dict[str, object] | None = None,
+            ) -> list[object]:
+                return []
+
+            def get_vectors(self, ids: list[str]) -> list[object]:
+                return []
+
+        def vector_factory(model: str) -> VectorIndexStub:
+            return VectorIndexStub()
+
+        runtime = IndexerRuntime(
+            store=backend,
+            index_config=index_config,
+            append_executor=cast(AppendExecutor, append_executor),
+            worker_coordinator=cast(WorkerCoordinator, worker_coordinator),
+            telemetry_manager=telemetry_manager,
+            vector_index_factory=cast(Callable[[str], VectorIndex], vector_factory),
+        )
 
         state = cast(
             ServerState,
@@ -107,9 +157,10 @@ async def test_append_text_uses_append_executor() -> None:
                 indexing_service=None,
                 query_service=None,
                 llm_service=None,
-                telemetry_run_manager=TelemetryRunManager(index_config),
+                telemetry_run_manager=telemetry_manager,
                 append_executor=append_executor,
                 worker_coordinator=worker_coordinator,
+                index_runtime=runtime,
             ),
         )
 
@@ -178,6 +229,7 @@ async def test_append_text_with_replace_existing_sets_flag() -> None:
 
         append_executor = StubAppendExecutor(outcome)
         worker_coordinator = StubWorkerCoordinator()
+        telemetry_manager = TelemetryRunManager(index_config)
 
         state = cast(
             ServerState,
@@ -189,20 +241,11 @@ async def test_append_text_with_replace_existing_sets_flag() -> None:
                 indexing_service=None,
                 query_service=None,
                 llm_service=None,
-                telemetry_run_manager=TelemetryRunManager(index_config),
+                telemetry_run_manager=telemetry_manager,
                 append_executor=append_executor,
                 worker_coordinator=worker_coordinator,
             ),
         )
-
-        servicer = IndexerServicer(state)
-
-        request = pb2.AppendTextRequest(
-            document_id=document_id,
-            content=b"hello world",
-            collect_telemetry=False,
-        )
-        setattr(request, "replace_existing", True)
 
         delete_calls: list[bool] = []
 
@@ -218,7 +261,7 @@ async def test_append_text_with_replace_existing_sets_flag() -> None:
             def upsert(
                 self,
                 items: list[tuple[str, list[float], dict[str, object]]],
-            ) -> None:  # pragma: no cover - not used in this test
+            ) -> None:
                 return None
 
             def search_similar(
@@ -226,23 +269,39 @@ async def test_append_text_with_replace_existing_sets_flag() -> None:
                 query_embedding: object,
                 k: int,
                 where: dict[str, object] | None = None,
-            ) -> list[object]:  # pragma: no cover
+            ) -> list[object]:
                 return []
 
-            def get_vectors(self, ids: list[str]) -> list[object]:  # pragma: no cover
+            def get_vectors(self, ids: list[str]) -> list[object]:
                 return []
 
-        def vector_factory(*args: object, **kwargs: object) -> VectorIndexStub:
+        def vector_factory(model: str) -> VectorIndexStub:
             return VectorIndexStub()
+
+        runtime = IndexerRuntime(
+            store=backend,
+            index_config=index_config,
+            append_executor=cast(AppendExecutor, append_executor),
+            worker_coordinator=cast(WorkerCoordinator, worker_coordinator),
+            telemetry_manager=telemetry_manager,
+            vector_index_factory=cast(Callable[[str], VectorIndex], vector_factory),
+        )
+
+        setattr(state, "index_runtime", runtime)
+
+        servicer = IndexerServicer(state)
+
+        request = pb2.AppendTextRequest(
+            document_id=document_id,
+            content=b"hello world",
+            collect_telemetry=False,
+        )
+        setattr(request, "replace_existing", True)
 
         with (
             patch.object(
                 backend, "clear_document", wraps=backend.clear_document
             ) as clear_mock,
-            patch(
-                "ragzoom.server.servicers.create_vector_index",
-                side_effect=vector_factory,
-            ),
         ):
             await servicer.AppendText(request, StubContext())
 
@@ -285,6 +344,7 @@ async def test_index_document_clears_then_appends() -> None:
 
         append_executor = StubAppendExecutor(outcome)
         worker_coordinator = StubWorkerCoordinator()
+        telemetry_manager = TelemetryRunManager(index_config)
 
         state = cast(
             ServerState,
@@ -296,13 +356,11 @@ async def test_index_document_clears_then_appends() -> None:
                 indexing_service=None,
                 query_service=None,
                 llm_service=None,
-                telemetry_run_manager=TelemetryRunManager(index_config),
+                telemetry_run_manager=telemetry_manager,
                 append_executor=append_executor,
                 worker_coordinator=worker_coordinator,
             ),
         )
-
-        servicer = IndexerServicer(state)
 
         request = pb2.IndexDocumentRequest(
             document_id=document_id,
@@ -333,17 +391,26 @@ async def test_index_document_clears_then_appends() -> None:
             ) -> list[object]:  # pragma: no cover
                 return []
 
-        def vector_factory(*args: object, **kwargs: object) -> VectorIndexStub:
+        def vector_factory(model: str) -> VectorIndexStub:
             return VectorIndexStub()
+
+        runtime = IndexerRuntime(
+            store=backend,
+            index_config=index_config,
+            append_executor=cast(AppendExecutor, append_executor),
+            worker_coordinator=cast(WorkerCoordinator, worker_coordinator),
+            telemetry_manager=telemetry_manager,
+            vector_index_factory=cast(Callable[[str], VectorIndex], vector_factory),
+        )
+
+        setattr(state, "index_runtime", runtime)
+
+        servicer = IndexerServicer(state)
 
         with (
             patch.object(
                 backend, "clear_document", wraps=backend.clear_document
             ) as clear_mock,
-            patch(
-                "ragzoom.server.servicers.create_vector_index",
-                side_effect=vector_factory,
-            ),
         ):
             response = await servicer.IndexDocument(request, StubContext())
 
