@@ -40,6 +40,9 @@ class StubWorkerCoordinator:
         self.enqueued: list[str] = []
         self.deleted: list[list[str] | None] = []
         self.new_roots: list[list[str] | None] = []
+        self.cancelled: list[str] = []
+        self.attached_runs: list[object] = []
+        self.detached: list[str] = []
 
     async def enqueue_document(
         self,
@@ -53,9 +56,15 @@ class StubWorkerCoordinator:
         self.new_roots.append(new_root_ids)
 
     async def attach_run(self, context: object) -> None:
-        return None
+        self.attached_runs.append(context)
 
     async def detach_run(self, document_id: str) -> None:
+        self.detached.append(document_id)
+
+    async def cancel_document(self, document_id: str) -> None:
+        self.cancelled.append(document_id)
+
+    async def wait_until_idle(self, document_id: str | None = None) -> None:
         return None
 
 
@@ -240,5 +249,114 @@ async def test_append_text_with_replace_existing_sets_flag() -> None:
         assert clear_mock.called
         assert delete_calls, "Vector index delete was not invoked"
         assert append_executor.calls
+        assert worker_coordinator.cancelled == [document_id]
+    finally:
+        backend.close()
+
+
+@pytest.mark.asyncio
+async def test_index_document_clears_then_appends() -> None:
+    backend = SQLiteStorageBackend()
+    try:
+        index_config = IndexConfig.load()
+        query_config = QueryConfig()
+        operational_config = OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        )
+
+        document_id = "doc-index"
+        backend.add_document(
+            document_id,
+            file_path="/tmp/original.txt",
+            embedding_model=index_config.embedding_model,
+            summary_model=index_config.summary_model,
+        )
+
+        outcome = AppendOutcome(
+            document_id=document_id,
+            appended_span_start=0,
+            appended_span_end=11,
+            new_leaf_ids=["leaf-1"],
+            deleted_node_ids=[],
+            total_leaves=1,
+        )
+
+        append_executor = StubAppendExecutor(outcome)
+        worker_coordinator = StubWorkerCoordinator()
+
+        state = cast(
+            ServerState,
+            SimpleNamespace(
+                index_config=index_config,
+                query_config=query_config,
+                operational_config=operational_config,
+                store=backend,
+                indexing_service=None,
+                query_service=None,
+                llm_service=None,
+                telemetry_run_manager=TelemetryRunManager(index_config),
+                append_executor=append_executor,
+                worker_coordinator=worker_coordinator,
+            ),
+        )
+
+        servicer = IndexerServicer(state)
+
+        request = pb2.IndexDocumentRequest(
+            document_id=document_id,
+            content=b"hello world",
+            collect_telemetry=False,
+        )
+
+        delete_calls: list[bool] = []
+
+        class VectorIndexStub:
+            def delete(
+                self,
+                filter: dict[str, object] | None = None,
+                ids: list[str] | None = None,
+            ) -> int:
+                delete_calls.append(True)
+                return 0
+
+            def upsert(
+                self,
+                items: list[tuple[str, list[float], dict[str, object]]],
+            ) -> None:  # pragma: no cover - not used
+                return None
+
+            def get_vectors(
+                self,
+                ids: list[str],
+            ) -> list[object]:  # pragma: no cover
+                return []
+
+        def vector_factory(*args: object, **kwargs: object) -> VectorIndexStub:
+            return VectorIndexStub()
+
+        with (
+            patch.object(
+                backend, "clear_document", wraps=backend.clear_document
+            ) as clear_mock,
+            patch(
+                "ragzoom.server.servicers.create_vector_index",
+                side_effect=vector_factory,
+            ),
+        ):
+            response = await servicer.IndexDocument(request, StubContext())
+
+        assert clear_mock.called
+        assert delete_calls, "Vector index delete was not invoked"
+        assert append_executor.calls
+        assert worker_coordinator.cancelled == [document_id]
+        assert worker_coordinator.enqueued == [document_id]
+
+        stats = response.stats
+        assert stats.document_id == document_id
+        assert stats.chunks_created == outcome.total_leaves
+        assert stats.new_leaves == len(outcome.new_leaf_ids)
+        assert stats.resummarized_nodes == 0
     finally:
         backend.close()

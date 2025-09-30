@@ -20,6 +20,7 @@ from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.retrieve import Retriever
 from ragzoom.rpc import dynamic_summary_pb2 as pb2
 from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
+from ragzoom.server.append_executor import AppendOutcome
 from ragzoom.server.run_manager import IndexRunContext
 from ragzoom.server.state import ServerState
 from ragzoom.server.worker_coordinator import WorkerCoordinator, WorkerStatus
@@ -106,6 +107,46 @@ def json_dumps(data: object) -> str:
     import json
 
     return json.dumps(data)
+
+
+async def _clear_document_state(
+    state: ServerState, document_id: str
+) -> tuple[int, bool]:
+    await state.worker_coordinator.cancel_document(document_id)
+
+    lock_fn = getattr(state.store, "lock_document", None)
+    candidate = lock_fn(document_id) if callable(lock_fn) else None
+    if candidate and hasattr(candidate, "__enter__") and hasattr(candidate, "__exit__"):
+        lock_cm = cast(AbstractContextManager[object], candidate)
+    else:
+        lock_cm = cast(AbstractContextManager[object], nullcontext())
+
+    with lock_cm:
+        doc_record = state.store.get_document_by_id(document_id)
+        if doc_record is None:
+            return 0, False
+
+        embedding_model = (
+            getattr(doc_record, "embedding_model", None)
+            or state.index_config.embedding_model
+        )
+
+        try:
+            vector_index = create_vector_index(
+                state.operational_config.vector_backend,
+                state.operational_config.database_url,
+                embedding_model,
+            )
+            vector_index.delete(filter={"document_id": document_id})
+        except Exception:  # pragma: no cover - defensive logging
+            logger.exception(
+                "Failed to clear vectors for document %s during ClearDocument",
+                document_id,
+            )
+
+        deleted_nodes = state.store.clear_document(document_id)
+
+    return deleted_nodes, True
 
 
 async def _abort(
@@ -218,60 +259,35 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
     def __init__(self, state: ServerState) -> None:
         self._state = state
 
-    async def IndexDocument(  # noqa: N802
+    async def _append_document(
         self,
-        request: pb2.IndexDocumentRequest,
-        context: ServicerContextProto,
-    ) -> pb2.IndexDocumentResponse:
-        source = request.WhichOneof("source")
-        if source is None:
-            await _abort(
-                context,
-                code=grpc.StatusCode.INVALID_ARGUMENT,
-                message="IndexDocument requires either `content` or `file_path`.",
-            )
+        *,
+        document_id: str,
+        text: str,
+        file_path: str | None,
+        replace_existing: bool,
+        collect_telemetry: bool,
+    ) -> tuple[IndexingResult, str | None]:
+        telemetry_manager = self._state.telemetry_run_manager
+        run_context: IndexRunContext | None = None
 
-        document_id = request.document_id or None
-        file_path: str | None = None
-
-        if source == "content":
-            text = await _decode_text(request.content, context)
-        else:
-            file_path = request.file_path
-            try:
-                text = Path(file_path).read_text(encoding="utf-8")
-            except OSError as exc:
-                await _abort(
-                    context,
-                    code=grpc.StatusCode.INVALID_ARGUMENT,
-                    message=f"Failed to read file '{file_path}': {exc}",
-                )
-
-        stats = await self._state.indexing_service.index_document_async(
-            text=text,
-            document_id=document_id,
-            file_path=file_path,
-            show_progress=False,
-            collect_telemetry=request.collect_telemetry,
+        existing_record = self._state.store.get_document_by_id(document_id)
+        embedding_model = (
+            existing_record.embedding_model
+            if existing_record and getattr(existing_record, "embedding_model", None)
+            else self._state.index_config.embedding_model
         )
+        summary_model = (
+            existing_record.summary_model
+            if existing_record and getattr(existing_record, "summary_model", None)
+            else self._state.index_config.summary_model
+        )
+        stored_file_path = getattr(existing_record, "file_path", None)
+        resolved_file_path = file_path if file_path is not None else stored_file_path
 
-        return pb2.IndexDocumentResponse(stats=_stats_to_proto(stats))
-
-    async def AppendText(  # noqa: N802
-        self,
-        request: pb2.AppendTextRequest,
-        context: ServicerContextProto,
-    ) -> pb2.AppendTextResponse:
-        if not request.document_id:
-            await _abort(
-                context,
-                code=grpc.StatusCode.INVALID_ARGUMENT,
-                message="AppendText requires `document_id`.",
-            )
-
-        text = await _decode_text(request.content, context)
-
-        document_id = request.document_id
+        if replace_existing:
+            await _clear_document_state(self._state, document_id)
+            existing_record = None
 
         lock_fn = getattr(self._state.store, "lock_document", None)
         lock_candidate = lock_fn(document_id) if callable(lock_fn) else None
@@ -284,43 +300,26 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
         else:
             lock_cm = cast(AbstractContextManager[object], nullcontext())
 
-        telemetry_manager = self._state.telemetry_run_manager
-        run_context: IndexRunContext | None = None
+        outcome: AppendOutcome | None = None
+        result: IndexingResult | None = None
         previous_leaf_count = 0
-
-        replace_existing = bool(getattr(request, "replace_existing", False))
 
         try:
             with lock_cm:
                 doc_record = self._state.store.get_document_by_id(document_id)
-                document_previously_existed = doc_record is not None
-                embedding_model = (
-                    doc_record.embedding_model
-                    if doc_record and getattr(doc_record, "embedding_model", None)
-                    else self._state.index_config.embedding_model
-                )
-                summary_model = (
-                    doc_record.summary_model
-                    if doc_record and getattr(doc_record, "summary_model", None)
-                    else self._state.index_config.summary_model
-                )
-
                 if doc_record is None:
                     self._state.store.add_document(
                         document_id=document_id,
-                        file_path=None,
+                        file_path=resolved_file_path,
                         embedding_model=embedding_model,
                         summary_model=summary_model,
                     )
-                doc_record = self._state.store.get_document_by_id(document_id)
-                file_path = (
-                    getattr(doc_record, "file_path", None) if doc_record else None
-                )
+                    doc_record = self._state.store.get_document_by_id(document_id)
 
                 document_store = self._state.store.for_document(document_id)
                 previous_leaf_count = document_store.nodes.leaf_count()
 
-                if request.collect_telemetry:
+                if collect_telemetry and telemetry_manager is not None:
                     existing_tokens = sum(
                         int(getattr(node, "token_count", 0))
                         for node in document_store.nodes.get_leaves()
@@ -332,9 +331,9 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
                         collect=True,
                         source_tokens=source_tokens,
                         document_path=(
-                            getattr(doc_record, "file_path", None)
-                            if doc_record
-                            else None
+                            file_path
+                            if file_path is not None
+                            else getattr(doc_record, "file_path", None)
                         ),
                     )
 
@@ -343,39 +342,6 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
                     self._state.operational_config.database_url,
                     embedding_model,
                 )
-
-                if replace_existing and (
-                    document_previously_existed or previous_leaf_count > 0
-                ):
-                    try:
-                        vector_index.delete(filter={"document_id": document_id})
-                    except Exception:  # pragma: no cover - defensive logging
-                        logger.exception(
-                            "Failed to clear vectors for document %s before rebuild",
-                            document_id,
-                        )
-
-                    try:
-                        self._state.store.clear_document(document_id)
-                    except Exception:  # pragma: no cover - defensive logging
-                        logger.exception(
-                            "Failed to clear document %s before rebuild", document_id
-                        )
-                        raise
-
-                    self._state.store.add_document(
-                        document_id=document_id,
-                        file_path=file_path,
-                        embedding_model=embedding_model,
-                        summary_model=summary_model,
-                    )
-                    document_store = self._state.store.for_document(document_id)
-                    previous_leaf_count = 0
-                    vector_index = create_vector_index(
-                        self._state.operational_config.vector_backend,
-                        self._state.operational_config.database_url,
-                        embedding_model,
-                    )
 
                 outcome = await self._state.append_executor.append(
                     store=document_store,
@@ -419,21 +385,100 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
 
             await self._state.worker_coordinator.enqueue_document(
                 document_id,
-                deleted_node_ids=outcome.deleted_node_ids,
-                new_root_ids=outcome.new_leaf_ids,
+                deleted_node_ids=outcome.deleted_node_ids if outcome else None,
+                new_root_ids=outcome.new_leaf_ids if outcome else None,
             )
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.exception(
-                "AppendText failed for document %s", document_id, exc_info=True
+                "Append failed for document %s", document_id, exc_info=True
             )
-            if run_context is not None:
+            if run_context is not None and telemetry_manager is not None:
                 await telemetry_manager.complete_run(run_context.run_id, error=str(exc))
                 await self._state.worker_coordinator.detach_run(document_id)
             raise
 
-        telemetry_run_id = result.telemetry_run_id or ""
+        assert result is not None and outcome is not None
+        telemetry_run_id = result.telemetry_run_id
+        return result, telemetry_run_id
+
+    async def IndexDocument(  # noqa: N802
+        self,
+        request: pb2.IndexDocumentRequest,
+        context: ServicerContextProto,
+    ) -> pb2.IndexDocumentResponse:
+        source = request.WhichOneof("source")
+        if source is None:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="IndexDocument requires either `content` or `file_path`.",
+            )
+
+        document_id = request.document_id or None
+        file_path: str | None = None
+
+        if source == "content":
+            text = await _decode_text(request.content, context)
+        else:
+            file_path = request.file_path
+            try:
+                text = Path(file_path).read_text(encoding="utf-8")
+            except OSError as exc:
+                await _abort(
+                    context,
+                    code=grpc.StatusCode.INVALID_ARGUMENT,
+                    message=f"Failed to read file '{file_path}': {exc}",
+                )
+
+        resolved_document_id = document_id
+        if not resolved_document_id:
+            if file_path:
+                resolved_document_id = Path(file_path).name
+            else:
+                await _abort(
+                    context,
+                    code=grpc.StatusCode.INVALID_ARGUMENT,
+                    message="IndexDocument requires `document_id` when no file path is provided.",
+                )
+
+        stats, _ = await self._append_document(
+            document_id=resolved_document_id,
+            text=text,
+            file_path=file_path,
+            replace_existing=True,
+            collect_telemetry=request.collect_telemetry,
+        )
+
+        return pb2.IndexDocumentResponse(stats=_stats_to_proto(stats))
+
+    async def AppendText(  # noqa: N802
+        self,
+        request: pb2.AppendTextRequest,
+        context: ServicerContextProto,
+    ) -> pb2.AppendTextResponse:
+        if not request.document_id:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="AppendText requires `document_id`.",
+            )
+
+        text = await _decode_text(request.content, context)
+
+        document_id = request.document_id
+
+        replace_existing = bool(getattr(request, "replace_existing", False))
+
+        result, telemetry_run_id = await self._append_document(
+            document_id=document_id,
+            text=text,
+            file_path=None,
+            replace_existing=replace_existing,
+            collect_telemetry=request.collect_telemetry,
+        )
+
         response = pb2.AppendTextResponse(stats=_stats_to_proto(result))
-        setattr(response, "telemetry_run_id", telemetry_run_id)
+        setattr(response, "telemetry_run_id", telemetry_run_id or "")
         return response
 
 
@@ -749,46 +794,7 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         return response_type(results=results)
 
     async def _clear_document(self, document_id: str) -> tuple[int, bool]:
-        await self._state.worker_coordinator.cancel_document(document_id)
-
-        lock_fn = getattr(self._state.store, "lock_document", None)
-        candidate = lock_fn(document_id) if callable(lock_fn) else None
-        if (
-            candidate
-            and hasattr(candidate, "__enter__")
-            and hasattr(candidate, "__exit__")
-        ):
-            lock_cm = cast(AbstractContextManager[object], candidate)
-        else:
-            lock_cm = cast(AbstractContextManager[object], nullcontext())
-
-        with lock_cm:
-
-            doc_record = self._state.store.get_document_by_id(document_id)
-            if doc_record is None:
-                return 0, False
-
-            embedding_model = (
-                getattr(doc_record, "embedding_model", None)
-                or self._state.index_config.embedding_model
-            )
-
-            try:
-                vector_index = create_vector_index(
-                    self._state.operational_config.vector_backend,
-                    self._state.operational_config.database_url,
-                    embedding_model,
-                )
-                vector_index.delete(filter={"document_id": document_id})
-            except Exception:  # pragma: no cover - defensive logging
-                logger.exception(
-                    "Failed to clear vectors for document %s during ClearDocument",
-                    document_id,
-                )
-
-            deleted_nodes = self._state.store.clear_document(document_id)
-
-        return deleted_nodes, True
+        return await _clear_document_state(self._state, document_id)
 
     def _format_status(self, status: WorkerStatus) -> str:
         parts = [
