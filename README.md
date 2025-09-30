@@ -28,7 +28,7 @@ storage migrations have introduced the required columns:
 - PostgreSQL: migrations run automatically on startup.
 - SQLite: the bundled migrations add the same columns on first access.
 
-`IndexingService.append_to_document(...)` and the CLI `ragzoom index --append` path reuse
+The gRPC `AppendText` endpoint—and, by proxy, the `ragzoom index --append` CLI path—reuse
 the existing tree, resummarize only the affected rightmost path, and rely on storage
 consistency checks (missing nodes are filtered after vector search) so queries see a
 coherent snapshot. Telemetry files produced during append

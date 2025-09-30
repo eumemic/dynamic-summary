@@ -9,7 +9,6 @@ from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.server.append_executor import AppendExecutor
 from ragzoom.server.run_manager import TelemetryRunManager
 from ragzoom.server.worker_coordinator import WorkerCoordinator
-from ragzoom.services.indexing_service import IndexingService
 from ragzoom.services.llm_service import LLMService
 from ragzoom.services.query_service import QueryService
 from ragzoom.store import create_store_with_docker
@@ -23,7 +22,6 @@ class ServerState:
     query_config: QueryConfig
     operational_config: OperationalConfig
     store: StorageBackend
-    indexing_service: IndexingService
     query_service: QueryService
     llm_service: LLMService
     telemetry_run_manager: TelemetryRunManager
@@ -47,7 +45,6 @@ class ServerState:
         store = create_store_with_docker(
             operational_cfg, embedding_model=index_cfg.embedding_model
         )
-        indexing_service = IndexingService(store, index_cfg, operational_cfg)
         query_service = QueryService(store, query_cfg, operational_cfg)
         llm_service = LLMService(
             index_cfg,
@@ -68,7 +65,6 @@ class ServerState:
             query_config=query_cfg,
             operational_config=operational_cfg,
             store=store,
-            indexing_service=indexing_service,
             query_service=query_service,
             llm_service=llm_service,
             telemetry_run_manager=telemetry_run_manager,

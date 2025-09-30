@@ -40,7 +40,7 @@ class ServiceContainer:
     - Services are initialized with the multi-document Store
     - Each service internally creates DocumentStore instances as needed
     - This ensures document isolation is enforced at the service layer
-    - IndexingService and QueryService handle document scoping transparently
+    - QueryService handles document scoping for retrieval operations
     - This pattern prevents cross-document contamination through the type system
     """
 
