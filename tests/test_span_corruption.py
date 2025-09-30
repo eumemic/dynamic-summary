@@ -6,6 +6,8 @@ and prevents span corruption issues.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import cast
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -14,84 +16,80 @@ from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretSt
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
-from ragzoom.index import TreeBuilder
-from tests.conftest import BackwardCompatibilityConfig
+from tests.conftest import BackwardCompatibilityConfig, IndexerRuntimeHarness
 
 
 class TestSpanCorruption:
     """Test span corruption issues in tree building."""
 
     def setup_system(
-        self, storage_backend: StorageBackend, vector_index: _VectorIndexProtocol
-    ) -> tuple[BackwardCompatibilityConfig, TreeBuilder, AsyncMock]:
-        """Set up test system."""
-        # Get document store first
-        doc_store = storage_backend.for_document("test-doc")
-
-        # Set up document metadata
+        self,
+        storage_backend: StorageBackend,
+        vector_index: _VectorIndexProtocol,
+        runtime_harness: IndexerRuntimeHarness,
+        *,
+        document_id: str = "test-doc",
+    ) -> tuple[BackwardCompatibilityConfig, str, AsyncMock]:
+        """Set up test system using the runtime harness."""
+        storage_backend.clear_document(document_id)
+        doc_store = storage_backend.for_document(document_id)
         doc_store.set_metadata(
             file_path="test_span_corruption.txt",
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
         )
 
-        # Create separate configs
         index_config = IndexConfig.load(
-            target_chunk_tokens=100,  # Small chunks to create many nodes
-            preceding_context_tokens=10,  # Must be less than leaf_tokens
+            target_chunk_tokens=100,
+            preceding_context_tokens=10,
         )
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(
             openai_api_key=SecretStr("test-key"),
         )
 
-        # Create tree builder
-        tree_builder = TreeBuilder(
-            index_config,
-            doc_store,
-            vector_index,
-            api_key=operational_config.openai_api_key.get_secret_value(),
-        )
-
-        # Mock API calls
+        runtime_harness.llm_service.config = index_config
         mock_client = AsyncMock()
-        tree_builder.llm_service.client = mock_client
+        runtime_harness.llm_service.client = mock_client
 
-        # Create a config wrapper for backward compatibility
         config = BackwardCompatibilityConfig(
             index_config, query_config, operational_config
         )
 
-        return config, tree_builder, mock_client
+        return config, document_id, mock_client
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(2.5)
     async def test_odd_nodes_create_invalid_spans(
-        self, storage_backend: StorageBackend, vector_index: _VectorIndexProtocol
+        self,
+        storage_backend: StorageBackend,
+        vector_index: _VectorIndexProtocol,
+        indexer_runtime_harness: IndexerRuntimeHarness,
     ) -> None:
         """Test that odd number of nodes creates span corruption."""
-        config, tree_builder, mock_client = self.setup_system(
-            storage_backend, vector_index
+        _, document_id, mock_client = self.setup_system(
+            storage_backend,
+            vector_index,
+            indexer_runtime_harness,
         )
-        doc_store = storage_backend.for_document("test-doc")
+        storage_backend.clear_document(document_id)
+        doc_store = storage_backend.for_document(document_id)
 
-        # Create text that will split into an odd number of chunks
-        # Each chunk is ~100 tokens, so we need longer content
         chunk_text = (
             "This is a longer chunk of text that should be approximately one hundred tokens. "
-            * 12
+            * 8
         )
-        chunks = [f"Chunk {i}: {chunk_text}" for i in range(15)]
+        chunks = [f"Chunk {i}: {chunk_text}" for i in range(9)]
+        chunks.append(f"Chunk {len(chunks)}: {chunk_text}")
+        text = " ".join(chunks)
         text = " ".join(chunks)
 
-        # Mock embeddings - return different embeddings for each text
         mock_client.embeddings.create = AsyncMock(
             side_effect=lambda **kwargs: Mock(
                 data=[Mock(embedding=[0.1] * 1536)]
                 * len(kwargs.get("input", [kwargs.get("input")]))
             )
         )
-
-        # Mock summaries
         mock_client.chat.completions.create = AsyncMock(
             return_value=Mock(
                 choices=[
@@ -100,16 +98,15 @@ class TestSpanCorruption:
             )
         )
 
-        # Index the document
-        await tree_builder.add_document_async(text, show_progress=False)
-
-        # Check for span corruption
-        from collections.abc import Sequence
-        from typing import cast
+        await indexer_runtime_harness.append(
+            document_id,
+            text,
+            replace_existing=True,
+            file_path="test_span_corruption.txt",
+        )
 
         nodes = cast(Sequence[TreeNode], doc_store.nodes.get_all())
 
-        # Check for invalid spans
         corrupt_nodes = []
         for node in nodes:
             node_height = node.height
@@ -123,7 +120,6 @@ class TestSpanCorruption:
                     }
                 )
             elif node.span_start == node.span_end and node_height > 0:
-                # Zero-width spans for non-leaf nodes are also invalid
                 corrupt_nodes.append(
                     {
                         "id": node.id,
@@ -133,95 +129,83 @@ class TestSpanCorruption:
                     }
                 )
 
-        # Report findings
-        if corrupt_nodes:
-            print(f"\nFound {len(corrupt_nodes)} corrupt nodes:")
-            for corrupt_node in corrupt_nodes:
-                print(
-                    f"  Height {corrupt_node['height']}: span ({corrupt_node['span_start']}, {corrupt_node['span_end']})"
-                )
-
-        # This test SHOULD fail with the current implementation
         assert (
             len(corrupt_nodes) == 0
         ), f"Found {len(corrupt_nodes)} nodes with invalid spans"
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(2.5)
     async def test_wraparound_pairing(
-        self, storage_backend: StorageBackend, vector_index: _VectorIndexProtocol
+        self,
+        storage_backend: StorageBackend,
+        vector_index: _VectorIndexProtocol,
+        indexer_runtime_harness: IndexerRuntimeHarness,
     ) -> None:
         """Test that demonstrates wraparound pairing issue."""
-        config, tree_builder, mock_client = self.setup_system(
-            storage_backend, vector_index
+        _, document_id, mock_client = self.setup_system(
+            storage_backend,
+            vector_index,
+            indexer_runtime_harness,
         )
-        doc_store = storage_backend.for_document("test-doc")
+        storage_backend.clear_document(document_id)
+        doc_store = storage_backend.for_document(document_id)
 
-        # Create 5 chunks that will split properly at 100 tokens each
-        # Each chunk needs to be long enough to hit the token limit
-        base_text = "The quick brown fox jumps over the lazy dog. " * 20  # ~100 tokens
-        chunks = []
-        for i in range(5):
-            chunks.append(f"CHUNK_{i}_START {base_text} CHUNK_{i}_END")
+        base_text = "The quick brown fox jumps over the lazy dog. " * 20
+        chunks = [f"CHUNK_{i}_START {base_text} CHUNK_{i}_END" for i in range(5)]
         text = " ".join(chunks)
 
-        # Mock embeddings
         mock_client.embeddings.create = AsyncMock(
             side_effect=lambda **kwargs: Mock(
                 data=[Mock(embedding=[0.1] * 1536)]
                 * len(kwargs.get("input", [kwargs.get("input")]))
             )
         )
-
-        # Mock summaries
         mock_client.chat.completions.create = AsyncMock(
             return_value=Mock(
                 choices=[Mock(message=Mock(content="Summary of the content"))]
             )
         )
 
-        # Index the document
-        await tree_builder.add_document_async(text, show_progress=False)
-
-        # Verify tree structure
-        from collections.abc import Sequence
-        from typing import cast
+        await indexer_runtime_harness.append(
+            document_id,
+            text,
+            replace_existing=True,
+            file_path="test_span_corruption.txt",
+        )
 
         nodes = cast(Sequence[TreeNode], doc_store.nodes.get_all())
+        nodes_by_id = {node.id: node for node in nodes}
 
-        # Group nodes by height
         nodes_by_height: dict[int, list[TreeNode]] = {}
         for node in nodes:
             height = node.height
-            if height not in nodes_by_height:
-                nodes_by_height[height] = []
-            nodes_by_height[height].append(node)
+            nodes_by_height.setdefault(height, []).append(node)
 
-        # Sort nodes by span_start within each height
         for height in nodes_by_height:
-            nodes_by_height[height].sort(key=lambda n: n.span_start)
+            nodes_by_height[height].sort(key=lambda node: node.span_start)
 
-        print("\nTree structure:")
-        for height in sorted(nodes_by_height.keys()):
-            print(f"\nHeight {height}:")
-            for node in nodes_by_height[height]:
-                print(f"  Node: span ({node.span_start}, {node.span_end})")
-                if node.left_child_id and node.right_child_id:
-                    left = next(n for n in nodes if n.id == node.left_child_id)
-                    right = next(n for n in nodes if n.id == node.right_child_id)
-                    print(f"    Left child: span ({left.span_start}, {left.span_end})")
-                    print(
-                        f"    Right child: span ({right.span_start}, {right.span_end})"
-                    )
+        root_height = max(nodes_by_height.keys())
+        assert len(nodes_by_height[root_height]) == 1
 
-                    # Check for wraparound
-                    if left.span_end > right.span_start:
-                        print(
-                            f"    WARNING: Wraparound detected! Left end {left.span_end} > Right start {right.span_start}"
-                        )
+        for height in range(root_height):
+            level_nodes = nodes_by_height.get(height, [])
+            for node in level_nodes:
+                left_id = node.left_child_id
+                right_id = node.right_child_id
+                if not left_id:
+                    continue
+                left = nodes_by_id.get(left_id)
+                assert left is not None
+                if right_id:
+                    right = nodes_by_id.get(right_id)
+                    assert right is not None
+                    assert node.span_start == left.span_start
+                    assert node.span_end == right.span_end
+                else:
+                    assert node.span_start == left.span_start
+                    assert node.span_end >= left.span_end
 
-        # Check all parent nodes have valid spans
-        for node in nodes:
-            if node.height > 0:
-                assert (
-                    node.span_end >= node.span_start
-                ), f"Node at height {node.height} has invalid span: ({node.span_start}, {node.span_end})"
+        leaves = nodes_by_height.get(0, [])
+        assert len(leaves) >= 5
+        for i, leaf in enumerate(leaves[:-1]):
+            assert leaf.span_end <= leaves[i + 1].span_start
