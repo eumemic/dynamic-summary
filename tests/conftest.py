@@ -3,7 +3,8 @@
 import math
 import os
 import signal
-from collections.abc import Callable, Generator
+from collections.abc import AsyncIterator, Callable, Generator
+from dataclasses import dataclass
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,9 +15,16 @@ from ragzoom.contracts.storage_backend import StorageBackend as _StorageBackendP
 from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.db_utils import create_temp_database, get_temp_db_name
 from ragzoom.document_store import DocumentStore
+from ragzoom.indexing.runtime import ClearedDocumentResult, IndexerRuntime
 from ragzoom.progress import configure_progress, get_progress_config
+from ragzoom.server.append_executor import AppendExecutor
+from ragzoom.server.run_manager import TelemetryRunManager
+from ragzoom.server.worker_coordinator import WorkerCoordinator
+from ragzoom.services.indexing_service import IndexingResult
+from ragzoom.services.llm_service import LLMService
 from ragzoom.store import create_store
 from ragzoom.telemetry_types import TelemetryDataDict
+from ragzoom.vector_factory import create_vector_index
 from tests.test_builders import DocumentBuilder, TreeNodeBuilder
 
 
@@ -53,6 +61,45 @@ class BackwardCompatibilityConfig:
     @property
     def budget_tokens(self) -> int:
         return self.query_config.budget_tokens
+
+
+@dataclass(slots=True)
+class IndexerRuntimeHarness:
+    """Convenience wrapper exposing async helpers around IndexerRuntime."""
+
+    runtime: IndexerRuntime
+    worker_coordinator: WorkerCoordinator
+    llm_service: LLMService
+    telemetry_manager: TelemetryRunManager
+
+    async def append(
+        self,
+        document_id: str,
+        text: str,
+        *,
+        replace_existing: bool = False,
+        collect_telemetry: bool = False,
+        file_path: str | None = None,
+        await_idle: bool = True,
+    ) -> IndexingResult:
+        session = self.runtime.get_session(document_id, file_path=file_path)
+        result = await session.append_text(
+            text,
+            replace_existing=replace_existing,
+            collect_telemetry=collect_telemetry,
+        )
+        if await_idle:
+            await self.worker_coordinator.wait_until_idle(document_id)
+        return result
+
+    async def clear(self, document_id: str) -> ClearedDocumentResult:
+        session = self.runtime.get_session(document_id)
+        result = await session.clear()
+        await self.worker_coordinator.wait_until_idle(document_id)
+        return result
+
+    async def wait_for_idle(self, document_id: str | None = None) -> None:
+        await self.worker_coordinator.wait_until_idle(document_id)
 
 
 # Set default API key for tests if not already set
@@ -331,6 +378,83 @@ def vector_index() -> Generator[_VectorIndexProtocol, None, None]:
     finally:
         # No standard close API across vector backends; rely on GC
         pass
+
+
+@pytest.fixture
+async def indexer_runtime_harness(
+    storage_backend: _StorageBackendProtocol,
+    base_config: BackwardCompatibilityConfig,
+) -> AsyncIterator[IndexerRuntimeHarness]:
+    """Provide a fully wired IndexerRuntime backed by real components."""
+
+    index_config = base_config.index_config
+    operational_template = base_config.operational_config
+
+    llm_service = LLMService(index_config, api_key=operational_template.openai_api_key)
+    append_executor = AppendExecutor(index_config, llm_service)
+    telemetry_manager = TelemetryRunManager(index_config)
+
+    default_vector_backend = os.environ.get(
+        "RAGZOOM_VECTOR_BACKEND", operational_template.vector_backend
+    )
+    store_db_url = getattr(getattr(storage_backend, "db", None), "url", None)
+    default_database_url = os.environ.get(
+        "RAGZOOM_DATABASE_URL",
+        (
+            str(store_db_url)
+            if store_db_url is not None
+            else operational_template.database_url
+        ),
+    )
+
+    def _index_for_model(model_id: str) -> _VectorIndexProtocol:
+        backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", default_vector_backend)
+        db_url = os.environ.get("RAGZOOM_DATABASE_URL", default_database_url)
+        return create_vector_index(backend, db_url, model_id)
+
+    def _index_for_document(document_id: str) -> _VectorIndexProtocol:
+        record = storage_backend.get_document_by_id(document_id)
+        model = (
+            getattr(record, "embedding_model", None) if record is not None else None
+        ) or index_config.embedding_model
+        return _index_for_model(model)
+
+    worker_coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=operational_template.replace(
+            database_url=default_database_url,
+            vector_backend=default_vector_backend,
+        ),
+        llm_service=llm_service,
+        run_manager=telemetry_manager,
+        vector_index_factory=_index_for_document,
+        worker_count=4,
+    )
+    await worker_coordinator.start()
+
+    runtime = IndexerRuntime(
+        store=storage_backend,
+        index_config=index_config,
+        append_executor=append_executor,
+        worker_coordinator=worker_coordinator,
+        telemetry_manager=telemetry_manager,
+        vector_index_factory=_index_for_model,
+    )
+
+    harness = IndexerRuntimeHarness(
+        runtime=runtime,
+        worker_coordinator=worker_coordinator,
+        llm_service=llm_service,
+        telemetry_manager=telemetry_manager,
+    )
+
+    try:
+        yield harness
+    finally:
+        await worker_coordinator.wait_until_idle()
+        await worker_coordinator.shutdown()
+        await telemetry_manager.prune_expired()
 
 
 def _create_real_store(
