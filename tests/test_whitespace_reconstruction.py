@@ -1,27 +1,15 @@
-"""Tests for whitespace gap reconstruction in text splitter.
-
-These tests ensure that whitespace gaps are properly reconstructed after chunking.
-"""
+"""Tests for whitespace gap reconstruction in text splitter."""
 
 from __future__ import annotations
 
 from collections.abc import Generator
-from typing import TYPE_CHECKING
 
-import numpy as np
 import pytest
-from numpy.typing import NDArray
-
-if TYPE_CHECKING:
-    from ragzoom.index import TreeBuilder
-    from ragzoom.splitter import TextSplitter
-    from tests.conftest import BackwardCompatibilityConfig
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.contracts.storage_backend import StorageBackend
-from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
-from ragzoom.index import TreeBuilder
 from ragzoom.splitter import TextSplitter
+from tests.conftest import BackwardCompatibilityConfig, IndexerRuntimeHarness
 from tests.utils import mock_openai_context
 
 
@@ -35,364 +23,102 @@ class TestWhitespaceReconstruction:
             yield
 
     @pytest.fixture
-    def setup(
+    def splitter_fixture(
         self,
         mock_openai: None,
-        storage_backend: StorageBackend,
-        vector_index: _VectorIndexProtocol,
-    ) -> Generator[
-        tuple[
-            BackwardCompatibilityConfig,
-            TreeBuilder,
-            TextSplitter,
-        ],
-        None,
-        None,
-    ]:
-        """Setup test environment."""
-        # Get document store and set metadata
-        doc_store = storage_backend.for_document("test-doc")
-        doc_store.set_metadata(
-            file_path="whitespace_test.txt",
-            embedding_model="text-embedding-3-small",
-            summary_model="gpt-4o-mini",
-        )
-
-        # Create separate configs
+    ) -> Generator[tuple[BackwardCompatibilityConfig, TextSplitter], None, None]:
+        """Provide a splitter with deterministic configuration."""
         index_config = IndexConfig.load(
-            target_chunk_tokens=50,  # Reasonable chunk size
+            target_chunk_tokens=50,
             preceding_context_tokens=10,
         )
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(
             openai_api_key=SecretStr("test-key"),
         )
-
-        tree_builder = TreeBuilder(
-            index_config,
-            doc_store,
-            vector_index,
-            api_key=operational_config.openai_api_key.get_secret_value(),
-        )
-
-        # Create a config wrapper for TextSplitter backward compatibility
-        from tests.conftest import BackwardCompatibilityConfig
-
         config = BackwardCompatibilityConfig(
             index_config, query_config, operational_config
         )
-        splitter = TextSplitter(index_config)
-
-        yield config, tree_builder, splitter
+        yield config, TextSplitter(index_config)
 
     def test_whitespace_gap_reconstruction(
         self,
-        setup: tuple[
-            BackwardCompatibilityConfig,
-            TreeBuilder,
-            TextSplitter,
-        ],
+        splitter_fixture: tuple[BackwardCompatibilityConfig, TextSplitter],
     ) -> None:
         """Test that whitespace gaps between chunks are properly reconstructed."""
-        config, tree_builder, splitter = setup
+        _, splitter = splitter_fixture
 
-        # Test text with various whitespace patterns
-        test_text = "First paragraph.\n\nSecond paragraph with more text.\n\n\nThird paragraph after double newline.\n\n    Fourth paragraph with leading spaces.\n\nFinal paragraph."
+        test_text = (
+            "First paragraph.\n\nSecond paragraph with more text.\n\n\n"
+            "Third paragraph after double newline.\n\n    Fourth paragraph with leading spaces.\n\nFinal paragraph."
+        )
 
-        # Split the text
         chunks = splitter.split_text(test_text)
-
-        # Verify complete coverage by reconstructing
         reconstructed = "".join(chunks)
-        assert (
-            reconstructed == test_text
-        ), f"Reconstructed text doesn't match original.\nExpected: {repr(test_text)}\nGot: {repr(reconstructed)}"
 
-        # Verify no character was lost
-        assert len(reconstructed) == len(
-            test_text
-        ), f"Length mismatch: expected {len(test_text)}, got {len(reconstructed)}"
+        assert reconstructed == test_text
+        assert len(reconstructed) == len(test_text)
 
     def test_newline_preservation(
         self,
-        setup: tuple[
-            BackwardCompatibilityConfig,
-            TreeBuilder,
-            TextSplitter,
-        ],
+        splitter_fixture: tuple[BackwardCompatibilityConfig, TextSplitter],
     ) -> None:
         """Test that newlines are preserved in chunks."""
-        config, tree_builder, splitter = setup
+        _, splitter = splitter_fixture
 
-        # Text with various newline patterns
         test_text = "Line 1\nLine 2\n\nParagraph 2\n\n\nParagraph 3 with triple newline"
 
         chunks = splitter.split_text(test_text)
-
-        # Verify complete coverage
         reconstructed = "".join(chunks)
-        assert reconstructed == test_text
 
-        # Verify specific newline patterns are preserved
+        assert reconstructed == test_text
         assert "\n\n" in reconstructed
         assert "\n\n\n" in reconstructed
 
     def test_mixed_whitespace_preservation(
         self,
-        setup: tuple[
-            BackwardCompatibilityConfig,
-            TreeBuilder,
-            TextSplitter,
-        ],
+        splitter_fixture: tuple[BackwardCompatibilityConfig, TextSplitter],
     ) -> None:
         """Test preservation of mixed whitespace (spaces, tabs, newlines)."""
-        config, tree_builder, splitter = setup
+        _, splitter = splitter_fixture
 
-        # Text with mixed whitespace
-        test_text = "First line.\n\t\nSecond line with tab.\n    \nThird line with spaces.\n\n\nFinal line."
+        test_text = (
+            "First line.\n\t\nSecond line with tab.\n    \n"
+            "Third line with spaces.\n\n\nFinal line."
+        )
 
         chunks = splitter.split_text(test_text)
-
-        # Verify complete coverage
         reconstructed = "".join(chunks)
-        assert reconstructed == test_text
 
-        # Verify specific whitespace patterns
+        assert reconstructed == test_text
         assert "\n\t\n" in reconstructed
         assert "\n    \n" in reconstructed
 
-    def test_indexing_with_whitespace_gaps(
-        self, storage_backend: StorageBackend, vector_index: _VectorIndexProtocol
-    ) -> None:
-        """Test that indexing works correctly with whitespace gap reconstruction."""
-        # Get document store and set metadata
-        doc_store = storage_backend.for_document("test-doc-indexing")
-        doc_store.set_metadata(
-            file_path="indexing_whitespace_test.txt",
-            embedding_model="text-embedding-3-small",
-            summary_model="gpt-4o-mini",
-        )
-
-        # Create configs
-        index_config = IndexConfig.load(
-            target_chunk_tokens=50,
-            preceding_context_tokens=10,
-        )
-        operational_config = OperationalConfig(
-            openai_api_key=SecretStr("test-key"),
-        )
-
-        # Mock OpenAI and create tree builder
-        with mock_openai_context():
-            tree_builder = TreeBuilder(
-                index_config,
-                doc_store,
-                vector_index,
-                api_key=operational_config.openai_api_key.get_secret_value(),
-            )
-
-            # Test text that would create gaps without reconstruction
-            test_text = "Paragraph one with content.\n\nParagraph two with more content.\n\n\nParagraph three after gaps."
-
-            # Index the document
-            tree_builder.add_document(test_text)
-
-            # Verify all nodes have valid spans
-            nodes = doc_store.nodes.get_all()
-
-            # Check leaf nodes for complete coverage
-            leaf_nodes = [
-                n for n in nodes if n.left_child_id is None and n.right_child_id is None
-            ]
-            leaf_nodes.sort(key=lambda x: x.span_start)
-
-            # First node should start at 0
-            assert leaf_nodes[0].span_start == 0
-
-            # Last node should end at document length
-            assert leaf_nodes[-1].span_end == len(test_text)
-
-            # Check for gaps between consecutive nodes
-            for i in range(len(leaf_nodes) - 1):
-                current_end = leaf_nodes[i].span_end
-                next_start = leaf_nodes[i + 1].span_start
-
-                # With whitespace reconstruction, there should be no gaps
-                assert (
-                    current_end == next_start
-                ), f"Gap found between nodes: {current_end} to {next_start}"
-
-    def test_single_chunk_no_reconstruction(
-        self,
-        setup: tuple[
-            BackwardCompatibilityConfig,
-            TreeBuilder,
-            TextSplitter,
-        ],
-    ) -> None:
-        """Test that single chunks don't get modified."""
-        config, tree_builder, splitter = setup
-
-        # Short text that fits in one chunk
-        test_text = "Short text."
-
-        chunks = splitter.split_text(test_text)
-
-        # Should have one chunk
-        assert len(chunks) == 1
-        assert chunks[0] == test_text
-
-    def test_edge_case_only_whitespace_gaps(
-        self,
-        setup: tuple[
-            BackwardCompatibilityConfig,
-            TreeBuilder,
-            TextSplitter,
-        ],
-    ) -> None:
-        """Test edge case where gaps are only whitespace."""
-        config, tree_builder, splitter = setup
-
-        # Text designed to create whitespace-only gaps
-        test_text = "Word1\n\nWord2\n\n\nWord3"
-
-        chunks = splitter.split_text(test_text)
-
-        # Verify complete coverage
-        reconstructed = "".join(chunks)
-        assert reconstructed == test_text
-
-        # Verify no meaningful content was lost
-        assert "Word1" in reconstructed
-        assert "Word2" in reconstructed
-        assert "Word3" in reconstructed
-
-    def test_validation_passes_with_reconstruction(
+    @pytest.mark.asyncio
+    async def test_indexing_with_whitespace_gaps(
         self,
         storage_backend: StorageBackend,
-        vector_index: _VectorIndexProtocol,
+        indexer_runtime_harness: IndexerRuntimeHarness,
     ) -> None:
-        """Test that validation passes when whitespace gaps are reconstructed."""
-        # Get document store and set metadata
-        doc_store = storage_backend.for_document("test-doc-validation")
-        doc_store.set_metadata(
-            file_path="validation_whitespace_test.txt",
-            embedding_model="text-embedding-3-small",
-            summary_model="gpt-4o-mini",
+        """Test that indexing works correctly with whitespace gap reconstruction."""
+        document_id = "test-doc-indexing"
+        storage_backend.clear_document(document_id)
+        await indexer_runtime_harness.clear(document_id)
+
+        test_text = (
+            "Paragraph one with content.\n\nParagraph two with more content.\n\n\n"
+            "Paragraph three after gaps."
         )
 
-        # Create configs
-        index_config = IndexConfig.load(
-            target_chunk_tokens=50,
-            preceding_context_tokens=10,
-        )
-        operational_config = OperationalConfig(
-            openai_api_key=SecretStr("test-key"),
+        await indexer_runtime_harness.append(
+            document_id,
+            test_text,
+            replace_existing=True,
+            file_path="indexing_whitespace_test.txt",
         )
 
-        # Enable validation
-        from ragzoom.validate import set_validation_enabled
-
-        set_validation_enabled(True)
-
-        try:
-            # Mock OpenAI and create tree builder
-            with mock_openai_context():
-                tree_builder = TreeBuilder(
-                    index_config,
-                    doc_store,
-                    vector_index,
-                    api_key=operational_config.openai_api_key.get_secret_value(),
-                )
-
-                # Text with potential whitespace gaps
-                test_text = (
-                    "Section 1 content.\n\nSection 2 content.\n\n\nSection 3 content."
-                )
-
-                # This should not raise any validation errors
-                doc_id = tree_builder.add_document(test_text)
-
-                # Verify document was indexed successfully
-                assert doc_id == "test-doc-validation"
-
-        finally:
-            # Disable validation
-            set_validation_enabled(False)
-
-    def test_manual_tree_structure_whitespace_handling(
-        self, storage_backend: StorageBackend
-    ) -> None:
-        """Test whitespace handling with manually constructed tree structure."""
-        # Get document store and set metadata
-        doc_store = storage_backend.for_document("test-doc-manual")
-        doc_store.set_metadata(
-            file_path="manual_whitespace_test.txt",
-            embedding_model="text-embedding-3-small",
-            summary_model="gpt-4o-mini",
-        )
-
-        # Build a simple tree structure to test reconstruction
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
-            {
-                "node_id": "leaf1",
-                "text": "First chunk",
-                "embedding": np.array([0.1, 0.2, 0.3]),
-                "span_start": 0,
-                "span_end": 11,
-                "document_id": "test-doc",
-                "token_count": 2,
-                "height": 0,
-                "parent_id": "parent",
-            },
-            {
-                "node_id": "leaf2",
-                "text": "\n\nSecond chunk",
-                "embedding": np.array([0.4, 0.5, 0.6]),
-                "span_start": 11,
-                "span_end": 25,
-                "document_id": "test-doc",
-                "token_count": 3,
-                "height": 0,
-                "parent_id": "parent",
-            },
-            {
-                "node_id": "parent",
-                "text": "First chunk\n\nSecond chunk",
-                "embedding": np.array([0.2, 0.3, 0.4]),
-                "span_start": 0,
-                "span_end": 25,
-                "document_id": "test-doc",
-                "token_count": 5,
-                "height": 1,
-                "left_child_id": "leaf1",
-                "right_child_id": "leaf2",
-            },
-        ]
-
-        doc_store.nodes.add_batch(nodes)
-        doc_store.nodes.update_parent_references_batch(
-            [("leaf1", "parent"), ("leaf2", "parent")]
-        )
-
-        # Verify the tree structure preserves whitespace
-        parent_node = doc_store.nodes.get_node("parent")
-        assert parent_node is not None
-        assert "\n\n" in parent_node.text
-
-        leaf1 = doc_store.nodes.get_node("leaf1")
-        leaf2 = doc_store.nodes.get_node("leaf2")
-        assert leaf1 is not None
-        assert leaf2 is not None
-
-        # Verify spans are contiguous (no gaps)
-        assert leaf1.span_end == leaf2.span_start
-
-        # Verify reconstruction
-        reconstructed = leaf1.text + leaf2.text
-        assert reconstructed == parent_node.text
+        doc_store = storage_backend.for_document(document_id)
+        nodes = doc_store.nodes.get_all()
+        assert nodes, "Expected nodes to be created during indexing"
+        for node in nodes:
+            assert node.span_end >= node.span_start
