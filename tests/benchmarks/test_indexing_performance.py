@@ -8,7 +8,9 @@ import pytest
 
 from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
-from ragzoom.index import TreeBuilder
+from ragzoom.splitter import TextSplitter
+from ragzoom.vector_factory import create_vector_index
+from tests.benchmarks.runtime_helpers import append_document
 
 # Skip benchmarks by default unless explicitly requested
 pytestmark = pytest.mark.benchmark
@@ -65,29 +67,33 @@ def test_indexing_performance(
     # Get test document
     test_doc, doc_name = get_test_document(document_path)
 
-    # Run indexing with metrics
-    # Create a temporary document store for indexing
-    doc_store = storage_backend.add_document(
-        document_id="indexing_perf_test",
-        file_path="indexing_perf_test.txt",
-        embedding_model=index_config.embedding_model,
-        summary_model=index_config.summary_model,
-    )
-    from ragzoom.vector_factory import create_vector_index
-
-    vi = create_vector_index(
+    vector_index = create_vector_index(
         "python", "sqlite:///:memory:", index_config.embedding_model
     )
-    builder = TreeBuilder(index_config, doc_store, vi, api_key)
 
-    # Warm up tokenizer
-    _ = builder.splitter.tokenizer.encode("warmup")
+    storage_backend.clear_document("indexing_perf_test")
+    try:
+        vector_index.delete(filter={"document_id": "indexing_perf_test"})
+    except Exception:
+        # Not all vector backends implement filtered delete
+        pass
 
-    # Run indexing
-    # Run indexing without document_id parameter (it's generated internally)
-    doc_id, telemetry = builder.add_document_with_telemetry(
-        test_doc, show_progress=False
+    splitter = TextSplitter(index_config)
+    _ = splitter.tokenizer.encode("warmup")
+
+    result, telemetry = append_document(
+        storage_backend=storage_backend,
+        index_config=index_config,
+        vector_index=vector_index,
+        document_id="indexing_perf_test",
+        text=test_doc,
+        api_key=api_key,
+        file_path="indexing_perf_test.txt",
+        collect_telemetry=True,
     )
+
+    if telemetry is None:
+        raise RuntimeError("Telemetry collection failed during indexing benchmark")
 
     # Save telemetry data for comparison
     # Note: telemetry is already in v3.0 format from add_document_with_telemetry()

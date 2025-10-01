@@ -1,20 +1,37 @@
 """Test node-level telemetry collection."""
 
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
+from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
-from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
-from ragzoom.index import TreeBuilder
 from ragzoom.telemetry_collection import (
     NodeTelemetry,
     SummaryAttempt,
     TelemetryCollector,
 )
+from tests.conftest import IndexerRuntimeHarness
 from tests.utils import create_telemetry_summary_mock
+from tests.vector_index_stubs import RecordingVectorIndex
+
+
+def _configure_runtime(
+    harness: IndexerRuntimeHarness,
+    config: IndexConfig,
+    vector_index: RecordingVectorIndex,
+) -> None:
+    harness.runtime._index_config = config
+    harness.runtime._append_executor._config = config
+    harness.runtime._append_executor._splitter = (
+        harness.runtime._append_executor._splitter.__class__(config)
+    )
+    harness.worker_coordinator._index_config = config
+    harness.llm_service.config = config
+    harness.telemetry_manager._index_config = config
+    harness.runtime._vector_index_factory = lambda _model: vector_index
+    harness.worker_coordinator._vector_index_factory = lambda _doc_id: vector_index
 
 
 class TestTelemetryDataStructures:
@@ -197,16 +214,15 @@ class TestTelemetryIntegration:
 
     @pytest.mark.asyncio
     async def test_telemetry_captures_all_nodes(
-        self, storage_backend: StorageBackend, vector_index: _VectorIndexProtocol
+        self,
+        storage_backend: StorageBackend,
+        indexer_runtime_harness: IndexerRuntimeHarness,
     ) -> None:
         """Test that telemetry captures all nodes during indexing."""
         index_config = IndexConfig.load(
             target_chunk_tokens=100,
             preceding_context_tokens=50,
             embedding_batch_size=2,
-        )
-        operational_config = OperationalConfig(
-            openai_api_key=SecretStr("test-key"),
         )
 
         # Create test text that will generate multiple nodes
@@ -220,7 +236,10 @@ class TestTelemetryIntegration:
         )
 
         # Create mock with telemetry-specific behavior
-        mock_async_client = MagicMock()
+        vector_index = RecordingVectorIndex()
+        _configure_runtime(indexer_runtime_harness, index_config, vector_index)
+
+        mock_async_client = AsyncMock()
 
         # Mock embeddings with store-type specific behavior
         async def mock_embeddings(*args: object, **kwargs: object) -> object:
@@ -241,40 +260,36 @@ class TestTelemetryIntegration:
         _, telemetry_chat_async = create_telemetry_summary_mock()
         mock_async_client.chat.completions.create = telemetry_chat_async
 
-        # Index with mocked client
-        with patch(
-            "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
-        ):
-            # Create document-scoped store and metadata
-            doc_store = storage_backend.for_document("telemetry-test")
-            doc_store.set_metadata(
-                file_path=None,
-                embedding_model="text-embedding-3-small",
-                summary_model="gpt-4o-mini",
-            )
-            builder = TreeBuilder(
-                index_config,
-                doc_store,
-                vector_index,
-                operational_config.openai_api_key.get_secret_value(),
-            )
+        indexer_runtime_harness.llm_service.client = mock_async_client
 
-            # Create reporter for metrics
-            source_tokens = len(builder.splitter.tokenizer.encode(test_text))
-            reporter = TelemetryCollector(
-                document_id="telemetry-test",
-                source_tokens=source_tokens,
-                config=index_config,
-            )
+        document_id = "telemetry-test"
+        storage_backend.clear_document(document_id)
+        doc_store = storage_backend.for_document(document_id)
+        doc_store.set_metadata(
+            file_path=None,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
 
-            # Index document via append path; telemetry captured on the stats object
-            stats = await builder.append_text_async(
-                test_text,
-                show_progress=False,
-                reporter=reporter,
-            )
+        await indexer_runtime_harness.append(
+            document_id,
+            test_text,
+            replace_existing=True,
+            file_path="telemetry-test.txt",
+            collect_telemetry=True,
+        )
+        await indexer_runtime_harness.wait_for_idle(document_id)
 
-        telemetry_data = stats.telemetry
+        run_context = (
+            await indexer_runtime_harness.telemetry_manager.latest_for_document(
+                document_id
+            )
+        )
+        assert run_context is not None
+        completed = await indexer_runtime_harness.telemetry_manager.wait_for_completion(
+            run_context
+        )
+        telemetry_data = completed.result
         assert telemetry_data is not None
 
         # Verify telemetry was collected (v4.2 format)
