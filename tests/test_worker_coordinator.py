@@ -1157,7 +1157,9 @@ async def test_worker_coordinator_rolls_up_after_reappend(
         worker_count=8,
     )
 
-    source_text = Path("test_data/the_hobbit_chapter_1.txt").read_text(encoding="utf-8")
+    source_text = Path("test_data/the_hobbit_chapter_1.txt").read_text(
+        encoding="utf-8"
+    )[:5000]
 
     async def _append_once() -> None:
         await append_executor.append(

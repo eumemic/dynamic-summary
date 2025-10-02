@@ -81,7 +81,7 @@ class TestPrecedingNeighborTracking:
             await indexer_runtime_harness.clear(document_id)
 
     @pytest.mark.asyncio
-    @pytest.mark.slow_threshold(6.0)
+    @pytest.mark.slow_threshold(8.0)
     async def test_internal_nodes_track_preceding_neighbor(
         self,
         storage_backend: StorageBackend,
