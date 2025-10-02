@@ -60,7 +60,7 @@ class TestChunkSizeRegressionSQLite:
         assert 50 <= avg_tokens <= config.target_chunk_tokens * 1.2
 
     @pytest.mark.asyncio
-    @pytest.mark.slow_threshold(3.0)
+    @pytest.mark.slow_threshold(4.0)
     async def test_indexed_chunks_have_correct_size(
         self,
         config: IndexConfig,

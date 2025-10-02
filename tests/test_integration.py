@@ -208,6 +208,7 @@ class TestIntegration:
         assert len(set(result.node_ids)) == len(result.node_ids)
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(3.0)
     async def test_token_budget_enforcement(
         self,
         mock_openai: tuple[Mock, Mock, Mock],

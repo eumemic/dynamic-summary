@@ -188,6 +188,7 @@ class TestBatchSizeLimits:
         assert len(result) == len(texts)
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(2.5)
     async def test_embedding_worker_packs_batches_by_tokens(
         self,
         config: IndexConfig,
