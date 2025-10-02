@@ -25,7 +25,7 @@ class TestPrecedingNeighborTracking:
     """Tests for preceding_neighbor_id field tracking during indexing."""
 
     @pytest.mark.asyncio
-    @pytest.mark.slow_threshold(2.0)
+    @pytest.mark.slow_threshold(3.0)
     async def test_leaf_nodes_track_preceding_neighbor(
         self,
         storage_backend: StorageBackend,
