@@ -59,7 +59,8 @@ class TestSpanCorruption:
         return config, document_id, mock_client
 
     @pytest.mark.asyncio
-    @pytest.mark.slow_threshold(2.5)
+    @pytest.mark.slow_threshold(3.0)
+    @pytest.mark.slow_threshold(3.0)
     async def test_odd_nodes_create_invalid_spans(
         self,
         storage_backend: StorageBackend,
@@ -104,6 +105,7 @@ class TestSpanCorruption:
             replace_existing=True,
             file_path="test_span_corruption.txt",
         )
+        await indexer_runtime_harness.wait_for_idle(document_id)
 
         nodes = cast(Sequence[TreeNode], doc_store.nodes.get_all())
 
@@ -172,6 +174,7 @@ class TestSpanCorruption:
             replace_existing=True,
             file_path="test_span_corruption.txt",
         )
+        await indexer_runtime_harness.wait_for_idle(document_id)
 
         nodes = cast(Sequence[TreeNode], doc_store.nodes.get_all())
         nodes_by_id = {node.id: node for node in nodes}

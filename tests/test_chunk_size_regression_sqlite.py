@@ -60,7 +60,7 @@ class TestChunkSizeRegressionSQLite:
         assert 50 <= avg_tokens <= config.target_chunk_tokens * 1.2
 
     @pytest.mark.asyncio
-    @pytest.mark.slow_threshold(4.0)
+    @pytest.mark.slow_threshold(5.0)
     async def test_indexed_chunks_have_correct_size(
         self,
         config: IndexConfig,
@@ -91,6 +91,7 @@ class TestChunkSizeRegressionSQLite:
             replace_existing=True,
             file_path=None,
         )
+        await indexer_runtime_harness.wait_for_idle(document_id)
 
         leaf_nodes = doc_store.nodes.get_leaves()
         assert leaf_nodes, "Indexing should yield leaf nodes"
