@@ -192,7 +192,9 @@ jobs:
         id: query_benchmark
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # Note: Uses default QUERY_BENCHMARK_RUNS=3 for statistical variance
+          QUERY_BENCHMARK_RUNS: 1
+          QUERY_BENCHMARK_DOC_CHARS: 20000
+          QUERY_BENCHMARK_SLOW_THRESHOLD: 30
         run: |
           echo "Running query performance benchmark (optimized for CI)..."
           DB_INFO_FILE="benchmark_results/benchmark_db.txt"

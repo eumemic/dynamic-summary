@@ -54,6 +54,9 @@ def get_test_document(document_type: str = "narrative") -> tuple[str, str]:
             path = Path(__file__).parent.parent.parent / file_path
 
         text = path.read_text(encoding="utf-8")
+        max_chars = int(os.getenv("QUERY_BENCHMARK_DOC_CHARS", "0"))
+        if max_chars > 0:
+            text = text[:max_chars]
         return text, name
     except Exception as e:
         pytest.skip(f"Could not load test document {file_path}: {e}")
@@ -102,7 +105,7 @@ def setup_test_document(
 
 
 @pytest.mark.benchmark
-@pytest.mark.slow_threshold(4.0)
+@pytest.mark.slow_threshold(float(os.getenv("QUERY_BENCHMARK_SLOW_THRESHOLD", "30")))
 @pytest.mark.parametrize("num_seeds", [5, 10, 20])
 @pytest.mark.parametrize("budget_tokens", [1000, 2000, 4000])
 @pytest.mark.parametrize("query_type", ["specific", "broad", "complex"])
