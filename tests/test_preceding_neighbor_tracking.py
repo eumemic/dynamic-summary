@@ -61,6 +61,7 @@ class TestPrecedingNeighborTracking:
                 replace_existing=True,
                 file_path=None,
             )
+            await indexer_runtime_harness.wait_for_idle(document_id)
 
             leaf_nodes = doc_store.nodes.get_leaves()
             leaf_nodes.sort(key=lambda n: n.span_start)
@@ -116,6 +117,7 @@ class TestPrecedingNeighborTracking:
                 replace_existing=True,
                 file_path=None,
             )
+            await indexer_runtime_harness.wait_for_idle(document_id)
 
             all_nodes: list[TreeNode] = []
             leaf_nodes = doc_store.nodes.get_leaves()
