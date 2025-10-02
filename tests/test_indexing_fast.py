@@ -1,7 +1,7 @@
 """Backend-agnostic fast indexing tests using storage backend."""
 
 from typing import cast
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -122,10 +122,8 @@ class TestIndexingFast:
             )
 
         llm_client = indexer_runtime_harness.llm_service.client
-        original_create = llm_client.embeddings.create
-        llm_client.embeddings.create = mock_embeddings_create  # type: ignore[assignment]
 
-        try:
+        with patch.object(llm_client.embeddings, "create", new=mock_embeddings_create):
             await indexer_runtime_harness.append(
                 "test-doc",
                 test_document,
@@ -133,8 +131,6 @@ class TestIndexingFast:
                 file_path="test-doc.txt",
                 await_idle=False,
             )
-        finally:
-            llm_client.embeddings.create = original_create  # type: ignore[assignment]
 
         doc_store = storage_backend.for_document("test-doc")
         leaf_nodes = [node for node in doc_store.nodes.get_all() if node.height == 0]

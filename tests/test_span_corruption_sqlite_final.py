@@ -65,6 +65,7 @@ class TestSpanCorruptionSQLite:
         return doc_store
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(2.0)
     async def test_odd_nodes_create_invalid_spans(
         self,
         storage_backend: StorageBackend,

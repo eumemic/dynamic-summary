@@ -241,8 +241,8 @@ class TestIndexingService:
             OperationalConfig(openai_api_key=SecretStr("test-key")),
             index_runtime=runtime,
         )
-        assert service._index_runtime is runtime  # type: ignore[attr-defined]
-        assert service._client_factory is None  # type: ignore[attr-defined]
+        assert service._index_runtime is runtime
+        assert service._client_factory is None
 
         result = service.index_document("content", document_id="doc-1")
 
@@ -266,7 +266,7 @@ class TestIndexingService:
             OperationalConfig(openai_api_key=SecretStr("test-key")),
             index_runtime=runtime,
         )
-        assert service._client_factory is None  # type: ignore[attr-defined]
+        assert service._client_factory is None
 
         with patch.object(
             service, "_append_via_grpc", wraps=service._append_via_grpc
@@ -295,7 +295,7 @@ class TestIndexingService:
             OperationalConfig(openai_api_key=SecretStr("test-key")),
             index_runtime=runtime,
         )
-        assert service._client_factory is None  # type: ignore[attr-defined]
+        assert service._client_factory is None
 
         result = await service.index_document_async("body", document_id="doc-async")
 
