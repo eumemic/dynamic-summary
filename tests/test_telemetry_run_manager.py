@@ -1,5 +1,6 @@
 import asyncio
 import json
+from enum import Enum
 from types import SimpleNamespace
 from typing import NoReturn, cast
 
@@ -15,12 +16,16 @@ from ragzoom.server.state import ServerState
 
 class StubContext:
     def __init__(self) -> None:
-        self.code: grpc.StatusCode | None = None
+        self.code: Enum | None = None
         self.details: str | None = None
 
     async def abort(self, code: object, details: str) -> NoReturn:
-        self.code = cast(grpc.StatusCode, code)
+        if not isinstance(code, Enum):
+            raise TypeError(
+                f"expected Enum status code, received {type(code).__name__}"
+            )
         self.details = details
+        self.code = code
         raise RuntimeError("aborted")
 
 
