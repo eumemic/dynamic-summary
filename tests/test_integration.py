@@ -105,7 +105,7 @@ class TestIntegration:
         )
         assembler = Assembler(doc_store)
 
-        result = retriever.retrieve("Tell me about the fox")
+        result = await retriever.retrieve_async("Tell me about the fox")
 
         assert len(result.node_ids) > 0
         assert result.tiling is not None
@@ -202,7 +202,7 @@ class TestIntegration:
             vector_index=vector_index,
         )
 
-        result = retriever.retrieve("Tell me about cats", num_seeds=3)
+        result = await retriever.retrieve_async("Tell me about cats", num_seeds=3)
 
         assert len(result.node_ids) <= 3
         assert len(set(result.node_ids)) == len(result.node_ids)
@@ -246,7 +246,7 @@ class TestIntegration:
         )
         assembler = Assembler(doc_store)
 
-        result = retriever.retrieve("test sentence", budget_tokens=100)
+        result = await retriever.retrieve_async("test sentence", budget_tokens=100)
         summary = assembler.assemble(result)
         token_count = assembler.get_token_count(summary)
 
@@ -302,5 +302,5 @@ class TestIntegration:
             vector_index=vector_index,
         )
 
-        result = retriever.retrieve("unrelated query")
+        result = await retriever.retrieve_async("unrelated query")
         assert important_node.id in result.coverage_map
