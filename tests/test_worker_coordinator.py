@@ -1181,9 +1181,11 @@ async def test_worker_coordinator_rolls_up_after_reappend(
     first_parentless = store.nodes.get_parentless_nodes()
     first_roots = [node for node in first_parentless if node.height > 0]
     assert len(first_roots) == 1
+    assert len(first_parentless) == len(first_roots)
 
     await _append_once()
     await _run_workers()
     second_parentless = store.nodes.get_parentless_nodes()
     second_roots = [node for node in second_parentless if node.height > 0]
     assert len(second_roots) == 1
+    assert len(second_parentless) == len(second_roots)
