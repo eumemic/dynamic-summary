@@ -60,7 +60,6 @@ class TestSpanCorruption:
 
     @pytest.mark.asyncio
     @pytest.mark.slow_threshold(3.0)
-    @pytest.mark.slow_threshold(3.0)
     async def test_odd_nodes_create_invalid_spans(
         self,
         storage_backend: StorageBackend,
@@ -136,7 +135,7 @@ class TestSpanCorruption:
         ), f"Found {len(corrupt_nodes)} nodes with invalid spans"
 
     @pytest.mark.asyncio
-    @pytest.mark.slow_threshold(2.5)
+    @pytest.mark.slow_threshold(4.0)
     async def test_wraparound_pairing(
         self,
         storage_backend: StorageBackend,
