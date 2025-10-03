@@ -208,6 +208,37 @@ def test_index_command_with_file(
     assert "Tree height: 4" in result.output
 
 
+def test_index_command_without_awaiting_workers(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None, tmp_path: Path
+) -> None:
+    file_path = _write_temp_file(tmp_path, "doc.txt", "Test content")
+    result = runner.invoke(cli, ["index", str(file_path), "--no-await-workers"])
+
+    assert result.exit_code == 0
+    assert "Leaf ingestion queued" in result.output
+    cli_mocks["grpc_client"].iter_worker_snapshots.assert_not_called()
+    cli_mocks["grpc_client"].get_document_status.assert_not_called()
+
+
+def test_index_command_rejects_telemetry_without_await(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None, tmp_path: Path
+) -> None:
+    file_path = _write_temp_file(tmp_path, "doc.txt", "Test content")
+    result = runner.invoke(
+        cli,
+        [
+            "index",
+            str(file_path),
+            "--telemetry",
+            "metrics.json",
+            "--no-await-workers",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--telemetry cannot be combined with --no-await-workers" in result.output
+
+
 def test_index_command_with_document_id(
     runner: CliRunner, cli_mocks: CliMocks, api_key: None, tmp_path: Path
 ) -> None:

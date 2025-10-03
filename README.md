@@ -242,6 +242,9 @@ ragzoom index document.txt
 # Index with custom document ID
 ragzoom index document.txt --document-id my-doc
 
+# Index without waiting for background summarization
+ragzoom index document.txt --no-await-workers
+
 # Re-index a document (automatically clears existing data)
 ragzoom index document.txt
 

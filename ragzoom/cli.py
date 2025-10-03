@@ -259,6 +259,16 @@ def cli(ctx: click.Context) -> None:
     show_default=False,
     help=GRPC_ADDRESS_HELP,
 )
+@click.option(
+    "--await-workers/--no-await-workers",
+    "await_workers",
+    default=True,
+    show_default=True,
+    help=(
+        "Wait for background summarization to finish before exiting. "
+        "Disable to exit once leaf ingestion has been scheduled."
+    ),
+)
 @click.pass_context
 def index(
     ctx: click.Context,
@@ -269,6 +279,7 @@ def index(
     no_progress: bool,
     append: bool,
     server_address: str | None,
+    await_workers: bool,
 ) -> None:
     """Index a document from file.
 
@@ -286,6 +297,11 @@ def index(
             if not document_id:
                 raise click.UsageError("--document-id is required when using --append")
             append_document_id = document_id
+
+        if telemetry_file and not await_workers:
+            raise click.UsageError(
+                "--telemetry cannot be combined with --no-await-workers; the command must wait for telemetry collection."
+            )
 
         result: IndexingResult
         resolved_address = _resolve_server_address(server_address)
@@ -339,49 +355,61 @@ def index(
                     collect_telemetry=bool(telemetry_file),
                 )
             telemetry_run_id = result.telemetry_run_id
-            final_snapshot = _display_worker_snapshots(
-                client.iter_worker_snapshots(),
-                target_document_id=target_document_id,
-            )
+            if await_workers:
+                final_snapshot = _display_worker_snapshots(
+                    client.iter_worker_snapshots(),
+                    target_document_id=target_document_id,
+                )
 
-            should_refresh_status = False
-            if final_snapshot is None:
-                should_refresh_status = True
-            else:
-                progress = final_snapshot.documents.get(target_document_id)
-                if progress:
-                    should_refresh_status = (
-                        progress.pending == 0 and progress.inflight == 0
-                    )
+                should_refresh_status = False
+                if final_snapshot is None:
+                    should_refresh_status = True
                 else:
-                    should_refresh_status = final_snapshot.idle
+                    progress = final_snapshot.documents.get(target_document_id)
+                    if progress:
+                        should_refresh_status = (
+                            progress.pending == 0 and progress.inflight == 0
+                        )
+                    else:
+                        should_refresh_status = final_snapshot.idle
 
-            if should_refresh_status:
-                try:
-                    refreshed_status = client.get_document_status(target_document_id)
-                except Exception as exc:  # pragma: no cover - network failures
-                    refresh_error = str(exc)
+                if should_refresh_status:
+                    try:
+                        refreshed_status = client.get_document_status(
+                            target_document_id
+                        )
+                    except Exception as exc:  # pragma: no cover - network failures
+                        refresh_error = str(exc)
 
-            if telemetry_file and telemetry_run_id:
-                try:
-                    telemetry_fetch = client.get_telemetry(
-                        document_id=target_document_id,
-                        run_id=telemetry_run_id,
-                        wait=True,
-                    )
-                except Exception as exc:  # pragma: no cover - gRPC errors surfaced
-                    telemetry_fetch_error = str(exc)
+                if telemetry_file and telemetry_run_id:
+                    try:
+                        telemetry_fetch = client.get_telemetry(
+                            document_id=target_document_id,
+                            run_id=telemetry_run_id,
+                            wait=True,
+                        )
+                    except Exception as exc:  # pragma: no cover - gRPC errors surfaced
+                        telemetry_fetch_error = str(exc)
+            else:
+                click.echo(
+                    "ℹ️ Leaf ingestion queued; summarization workers continue in the background."
+                )
+                click.echo(
+                    "   Use `ragzoom status --document-id "
+                    f"{target_document_id}` to monitor progress."
+                )
 
         document_id = target_document_id
 
-        if refreshed_status:
-            result.tree_depth = refreshed_status.tree_depth
-            result.chunks_created = refreshed_status.leaf_count
-        elif refresh_error:
-            click.echo(
-                f"⚠️ Failed to refresh document status: {refresh_error}",
-                err=True,
-            )
+        if await_workers:
+            if refreshed_status:
+                result.tree_depth = refreshed_status.tree_depth
+                result.chunks_created = refreshed_status.leaf_count
+            elif refresh_error:
+                click.echo(
+                    f"⚠️ Failed to refresh document status: {refresh_error}",
+                    err=True,
+                )
         success_message = (
             "✅ Document appended successfully!"
             if append
@@ -403,7 +431,7 @@ def index(
         if telemetry_run_id:
             click.echo(f"   Telemetry run ID: {telemetry_run_id}")
 
-        if telemetry_file:
+        if telemetry_file and await_workers:
             if telemetry_run_id:
                 if telemetry_fetch_error:
                     click.echo(

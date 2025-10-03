@@ -111,6 +111,20 @@ def sanitize_forward_args(forward_args: list[str]) -> list[str]:
     return filtered
 
 
+def should_append_no_await(forward_args: list[str]) -> bool:
+    """Return True when we should add --no-await-workers by default."""
+
+    explicit_flags = {"--await-workers", "--no-await-workers"}
+
+    for arg in forward_args:
+        if arg in explicit_flags:
+            return False
+        if arg == "--telemetry" or arg.startswith("--telemetry="):
+            return False
+
+    return True
+
+
 def main() -> None:
     args, forward_args = parse_args()
 
@@ -134,6 +148,11 @@ def main() -> None:
     )
 
     sanitized_args = sanitize_forward_args(forward_args)
+    add_no_await = should_append_no_await(forward_args)
+    if add_no_await:
+        print(
+            "[info] Using --no-await-workers; summarization will continue asynchronously."
+        )
 
     for chunk_path in chunk_paths:
         cmd = [
@@ -143,6 +162,9 @@ def main() -> None:
             "--document-id",
             document_id,
         ]
+
+        if add_no_await:
+            cmd.append("--no-await-workers")
 
         cmd.extend(sanitized_args)
         run_cli(args.python, cmd)
