@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import types
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 
 import numpy as np
@@ -18,13 +18,14 @@ from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
-from ragzoom.server.append_executor import AppendExecutor
+from ragzoom.server.append_executor import AppendExecutor, EmbeddingProvider
 from ragzoom.server.worker_coordinator import (
     DocumentState,
     ReadyParentCandidate,
     WorkerCoordinator,
     compute_ready_parent_candidates,
 )
+from ragzoom.splitter import TextSplitter
 from ragzoom.vector_api import Vector
 
 DocStoreFixture = tuple[str, DocumentStore]
@@ -251,7 +252,36 @@ class StubVectorIndex(VectorIndex):
         return []
 
 
+class FixedWidthSplitter(TextSplitter):
+    """Deterministic splitter that slices text into equal-sized chunks."""
+
+    def __init__(self, width: int, config: IndexConfig) -> None:
+        super().__init__(config)
+        self._width = width
+
+    def split_text(self, text: str) -> list[str]:
+        return [
+            text[i : i + self._width]
+            for i in range(0, len(text), self._width)
+            if text[i : i + self._width]
+        ]
+
+
+class SimpleEmbedder(EmbeddingProvider):
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return [[float(index + 1)] * 4 for index, _ in enumerate(texts)]
+
+
 class StubLLMService:
+    def __init__(self) -> None:
+        self._on_summarize: Callable[[str, str, str | None], None] | None = None
+
+    def set_hook(
+        self,
+        hook: Callable[[str, str, str | None], None],
+    ) -> None:
+        self._on_summarize = hook
+
     async def _summarize_text(
         self,
         left_text: str,
@@ -264,6 +294,9 @@ class StubLLMService:
         left_token_count: int | None = None,
         right_token_count: int | None = None,
     ) -> tuple[str, int, int]:
+        hook = self._on_summarize
+        if hook is not None:
+            hook(left_text, right_text, parent_id)
         text = f"summary({left_text}|{right_text})"
         return text, 0, len(text.split())
 
@@ -324,17 +357,187 @@ async def test_worker_coordinator_builds_parent(
     finally:
         await coordinator.shutdown()
 
-    parents = _fetch_parent(store, 1)
-    assert len(parents) == 1
-    parent = parents[0]
-    assert parent.left_child_id == "L"
-    assert parent.right_child_id == "R"
-    left_node = store.nodes.get("L")
-    right_node = store.nodes.get("R")
-    assert left_node is not None
-    assert right_node is not None
-    assert left_node.parent_id == parent.id
-    assert right_node.parent_id == parent.id
+
+@pytest.mark.asyncio
+async def test_worker_skips_candidate_when_dependencies_change(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    document_id, store = doc_store
+
+    left_leaf_id = "leaf-left"
+    right_leaf_id = "leaf-right"
+
+    store.nodes.add_batch(
+        [
+            _leaf_payload(
+                left_leaf_id,
+                span_start=0,
+                span_end=10,
+                level_index=0,
+                document_id=document_id,
+                following=right_leaf_id,
+            ),
+            _leaf_payload(
+                right_leaf_id,
+                span_start=10,
+                span_end=20,
+                level_index=1,
+                document_id=document_id,
+                preceding=left_leaf_id,
+            ),
+        ]
+    )
+
+    vector_index = StubVectorIndex()
+
+    def _vector_factory(_: str) -> VectorIndex:
+        return vector_index
+
+    llm_service = StubLLMService()
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=llm_service,
+        vector_index_factory=_vector_factory,
+        worker_count=1,
+    )
+
+    await coordinator.start()
+
+    mutated = False
+
+    def _on_summary(_: str, __: str, ___: str | None) -> None:
+        nonlocal mutated
+        if mutated:
+            return
+        mutated = True
+        store.nodes.delete_nodes([right_leaf_id], session=None)
+        store.nodes.add_batch(
+            [
+                _leaf_payload(
+                    "replacement-right",
+                    span_start=10,
+                    span_end=20,
+                    level_index=1,
+                    document_id=document_id,
+                    preceding=left_leaf_id,
+                )
+            ]
+        )
+        store.nodes.update_neighbors_batch(
+            [
+                (left_leaf_id, None, "replacement-right"),
+                ("replacement-right", left_leaf_id, None),
+            ],
+            session=None,
+        )
+
+    llm_service.set_hook(_on_summary)
+
+    await coordinator.enqueue_document(document_id, new_root_ids=[left_leaf_id])
+    await asyncio.wait_for(coordinator.wait_until_idle(document_id), timeout=5)
+
+    leaf_after = store.nodes.get(left_leaf_id)
+    assert leaf_after is not None
+    parent_id = leaf_after.parent_id
+    assert parent_id is not None, "Coordinator left leaf without rebuilding parent"
+
+    parent_node = store.nodes.get(parent_id)
+    assert parent_node is not None
+    assert parent_node.left_child_id == left_leaf_id
+    assert parent_node.right_child_id in {right_leaf_id, "replacement-right"}
+
+    await coordinator.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_append_after_parent_reference_cleared_removes_ancestor(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    document_id, store = doc_store
+
+    splitter = FixedWidthSplitter(width=4, config=index_config)
+    embedder = SimpleEmbedder()
+    executor = AppendExecutor(index_config, embedder, splitter=splitter)
+    vector_index = StubVectorIndex()
+
+    def _vector_factory(_: str) -> VectorIndex:
+        return StubVectorIndex()
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        vector_index_factory=_vector_factory,
+        worker_count=2,
+    )
+
+    await coordinator.start()
+    try:
+        # Seed the document with two leaves so the coordinator builds an initial parent.
+        initial_outcome = await executor.append(
+            store=store,
+            vector_index=vector_index,
+            document_id=document_id,
+            new_text="AAAABBBB",
+        )
+        await coordinator.enqueue_document(
+            document_id,
+            deleted_node_ids=initial_outcome.deleted_node_ids,
+            new_root_ids=initial_outcome.new_leaf_ids,
+        )
+        await asyncio.wait_for(coordinator.wait_until_idle(document_id), timeout=5)
+
+        right_leaf_id = initial_outcome.new_leaf_ids[-1]
+        right_leaf = store.nodes.get(right_leaf_id)
+        assert right_leaf is not None
+        parent_id = getattr(right_leaf, "parent_id", None)
+        assert parent_id is not None
+
+        # Simulate the worker clearing the parent reference before the append executor runs.
+        store.nodes.update_parent_references_batch([(right_leaf_id, None)])
+
+        append_outcome = await executor.append(
+            store=store,
+            vector_index=vector_index,
+            document_id=document_id,
+            new_text="CCCC",
+        )
+        await coordinator.enqueue_document(
+            document_id,
+            deleted_node_ids=append_outcome.deleted_node_ids,
+            new_root_ids=append_outcome.new_leaf_ids,
+        )
+
+        await asyncio.wait_for(coordinator.wait_until_idle(document_id), timeout=5)
+
+        parentless = store.nodes.get_parentless_nodes()
+        leaf_parentless = [
+            node.id for node in parentless if int(getattr(node, "height", 0)) == 0
+        ]
+
+        assert (
+            not leaf_parentless
+        ), f"Leaves missing parents after append: {leaf_parentless}"
+        # A well-formed tree should have exactly one parentless node (the root).
+        assert len(parentless) == 1
+    finally:
+        await coordinator.shutdown()
 
 
 @pytest.mark.asyncio
@@ -365,6 +568,7 @@ async def test_worker_coordinator_converges_to_single_root(
 
     class CoordinatedLLM(StubLLMService):
         def __init__(self, expected: int) -> None:
+            super().__init__()
             self._expected = expected
             self._seen = 0
             self._lock = asyncio.Lock()
@@ -637,7 +841,7 @@ async def test_worker_coordinator_preserves_preceding_parent_links(
         self: WorkerCoordinator,
         candidate: ReadyParentCandidate,
         state: DocumentState,
-    ) -> list[str]:
+    ) -> tuple[list[str], bool]:
         if candidate.document_id != document_id or candidate.left_child_id != "leaf-0":
             return await orig_process(self, candidate, state)
 

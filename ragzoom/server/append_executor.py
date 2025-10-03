@@ -84,6 +84,12 @@ class AppendExecutor:
             raise ValueError("append requires non-empty text")
 
         right_leaf = store.nodes.get_rightmost_leaf_for_document(document_id)
+        logger.debug(
+            "append[%s]: starting append (new_text_chars=%d, replace_leaf=%s)",
+            document_id,
+            len(new_text),
+            bool(right_leaf),
+        )
         tail_start = int(right_leaf.span_start) if right_leaf else 0
         preceding_neighbor = (
             getattr(right_leaf, "preceding_neighbor_id", None) if right_leaf else None
@@ -110,6 +116,13 @@ class AppendExecutor:
             start_level_index=(
                 int(getattr(right_leaf, "level_index", 0)) if right_leaf else 0
             ),
+        )
+        logger.debug(
+            "append[%s]: prepared %d leaf specs (tail_start=%d, first_leaf=%s)",
+            document_id,
+            len(leaf_specs),
+            tail_start,
+            right_leaf.id if right_leaf else None,
         )
 
         if reporter is not None:
@@ -245,6 +258,14 @@ class AppendExecutor:
 
                 vector_index.upsert(vector_payload)
                 rollback_new_ids = [leaf.node_id for leaf in leaf_specs]
+            logger.debug(
+                "append[%s]: wrote %d leaves (deleted=%d) span=(%d,%d)",
+                document_id,
+                len(leaf_specs),
+                len(deleted_node_ids),
+                leaf_specs[0].span_start,
+                leaf_specs[-1].span_end,
+            )
         except Exception:
             if rollback_vectors:
                 try:
@@ -270,6 +291,12 @@ class AppendExecutor:
 
         total_leaves = store.nodes.leaf_count()
         appended_span_end = leaf_specs[-1].span_end
+        logger.debug(
+            "append[%s]: completed append (new_total_leaves=%d, span_end=%d)",
+            document_id,
+            total_leaves,
+            appended_span_end,
+        )
 
         return AppendOutcome(
             document_id=document_id,
@@ -349,7 +376,23 @@ class AppendExecutor:
             to_delete.append(current.id)
             parent_id = getattr(current, "parent_id", None)
             if not parent_id:
-                break
+                # Attempt to infer the ancestor by structural position even if the
+                # explicit parent reference has been cleared.
+                level_index = int(getattr(current, "level_index", 0))
+                height = int(getattr(current, "height", 0))
+                parent_height = height + 1
+                # Parent level index follows the pairing pattern used during tiling.
+                parent_level_index = level_index // 2
+                if parent_height <= height:
+                    break
+                inferred_parent = store.nodes.get_by_height_and_level(
+                    height=parent_height,
+                    level_index=parent_level_index,
+                )
+                if inferred_parent is None:
+                    break
+                current = inferred_parent
+                continue
             current = store.nodes.get(parent_id)
         return to_delete
 

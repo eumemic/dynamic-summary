@@ -204,6 +204,14 @@ class WorkerCoordinator:
     ) -> None:
         if document_id in self._cancelled_documents:
             return
+        deleted_list = list(deleted_node_ids) if deleted_node_ids is not None else None
+        new_root_list = list(new_root_ids) if new_root_ids is not None else None
+        logger.debug(
+            "workers[%s]: enqueue_document start (deleted=%d, new_roots=%d)",
+            document_id,
+            0 if deleted_list is None else len(deleted_list),
+            0 if new_root_list is None else len(new_root_list),
+        )
         state = self._get_or_create_document_state(document_id)
         async with self._coord_lock:
             if (
@@ -214,10 +222,16 @@ class WorkerCoordinator:
         await self._resync_document(
             document_id,
             state,
-            deleted_node_ids=deleted_node_ids,
-            new_root_ids=new_root_ids,
+            deleted_node_ids=deleted_list,
+            new_root_ids=new_root_list,
         )
         await self._maybe_finish_run(document_id)
+        logger.debug(
+            "workers[%s]: enqueue_document done (pending=%d, inflight=%d)",
+            document_id,
+            self._pending_counts.get(document_id, 0),
+            self._inflight_counts.get(document_id, 0),
+        )
 
     async def wait_until_idle(self, document_id: str | None = None) -> None:
         while True:
@@ -339,11 +353,24 @@ class WorkerCoordinator:
 
             store = self._store.for_document(document_id)
             doc_span_end = self._document_span_end(document_id, store)
+            explicit_roots: set[str] | None = None
             if new_root_ids is None:
                 roots = store.nodes.get_root_nodes()
                 root_ids = [node.id for node in roots]
             else:
-                root_ids = [root_id for root_id in new_root_ids if root_id]
+                filtered = [root_id for root_id in new_root_ids if root_id]
+                root_ids = filtered
+                explicit_roots = set(filtered)
+
+            if explicit_roots:
+                reinstated = explicit_roots & state.tombstones
+                if reinstated:
+                    state.tombstones.difference_update(reinstated)
+                    logger.debug(
+                        "workers[%s]: cleared tombstones for reinstated nodes %s",
+                        document_id,
+                        sorted(reinstated),
+                    )
 
             for root_id in root_ids:
                 await self._process_new_root(
@@ -378,10 +405,20 @@ class WorkerCoordinator:
                 ):
                     removed += 1
                     state.queued.discard(candidate.left_child_id)
+                    logger.debug(
+                        "workers[%s]: dropping queued candidate %s due to deletion",
+                        document_id,
+                        candidate.left_child_id,
+                    )
                     continue
                 retained.append((priority, candidate))
 
             if removed == 0:
+                logger.debug(
+                    "workers[%s]: deleted nodes %s did not match queued candidates",
+                    document_id,
+                    sorted(deleted_ids),
+                )
                 return
 
             self._queue._queue = retained  # type: ignore[attr-defined]
@@ -405,6 +442,11 @@ class WorkerCoordinator:
                 and sum(self._inflight_counts.values()) == 0
             ):
                 self._idle_event.set()
+        logger.debug(
+            "workers[%s]: removed %d queued candidates due to deletion",
+            document_id,
+            removed,
+        )
 
     async def _process_new_root(
         self,
@@ -517,7 +559,16 @@ class WorkerCoordinator:
             await self._queue.put((priority, candidate))
             state.queued.add(key)
             self._pending_counts[candidate.document_id] += 1
+            pending = self._pending_counts[candidate.document_id]
             self._idle_event.clear()
+            logger.debug(
+                "workers[%s]: enqueued candidate left=%s height=%d level=%d pending=%d",
+                candidate.document_id,
+                candidate.left_child_id,
+                candidate.height,
+                candidate.level_index,
+                pending,
+            )
         self._ensure_workers()
 
     def _dependency_signature(
@@ -608,6 +659,48 @@ class WorkerCoordinator:
     ) -> bool:
         return self._dependency_signature(before) == self._dependency_signature(after)
 
+    async def _retry_candidate(
+        self, candidate: ReadyParentCandidate, state: DocumentState
+    ) -> None:
+        if self._is_cancelled(candidate.document_id):
+            return
+
+        store = self._store.for_document(candidate.document_id)
+        left = store.nodes.get(candidate.left_child_id)
+        if left is None:
+            return
+
+        doc_span_end = self._document_span_end(candidate.document_id, store)
+        ready, _ = self._resolve_dependencies(
+            candidate.document_id,
+            left,
+            state,
+            store,
+            doc_span_end,
+        )
+        if not ready:
+            logger.debug(
+                "workers[%s]: dependencies still unstable for left=%s; rescanning",
+                candidate.document_id,
+                candidate.left_child_id,
+            )
+            await self._scan_document(candidate.document_id)
+            return
+
+        retry_candidate = ReadyParentCandidate(
+            document_id=candidate.document_id,
+            left_child_id=left.id,
+            height=int(getattr(left, "height", 0)),
+            level_index=int(getattr(left, "level_index", 0)),
+            span_start=int(getattr(left, "span_start", 0)),
+        )
+        logger.debug(
+            "workers[%s]: requeuing candidate after dependency change left=%s",
+            candidate.document_id,
+            left.id,
+        )
+        await self._enqueue_candidate(retry_candidate, state)
+
     def _check_dependencies_still_valid(
         self,
         document_id: str,
@@ -655,11 +748,22 @@ class WorkerCoordinator:
                 state.queued.discard(key)
                 state.inflight.add(key)
                 self._inflight_counts[candidate.document_id] += 1
+            logger.debug(
+                "worker-%d: start candidate doc=%s left=%s level=%d height=%d",
+                worker_id,
+                candidate.document_id,
+                candidate.left_child_id,
+                candidate.level_index,
+                candidate.height,
+            )
 
             error_exc: Exception | None = None
             new_roots: list[str] = []
+            retry_candidate = False
             try:
-                new_roots = await self._process_candidate(candidate, state)
+                new_roots, retry_candidate = await self._process_candidate(
+                    candidate, state
+                )
             except Exception as exc:  # pragma: no cover - defensive logging
                 error_exc = exc
                 logger.exception(
@@ -690,6 +794,18 @@ class WorkerCoordinator:
                         self._idle_event.set()
 
                 self._queue.task_done()
+            logger.debug(
+                "worker-%d: finish candidate doc=%s left=%s pending=%d inflight=%d error=%s",
+                worker_id,
+                candidate.document_id,
+                candidate.left_child_id,
+                self._pending_counts.get(candidate.document_id, 0),
+                self._inflight_counts.get(candidate.document_id, 0),
+                error_exc.__class__.__name__ if error_exc else None,
+            )
+
+            if retry_candidate and error_exc is None:
+                await self._retry_candidate(candidate, state)
 
             if error_exc is None:
                 try:
@@ -713,8 +829,22 @@ class WorkerCoordinator:
                         exc_info=True,
                     )
                 await self._maybe_finish_run(candidate.document_id)
+                logger.debug(
+                    "worker-%d: candidate doc=%s left=%s produced new_parents=%d",
+                    worker_id,
+                    candidate.document_id,
+                    candidate.left_child_id,
+                    len(new_roots),
+                )
             else:
                 await self._handle_worker_failure(candidate.document_id, error_exc)
+                logger.debug(
+                    "worker-%d: candidate doc=%s left=%s failed with %s",
+                    worker_id,
+                    candidate.document_id,
+                    candidate.left_child_id,
+                    type(error_exc).__name__,
+                )
 
         while not self._queue.empty():
             _, candidate = await self._queue.get()
@@ -760,20 +890,41 @@ class WorkerCoordinator:
 
     async def _process_candidate(
         self, candidate: ReadyParentCandidate, state: DocumentState
-    ) -> list[str]:
+    ) -> tuple[list[str], bool]:
         if self._is_cancelled(candidate.document_id):
-            return []
+            logger.debug(
+                "worker: candidate doc=%s left=%s aborted (document cancelled)",
+                candidate.document_id,
+                candidate.left_child_id,
+            )
+            return [], False
         store = self._store.for_document(candidate.document_id)
+
+        def _skip(stage: str, reason: str) -> tuple[list[str], bool]:
+            logger.debug(
+                "worker: skip candidate doc=%s left=%s stage=%s reason=%s",
+                candidate.document_id,
+                candidate.left_child_id,
+                stage,
+                reason,
+            )
+            return [], True
 
         async with self._coord_lock:
             context = self._runs.get(candidate.document_id)
         collector = context.telemetry_collector if context else None
 
+        logger.debug(
+            "worker: candidate doc=%s left=%s dependency check",
+            candidate.document_id,
+            candidate.left_child_id,
+        )
+
         ready, snapshot = self._check_dependencies_still_valid(
             candidate.document_id, candidate.left_child_id, state
         )
         if not ready or snapshot.left is None:
-            return []
+            return _skip("dependency-check", "dependencies not ready or left missing")
 
         left = snapshot.left
         right = snapshot.right
@@ -820,24 +971,43 @@ class WorkerCoordinator:
             left_token_count=left_tokens,
             right_token_count=right_tokens,
         )
+        logger.debug(
+            "worker: summarized doc=%s left=%s right=%s parent=%s span=(%d,%d)",
+            candidate.document_id,
+            left.id,
+            right.id if right else None,
+            parent_id,
+            span_start,
+            span_end,
+        )
 
         if self._is_cancelled(candidate.document_id):
-            return []
+            logger.debug(
+                "worker: candidate doc=%s left=%s aborted after summary (cancelled)",
+                candidate.document_id,
+                candidate.left_child_id,
+            )
+            return [], False
 
         ready, post_summary = self._check_dependencies_still_valid(
             candidate.document_id, candidate.left_child_id, state
         )
         if not ready or not self._dependencies_match(snapshot, post_summary):
-            return []
+            return _skip("post-summary", "dependencies changed after summary")
 
         if post_summary.left is None:
-            return []
+            return _skip("post-summary", "left missing after summary")
 
         start_time = time.time()
         embeddings = await self._llm_service.embed_texts([summary])
         if len(embeddings) != 1:
             raise ValueError("Embedding provider returned unexpected batch size")
         embedding_vector = np.asarray(embeddings[0], dtype=np.float64)
+        logger.debug(
+            "worker: embedded parent doc=%s parent=%s",
+            candidate.document_id,
+            parent_id,
+        )
 
         if collector is not None:
             collector.record_embedding_call_v2(
@@ -848,18 +1018,23 @@ class WorkerCoordinator:
             )
 
         if self._is_cancelled(candidate.document_id):
-            return []
+            logger.debug(
+                "worker: candidate doc=%s left=%s aborted after embedding (cancelled)",
+                candidate.document_id,
+                candidate.left_child_id,
+            )
+            return [], False
 
         ready, post_embedding = self._check_dependencies_still_valid(
             candidate.document_id, candidate.left_child_id, state
         )
         if not ready or not self._dependencies_match(post_summary, post_embedding):
-            return []
+            return _skip("post-embedding", "dependencies changed after embedding")
 
         left_after_embedding = post_embedding.left
         right_after_embedding = post_embedding.right
         if left_after_embedding is None:
-            return []
+            return _skip("post-embedding", "left missing after embedding")
 
         following_neighbor_id = (
             getattr(right_after_embedding, "following_neighbor_id", None)
@@ -885,12 +1060,12 @@ class WorkerCoordinator:
             or not self._dependencies_match(post_embedding, final_snapshot)
             or final_snapshot.left is None
         ):
-            return []
+            return _skip("final-check", "dependencies changed before commit")
 
         left_final = final_snapshot.left
         right_final = final_snapshot.right
         if left_final is None:
-            return []
+            return _skip("final-check", "left missing before commit")
 
         span_start_final = int(getattr(left_final, "span_start", span_start))
         span_end_final = int(
@@ -905,13 +1080,21 @@ class WorkerCoordinator:
         try:
             with store.transaction() as session:
                 if self._is_cancelled(candidate.document_id):
-                    return []
+                    logger.debug(
+                        "worker: candidate doc=%s left=%s aborted during commit (cancelled)",
+                        candidate.document_id,
+                        candidate.left_child_id,
+                    )
+                    return [], False
                 preceding_parent_id: str | None = None
                 preceding_parent_node = None
                 if preceding_node_id_final:
                     refreshed_preceding = store.nodes.get(preceding_node_id_final)
                     if refreshed_preceding is None:
-                        return []
+                        return _skip(
+                            "commit",
+                            f"preceding neighbor {preceding_node_id_final} missing",
+                        )
                     parent_candidate = getattr(refreshed_preceding, "parent_id", None)
                     if parent_candidate:
                         preceding_parent_id = str(parent_candidate)
@@ -936,7 +1119,10 @@ class WorkerCoordinator:
                 if following_neighbor_id:
                     refreshed_following = store.nodes.get(following_neighbor_id)
                     if refreshed_following is None:
-                        return []
+                        return _skip(
+                            "commit",
+                            f"following neighbor {following_neighbor_id} missing",
+                        )
                     parent_candidate = getattr(refreshed_following, "parent_id", None)
                     if parent_candidate:
                         following_parent_id = str(parent_candidate)
@@ -1042,7 +1228,17 @@ class WorkerCoordinator:
         if context is not None:
             context.register_summary_node(parent_id)
 
-        return [parent_id]
+        logger.debug(
+            "worker: committed parent doc=%s parent=%s left=%s right=%s height=%d level=%d",
+            candidate.document_id,
+            parent_id,
+            left_final.id,
+            right_final.id if right_final else None,
+            height,
+            parent_level_index,
+        )
+
+        return [parent_id], False
 
     async def cancel_document(self, document_id: str) -> None:
         async with self._coord_lock:

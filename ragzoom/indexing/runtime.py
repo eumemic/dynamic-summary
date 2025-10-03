@@ -287,6 +287,13 @@ class DocumentIndexSession:
         if not text:
             raise ValueError("text must be non-empty")
 
+        logger.debug(
+            "append[%s]: session start (replace_existing=%s, collect_telemetry=%s)",
+            self._document_id,
+            replace_existing,
+            collect_telemetry,
+        )
+
         if replace_existing:
             await self.clear()
 
@@ -328,6 +335,11 @@ class DocumentIndexSession:
 
                 document_store = store.for_document(self._document_id)
                 previous_leaf_count = document_store.nodes.leaf_count()
+                logger.debug(
+                    "append[%s]: previous leaf count=%d",
+                    self._document_id,
+                    previous_leaf_count,
+                )
 
                 if collect_telemetry and telemetry_manager is not None:
                     existing_tokens = sum(
@@ -386,11 +398,22 @@ class DocumentIndexSession:
 
             if run_context is not None:
                 await self._runtime._worker_coordinator.attach_run(run_context)
+                logger.debug(
+                    "append[%s]: telemetry run attached (run_id=%s)",
+                    self._document_id,
+                    run_context.run_id,
+                )
 
             await self._runtime._worker_coordinator.enqueue_document(
                 self._document_id,
                 deleted_node_ids=outcome.deleted_node_ids if outcome else None,
                 new_root_ids=outcome.new_leaf_ids if outcome else None,
+            )
+            logger.debug(
+                "append[%s]: enqueue complete (new_leaves=%d, deleted_nodes=%d)",
+                self._document_id,
+                len(outcome.new_leaf_ids) if outcome else 0,
+                len(outcome.deleted_node_ids) if outcome else 0,
             )
 
             await self._runtime._emit_status(self._document_id)
