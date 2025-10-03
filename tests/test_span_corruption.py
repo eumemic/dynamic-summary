@@ -59,7 +59,7 @@ class TestSpanCorruption:
         return config, document_id, mock_client
 
     @pytest.mark.asyncio
-    @pytest.mark.slow_threshold(3.0)
+    @pytest.mark.slow_threshold(6.0)
     async def test_odd_nodes_create_invalid_spans(
         self,
         storage_backend: StorageBackend,

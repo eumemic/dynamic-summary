@@ -565,8 +565,7 @@ RUN_ENV+=(RAGZOOM_SERVER_ADDRESS="${SERVER_HOST}:${SERVER_PORT}")
 RUN_ENV+=(BENCHMARK_DOCUMENT_ID="$EFFECTIVE_DOCUMENT_ID")
 
 CHUNK_COUNT="${BENCHMARK_CHUNKS:-16}"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-INCREMENTAL_SCRIPT="$SCRIPT_DIR/incrementally_index.py"
+INCREMENTAL_MODULE="ragzoom.tools.incremental_index"
 PYTHON_EXEC="${PYTHON:-python}"
 
 FORWARDED_ARGS=(
@@ -580,7 +579,7 @@ fi
 
 # Run incremental indexing without waiting between appends
 echo "📝 Running incremental indexing (chunks: $CHUNK_COUNT)..."
-env "${RUN_ENV[@]}" "$PYTHON_EXEC" "$INCREMENTAL_SCRIPT" \
+env "${RUN_ENV[@]}" "$PYTHON_EXEC" -m "$INCREMENTAL_MODULE" \
     "$DOCUMENT" \
     --chunks "$CHUNK_COUNT" \
     --document-id "$EFFECTIVE_DOCUMENT_ID" \

@@ -1,32 +1,16 @@
-"""Unit tests for the incremental indexing helper script."""
+"""Unit tests for the incremental indexing helper utilities."""
 
 from __future__ import annotations
 
-import importlib.util
-import sys
+import os
+from collections.abc import Sequence
 from pathlib import Path
-from types import ModuleType
 
+import pytest
+from pytest import CaptureFixture
 
-def _load_script_module() -> ModuleType:
-    scripts_dir = (
-        Path(__file__).resolve().parent.parent / "scripts" / "incrementally_index.py"
-    )
-    spec = importlib.util.spec_from_file_location(
-        "incrementally_index_module", scripts_dir
-    )
-    if spec is None:
-        raise RuntimeError("Failed to load incrementally_index.py for testing")
-    loader = spec.loader
-    if loader is None:
-        raise RuntimeError("Failed to load incrementally_index.py for testing")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules.setdefault(spec.name, module)
-    loader.exec_module(module)
-    return module
-
-
-incremental = _load_script_module()
+from ragzoom.constants import DEFAULT_GRPC_ADDRESS
+from ragzoom.tools import incremental_index as incremental
 
 
 def test_sanitize_forward_args_strips_append_and_document_id() -> None:
@@ -51,3 +35,99 @@ def test_should_append_no_await_respects_explicit_flags() -> None:
 def test_should_append_no_await_avoids_telemetry_conflict() -> None:
     assert not incremental.should_append_no_await(["--telemetry", "out.json"])
     assert not incremental.should_append_no_await(["--telemetry=out.json"])
+
+
+def test_run_incremental_indexing_does_not_modify_vector_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: list[list[str]] = []
+
+    def fake_run_cli(_python: str, args: Sequence[str]) -> None:
+        recorded.append(list(args))
+
+    def fake_chunk_document(_source: Path, _count: int, _dir: Path) -> tuple[Path, ...]:
+        return (Path("chunk_a.txt"),)
+
+    monkeypatch.setattr(incremental, "_run_cli", fake_run_cli)
+    monkeypatch.setattr(incremental, "chunk_document", fake_chunk_document)
+    monkeypatch.setattr(incremental, "ensure_server_running", lambda address: None)
+    monkeypatch.delenv("RAGZOOM_VECTOR_BACKEND", raising=False)
+
+    incremental.run_incremental_indexing(
+        source=Path("/tmp/doc.txt"),
+        chunk_count=1,
+        python_exec="python",
+        forward_args=[],
+        echo=lambda *_: None,
+    )
+
+    # The first call clears the document; the second performs indexing with injected flag.
+    index_cmd = recorded[1]
+    assert "--vector-backend" not in index_cmd
+    assert "RAGZOOM_VECTOR_BACKEND" not in os.environ
+
+
+def test_run_incremental_indexing_respects_server_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: list[str] = []
+
+    def fake_run_cli(_python: str, args: Sequence[str]) -> None:
+        pass
+
+    def fake_chunk_document(_source: Path, _count: int, _dir: Path) -> tuple[Path, ...]:
+        return (Path("chunk_a.txt"),)
+
+    def fake_ensure(address: str, *, timeout: float = 2.0) -> None:
+        recorded.append(address)
+
+    monkeypatch.setattr(incremental, "_run_cli", fake_run_cli)
+    monkeypatch.setattr(incremental, "chunk_document", fake_chunk_document)
+    monkeypatch.setattr(incremental, "ensure_server_running", fake_ensure)
+
+    incremental.run_incremental_indexing(
+        source=Path("/tmp/doc.txt"),
+        chunk_count=1,
+        python_exec="python",
+        forward_args=["--server-address", "0.0.0.0:5555"],
+        echo=lambda *_: None,
+    )
+
+    assert recorded == ["0.0.0.0:5555"]
+
+    recorded.clear()
+    monkeypatch.delenv("RAGZOOM_SERVER_ADDRESS", raising=False)
+    incremental.run_incremental_indexing(
+        source=Path("/tmp/doc.txt"),
+        chunk_count=1,
+        python_exec="python",
+        forward_args=[],
+        echo=lambda *_: None,
+    )
+
+    assert recorded == [DEFAULT_GRPC_ADDRESS]
+
+
+def test_cli_main_reports_missing_server(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: CaptureFixture[str],
+) -> None:
+    doc = tmp_path / "doc.txt"
+    doc.write_text("hello", encoding="utf-8")
+
+    def fake_run_incremental_indexing(**_kwargs: object) -> None:
+        raise RuntimeError("No RagZoom gRPC server detected at fake")
+
+    monkeypatch.setattr(
+        incremental,
+        "run_incremental_indexing",
+        fake_run_incremental_indexing,
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        incremental.cli_main([str(doc)])
+
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "No RagZoom gRPC server detected" in err
