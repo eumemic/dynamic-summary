@@ -362,24 +362,26 @@ class WorkerCoordinator:
                 root_ids = filtered
                 explicit_roots = set(filtered)
 
-            if explicit_roots:
-                reinstated = explicit_roots & state.tombstones
-                if reinstated:
-                    state.tombstones.difference_update(reinstated)
-                    logger.debug(
-                        "workers[%s]: cleared tombstones for reinstated nodes %s",
-                        document_id,
-                        sorted(reinstated),
-                    )
-
-            for root_id in root_ids:
-                await self._process_new_root(
+        if explicit_roots:
+            reinstated = explicit_roots & state.tombstones
+            if reinstated:
+                state.tombstones.difference_update(reinstated)
+                logger.debug(
+                    "workers[%s]: cleared tombstones for reinstated nodes %s",
                     document_id,
-                    root_id,
-                    state,
-                    store,
-                    doc_span_end,
+                    sorted(reinstated),
                 )
+
+        for root_id in root_ids:
+            await self._process_new_root(
+                document_id,
+                root_id,
+                state,
+                store,
+                doc_span_end,
+            )
+
+        self._prune_resolved_tombstones(state, store)
 
     async def _handle_deleted_nodes(
         self,
@@ -446,6 +448,27 @@ class WorkerCoordinator:
             "workers[%s]: removed %d queued candidates due to deletion",
             document_id,
             removed,
+        )
+
+    def _prune_resolved_tombstones(
+        self, state: DocumentState, store: DocumentStore
+    ) -> None:
+        if not state.tombstones:
+            return
+
+        removable: set[str] = set()
+        for node_id in state.tombstones:
+            if store.nodes.get(node_id) is None:
+                removable.add(node_id)
+
+        if not removable:
+            return
+
+        state.tombstones.difference_update(removable)
+        logger.debug(
+            "workers[%s]: pruned resolved tombstones %s",
+            store.document_id,
+            sorted(removable),
         )
 
     async def _process_new_root(

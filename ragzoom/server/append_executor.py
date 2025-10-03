@@ -376,25 +376,36 @@ class AppendExecutor:
             to_delete.append(current.id)
             parent_id = getattr(current, "parent_id", None)
             if not parent_id:
-                # Attempt to infer the ancestor by structural position even if the
-                # explicit parent reference has been cleared.
-                level_index = int(getattr(current, "level_index", 0))
-                height = int(getattr(current, "height", 0))
-                parent_height = height + 1
-                # Parent level index follows the pairing pattern used during tiling.
-                parent_level_index = level_index // 2
-                if parent_height <= height:
-                    break
-                inferred_parent = store.nodes.get_by_height_and_level(
-                    height=parent_height,
-                    level_index=parent_level_index,
-                )
+                inferred_parent = self._infer_structural_parent(store, current)
                 if inferred_parent is None:
                     break
                 current = inferred_parent
                 continue
             current = store.nodes.get(parent_id)
         return to_delete
+
+    def _infer_structural_parent(
+        self, store: DocumentStore, node: TreeNode
+    ) -> TreeNode | None:
+        """Infer the parent by structural metadata when parent_id is missing."""
+
+        level_index = int(getattr(node, "level_index", 0))
+        height = int(getattr(node, "height", 0))
+        parent_height = height + 1
+        if parent_height <= height:
+            return None
+
+        parent_level_index = level_index // 2
+        inferred = store.nodes.get_by_height_and_level(
+            height=parent_height, level_index=parent_level_index
+        )
+        if inferred is None:
+            return None
+        if getattr(inferred, "document_id", None) != getattr(node, "document_id", None):
+            return None
+        if inferred.id == node.id:
+            return None
+        return inferred
 
     def _build_neighbor_updates(
         self,

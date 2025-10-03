@@ -6,6 +6,7 @@ import asyncio
 import types
 from collections.abc import Callable, Generator
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pytest
@@ -252,11 +253,10 @@ class StubVectorIndex(VectorIndex):
         return []
 
 
-class FixedWidthSplitter(TextSplitter):
+class FixedWidthSplitter:
     """Deterministic splitter that slices text into equal-sized chunks."""
 
-    def __init__(self, width: int, config: IndexConfig) -> None:
-        super().__init__(config)
+    def __init__(self, width: int) -> None:
         self._width = width
 
     def split_text(self, text: str) -> list[str]:
@@ -466,7 +466,7 @@ async def test_append_after_parent_reference_cleared_removes_ancestor(
 ) -> None:
     document_id, store = doc_store
 
-    splitter = FixedWidthSplitter(width=4, config=index_config)
+    splitter = cast(TextSplitter, FixedWidthSplitter(width=4))
     embedder = SimpleEmbedder()
     executor = AppendExecutor(index_config, embedder, splitter=splitter)
     vector_index = StubVectorIndex()
