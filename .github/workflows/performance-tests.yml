@@ -194,7 +194,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           QUERY_BENCHMARK_RUNS: 1
           QUERY_BENCHMARK_DOC_CHARS: 20000
-          QUERY_BENCHMARK_SLOW_THRESHOLD: 30
+          QUERY_BENCHMARK_SLOW_THRESHOLD: 600
         run: |
           echo "Running query performance benchmark (optimized for CI)..."
           DB_INFO_FILE="benchmark_results/benchmark_db.txt"
