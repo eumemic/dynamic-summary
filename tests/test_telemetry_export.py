@@ -56,7 +56,11 @@ async def test_run_manager_writes_document_telemetry(tmp_path: Path) -> None:
 
     await manager.complete_run(context.run_id)
 
-    telemetry = export_document_telemetry(log, "doc")
+    telemetry = export_document_telemetry(
+        log,
+        "doc",
+        active_nodes={"node-1": {"height": 1, "span": (0, 64)}},
+    )
     assert telemetry["document_id"] == "doc"
     assert telemetry["append_metadata"]["mutated_nodes"] == 1
     assert telemetry["append_metadata"]["leaf_delta"] == 1
@@ -75,4 +79,108 @@ def test_export_requires_metadata(tmp_path: Path) -> None:
 
     log = DocumentTelemetryLog(tmp_path)
     with pytest.raises(TelemetryExportError):
-        export_document_telemetry(log, "missing-doc")
+        export_document_telemetry(log, "missing-doc", active_nodes={})
+
+
+@pytest.mark.asyncio
+async def test_export_filters_and_updates_active_nodes(tmp_path: Path) -> None:
+    """Exporter should align node data with active document state."""
+
+    log = DocumentTelemetryLog(tmp_path)
+    metadata = {
+        "format_version": "4.2",
+        "document_id": "doc",
+        "source_document_tokens": 0,
+    }
+    await log.ensure_metadata("doc", metadata, reset=True)
+
+    await log.append_event(
+        "doc",
+        {
+            "event": "append_started",
+            "run_id": "run-1",
+            "append_id": "run-1",
+        },
+    )
+    await log.append_event(
+        "doc",
+        {
+            "event": "node_committed",
+            "run_id": "run-1",
+            "append_id": "run-1",
+            "node_id": "node-old",
+            "height": 1,
+            "span_start": 0,
+            "span_end": 10,
+            "timestamp": 1.0,
+        },
+    )
+    await log.append_event(
+        "doc",
+        {
+            "event": "append_completed",
+            "run_id": "run-1",
+            "append_id": "run-1",
+            "duration": 1.0,
+            "outcome": {
+                "mutated_nodes": 2,
+                "new_leaves": 2,
+                "leaf_delta": 2,
+                "nodes": [
+                    {
+                        "node_id": "node-old",
+                        "height": 1,
+                        "created_at": 0.5,
+                        "span": [0, 10],
+                    },
+                    {
+                        "node_id": "node-stale",
+                        "height": 0,
+                        "created_at": 0.6,
+                        "span": [10, 20],
+                    },
+                ],
+            },
+        },
+    )
+    await log.append_event(
+        "doc",
+        {
+            "event": "node_committed",
+            "run_id": "run-2",
+            "append_id": "run-2",
+            "node_id": "node-old",
+            "height": 2,
+            "span_start": 0,
+            "span_end": 15,
+            "timestamp": 2.0,
+        },
+    )
+    await log.append_event(
+        "doc",
+        {
+            "event": "node_committed",
+            "run_id": "run-2",
+            "append_id": "run-2",
+            "node_id": "node-only",
+            "height": 0,
+            "span_start": 20,
+            "span_end": 24,
+            "timestamp": 2.5,
+        },
+    )
+
+    telemetry = export_document_telemetry(
+        log,
+        "doc",
+        active_nodes={
+            "node-old": {"height": 3, "span": (0, 15)},
+            "node-only": {"height": 0, "span": (20, 25)},
+        },
+    )
+
+    nodes = {node["node_id"]: node for node in telemetry["nodes"]}
+    assert set(nodes) == {"node-old", "node-only"}
+    assert tuple(nodes["node-old"]["span"]) == (0, 15)
+    assert nodes["node-old"]["height"] == 3
+    assert tuple(nodes["node-only"]["span"]) == (20, 25)

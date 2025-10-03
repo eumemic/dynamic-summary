@@ -585,8 +585,23 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
                 message="Server telemetry logging is disabled.",
             )
 
+        doc_store = self._state.store.for_document(request.document_id)
+        active_nodes: dict[str, dict[str, object]] = {}
+        for node in doc_store.nodes.get_all():
+            active_nodes[node.id] = {
+                "height": int(getattr(node, "height", 0)),
+                "span": (
+                    int(getattr(node, "span_start", 0)),
+                    int(getattr(node, "span_end", 0)),
+                ),
+            }
+
         try:
-            telemetry = export_document_telemetry(telemetry_log, request.document_id)
+            telemetry = export_document_telemetry(
+                telemetry_log,
+                request.document_id,
+                active_nodes=active_nodes,
+            )
         except TelemetryExportError as exc:
             response_cls = getattr(pb2, "ExportTelemetryResponse")
             response = response_cls(

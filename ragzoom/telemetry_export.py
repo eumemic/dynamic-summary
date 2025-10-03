@@ -18,7 +18,10 @@ class TelemetryExportError(RuntimeError):
 
 
 def synthesize_document_telemetry(
-    metadata: JsonDict, events: Iterable[Mapping[str, object]]
+    metadata: JsonDict,
+    events: Iterable[Mapping[str, object]],
+    *,
+    active_nodes: Mapping[str, Mapping[str, object]] | None = None,
 ) -> TelemetryDataDict:
     """Combine metadata and event stream into legacy telemetry payload."""
 
@@ -28,6 +31,7 @@ def synthesize_document_telemetry(
     nodes_by_id: dict[str, JsonDict] = {}
     append_order: list[str] = []
     append_history: dict[str, JsonDict] = {}
+    committed_nodes: dict[str, JsonDict] = {}
 
     indexed_at = _as_float(base.get("indexed_at"))
     source_tokens = _as_int(base.get("source_document_tokens")) or 0
@@ -119,6 +123,23 @@ def synthesize_document_telemetry(
             )
             if history_key and history_key not in append_order:
                 append_order.append(history_key)
+        elif event_type == "node_committed":
+            node_id = _as_str(event.get("node_id"))
+            if node_id is None:
+                continue
+            entry = committed_nodes.setdefault(node_id, {"node_id": node_id})
+            height = _coerce_int(event.get("height"))
+            if height is not None:
+                entry["height"] = height
+            span_start = _coerce_int(event.get("span_start"))
+            span_end = _coerce_int(event.get("span_end"))
+            if span_start is not None and span_end is not None:
+                entry["span"] = (span_start, span_end)
+            if "created_at" not in entry:
+                timestamp = _as_float(event.get("timestamp"))
+                if timestamp is not None:
+                    entry["created_at"] = timestamp
+            continue
 
     if not nodes_by_id and last_outcome is None:
         raise TelemetryExportError("No completed telemetry events were recorded")
@@ -129,8 +150,7 @@ def synthesize_document_telemetry(
     if source_tokens:
         result["source_document_tokens"] = source_tokens
 
-    node_records: list[JsonDict] = list(nodes_by_id.values())
-    node_records.sort(key=lambda payload: _as_float(payload.get("created_at")) or 0.0)
+    node_records = _merge_node_payloads(nodes_by_id, committed_nodes, active_nodes)
     result["nodes"] = node_records
 
     if last_outcome is not None:
@@ -159,7 +179,10 @@ def synthesize_document_telemetry(
 
 
 def export_document_telemetry(
-    log: DocumentTelemetryLog, document_id: str
+    log: DocumentTelemetryLog,
+    document_id: str,
+    *,
+    active_nodes: Mapping[str, Mapping[str, object]] | None = None,
 ) -> TelemetryDataDict:
     """Load metadata and events for a document and synthesize telemetry."""
 
@@ -175,7 +198,88 @@ def export_document_telemetry(
             f"Telemetry event log is empty for document '{document_id}'"
         )
 
-    return synthesize_document_telemetry(metadata, events)
+    return synthesize_document_telemetry(
+        metadata,
+        events,
+        active_nodes=active_nodes,
+    )
+
+
+def _merge_node_payloads(
+    nodes_by_id: Mapping[str, JsonDict],
+    committed_nodes: Mapping[str, JsonDict],
+    active_nodes: Mapping[str, Mapping[str, object]] | None,
+) -> list[JsonDict]:
+    if active_nodes is None:
+        merged: list[JsonDict] = []
+        for node_id, payload in nodes_by_id.items():
+            merged_payload = _apply_node_updates(
+                node_id,
+                payload,
+                committed_nodes.get(node_id),
+                None,
+            )
+            merged.append(merged_payload)
+        merged.sort(key=lambda payload: _as_float(payload.get("created_at")) or 0.0)
+        return merged
+
+    final_nodes: list[JsonDict] = []
+    for node_id, active_payload in active_nodes.items():
+        merged_payload = _apply_node_updates(
+            node_id,
+            nodes_by_id.get(node_id),
+            committed_nodes.get(node_id),
+            active_payload,
+        )
+        final_nodes.append(merged_payload)
+
+    final_nodes.sort(key=lambda payload: _as_float(payload.get("created_at")) or 0.0)
+    return final_nodes
+
+
+def _apply_node_updates(
+    node_id: str,
+    base_payload: JsonDict | None,
+    committed_payload: JsonDict | None,
+    active_payload: Mapping[str, object] | None,
+) -> JsonDict:
+    merged: JsonDict = {"node_id": node_id}
+    if base_payload:
+        merged.update(base_payload)
+
+    if committed_payload:
+        if "height" in committed_payload:
+            merged["height"] = committed_payload["height"]
+        if "span" in committed_payload:
+            merged["span"] = committed_payload["span"]
+        if "created_at" in committed_payload and "created_at" not in merged:
+            merged["created_at"] = committed_payload["created_at"]
+
+    if active_payload:
+        height_value = active_payload.get("height")
+        height = _coerce_int(height_value) if height_value is not None else None
+        if height is not None:
+            merged["height"] = height
+        span_value = active_payload.get("span")
+        active_span = _coerce_span(span_value) if span_value is not None else None
+        if active_span is not None:
+            merged["span"] = active_span
+
+    existing_span = merged.get("span")
+    coerced_span = _coerce_span(existing_span) if existing_span is not None else None
+    if coerced_span is not None:
+        merged["span"] = coerced_span
+    elif existing_span is not None:
+        merged.pop("span", None)
+
+    if "height" not in merged:
+        merged["height"] = 0
+
+    if "created_at" not in merged:
+        # Fallback to zero to keep sorting deterministic.
+        merged["created_at"] = 0.0
+
+    return merged
 
 
 def _as_str(value: object) -> str | None:
@@ -218,6 +322,30 @@ def _as_mapping(value: object) -> Mapping[str, object] | None:
     if isinstance(value, Mapping):
         return value
     return None
+
+
+def _coerce_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    return _as_int(value)
+
+
+def _coerce_span(value: object) -> tuple[int, int] | None:
+    if isinstance(value, Mapping):
+        start = _coerce_int(value.get("span_start"))
+        end = _coerce_int(value.get("span_end"))
+    elif isinstance(value, Sequence):
+        sequence = list(value)
+        if len(sequence) != 2:
+            return None
+        start = _coerce_int(sequence[0])
+        end = _coerce_int(sequence[1])
+    else:
+        return None
+
+    if start is None or end is None:
+        return None
+    return (start, end)
 
 
 __all__ = [
