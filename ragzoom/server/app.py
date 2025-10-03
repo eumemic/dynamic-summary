@@ -22,6 +22,8 @@ class ServerOptions:
     host: str = DEFAULT_GRPC_HOST
     port: int = DEFAULT_GRPC_PORT
     config_path: str | None = None
+    collect_telemetry: bool = False
+    telemetry_dir: str | None = None
 
 
 def build_state(options: ServerOptions) -> ServerState:
@@ -36,6 +38,10 @@ def build_state(options: ServerOptions) -> ServerState:
         index_config=index_cfg,
         query_config=query_cfg,
         operational_config=operational_cfg,
+        collect_telemetry=options.collect_telemetry,
+        telemetry_dir=(
+            Path(options.telemetry_dir) if options.telemetry_dir is not None else None
+        ),
     )
 
 

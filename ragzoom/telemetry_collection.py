@@ -535,6 +535,23 @@ class TelemetryCollector:
         self.tree_height = max(self.tree_height, height)
         self._update_memory_usage()
 
+    def metadata_snapshot(self) -> dict[str, object]:
+        """Build the immutable metadata payload for persistent telemetry."""
+
+        metadata: dict[str, object] = {
+            "format_version": TELEMETRY_FORMAT_VERSION,
+            "document_id": self.document_id,
+            "config": asdict(self.config),
+            "model_metadata": self._get_model_metadata(),
+            "system_prompts": self._get_system_prompts(),
+            "runtime_info": self._get_runtime_info(),
+        }
+
+        if self.document_path:
+            metadata["document_path"] = self.document_path
+
+        return metadata
+
     def finalize(self) -> TelemetryDataDict:
         """Finalize telemetry collection and return raw telemetry data.
 

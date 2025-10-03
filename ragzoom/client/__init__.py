@@ -7,6 +7,7 @@ from .grpc_client import (
     ExecuteQueryOutput,
     GrpcRagzoomClient,
     RetrievalView,
+    TelemetryExportResult,
     TelemetryFetchResult,
     WorkerRunSnapshot,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "DocumentProgressSnapshot",
     "GrpcRagzoomClient",
     "RetrievalView",
+    "TelemetryExportResult",
     "TelemetryFetchResult",
     "WorkerRunSnapshot",
 ]

@@ -156,6 +156,15 @@ message ClearDocumentResponse {
   repeated ClearDocumentResult results = 1;
 }
 
+message ExportTelemetryRequest {
+  string document_id = 1;
+}
+
+message ExportTelemetryResponse {
+  string telemetry_json = 1;
+  string error = 2;
+}
+
 service IndexerService {
   rpc IndexDocument(IndexDocumentRequest) returns (IndexDocumentResponse);
   rpc AppendText(AppendTextRequest) returns (AppendTextResponse);
@@ -171,4 +180,5 @@ service WorkerService {
   rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse);
   rpc GetTelemetry(GetTelemetryRequest) returns (GetTelemetryResponse);
   rpc ClearDocument(ClearDocumentRequest) returns (ClearDocumentResponse);
+  rpc ExportTelemetry(ExportTelemetryRequest) returns (ExportTelemetryResponse);
 }

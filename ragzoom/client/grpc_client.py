@@ -53,7 +53,7 @@ def _map_rpc_error(error: object) -> RuntimeError:
     return RuntimeError(message)
 
 
-@dataclass(slots=True)
+@dataclass
 class NodeSummary:
     node_id: str
     text: str
@@ -66,7 +66,7 @@ class NodeSummary:
     height: int
 
 
-@dataclass(slots=True)
+@dataclass
 class RetrievalView:
     selected_ids: list[str]
     tiling_ids: list[str]
@@ -75,7 +75,7 @@ class RetrievalView:
     nodes: dict[str, NodeSummary]
 
 
-@dataclass(slots=True)
+@dataclass
 class ExecuteQueryOutput:
     query_result: QueryResult
     retrieval: RetrievalView
@@ -83,7 +83,7 @@ class ExecuteQueryOutput:
     validation_warning: str
 
 
-@dataclass(slots=True)
+@dataclass
 class DocumentProgressSnapshot:
     pending: int
     inflight: int
@@ -91,7 +91,7 @@ class DocumentProgressSnapshot:
     total: int
 
 
-@dataclass(slots=True)
+@dataclass
 class WorkerRunSnapshot:
     message: str
     idle: bool
@@ -100,21 +100,27 @@ class WorkerRunSnapshot:
     documents: dict[str, DocumentProgressSnapshot]
 
 
-@dataclass(slots=True)
+@dataclass
 class ClearedDocumentResult:
     document_id: str
     deleted_nodes: int
     document_existed: bool
 
 
-@dataclass(slots=True)
+@dataclass
 class TelemetryFetchResult:
     complete: bool
     telemetry: TelemetryDataDict | None
     error: str | None
 
 
-@dataclass(slots=True)
+@dataclass
+class TelemetryExportResult:
+    telemetry: TelemetryDataDict | None
+    error: str | None
+
+
+@dataclass
 class DocumentStatusView:
     document_id: str
     leaf_count: int
@@ -382,6 +388,27 @@ class GrpcRagzoomClient:
 
         return TelemetryFetchResult(
             complete=bool(getattr(response, "complete", False)),
+            telemetry=telemetry,
+            error=error_message or None,
+        )
+
+    def export_document_telemetry(
+        self,
+        *,
+        document_id: str,
+    ) -> TelemetryExportResult:
+        request = pb2.ExportTelemetryRequest(document_id=document_id)
+        try:
+            export_rpc = getattr(self._workers, "ExportTelemetry")
+            response = export_rpc(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        telemetry_json = getattr(response, "telemetry_json", "")
+        telemetry = _decode_telemetry(telemetry_json)
+        error_message = getattr(response, "error", "") or ""
+
+        return TelemetryExportResult(
             telemetry=telemetry,
             error=error_message or None,
         )

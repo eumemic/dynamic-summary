@@ -18,7 +18,6 @@ from dotenv import load_dotenv
 from ragzoom.client import (
     DocumentStatusView,
     GrpcRagzoomClient,
-    TelemetryFetchResult,
     WorkerRunSnapshot,
 )
 from ragzoom.config import (
@@ -246,6 +245,11 @@ def cli(ctx: click.Context) -> None:
     default=None,
     help="Save telemetry data to JSON file",
 )
+@click.option(
+    "--collect-telemetry",
+    is_flag=True,
+    help="Enable document-scoped telemetry logging without waiting for export",
+)
 @click.option("--no-progress", is_flag=True, help="Disable progress bar")
 @click.option(
     "--append",
@@ -280,6 +284,7 @@ def index(
     append: bool,
     server_address: str | None,
     await_workers: bool,
+    collect_telemetry: bool,
 ) -> None:
     """Index a document from file.
 
@@ -298,7 +303,10 @@ def index(
                 raise click.UsageError("--document-id is required when using --append")
             append_document_id = document_id
 
-        if telemetry_file and not await_workers:
+        telemetry_requested = telemetry_file is not None
+        collect_requested = collect_telemetry or telemetry_requested
+
+        if telemetry_requested and not await_workers:
             raise click.UsageError(
                 "--telemetry cannot be combined with --no-await-workers; the command must wait for telemetry collection."
             )
@@ -319,8 +327,6 @@ def index(
         )
 
         telemetry_run_id: str | None = None
-        telemetry_fetch: TelemetryFetchResult | None = None
-        telemetry_fetch_error: str | None = None
 
         with GrpcRagzoomClient(resolved_address) as client:
             append_method = cast(AppendTextCallable, client.append_text)
@@ -345,14 +351,14 @@ def index(
                 result = append_method(
                     document_id=target_document_id,
                     content=content_bytes,
-                    collect_telemetry=bool(telemetry_file),
+                    collect_telemetry=collect_requested,
                     replace_existing=not append,
                 )
             else:
                 result = append_method(
                     document_id=target_document_id,
                     content=content_bytes,
-                    collect_telemetry=bool(telemetry_file),
+                    collect_telemetry=collect_requested,
                 )
             telemetry_run_id = result.telemetry_run_id
             if await_workers:
@@ -381,15 +387,6 @@ def index(
                     except Exception as exc:  # pragma: no cover - network failures
                         refresh_error = str(exc)
 
-                if telemetry_file and telemetry_run_id:
-                    try:
-                        telemetry_fetch = client.get_telemetry(
-                            document_id=target_document_id,
-                            run_id=telemetry_run_id,
-                            wait=True,
-                        )
-                    except Exception as exc:  # pragma: no cover - gRPC errors surfaced
-                        telemetry_fetch_error = str(exc)
             else:
                 click.echo(
                     "ℹ️ Leaf ingestion queued; summarization workers continue in the background."
@@ -398,6 +395,11 @@ def index(
                     "   Use `ragzoom status --document-id "
                     f"{target_document_id}` to monitor progress."
                 )
+                if collect_requested:
+                    click.echo(
+                        "   Run `ragzoom telemetry-export --document-id "
+                        f"{target_document_id}` once workers finish to synthesize telemetry."
+                    )
 
         document_id = target_document_id
 
@@ -431,47 +433,31 @@ def index(
         if telemetry_run_id:
             click.echo(f"   Telemetry run ID: {telemetry_run_id}")
 
-        if telemetry_file and await_workers:
-            if telemetry_run_id:
-                if telemetry_fetch_error:
-                    click.echo(
-                        f"❌ Failed to retrieve telemetry: {telemetry_fetch_error}",
-                        err=True,
+        if telemetry_requested and await_workers:
+            telemetry_path = cast(str, telemetry_file)
+            export_result = None
+            export_error: str | None = None
+            try:
+                with GrpcRagzoomClient(resolved_address) as export_client:
+                    export_result = export_client.export_document_telemetry(
+                        document_id=target_document_id
                     )
-                elif telemetry_fetch is None:
-                    click.echo(
-                        "⚠️ Telemetry response missing; nothing was saved.",
-                        err=True,
-                    )
-                elif not telemetry_fetch.complete:
-                    click.echo(
-                        "⚠️ Telemetry run still in progress; rerun `ragzoom telemetry` later.",
-                        err=True,
-                    )
-                elif telemetry_fetch.error:
-                    click.echo(
-                        f"⚠️ Telemetry collection failed: {telemetry_fetch.error}",
-                        err=True,
-                    )
-                elif telemetry_fetch.telemetry:
+            except Exception as exc:  # pragma: no cover - network failures
+                export_error = str(exc)
+            if export_result is not None:
+                if export_result.error:
+                    export_error = export_result.error
+                elif export_result.telemetry:
                     try:
-                        with open(telemetry_file, "w", encoding="utf-8") as f:
-                            json.dump(telemetry_fetch.telemetry, f, indent=2)
-                        click.echo(f"✅ Saved telemetry: {telemetry_file}")
+                        with open(telemetry_path, "w", encoding="utf-8") as f:
+                            json.dump(export_result.telemetry, f, indent=2)
+                        click.echo(f"✅ Saved telemetry: {telemetry_path}")
                     except OSError as exc:
-                        click.echo(
-                            f"❌ Failed to write telemetry file: {exc}", err=True
-                        )
+                        export_error = str(exc)
                 else:
-                    click.echo(
-                        "⚠️ Telemetry data was empty for this run.",
-                        err=True,
-                    )
-            else:
-                click.echo(
-                    "⚠️ Telemetry data was not available; nothing was saved.",
-                    err=True,
-                )
+                    export_error = "Telemetry data was empty for this document."
+            if export_error:
+                click.echo(f"❌ Telemetry export failed: {export_error}", err=True)
 
         # Show debug hint if enabled
         if debug:
@@ -600,6 +586,53 @@ def telemetry(
             sys.exit(1)
     else:
         click.echo(json.dumps(response.telemetry, indent=2))
+
+
+@cli.command("telemetry-export")
+@click.option("--document-id", required=True, help="Document ID to export")
+@click.option(
+    "--output",
+    type=str,
+    default="telemetry.json",
+    show_default=True,
+    help="Path to write synthesized telemetry JSON",
+)
+@click.option(
+    "--server-address",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default=None,
+    show_default=False,
+    help=GRPC_ADDRESS_HELP,
+)
+def telemetry_export(document_id: str, output: str, server_address: str | None) -> None:
+    """Synthesize document-level telemetry from server logs."""
+
+    resolved_address = _resolve_server_address(server_address)
+    try:
+        with GrpcRagzoomClient(resolved_address) as client:
+            result = client.export_document_telemetry(document_id=document_id)
+    except Exception as exc:
+        handle_cli_error(exc, "exporting telemetry")
+        return
+
+    if result.error:
+        click.echo(f"❌ Telemetry export failed: {result.error}", err=True)
+        sys.exit(1)
+
+    if result.telemetry is None:
+        click.echo(
+            "⚠️ Telemetry data was empty for this document; nothing was written.",
+            err=True,
+        )
+        sys.exit(1)
+
+    try:
+        with open(output, "w", encoding="utf-8") as fh:
+            json.dump(result.telemetry, fh, indent=2)
+        click.echo(f"✅ Saved telemetry: {output}")
+    except OSError as exc:
+        click.echo(f"❌ Failed to write telemetry file: {exc}", err=True)
+        sys.exit(1)
 
 
 @cli.command()
@@ -1240,11 +1273,23 @@ def server() -> None:
     help="Optional indexing config file",
 )
 @click.option("--debug", is_flag=True, help="Enable debug logging")
+@click.option(
+    "--collect-telemetry",
+    is_flag=True,
+    help="Persist document-scoped telemetry logs on the server",
+)
+@click.option(
+    "--telemetry-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Directory to store telemetry events (defaults near data dir)",
+)
 def start_server(
     host: str,
     port: int,
     config_path: Path | None,
     debug: bool,
+    collect_telemetry: bool,
+    telemetry_dir: Path | None,
 ) -> None:
     """Start the RagZoom gRPC server."""
 
@@ -1253,6 +1298,8 @@ def start_server(
         host=host,
         port=port,
         config_path=str(config_path) if config_path else None,
+        collect_telemetry=collect_telemetry,
+        telemetry_dir=str(telemetry_dir) if telemetry_dir else None,
     )
     run_server(options)
 

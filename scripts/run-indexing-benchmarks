@@ -112,10 +112,10 @@ start_grpc_server() {
 
     echo "🚀 Starting RagZoom gRPC server on $host:$port (log: $log_file)"
     if [ ${#SERVER_ENV[@]} -gt 0 ]; then
-        env "${SERVER_ENV[@]}" python -m ragzoom.cli server start --host "$host" --port "$port" \
+        env "${SERVER_ENV[@]}" python -m ragzoom.cli server start --host "$host" --port "$port" --collect-telemetry \
             >"$log_file" 2>&1 &
     else
-        python -m ragzoom.cli server start --host "$host" --port "$port" \
+        python -m ragzoom.cli server start --host "$host" --port "$port" --collect-telemetry \
             >"$log_file" 2>&1 &
     fi
     OWN_SERVER_PID=$!
@@ -533,26 +533,6 @@ else
     echo "⚙️  RAGZOOM_START_GRPC_SERVER=0 – assuming server already running at $SERVER_HOST:$SERVER_PORT"
 fi
 
-# Run indexing with telemetry
-# Implicitly adds: --telemetry <file> --debug --no-progress
-echo "📝 Running indexing with telemetry..."
-
-# Build command args
-INDEX_ARGS=(
-    "$DOCUMENT"
-    --telemetry "$TELEMETRY_FILE"
-    --debug
-    --no-progress
-)
-
-# All configuration comes from default_config.json plus any CLI overrides
-# No settings are extracted from baseline - each run uses current defaults
-
-# Add any extra arguments
-if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
-    INDEX_ARGS+=("${EXTRA_ARGS[@]}")
-fi
-
 # Determine document ID for validation (default to filename unless overridden)
 EFFECTIVE_DOCUMENT_ID=""
 for ((idx = 0; idx < ${#EXTRA_ARGS[@]}; idx++)); do
@@ -578,31 +558,82 @@ fi
 # Prefer chroma vector backend if installed; otherwise fall back to python
 RUN_ENV=()
 
-# If we created a local SQLite DB, set backend accordingly
-RUN_ENV=()
 if [ ${#SERVER_ENV[@]} -gt 0 ]; then
     RUN_ENV+=("${SERVER_ENV[@]}")
 fi
 RUN_ENV+=(RAGZOOM_SERVER_ADDRESS="${SERVER_HOST}:${SERVER_PORT}")
+RUN_ENV+=(BENCHMARK_DOCUMENT_ID="$EFFECTIVE_DOCUMENT_ID")
 
-env "${RUN_ENV[@]}" python -m ragzoom.cli index "${INDEX_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
+CHUNK_COUNT="${BENCHMARK_CHUNKS:-16}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+INCREMENTAL_SCRIPT="$SCRIPT_DIR/incrementally_index.py"
+PYTHON_EXEC="${PYTHON:-python}"
 
-# Check if indexing succeeded
+FORWARDED_ARGS=(
+    --collect-telemetry
+    --debug
+    --no-progress
+)
+if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
+    FORWARDED_ARGS+=("${EXTRA_ARGS[@]}")
+fi
+
+# Run incremental indexing without waiting between appends
+echo "📝 Running incremental indexing (chunks: $CHUNK_COUNT)..."
+env "${RUN_ENV[@]}" "$PYTHON_EXEC" "$INCREMENTAL_SCRIPT" \
+    "$DOCUMENT" \
+    --chunks "$CHUNK_COUNT" \
+    --document-id "$EFFECTIVE_DOCUMENT_ID" \
+    --python "$PYTHON_EXEC" \
+    -- "${FORWARDED_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
+
 if [ ${PIPESTATUS[0]} -ne 0 ]; then
-    echo "❌ Indexing failed. Check $LOG_FILE for details."
+    echo "❌ Incremental indexing failed. Check $LOG_FILE for details."
     exit 1
 fi
 
-echo ""
-echo "✅ Indexing completed. Telemetry saved to $TELEMETRY_FILE"
-echo ""
+# Wait once for workers to drain
+echo "🕒 Waiting for summarization workers to finish..."
+env "${RUN_ENV[@]}" "$PYTHON_EXEC" - <<'PY' 2>&1 | tee -a "$LOG_FILE"
+import os
+from ragzoom.client import GrpcRagzoomClient
 
+address = os.environ.get("RAGZOOM_SERVER_ADDRESS")
+document_id = os.environ.get("BENCHMARK_DOCUMENT_ID")
+if not address or not document_id:
+    raise SystemExit("Missing server address or document id for worker wait step")
+
+with GrpcRagzoomClient(address) as client:
+    for _ in client.iter_worker_snapshots():
+        pass
+PY
+
+if [ ${PIPESTATUS[0]} -ne 0 ]; then
+    echo "❌ Worker coordination failed. Check $LOG_FILE for details."
+    exit 1
+fi
+
+
+echo ""
+echo "🧾 Exporting telemetry..."
+env "${RUN_ENV[@]}" "$PYTHON_EXEC" -m ragzoom.cli telemetry-export \
+    --document-id "$EFFECTIVE_DOCUMENT_ID" \
+    --output "$TELEMETRY_FILE" 2>&1 | tee -a "$LOG_FILE"
+
+if [ ${PIPESTATUS[0]} -ne 0 ]; then
+    echo "❌ Telemetry export failed. Check $LOG_FILE for details."
+    exit 1
+fi
+
+
+echo ""
 echo "🧪 Running document validation..."
-env "${RUN_ENV[@]}" python -m ragzoom.cli validate "$EFFECTIVE_DOCUMENT_ID" 2>&1 | tee -a "$LOG_FILE"
+env "${RUN_ENV[@]}" "$PYTHON_EXEC" -m ragzoom.cli validate "$EFFECTIVE_DOCUMENT_ID" 2>&1 | tee -a "$LOG_FILE"
 if [ ${PIPESTATUS[0]} -ne 0 ]; then
     echo "❌ Validation failed. Check $LOG_FILE for details."
     exit 1
 fi
+
 
 echo ""
 echo "✅ Validation completed for document $EFFECTIVE_DOCUMENT_ID"

@@ -24,6 +24,10 @@ from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
 from ragzoom.server.state import ServerState
 from ragzoom.server.worker_coordinator import WorkerCoordinator, WorkerStatus
 from ragzoom.services.indexing_service import IndexingResult
+from ragzoom.telemetry_export import (
+    TelemetryExportError,
+    export_document_telemetry,
+)
 from ragzoom.tree_viz import build_ascii_tree
 from ragzoom.validate import validate_tiling
 from ragzoom.vector_factory import create_vector_index
@@ -41,6 +45,13 @@ if TYPE_CHECKING:
 
     class TelemetryResponseProto(Protocol):
         complete: bool
+        telemetry_json: str
+        error: str
+
+    class ExportTelemetryRequestProto(Protocol):
+        document_id: str
+
+    class ExportTelemetryResponseProto(Protocol):
         telemetry_json: str
         error: str
 
@@ -553,6 +564,43 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
             error=error_message,
         )
         return cast("TelemetryResponseProto", response)
+
+    async def ExportTelemetry(  # noqa: N802
+        self,
+        request: ExportTelemetryRequestProto,
+        context: ServicerContextProto,
+    ) -> ExportTelemetryResponseProto:
+        if not request.document_id:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="ExportTelemetry requires `document_id`.",
+            )
+
+        telemetry_log = self._state.telemetry_log
+        if telemetry_log is None:
+            await _abort(
+                context,
+                code=grpc.StatusCode.FAILED_PRECONDITION,
+                message="Server telemetry logging is disabled.",
+            )
+
+        try:
+            telemetry = export_document_telemetry(telemetry_log, request.document_id)
+        except TelemetryExportError as exc:
+            response_cls = getattr(pb2, "ExportTelemetryResponse")
+            response = response_cls(
+                telemetry_json="",
+                error=str(exc),
+            )
+            return cast("ExportTelemetryResponseProto", response)
+
+        response_cls = getattr(pb2, "ExportTelemetryResponse")
+        response = response_cls(
+            telemetry_json=json.dumps(telemetry),
+            error="",
+        )
+        return cast("ExportTelemetryResponseProto", response)
 
     async def ClearDocument(  # noqa: N802
         self,

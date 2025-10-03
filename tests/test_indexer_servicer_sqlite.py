@@ -53,6 +53,7 @@ class StubWorkerCoordinator:
         *,
         deleted_node_ids: list[str] | None = None,
         new_root_ids: list[str] | None = None,
+        run_context: object | None = None,
     ) -> None:
         self.enqueued.append(document_id)
         self.deleted.append(deleted_node_ids)
@@ -61,8 +62,8 @@ class StubWorkerCoordinator:
     async def attach_run(self, context: object) -> None:
         self.attached_runs.append(context)
 
-    async def detach_run(self, document_id: str) -> None:
-        self.detached.append(document_id)
+    async def detach_run(self, document_id: str, run_id: object) -> None:
+        self.detached.append(f"{document_id}:{run_id}")
 
     async def cancel_document(self, document_id: str) -> None:
         self.cancelled.append(document_id)

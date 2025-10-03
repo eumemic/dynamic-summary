@@ -39,6 +39,7 @@ async def test_telemetry_run_manager_completes_and_finalizes() -> None:
         collect=True,
         source_tokens=120,
         document_path=None,
+        replace_existing=False,
     )
 
     context.register_append_outcome(
@@ -74,6 +75,7 @@ async def test_telemetry_run_manager_marks_failure() -> None:
         collect=True,
         source_tokens=10,
         document_path=None,
+        replace_existing=False,
     )
 
     await manager.complete_run(context.run_id, error="boom")
@@ -96,6 +98,7 @@ async def test_get_telemetry_waits_until_complete() -> None:
         collect=True,
         source_tokens=42,
         document_path=None,
+        replace_existing=False,
     )
     run.register_append_outcome(
         span_start=0,

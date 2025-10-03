@@ -228,3 +228,65 @@ class GetDocumentResponse:
     def __init__(self, *, status: DocumentStatus) -> None: ...
 
 WORKER_RUN_MODE_UNTIL_IDLE: int
+
+class GetTelemetryRequest:
+    document_id: str
+    run_id: str
+    wait: bool
+
+    def __init__(self, *, document_id: str, run_id: str, wait: bool = ...) -> None: ...
+
+class GetTelemetryResponse:
+    complete: bool
+    telemetry_json: str
+    error: str
+
+    def __init__(
+        self,
+        *,
+        complete: bool = ...,
+        telemetry_json: str = ...,
+        error: str = ...,
+    ) -> None: ...
+
+class ClearDocumentRequest:
+    document_ids: Sequence[str]
+    clear_all: bool
+
+    def __init__(
+        self, *, document_ids: Iterable[str] = ..., clear_all: bool = ...
+    ) -> None: ...
+
+class ClearDocumentResult:
+    document_id: str
+    deleted_nodes: int
+    document_existed: bool
+
+    def __init__(
+        self,
+        *,
+        document_id: str = ...,
+        deleted_nodes: int = ...,
+        document_existed: bool = ...,
+    ) -> None: ...
+
+class ClearDocumentResponse:
+    results: Sequence[ClearDocumentResult]
+
+    def __init__(self, *, results: Iterable[ClearDocumentResult]) -> None: ...
+
+class ExportTelemetryRequest:
+    document_id: str
+
+    def __init__(self, *, document_id: str) -> None: ...
+
+class ExportTelemetryResponse:
+    telemetry_json: str
+    error: str
+
+    def __init__(
+        self,
+        *,
+        telemetry_json: str = ...,
+        error: str = ...,
+    ) -> None: ...

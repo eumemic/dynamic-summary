@@ -345,6 +345,7 @@ class DocumentIndexSession:
                             if self._file_path is not None
                             else getattr(doc_record, "file_path", None)
                         ),
+                        replace_existing=replace_existing,
                     )
 
                 vector_index = self._runtime._vector_index_factory(embedding_model)
@@ -391,6 +392,7 @@ class DocumentIndexSession:
                 self._document_id,
                 deleted_node_ids=outcome.deleted_node_ids if outcome else None,
                 new_root_ids=outcome.new_leaf_ids if outcome else None,
+                run_context=run_context,
             )
 
             await self._runtime._emit_status(self._document_id)
@@ -407,7 +409,8 @@ class DocumentIndexSession:
                     )
                 with suppress(Exception):
                     await self._runtime._worker_coordinator.detach_run(
-                        self._document_id
+                        self._document_id,
+                        run_context.run_id,
                     )
             raise
 
@@ -444,6 +447,9 @@ class DocumentIndexSession:
             deleted_nodes = store.clear_document(self._document_id)
 
         await self._runtime._emit_status(self._document_id)
+        telemetry_manager = self._runtime._telemetry_manager
+        if telemetry_manager is not None:
+            await telemetry_manager.clear_document(self._document_id)
         return ClearedDocumentResult(
             document_id=self._document_id,
             deleted_nodes=deleted_nodes,

@@ -102,6 +102,8 @@ def sanitize_forward_args(forward_args: list[str]) -> list[str]:
         if skip_next:
             skip_next = False
             continue
+        if arg == "--":
+            continue
         if arg == "--append":
             continue
         if arg == "--document-id":
@@ -149,10 +151,17 @@ def main() -> None:
 
     sanitized_args = sanitize_forward_args(forward_args)
     add_no_await = should_append_no_await(forward_args)
+    collect_requested = "--collect-telemetry" in forward_args
     if add_no_await:
         print(
             "[info] Using --no-await-workers; summarization will continue asynchronously."
         )
+        if collect_requested:
+            print(
+                "[info] Telemetry will continue accumulating in the background. "
+                "Export with `ragzoom telemetry-export --document-id "
+                f"{document_id}` once workers are idle."
+            )
 
     for chunk_path in chunk_paths:
         cmd = [

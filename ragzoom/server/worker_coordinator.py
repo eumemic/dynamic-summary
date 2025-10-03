@@ -7,7 +7,7 @@ import heapq
 import logging
 import time
 import uuid
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from itertools import count
@@ -41,6 +41,7 @@ class ReadyParentCandidate:
     height: int
     level_index: int
     span_start: int
+    run_id: str | None = None
 
 
 NodeFieldValue = str | int | float | bool | list[float] | NDArray[np.float64] | None
@@ -74,6 +75,10 @@ class DocumentState:
     inflight: set[str]
     tombstones: set[str]
     completed: int
+    run_queue: deque[str]
+    pending_by_run: dict[str, int]
+    inflight_by_run: dict[str, int]
+    run_assignments: dict[str, str]
 
 
 # jscpd:ignore-start - Signature must match LLMService._summarize_text exactly for type safety
@@ -117,6 +122,7 @@ def compute_ready_parent_candidates(store: DocumentStore) -> list[ReadyParentCan
                 height=int(getattr(node, "height", 0)),
                 level_index=int(getattr(node, "level_index", 0)),
                 span_start=int(getattr(node, "span_start", 0)),
+                run_id=None,
             )
         )
     return candidates
@@ -144,7 +150,6 @@ class WorkerCoordinator:
         self._run_manager = run_manager
 
         # Active run contexts keyed by document_id
-        self._runs: dict[str, IndexRunContext] = {}
 
         if vector_index_factory is None:
             vector_index_factory = lambda _doc_id: create_vector_index(  # noqa: E731
@@ -201,6 +206,7 @@ class WorkerCoordinator:
         *,
         deleted_node_ids: Iterable[str] | None = None,
         new_root_ids: Iterable[str] | None = None,
+        run_context: IndexRunContext | None = None,
     ) -> None:
         if document_id in self._cancelled_documents:
             return
@@ -219,11 +225,17 @@ class WorkerCoordinator:
                 and self._inflight_counts.get(document_id, 0) == 0
             ):
                 state.completed = 0
+            if run_context is not None:
+                if run_context.run_id not in state.run_queue:
+                    state.run_queue.append(run_context.run_id)
+                state.pending_by_run.setdefault(run_context.run_id, 0)
+                state.inflight_by_run.setdefault(run_context.run_id, 0)
         await self._resync_document(
             document_id,
             state,
             deleted_node_ids=deleted_list,
             new_root_ids=new_root_list,
+            run_id=run_context.run_id if run_context is not None else None,
         )
         await self._maybe_finish_run(document_id)
         logger.debug(
@@ -290,12 +302,30 @@ class WorkerCoordinator:
 
     async def attach_run(self, context: IndexRunContext) -> None:
         async with self._coord_lock:
-            self._runs[context.document_id] = context
+            state = self._get_or_create_document_state(context.document_id)
+            state.run_queue.append(context.run_id)
+            state.pending_by_run.setdefault(context.run_id, 0)
+            state.inflight_by_run.setdefault(context.run_id, 0)
 
-    async def detach_run(self, document_id: str) -> None:
+    async def detach_run(self, document_id: str, run_id: str) -> None:
         async with self._coord_lock:
-            if document_id in self._runs:
-                self._runs.pop(document_id)
+            state = self._documents.get(document_id)
+            if state is None:
+                return
+            try:
+                state.run_queue.remove(run_id)
+            except ValueError:
+                pass
+            state.pending_by_run.pop(run_id, None)
+            state.inflight_by_run.pop(run_id, None)
+            if state.run_assignments:
+                removable = [
+                    node_id
+                    for node_id, assigned in state.run_assignments.items()
+                    if assigned == run_id
+                ]
+                for node_id in removable:
+                    state.run_assignments.pop(node_id, None)
 
     async def status(self) -> WorkerStatus:
         async with self._coord_lock:
@@ -320,7 +350,16 @@ class WorkerCoordinator:
     def _get_or_create_document_state(self, document_id: str) -> DocumentState:
         state = self._documents.get(document_id)
         if state is None:
-            state = DocumentState(set(), set(), set(), 0)
+            state = DocumentState(
+                queued=set(),
+                inflight=set(),
+                tombstones=set(),
+                completed=0,
+                run_queue=deque(),
+                pending_by_run={},
+                inflight_by_run={},
+                run_assignments={},
+            )
             self._documents[document_id] = state
         return state
 
@@ -344,6 +383,7 @@ class WorkerCoordinator:
         *,
         deleted_node_ids: Iterable[str] | None,
         new_root_ids: Iterable[str] | None,
+        run_id: str | None = None,
     ) -> None:
         if self._is_cancelled(document_id):
             return
@@ -373,12 +413,15 @@ class WorkerCoordinator:
                 )
 
         for root_id in root_ids:
+            if run_id is not None:
+                state.run_assignments[root_id] = run_id
             await self._process_new_root(
                 document_id,
                 root_id,
                 state,
                 store,
                 doc_span_end,
+                run_id=state.run_assignments.get(root_id, run_id),
             )
 
         self._prune_resolved_tombstones(state, store)
@@ -394,6 +437,8 @@ class WorkerCoordinator:
             return
 
         state.tombstones.update(deleted_ids)
+        for node_id in deleted_ids:
+            state.run_assignments.pop(node_id, None)
 
         async with self._coord_lock:
             queue_list = self._queue._queue  # type: ignore[attr-defined]
@@ -407,6 +452,10 @@ class WorkerCoordinator:
                 ):
                     removed += 1
                     state.queued.discard(candidate.left_child_id)
+                    if candidate.run_id is not None:
+                        pending = state.pending_by_run.get(candidate.run_id, 0)
+                        if pending > 0:
+                            state.pending_by_run[candidate.run_id] = pending - 1
                     logger.debug(
                         "workers[%s]: dropping queued candidate %s due to deletion",
                         document_id,
@@ -478,6 +527,8 @@ class WorkerCoordinator:
         state: DocumentState,
         store: DocumentStore,
         doc_span_end: int | None,
+        *,
+        run_id: str | None = None,
     ) -> None:
         if not root_id or root_id in state.tombstones:
             return
@@ -485,6 +536,12 @@ class WorkerCoordinator:
         root = store.nodes.get(root_id)
         if root is None:
             return
+
+        assigned_run = run_id or state.run_assignments.get(root_id)
+        if assigned_run is None and state.run_queue:
+            assigned_run = state.run_queue[-1]
+        if assigned_run is not None:
+            state.run_assignments[root_id] = assigned_run
 
         level_index = int(getattr(root, "level_index", 0))
         effective_span_end = doc_span_end
@@ -494,6 +551,8 @@ class WorkerCoordinator:
             return
 
         if level_index % 2 == 0:
+            if assigned_run is not None:
+                state.run_assignments.setdefault(root.id, assigned_run)
             await self._possibly_enqueue_left_child(
                 document_id,
                 root,
@@ -507,6 +566,8 @@ class WorkerCoordinator:
         if preceding_id and preceding_id not in state.tombstones:
             left_sibling = store.nodes.get(preceding_id)
             if left_sibling is not None:
+                if assigned_run is not None:
+                    state.run_assignments.setdefault(left_sibling.id, assigned_run)
                 await self._possibly_enqueue_left_child(
                     document_id,
                     left_sibling,
@@ -519,6 +580,10 @@ class WorkerCoordinator:
         if following_id and following_id not in state.tombstones:
             following_neighbor = store.nodes.get(following_id)
             if following_neighbor is not None:
+                if assigned_run is not None:
+                    state.run_assignments.setdefault(
+                        following_neighbor.id, assigned_run
+                    )
                 await self._possibly_enqueue_left_child(
                     document_id,
                     following_neighbor,
@@ -545,12 +610,18 @@ class WorkerCoordinator:
         if not ready:
             return
 
+        run_id = state.run_assignments.get(left_node.id)
+        if run_id is None and state.run_queue:
+            run_id = state.run_queue[-1]
+            state.run_assignments[left_node.id] = run_id
+
         candidate = ReadyParentCandidate(
             document_id=document_id,
             left_child_id=left_node.id,
             height=int(getattr(left_node, "height", 0)),
             level_index=int(getattr(left_node, "level_index", 0)),
             span_start=int(getattr(left_node, "span_start", 0)),
+            run_id=run_id,
         )
         await self._enqueue_candidate(candidate, state)
 
@@ -582,6 +653,10 @@ class WorkerCoordinator:
             await self._queue.put((priority, candidate))
             state.queued.add(key)
             self._pending_counts[candidate.document_id] += 1
+            if candidate.run_id is not None:
+                state.pending_by_run[candidate.run_id] = (
+                    state.pending_by_run.get(candidate.run_id, 0) + 1
+                )
             pending = self._pending_counts[candidate.document_id]
             self._idle_event.clear()
             logger.debug(
@@ -716,6 +791,7 @@ class WorkerCoordinator:
             height=int(getattr(left, "height", 0)),
             level_index=int(getattr(left, "level_index", 0)),
             span_start=int(getattr(left, "span_start", 0)),
+            run_id=candidate.run_id,
         )
         logger.debug(
             "workers[%s]: requeuing candidate after dependency change left=%s",
@@ -751,7 +827,11 @@ class WorkerCoordinator:
     async def _scan_document(self, document_id: str) -> None:
         state = self._get_or_create_document_state(document_id)
         await self._resync_document(
-            document_id, state, deleted_node_ids=None, new_root_ids=None
+            document_id,
+            state,
+            deleted_node_ids=None,
+            new_root_ids=None,
+            run_id=None,
         )
 
     async def _worker_loop(self, worker_id: int) -> None:
@@ -771,6 +851,13 @@ class WorkerCoordinator:
                 state.queued.discard(key)
                 state.inflight.add(key)
                 self._inflight_counts[candidate.document_id] += 1
+                if candidate.run_id is not None:
+                    pending = state.pending_by_run.get(candidate.run_id, 0)
+                    if pending > 0:
+                        state.pending_by_run[candidate.run_id] = pending - 1
+                    state.inflight_by_run[candidate.run_id] = (
+                        state.inflight_by_run.get(candidate.run_id, 0) + 1
+                    )
             logger.debug(
                 "worker-%d: start candidate doc=%s left=%s level=%d height=%d",
                 worker_id,
@@ -803,6 +890,12 @@ class WorkerCoordinator:
                         self._inflight_counts[doc_id] = current_inflight - 1
                     else:
                         self._inflight_counts.pop(doc_id, None)
+                    if candidate.run_id is not None:
+                        inflight = state.inflight_by_run.get(candidate.run_id, 0)
+                        if inflight > 1:
+                            state.inflight_by_run[candidate.run_id] = inflight - 1
+                        else:
+                            state.inflight_by_run.pop(candidate.run_id, None)
 
                     current_pending = self._pending_counts.get(doc_id, 0)
                     if current_pending > 1:
@@ -838,12 +931,15 @@ class WorkerCoordinator:
                             candidate.document_id, store
                         )
                         for root_id in new_roots:
+                            if candidate.run_id is not None:
+                                state.run_assignments[root_id] = candidate.run_id
                             await self._process_new_root(
                                 candidate.document_id,
                                 root_id,
                                 state,
                                 store,
                                 doc_span_end,
+                                run_id=candidate.run_id,
                             )
                 except Exception:  # pragma: no cover - defensive logging
                     logger.exception(
@@ -860,7 +956,9 @@ class WorkerCoordinator:
                     len(new_roots),
                 )
             else:
-                await self._handle_worker_failure(candidate.document_id, error_exc)
+                await self._handle_worker_failure(
+                    candidate.document_id, candidate.run_id, error_exc
+                )
                 logger.debug(
                     "worker-%d: candidate doc=%s left=%s failed with %s",
                     worker_id,
@@ -882,34 +980,34 @@ class WorkerCoordinator:
                     self._pending_counts.pop(doc_id, None)
             self._queue.task_done()
 
-    async def _handle_worker_failure(self, document_id: str, error: Exception) -> None:
-        if self._run_manager is None:
+    async def _handle_worker_failure(
+        self, document_id: str, run_id: str | None, error: Exception
+    ) -> None:
+        if self._run_manager is None or run_id is None:
             return
         message = f"Worker failure for {document_id}: {error}"
-        await self._finalize_run(document_id, error=message)
+        await self._run_manager.complete_run(run_id, error=message)
+        await self.detach_run(document_id, run_id)
+        await self._maybe_finish_run(document_id)
 
     async def _maybe_finish_run(self, document_id: str) -> None:
         if self._run_manager is None:
             return
         async with self._coord_lock:
-            context = self._runs.get(document_id)
-            if context is None:
+            state = self._documents.get(document_id)
+            if state is None or not state.run_queue:
                 return
-            if self._pending_counts.get(document_id, 0) > 0:
-                return
-            if self._inflight_counts.get(document_id, 0) > 0:
-                return
-        await self._finalize_run(document_id, error=None)
-
-    async def _finalize_run(self, document_id: str, *, error: str | None) -> None:
-        if self._run_manager is None:
-            return
-        async with self._coord_lock:
-            context = self._runs.get(document_id)
-        if context is None:
-            return
-        await self._run_manager.complete_run(context.run_id, error=error)
-        await self.detach_run(document_id)
+            ready: list[str] = []
+            for run_id in list(state.run_queue):
+                pending = state.pending_by_run.get(run_id, 0)
+                inflight = state.inflight_by_run.get(run_id, 0)
+                if pending == 0 and inflight == 0:
+                    ready.append(run_id)
+                else:
+                    break
+        for run_id in ready:
+            await self._run_manager.complete_run(run_id, error=None)
+            await self.detach_run(document_id, run_id)
 
     async def _process_candidate(
         self, candidate: ReadyParentCandidate, state: DocumentState
@@ -933,8 +1031,9 @@ class WorkerCoordinator:
             )
             return [], True
 
-        async with self._coord_lock:
-            context = self._runs.get(candidate.document_id)
+        context: IndexRunContext | None = None
+        if self._run_manager is not None and candidate.run_id is not None:
+            context = await self._run_manager.get_run(candidate.run_id)
         collector = context.telemetry_collector if context else None
 
         logger.debug(
@@ -1250,6 +1349,14 @@ class WorkerCoordinator:
 
         if context is not None:
             context.register_summary_node(parent_id)
+            if self._run_manager is not None:
+                await self._run_manager.record_node_committed(
+                    context,
+                    node_id=parent_id,
+                    height=height,
+                    span_start=span_start_final,
+                    span_end=span_end_final,
+                )
 
         logger.debug(
             "worker: committed parent doc=%s parent=%s left=%s right=%s height=%d level=%d",
@@ -1264,6 +1371,7 @@ class WorkerCoordinator:
         return [parent_id], False
 
     async def cancel_document(self, document_id: str) -> None:
+        run_ids: list[str] = []
         async with self._coord_lock:
             self._cancelled_documents.add(document_id)
             state = self._documents.get(document_id)
@@ -1272,6 +1380,11 @@ class WorkerCoordinator:
                 state.inflight.clear()
                 state.tombstones.clear()
                 state.completed = 0
+                run_ids = list(state.run_queue)
+                state.run_queue.clear()
+                state.pending_by_run.clear()
+                state.inflight_by_run.clear()
+                state.run_assignments.clear()
 
             queue_list = getattr(self._queue, "_queue")
             retained: list[tuple[tuple[int, int, int, int], ReadyParentCandidate]] = []
@@ -1295,7 +1408,10 @@ class WorkerCoordinator:
             self._pending_counts.pop(document_id, None)
             self._idle_event.clear()
 
-        await self._finalize_run(document_id, error="Document cleared")
+        for run_id in run_ids:
+            if self._run_manager is not None:
+                await self._run_manager.complete_run(run_id, error="Document cleared")
+            await self.detach_run(document_id, run_id)
         await self.wait_until_idle(document_id)
 
         async with self._coord_lock:
