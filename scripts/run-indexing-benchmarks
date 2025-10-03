@@ -628,7 +628,7 @@ fi
 
 echo ""
 echo "🧪 Running document validation..."
-env "${RUN_ENV[@]}" "$PYTHON_EXEC" -m ragzoom.cli validate "$EFFECTIVE_DOCUMENT_ID" 2>&1 | tee -a "$LOG_FILE"
+env "${RUN_ENV[@]}" "$PYTHON_EXEC" -m ragzoom.cli validate --complete "$EFFECTIVE_DOCUMENT_ID" 2>&1 | tee -a "$LOG_FILE"
 if [ ${PIPESTATUS[0]} -ne 0 ]; then
     echo "❌ Validation failed. Check $LOG_FILE for details."
     exit 1
