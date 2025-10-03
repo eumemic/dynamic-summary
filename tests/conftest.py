@@ -1,5 +1,7 @@
 """Pytest configuration and fixtures for RagZoom tests."""
 
+import asyncio
+import logging
 import math
 import os
 import signal
@@ -26,6 +28,8 @@ from ragzoom.store import create_store
 from ragzoom.telemetry_types import TelemetryDataDict
 from ragzoom.vector_factory import create_vector_index
 from tests.test_builders import DocumentBuilder, TreeNodeBuilder
+
+logger = logging.getLogger(__name__)
 
 
 class BackwardCompatibilityConfig:
@@ -452,8 +456,29 @@ async def indexer_runtime_harness(
     try:
         yield harness
     finally:
-        await worker_coordinator.wait_until_idle()
-        await worker_coordinator.shutdown()
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(worker_coordinator.wait_until_idle()),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "IndexerRuntimeHarness teardown: wait_until_idle timed out; forcing shutdown"
+            )
+        except asyncio.CancelledError:
+            logger.warning(
+                "IndexerRuntimeHarness teardown interrupted by cancellation; forcing shutdown"
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.exception(
+                "IndexerRuntimeHarness teardown: wait_until_idle failed", exc_info=exc
+            )
+        try:
+            await asyncio.shield(worker_coordinator.shutdown())
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.exception(
+                "IndexerRuntimeHarness teardown: shutdown failed", exc_info=exc
+            )
         await telemetry_manager.prune_expired()
 
 

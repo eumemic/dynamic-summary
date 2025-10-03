@@ -167,6 +167,7 @@ class WorkerCoordinator:
         self._coord_lock = asyncio.Lock()
         self._shutdown = asyncio.Event()
         self._workers: list[asyncio.Task[None]] = []
+        self._next_worker_id = 0
         self._idle_event = asyncio.Event()
         self._idle_event.set()
 
@@ -174,15 +175,13 @@ class WorkerCoordinator:
     # Lifecycle management
     # ------------------------------------------------------------------
     async def start(self) -> None:
-        if self._workers:
-            return
         if self._shutdown.is_set():
             self._shutdown = asyncio.Event()
-        for worker_id in range(self._worker_count):
-            task = asyncio.create_task(
-                self._worker_loop(worker_id), name=f"worker-{worker_id}"
-            )
-            self._workers.append(task)
+        if self._workers:
+            self._ensure_workers()
+            return
+        for _ in range(self._worker_count):
+            self._spawn_worker()
 
     async def shutdown(self) -> None:
         self._shutdown.set()
@@ -222,6 +221,7 @@ class WorkerCoordinator:
 
     async def wait_until_idle(self, document_id: str | None = None) -> None:
         while True:
+            self._ensure_workers()
             if document_id is None:
                 if (
                     not self._pending_counts
@@ -242,6 +242,37 @@ class WorkerCoordinator:
         if document_id is None:
             return sum(self._pending_counts.values())
         return self._pending_counts.get(document_id, 0)
+
+    def _spawn_worker(self) -> None:
+        if self._shutdown.is_set():
+            return
+        worker_id = self._next_worker_id
+        self._next_worker_id += 1
+        task = asyncio.create_task(
+            self._worker_loop(worker_id), name=f"worker-{worker_id}"
+        )
+        self._workers.append(task)
+
+    def _ensure_workers(self) -> None:
+        if self._shutdown.is_set():
+            return
+        alive: list[asyncio.Task[None]] = []
+        for task in self._workers:
+            if task.done():
+                try:
+                    exc = task.exception()
+                except asyncio.CancelledError:
+                    exc = None
+                if task.cancelled():
+                    logger.warning("Worker task cancelled unexpectedly")
+                elif exc is not None:
+                    logger.exception("Worker task failed unexpectedly", exc_info=exc)
+                continue
+            alive.append(task)
+        missing = self._worker_count - len(alive)
+        self._workers = alive
+        for _ in range(missing):
+            self._spawn_worker()
 
     async def attach_run(self, context: IndexRunContext) -> None:
         async with self._coord_lock:
@@ -487,6 +518,7 @@ class WorkerCoordinator:
             state.queued.add(key)
             self._pending_counts[candidate.document_id] += 1
             self._idle_event.clear()
+        self._ensure_workers()
 
     def _dependency_signature(
         self, snapshot: DependencySnapshot

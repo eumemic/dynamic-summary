@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ from ragzoom.server.worker_coordinator import WorkerCoordinator
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.services.llm_service import LLMService
 from ragzoom.telemetry_types import TelemetryDataDict
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -87,8 +90,29 @@ async def create_runtime(
     try:
         yield RuntimeBundle(runtime, worker_coordinator, telemetry_manager)
     finally:
-        await worker_coordinator.wait_until_idle()
-        await worker_coordinator.shutdown()
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(worker_coordinator.wait_until_idle()),
+                timeout=30.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Benchmark runtime teardown: wait_until_idle timed out; forcing shutdown"
+            )
+        except asyncio.CancelledError:
+            logger.warning(
+                "Benchmark runtime teardown interrupted by cancellation; forcing shutdown"
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.exception(
+                "Benchmark runtime teardown: wait_until_idle failed", exc_info=exc
+            )
+        try:
+            await asyncio.shield(worker_coordinator.shutdown())
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.exception(
+                "Benchmark runtime teardown: shutdown failed", exc_info=exc
+            )
         await telemetry_manager.prune_expired()
 
 
