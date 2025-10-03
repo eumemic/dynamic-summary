@@ -10,6 +10,11 @@ from typing import cast
 
 import grpc
 
+from ragzoom.constants import (
+    DEFAULT_GRPC_ADDRESS,
+    DEFAULT_GRPC_STREAM_TIMEOUT,
+    DEFAULT_GRPC_TIMEOUT,
+)
 from ragzoom.rpc import dynamic_summary_pb2 as pb2
 from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
 from ragzoom.services.indexing_service import IndexingResult
@@ -120,9 +125,16 @@ class DocumentStatusView:
 class GrpcRagzoomClient:
     """Synchronous convenience wrapper for the RagZoom gRPC services."""
 
-    def __init__(self, address: str, *, timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        address: str = DEFAULT_GRPC_ADDRESS,
+        *,
+        timeout: float | None = None,
+        stream_timeout: float | None = DEFAULT_GRPC_STREAM_TIMEOUT,
+    ) -> None:
         self._address = address
-        self._timeout = timeout
+        self._timeout = DEFAULT_GRPC_TIMEOUT if timeout is None else timeout
+        self._stream_timeout = stream_timeout
         self._channel = grpc.insecure_channel(address)
         self._indexer: pb2_grpc.IndexerServiceStub = pb2_grpc.IndexerServiceStub(
             self._channel
@@ -259,7 +271,7 @@ class GrpcRagzoomClient:
     def iter_worker_snapshots(self) -> Iterator[WorkerRunSnapshot]:
         request = pb2.RunWorkersRequest(mode=pb2.WORKER_RUN_MODE_UNTIL_IDLE)
         try:
-            responses = self._workers.RunWorkers(request, timeout=self._timeout)
+            responses = self._workers.RunWorkers(request, timeout=self._stream_timeout)
             for resp in responses:
                 documents: dict[str, DocumentProgressSnapshot] = {}
                 for progress in resp.documents:

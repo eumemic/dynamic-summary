@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import suppress
@@ -87,7 +88,7 @@ def _stats_to_proto(stats: IndexingResult) -> pb2.DocumentStats:
     ):
         raise ValueError("IndexingResult is missing required mutation metadata")
 
-    telemetry_json = "" if stats.telemetry is None else json_dumps(stats.telemetry)
+    telemetry_json = "" if stats.telemetry is None else json.dumps(stats.telemetry)
     return pb2.DocumentStats(
         document_id=stats.document_id,
         chunks_created=stats.chunks_created,
@@ -98,12 +99,6 @@ def _stats_to_proto(stats: IndexingResult) -> pb2.DocumentStats:
         telemetry_json=telemetry_json,
         tree_depth=stats.tree_depth,
     )
-
-
-def json_dumps(data: object) -> str:
-    import json
-
-    return json.dumps(data)
 
 
 async def _abort(
@@ -550,7 +545,7 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         error_message = run.error or ""
         telemetry_payload = ""
         if not error_message and run.result is not None:
-            telemetry_payload = json_dumps(run.result)
+            telemetry_payload = json.dumps(run.result)
 
         response = response_cls(
             complete=True,
