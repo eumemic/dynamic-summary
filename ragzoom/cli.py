@@ -44,6 +44,7 @@ from ragzoom.server.app import ServerOptions, run_server
 from ragzoom.services.document_service import DocumentService
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.store import create_store_with_docker
+from ragzoom.telemetry_types import TelemetryDataDict
 from ragzoom.validation import validate_document
 from ragzoom.vector_factory import create_vector_index
 
@@ -642,8 +643,21 @@ def telemetry_export(document_id: str, output: str, server_address: str | None) 
     is_flag=True,
     help="Require the document tree to be fully summarized (single root).",
 )
+@click.option(
+    "--telemetry-file",
+    type=click.Path(exists=True, dir_okay=False, readable=True),
+    help=(
+        "Path to telemetry JSON file; when provided, cross-check contents "
+        "against stored nodes."
+    ),
+)
 @click.pass_context
-def validate(ctx: click.Context, document_id: str, complete: bool) -> None:
+def validate(
+    ctx: click.Context,
+    document_id: str,
+    complete: bool,
+    telemetry_file: str | None,
+) -> None:
     """Validate invariants for a document tree."""
 
     index_config: IndexConfig = ctx.obj["index_config"]
@@ -658,12 +672,37 @@ def validate(ctx: click.Context, document_id: str, complete: bool) -> None:
         index_config.embedding_model,
     )
 
+    telemetry_payload: TelemetryDataDict | None = None
+    if telemetry_file:
+        try:
+            with open(telemetry_file, encoding="utf-8") as fh:
+                telemetry_json = json.load(fh)
+        except OSError as exc:
+            click.echo(f"❌ Failed to read telemetry file: {exc}", err=True)
+            raise SystemExit(1)
+        except json.JSONDecodeError as exc:
+            click.echo(
+                f"❌ Telemetry file is not valid JSON: {exc.msg}",
+                err=True,
+            )
+            raise SystemExit(1)
+
+        if not isinstance(telemetry_json, dict):
+            click.echo(
+                "❌ Telemetry file must contain a JSON object at the top level.",
+                err=True,
+            )
+            raise SystemExit(1)
+
+        telemetry_payload = cast(TelemetryDataDict, telemetry_json)
+
     report = validate_document(
         document_id=document_id,
         store=store,
         vector_index=vector_index,
         require_complete=complete,
         target_chunk_tokens=index_config.target_chunk_tokens,
+        telemetry=telemetry_payload,
     )
 
     heading = (

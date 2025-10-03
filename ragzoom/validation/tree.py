@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
@@ -12,6 +13,7 @@ from ragzoom.contracts.tree_node import (
 )
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
+from ragzoom.telemetry_types import TelemetryDataDict
 
 Severity = Literal["error", "warning"]
 
@@ -81,6 +83,7 @@ def validate_document(
     require_complete: bool = False,
     target_chunk_tokens: int | None = None,
     chunk_tolerance: float = 0.2,
+    telemetry: TelemetryDataDict | None = None,
 ) -> ValidationReport:
     """Validate invariants for a single document.
 
@@ -117,6 +120,8 @@ def validate_document(
         _vector_index_consistency(snapshot, vector_index) if vector_index else []
     )
     findings.extend(_completeness_check(snapshot, require_complete=require_complete))
+    if telemetry is not None:
+        findings.extend(_telemetry_consistency(snapshot, telemetry))
 
     metrics = {
         "node_count": len(snapshot.nodes),
@@ -138,6 +143,186 @@ def _build_snapshot(document_id: str, doc_store: DocumentStore) -> DocumentSnaps
         leaves=leaves,
         parentless=parentless,
     )
+
+
+def _telemetry_consistency(
+    snapshot: DocumentSnapshot, telemetry: TelemetryDataDict
+) -> list[ValidationFinding]:
+    findings: list[ValidationFinding] = []
+
+    telemetry_document_id = telemetry.get("document_id")
+    if (
+        isinstance(telemetry_document_id, str)
+        and telemetry_document_id != snapshot.document_id
+    ):
+        findings.append(
+            ValidationFinding(
+                code="telemetry.document_mismatch",
+                message=(
+                    "Telemetry document_id does not match target document: "
+                    f"{telemetry_document_id} != {snapshot.document_id}"
+                ),
+            )
+        )
+
+    raw_nodes = telemetry.get("nodes")
+    if not isinstance(raw_nodes, list):
+        findings.append(
+            ValidationFinding(
+                code="telemetry.nodes.invalid",
+                message="Telemetry payload is missing a valid 'nodes' list",
+            )
+        )
+        return findings
+
+    telemetry_nodes: dict[str, Mapping[str, object]] = {}
+    for index, entry in enumerate(raw_nodes):
+        if not isinstance(entry, dict):
+            findings.append(
+                ValidationFinding(
+                    code="telemetry.node.invalid",
+                    message=(
+                        "Telemetry entry at index " f"{index} is not a JSON object"
+                    ),
+                )
+            )
+            continue
+
+        raw_node_id = entry.get("node_id")
+        if not isinstance(raw_node_id, str) or not raw_node_id:
+            findings.append(
+                ValidationFinding(
+                    code="telemetry.node.missing_id",
+                    message=(
+                        "Telemetry entry at index "
+                        f"{index} is missing a valid node_id"
+                    ),
+                )
+            )
+            continue
+
+        if raw_node_id in telemetry_nodes:
+            findings.append(
+                ValidationFinding(
+                    code="telemetry.node.duplicate",
+                    message=(
+                        "Telemetry contains multiple entries for node " f"{raw_node_id}"
+                    ),
+                    node_id=raw_node_id,
+                )
+            )
+            continue
+
+        telemetry_nodes[raw_node_id] = entry
+
+    node_lookup = snapshot.node_lookup
+
+    for node_id, node in node_lookup.items():
+        if node_id not in telemetry_nodes:
+            findings.append(
+                ValidationFinding(
+                    code="telemetry.node.missing",
+                    message=("Database node is missing from telemetry payload"),
+                    node_id=node_id,
+                )
+            )
+
+    for node_id in telemetry_nodes:
+        if node_id not in node_lookup:
+            findings.append(
+                ValidationFinding(
+                    code="telemetry.node.unexpected",
+                    message="Telemetry references a node not present in storage",
+                    node_id=node_id,
+                )
+            )
+
+    for node_id, node in node_lookup.items():
+        telemetry_entry = telemetry_nodes.get(node_id)
+        if telemetry_entry is None:
+            continue
+
+        telemetry_height = telemetry_entry.get("height")
+        if telemetry_height is None:
+            findings.append(
+                ValidationFinding(
+                    code="telemetry.missing.height",
+                    message="Telemetry entry is missing height",
+                    node_id=node_id,
+                )
+            )
+        else:
+            coerced_height = _coerce_int(telemetry_height)
+            if coerced_height is None:
+                findings.append(
+                    ValidationFinding(
+                        code="telemetry.invalid.height",
+                        message="Telemetry height is not an integer",
+                        node_id=node_id,
+                    )
+                )
+            elif coerced_height != node.height:
+                findings.append(
+                    ValidationFinding(
+                        code="telemetry.mismatch.height",
+                        message=(
+                            "Telemetry height does not match stored height: "
+                            f"{coerced_height} != {node.height}"
+                        ),
+                        node_id=node_id,
+                    )
+                )
+
+        if "span" in telemetry_entry:
+            telemetry_span = _coerce_span(telemetry_entry.get("span"))
+            if telemetry_span is None:
+                findings.append(
+                    ValidationFinding(
+                        code="telemetry.invalid.span",
+                        message="Telemetry span is not a two-element integer sequence",
+                        node_id=node_id,
+                    )
+                )
+            else:
+                expected_span = (int(node.span_start), int(node.span_end))
+                if telemetry_span != expected_span:
+                    findings.append(
+                        ValidationFinding(
+                            code="telemetry.mismatch.span",
+                            message=(
+                                "Telemetry span does not match stored span: "
+                                f"{telemetry_span} != {expected_span}"
+                            ),
+                            node_id=node_id,
+                        )
+                    )
+
+    return findings
+
+
+def _coerce_int(value: object) -> int | None:
+    if isinstance(value, bool):  # bool is subclass of int; reject explicitly
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _coerce_span(value: object) -> tuple[int, int] | None:
+    if isinstance(value, list | tuple) and len(value) == 2:
+        start = _coerce_int(value[0])
+        end = _coerce_int(value[1])
+        if start is None or end is None:
+            return None
+        return (start, end)
+    return None
 
 
 def _nodes_exist(snapshot: DocumentSnapshot) -> list[ValidationFinding]:
