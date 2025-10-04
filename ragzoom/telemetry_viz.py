@@ -7,6 +7,7 @@ simplified metrics in telemetry_cli.py.
 
 import json
 import logging
+import numbers
 import os
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -1490,6 +1491,50 @@ class TelemetryVisualizer:
         # Extract nodes from telemetry
         nodes = self._extract_nodes_from_telemetry(telemetry)
 
+        def _to_float(value: object) -> float | None:
+            return float(value) if isinstance(value, numbers.Real) else None
+
+        append_chunks: list[dict[str, float | None]] = []
+        append_history = telemetry.get("append_history")
+        if isinstance(append_history, list):
+            for entry in append_history:
+                if not isinstance(entry, dict):
+                    continue
+                chunk_split = entry.get("chunk_split")
+                if not isinstance(chunk_split, dict):
+                    continue
+                start_time = _to_float(chunk_split.get("start_time"))
+                end_time = _to_float(chunk_split.get("end_time"))
+                span_start = _to_float(entry.get("span_start"))
+                span_end = _to_float(entry.get("span_end"))
+                append_chunks.append(
+                    {
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "span_start": span_start,
+                        "span_end": span_end,
+                    }
+                )
+
+        if not append_chunks:
+            chunk_split = telemetry.get("chunk_split")
+            if isinstance(chunk_split, dict):
+                start_time = _to_float(chunk_split.get("start_time"))
+                end_time = _to_float(chunk_split.get("end_time"))
+                span_start = span_end = None
+                append_meta = telemetry.get("append_metadata")
+                if isinstance(append_meta, dict):
+                    span_start = _to_float(append_meta.get("span_start"))
+                    span_end = _to_float(append_meta.get("span_end"))
+                append_chunks.append(
+                    {
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "span_start": span_start,
+                        "span_end": span_end,
+                    }
+                )
+
         # Define retry attempt colors (1=blue, 2=green, 3=yellow, 4=orange, 5+=red)
         attempt_colors = ATTEMPT_COLORS
 
@@ -1559,6 +1604,46 @@ class TelemetryVisualizer:
                 )
 
             span_start, span_end = node_spans[node_id]
+
+            # Render leaf text generation windows using chunk split telemetry
+            if node.get("height") == 0 and append_chunks:
+                chunk_info = None
+                for info in append_chunks:
+                    start_span = info.get("span_start")
+                    end_span = info.get("span_end")
+                    if start_span is not None and end_span is not None:
+                        if span_start >= start_span and span_end <= end_span:
+                            chunk_info = info
+                            break
+                    elif info.get("start_time") is not None:
+                        chunk_info = info
+                        break
+
+                if chunk_info is not None:
+                    start_time = chunk_info.get("start_time")
+                    end_time = chunk_info.get("end_time")
+                    if isinstance(start_time, float) and isinstance(end_time, float):
+                        if indexing_start_time is None and min_time is None:
+                            min_time = start_time
+                        baseline, min_time = self._calculate_timeline_baseline(
+                            indexing_start_time, min_time, start_time
+                        )
+                        duration = max(end_time - start_time, 0.1)
+                        max_time = max(max_time, end_time)
+                        rect = Rectangle(
+                            (
+                                span_start,
+                                start_time - baseline,
+                            ),
+                            max(1, span_end - span_start - gap),
+                            duration,
+                            facecolor=attempt_colors[0],
+                            edgecolor="black",
+                            linewidth=0.5,
+                            alpha=0.9,
+                            zorder=1,
+                        )
+                        ax.add_patch(rect)
 
             # First, process embedding operations for ALL nodes (including leaves)
             embedding = node.get("embedding")

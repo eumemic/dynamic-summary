@@ -101,6 +101,13 @@ def synthesize_document_telemetry(
                 }
             )
             if outcome is not None:
+                span_start = outcome.get("span_start")
+                span_end = outcome.get("span_end")
+                if span_start is not None:
+                    entry["span_start"] = span_start
+                if span_end is not None:
+                    entry["span_end"] = span_end
+            if outcome is not None:
                 chunk_split = _as_mapping(outcome.get("chunk_split"))
                 if chunk_split:
                     entry["chunk_split"] = dict(chunk_split)
@@ -160,12 +167,16 @@ def synthesize_document_telemetry(
     if last_outcome is not None:
         append_metadata = {
             "scope": "append",
-            "span_start": last_outcome.get("span_start"),
-            "span_end": last_outcome.get("span_end"),
             "mutated_nodes": last_outcome.get("mutated_nodes"),
             "summary_nodes": last_outcome.get("summary_nodes"),
             "leaf_delta": last_outcome.get("leaf_delta"),
         }
+        span_start = last_outcome.get("span_start")
+        span_end = last_outcome.get("span_end")
+        if span_start is not None:
+            append_metadata["span_start"] = span_start
+        if span_end is not None:
+            append_metadata["span_end"] = span_end
         result["append_metadata"] = {
             key: value for key, value in append_metadata.items() if value is not None
         }
