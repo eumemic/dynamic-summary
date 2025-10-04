@@ -37,6 +37,7 @@ class TreeNode(Protocol):
     is_pinned: bool | int
     preceding_neighbor_id: str | None
     following_neighbor_id: str | None
+    level_index: int
 
     # Optional helpers many implementations already provide
     def is_leaf(self) -> bool: ...  # pragma: no cover - protocol signature
@@ -78,3 +79,37 @@ def get_depth(node: TreeNode) -> int:
                 "define get_depth() or provide a depth attribute."
             )
         return int(depth_attr)
+
+
+def is_left_child(node: TreeNode) -> bool:
+    """Backend-agnostic check for whether node is a left child."""
+
+    method = getattr(node, "is_left_child", None)
+    if callable(method):
+        try:
+            return bool(method())
+        except Exception:
+            pass
+    level_index = getattr(node, "level_index", None)
+    if level_index is None:
+        raise AttributeError(
+            "TreeNode does not expose level_index; cannot infer left-child status"
+        )
+    return int(level_index) % 2 == 0
+
+
+def is_right_child(node: TreeNode) -> bool:
+    """Backend-agnostic check for whether node is a right child."""
+
+    method = getattr(node, "is_right_child", None)
+    if callable(method):
+        try:
+            return bool(method())
+        except Exception:
+            pass
+    level_index = getattr(node, "level_index", None)
+    if level_index is None:
+        raise AttributeError(
+            "TreeNode does not expose level_index; cannot infer right-child status"
+        )
+    return int(level_index) % 2 == 1

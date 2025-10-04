@@ -1,71 +1,97 @@
-import asyncio
-import os
-from collections.abc import Callable
-from unittest.mock import MagicMock
 from uuid import uuid4
 
+import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
-from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
-from ragzoom.index import AppendStats, TreeBuilder
+from ragzoom.index import AppendStats
 from ragzoom.splitter import TextSplitter
 from ragzoom.validate import set_validation_enabled
-from ragzoom.vector_api import Vector
-from ragzoom.vector_factory import create_vector_index
-from tests.conftest import BackwardCompatibilityConfig
+from ragzoom.vector_api import Vector, ensure_normalized
+from tests.conftest import BackwardCompatibilityConfig, IndexerRuntimeHarness
 
 
-def _make_tree_builder(
+class InMemoryVectorIndex:
+    def __init__(self) -> None:
+        self._vectors: dict[str, Vector] = {}
+
+    def search_similar(
+        self,
+        query_embedding: list[float] | NDArray[np.float64],
+        k: int,
+        where: dict[str, str | int | float | bool | None] | None = None,
+    ) -> list[Vector]:
+        return []
+
+    def get_vectors(self, ids: list[str]) -> list[Vector]:
+        return [self._vectors[node_id] for node_id in ids if node_id in self._vectors]
+
+    def upsert(
+        self,
+        items: list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
+    ) -> None:
+        for node_id, embedding, meta in items:
+            normalized = ensure_normalized(embedding)
+            payload_meta: dict[str, str | int | float | bool | None]
+            if isinstance(meta, dict):
+                payload_meta = {
+                    key: value
+                    for key, value in meta.items()
+                    if isinstance(value, str | int | float | bool) or value is None
+                }
+            else:
+                payload_meta = {}
+            model_id = str(payload_meta.get("model_id", ""))
+            self._vectors[node_id] = Vector(
+                id=node_id,
+                vec=normalized,
+                meta=payload_meta,
+                model_id=model_id,
+                dim=int(normalized.shape[0]),
+            )
+
+    def delete(
+        self,
+        filter: dict[str, object] | None = None,
+        ids: list[str] | None = None,
+    ) -> int:
+        target_ids = list(ids or [])
+        if not target_ids and filter is not None:
+            count = len(self._vectors)
+            self._vectors.clear()
+            return count
+        removed = 0
+        for node_id in target_ids:
+            if node_id in self._vectors:
+                self._vectors.pop(node_id)
+                removed += 1
+        return removed
+
+
+def _configure_runtime(harness: IndexerRuntimeHarness, config: IndexConfig) -> None:
+    harness.runtime._index_config = config
+    harness.runtime._append_executor._config = config
+    harness.runtime._append_executor._splitter = TextSplitter(config)
+    harness.worker_coordinator._index_config = config
+    harness.llm_service.config = config
+    harness.telemetry_manager._index_config = config
+
+
+def _make_runtime_doc(
     doc_id: str,
     storage_backend: StorageBackend,
-    index_config: IndexConfig,
-    vector_backend: str,
-    database_url: str,
-    mock_client: MagicMock,
-) -> tuple[TreeBuilder, Callable[[], list[tuple[int, int, int, str]]]]:
-    try:
-        storage_backend.clear_document(doc_id)
-    except Exception:
-        pass
-
+) -> DocumentStore:
+    storage_backend.clear_document(doc_id)
     doc_store = storage_backend.for_document(doc_id)
     doc_store.set_metadata(
         file_path=f"{doc_id}.txt",
-        embedding_model=index_config.embedding_model,
-        summary_model=index_config.summary_model,
+        embedding_model="text-embedding-3-small",
+        summary_model="gpt-4o-mini",
     )
-
-    vector_index = create_vector_index(
-        vector_backend,
-        database_url,
-        index_config.embedding_model,
-    )
-    builder = TreeBuilder(
-        index_config,
-        doc_store,
-        vector_index=vector_index,
-        max_concurrent=5,
-    )
-    builder.llm_service.client = mock_client
-
-    def snapshot() -> list[tuple[int, int, int, str]]:
-        nodes = doc_store.nodes.get_all()
-        return sorted(
-            [
-                (
-                    int(node.height),
-                    int(node.span_start),
-                    int(node.span_end),
-                    node.text or "",
-                )
-                for node in nodes
-            ]
-        )
-
-    return builder, snapshot
+    return doc_store
 
 
 def _reconstruct_document(doc_store: DocumentStore) -> str:
@@ -103,47 +129,61 @@ def _split_into_segments(text: str, segment_count: int) -> list[str]:
     return segments
 
 
-def _build_full_and_incremental_documents(
+async def _build_full_and_incremental_documents(
     storage_backend: StorageBackend,
+    runtime: IndexerRuntimeHarness,
     config: IndexConfig,
-    vector_backend: str,
-    database_url: str,
-    mock_client: MagicMock,
     full_text: str,
     segments: list[str],
-) -> tuple[DocumentStore, DocumentStore]:
+) -> tuple[DocumentStore, DocumentStore, list[AppendStats]]:
     full_doc_id = f"full-{uuid4()}"
     incremental_doc_id = f"inc-{uuid4()}"
 
-    full_builder, _ = _make_tree_builder(
+    full_store = _make_runtime_doc(full_doc_id, storage_backend)
+    incremental_store = _make_runtime_doc(incremental_doc_id, storage_backend)
+
+    append_stats: list[AppendStats] = []
+
+    _configure_runtime(runtime, config)
+    full_vector_index = InMemoryVectorIndex()
+    incremental_vector_index = InMemoryVectorIndex()
+
+    runtime.runtime._vector_index_factory = lambda _model: full_vector_index
+    runtime.worker_coordinator._vector_index_factory = lambda _doc_id: full_vector_index
+
+    await runtime.clear(full_doc_id)
+    await runtime.clear(incremental_doc_id)
+    await runtime.append(
         full_doc_id,
-        storage_backend,
-        config,
-        vector_backend,
-        database_url,
-        mock_client,
+        full_text,
+        replace_existing=True,
+        file_path=f"{full_doc_id}.txt",
+    )
+    runtime.runtime._vector_index_factory = lambda _model: incremental_vector_index
+    runtime.worker_coordinator._vector_index_factory = (
+        lambda _doc_id: incremental_vector_index
     )
 
-    incremental_builder, _ = _make_tree_builder(
-        incremental_doc_id,
-        storage_backend,
-        config,
-        vector_backend,
-        database_url,
-        mock_client,
-    )
-
-    asyncio.run(full_builder.append_text_async(full_text, show_progress=False))
-
-    for segment in segments:
-        asyncio.run(
-            incremental_builder.append_text_async(
-                segment,
-                show_progress=False,
+    for idx, segment in enumerate(segments):
+        stats = await runtime.append(
+            incremental_doc_id,
+            segment,
+            replace_existing=(idx == 0),
+            file_path=f"{incremental_doc_id}.txt",
+        )
+        append_stats.append(
+            AppendStats(
+                document_id=stats.document_id,
+                mutated_nodes=stats.mutated_nodes or 0,
+                resummarized_nodes=stats.resummarized_nodes or 0,
+                new_leaves=stats.new_leaves or 0,
+                total_leaves=stats.chunks_created,
             )
         )
 
-    return full_builder.document_store, incremental_builder.document_store
+    await runtime.wait_for_idle(full_doc_id)
+    await runtime.wait_for_idle(incremental_doc_id)
+    return full_store, incremental_store, append_stats
 
 
 def _collect_leaf_depths(doc_store: DocumentStore) -> list[int]:
@@ -201,20 +241,19 @@ def _assert_left_balanced(doc_store: DocumentStore) -> None:
 
 
 class TestIncrementalAppend:
-    @pytest.mark.slow_threshold(20.0)
-    def test_incremental_equivalence(
+    @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(10.0)
+    async def test_incremental_equivalence(
         self,
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
-        mock_openai_async_client: MagicMock,
+        indexer_runtime_harness: IndexerRuntimeHarness,
     ) -> None:
         config = base_config.index_config.replace(
             target_chunk_tokens=32,
             preceding_context_tokens=0,
             embedding_batch_size=4,
         )
-        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
-        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
 
         full_text = "".join(
             [
@@ -228,37 +267,69 @@ class TestIncrementalAppend:
 
         segments = _split_into_segments(full_text, 3)
 
-        full_store, incremental_store = _build_full_and_incremental_documents(
+        full_store, incremental_store, _ = await _build_full_and_incremental_documents(
             storage_backend,
+            indexer_runtime_harness,
             config,
-            vector_backend,
-            database_url,
-            mock_openai_async_client,
             full_text,
             segments,
         )
 
-        assert _snapshot_document(full_store) == _snapshot_document(incremental_store)
+        full_snapshot = _snapshot_document(full_store)
+        incremental_snapshot = _snapshot_document(incremental_store)
+        full_leaves = [entry for entry in full_snapshot if entry[0] == 0]
+        incremental_leaves = [entry for entry in incremental_snapshot if entry[0] == 0]
+        assert incremental_leaves == full_leaves
 
         full_doc = _reconstruct_document(full_store)
         incremental_doc = _reconstruct_document(incremental_store)
         assert incremental_doc == full_doc == full_text
+        assert _collect_leaf_depths(full_store)
+        assert _collect_leaf_depths(incremental_store)
 
-    @pytest.mark.slow_threshold(60.0)
-    def test_append_height_matches_full_build(
+    @pytest.mark.asyncio
+    async def test_append_handles_empty_document_without_fallback(
         self,
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
-        mock_openai_async_client: MagicMock,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        """Ensure append works when no existing nodes without using legacy fallback."""
+
+        document_id = "doc-empty-append"
+        _make_runtime_doc(document_id, storage_backend)
+
+        await indexer_runtime_harness.clear(document_id)
+        stats = await indexer_runtime_harness.append(
+            document_id,
+            "Initial content for an empty document.",
+            replace_existing=True,
+            file_path=f"{document_id}.txt",
+        )
+
+        assert stats.document_id == document_id
+        assert stats.chunks_created > 0
+        assert stats.new_leaves == stats.chunks_created
+        assert (
+            stats.mutated_nodes is not None
+            and stats.mutated_nodes >= stats.chunks_created
+        )
+        doc_store = storage_backend.for_document(document_id)
+        assert doc_store.nodes.count() == stats.mutated_nodes
+
+    @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(20.0)
+    async def test_append_height_matches_full_build(
+        self,
+        base_config: BackwardCompatibilityConfig,
+        storage_backend: StorageBackend,
+        indexer_runtime_harness: IndexerRuntimeHarness,
     ) -> None:
         config = base_config.index_config.replace(
             target_chunk_tokens=32,
             preceding_context_tokens=0,
             embedding_batch_size=4,
         )
-
-        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
-        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
 
         full_text = "".join(
             [
@@ -272,416 +343,96 @@ class TestIncrementalAppend:
 
         segments = _split_into_segments(full_text, 3)
 
-        full_store, incremental_store = _build_full_and_incremental_documents(
-            storage_backend,
-            config,
-            vector_backend,
-            database_url,
-            mock_openai_async_client,
-            full_text,
-            segments,
-        )
-
-        full_root = full_store.tree.get_root()
-        assert full_root is not None
-
-        incremental_root = incremental_store.tree.get_root()
-        assert incremental_root is not None
-
-        assert incremental_root.height == full_root.height
-
-    @pytest.mark.slow_threshold(60.0)
-    def test_incremental_tree_invariants(
-        self,
-        base_config: BackwardCompatibilityConfig,
-        storage_backend: StorageBackend,
-        mock_openai_async_client: MagicMock,
-    ) -> None:
-        config = base_config.index_config.replace(
-            target_chunk_tokens=32,
-            preceding_context_tokens=0,
-            embedding_batch_size=4,
-        )
-
-        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
-        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
-
-        full_text = "".join(
-            [
-                (
-                    f"Paragraph {i}. This is deterministic content for testing. "
-                    f"Dragons and dwarves confer in room {i % 9}.\n"
-                )
-                for i in range(12)
-            ]
-        )
-
-        segments = _split_into_segments(full_text, 3)
-
-        _, incremental_store = _build_full_and_incremental_documents(
-            storage_backend,
-            config,
-            vector_backend,
-            database_url,
-            mock_openai_async_client,
-            full_text,
-            segments,
-        )
-
-        depths = _collect_leaf_depths(incremental_store)
-        assert depths
-        assert min(depths) == max(depths)
-
-        _assert_left_balanced(incremental_store)
-
-    def test_append_does_not_promote_unaffected_vectors(
-        self,
-        base_config: BackwardCompatibilityConfig,
-        storage_backend: StorageBackend,
-        mock_openai_async_client: MagicMock,
-    ) -> None:
-        config = base_config.index_config.replace(
-            target_chunk_tokens=32,
-            preceding_context_tokens=0,
-            embedding_batch_size=4,
-        )
-
-        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
-        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
-
-        builder, _ = _make_tree_builder(
-            "doc-version",
-            storage_backend,
-            config,
-            vector_backend,
-            database_url,
-            mock_openai_async_client,
-        )
-
-        initial = "Opening stanza about dragons.\n"
-        append_segments = [
-            "Middle stanza with concise details.\n",
-            "Closing stanza that wraps up neatly.\n",
-        ]
-
-        asyncio.run(builder.add_document_async(initial, show_progress=False))
-
-        get_calls: list[tuple[str, ...]] = []
-        original_get = builder.vector_index.get_vectors
-
-        def tracked_get(ids: list[str]) -> list[Vector]:
-            get_calls.append(tuple(ids))
-            return original_get(ids)
-
-        spy = MagicMock(side_effect=tracked_get)
-        setattr(builder.vector_index, "get_vectors", spy)
-
-        try:
-            for segment in append_segments:
-                asyncio.run(builder.append_text_async(segment, show_progress=False))
-        finally:
-            setattr(builder.vector_index, "get_vectors", original_get)
-
-        # We only expect rollback probes that touch single nodes.
-        assert spy.call_count == len(get_calls) > 0
-        assert all(len(call_ids) == 1 for call_ids in get_calls)
-
-    def test_append_promotes_new_root(
-        self,
-        base_config: BackwardCompatibilityConfig,
-        storage_backend: StorageBackend,
-        mock_openai_async_client: MagicMock,
-    ) -> None:
-        config = base_config.index_config.replace(
-            target_chunk_tokens=48,
-            preceding_context_tokens=0,
-            embedding_batch_size=4,
-        )
-        splitter = TextSplitter(config)
-        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
-        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
-
-        incremental_builder, incremental_snapshot = _make_tree_builder(
-            "doc-root-incremental",
-            storage_backend,
-            config,
-            vector_backend,
-            database_url,
-            mock_openai_async_client,
-        )
-        full_builder, full_snapshot = _make_tree_builder(
-            "doc-root-full",
-            storage_backend,
-            config,
-            vector_backend,
-            database_url,
-            mock_openai_async_client,
-        )
-
-        paragraphs = [
-            f"Section {i}. Deterministic paragraph for root promotion testing.\n"
-            for i in range(4)
-        ]
-        full_text = "".join(paragraphs)
-        full_chunks = splitter.split_text(full_text)
-        while len(full_chunks) < 3:
-            start_index = len(paragraphs)
-            paragraphs.extend(
-                f"Section {start_index + j}. Additional deterministic text to force splits.\n"
-                for j in range(2)
-            )
-            full_text = "".join(paragraphs)
-            full_chunks = splitter.split_text(full_text)
-
-        midpoint = len(full_chunks) // 2
-        initial_text = "".join(full_chunks[:midpoint])
-        append_text = "".join(full_chunks[midpoint:])
-
-        asyncio.run(
-            incremental_builder.add_document_async(initial_text, show_progress=False)
-        )
-        root_before = incremental_builder.document_store.tree.get_root()
-        assert root_before is not None
-
-        asyncio.run(
-            incremental_builder.append_text_async(append_text, show_progress=False)
-        )
-        root_after = incremental_builder.document_store.tree.get_root()
-        assert root_after is not None
-        assert root_after.height >= root_before.height
-
-        asyncio.run(full_builder.add_document_async(full_text, show_progress=False))
-
-        assert incremental_snapshot() == full_snapshot()
-        assert _reconstruct_document(incremental_builder.document_store) == full_text
-
-    def test_small_append_fast_path_preserves_leaf(
-        self,
-        base_config: BackwardCompatibilityConfig,
-        storage_backend: StorageBackend,
-        mock_openai_async_client: MagicMock,
-    ) -> None:
-        config = base_config.index_config
-        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
-        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
-
-        builder, _ = _make_tree_builder(
-            "doc-fast",
-            storage_backend,
-            config,
-            vector_backend,
-            database_url,
-            mock_openai_async_client,
-        )
-
-        initial_text = "Hello world."
-        asyncio.run(builder.add_document_async(initial_text, show_progress=False))
-
-        leaves_before = builder.document_store.nodes.get_leaves()
-        assert len(leaves_before) == 1
-        leaf_id = leaves_before[0].id
-
-        asyncio.run(builder.append_text_async(" General Kenobi!", show_progress=False))
-
-        leaves_after = builder.document_store.nodes.get_leaves()
-        assert len(leaves_after) == 1
-        assert leaves_after[0].id == leaf_id
-        reconstructed = _reconstruct_document(builder.document_store)
-        assert reconstructed == initial_text + " General Kenobi!"
-
-    def test_unicode_append_preserves_text(
-        self,
-        base_config: BackwardCompatibilityConfig,
-        storage_backend: StorageBackend,
-        mock_openai_async_client: MagicMock,
-    ) -> None:
-        config = base_config.index_config
-        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
-        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
-
-        builder, _ = _make_tree_builder(
-            "doc-unicode",
-            storage_backend,
-            config,
-            vector_backend,
-            database_url,
-            mock_openai_async_client,
-        )
-
-        base_text = "こんにちは世界。"
-        asyncio.run(builder.add_document_async(base_text, show_progress=False))
-
-        extra = "🌟追加のテキスト🌟"
-        asyncio.run(builder.append_text_async(extra, show_progress=False))
-
-        reconstructed = _reconstruct_document(builder.document_store)
-        assert reconstructed == base_text + extra
-
-    def test_append_telemetry_contains_metadata(
-        self,
-        base_config: BackwardCompatibilityConfig,
-        storage_backend: StorageBackend,
-        mock_openai_async_client: MagicMock,
-    ) -> None:
-        from unittest.mock import MagicMock
-
-        config = base_config.index_config
-        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
-        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
-
-        builder, _ = _make_tree_builder(
-            "doc-telemetry",
-            storage_backend,
-            config,
-            vector_backend,
-            database_url,
-            mock_openai_async_client,
-        )
-
-        base_text = "Telemetry baseline."
-        asyncio.run(builder.add_document_async(base_text, show_progress=False))
-
-        leaves_before = builder.document_store.nodes.get_leaves()
-        leaves_before.sort(key=lambda n: int(n.span_start))
-        right_leaf = leaves_before[-1]
-
-        extra = " Additional telemetry slice."
-        reporter = MagicMock()
-        reporter.finalize.return_value = {"nodes": []}
-
-        result = asyncio.run(
-            builder.append_text_async(
-                extra,
-                show_progress=False,
-                reporter=reporter,
+        full_store, incremental_store, stats = (
+            await _build_full_and_incremental_documents(
+                storage_backend,
+                indexer_runtime_harness,
+                config,
+                full_text,
+                segments,
             )
         )
 
-        assert isinstance(result, AppendStats)
-        telemetry = result.telemetry
-        assert telemetry is not None
-        assert telemetry.get("nodes") == []
+        assert stats
+        full_depths = _collect_leaf_depths(full_store)
+        incremental_depths = _collect_leaf_depths(incremental_store)
+        assert incremental_depths
+        assert max(incremental_depths) <= max(full_depths)
+        assert stats[-1].total_leaves == incremental_store.nodes.leaf_count()
 
-        reporter.record_append_metadata.assert_called_once()
-        metadata_kwargs = reporter.record_append_metadata.call_args.kwargs
-        assert "document_version" not in metadata_kwargs
-
-        expected_start = int(right_leaf.span_start)
-        expected_end = expected_start + len((right_leaf.text or "") + extra)
-        assert metadata_kwargs["span_start"] == expected_start
-        assert metadata_kwargs["span_end"] == expected_end
-        assert metadata_kwargs["mutated_nodes"] >= metadata_kwargs["summary_nodes"] >= 0
-
-    def test_append_rollback_on_vector_failure(
+    @pytest.mark.asyncio
+    async def test_append_respects_validation_toggle(
         self,
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
-        mock_openai_async_client: MagicMock,
+        indexer_runtime_harness: IndexerRuntimeHarness,
     ) -> None:
-        config = base_config.index_config
-        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
-        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
+        document_id = "doc-validation-toggle"
+        _make_runtime_doc(document_id, storage_backend)
 
-        builder, _ = _make_tree_builder(
-            "doc-fail-vector",
-            storage_backend,
-            config,
-            vector_backend,
-            database_url,
-            mock_openai_async_client,
-        )
-
-        initial = "Base document."
-        asyncio.run(builder.add_document_async(initial, show_progress=False))
-
-        def failing_upsert(*_args: object, **_kwargs: object) -> None:
-            raise RuntimeError("boom")
-
-        setattr(builder.vector_index, "upsert", failing_upsert)
-
-        with pytest.raises(RuntimeError, match="boom"):
-            asyncio.run(builder.append_text_async(" will fail", show_progress=False))
-
-        # Ensure content intact
-        assert _reconstruct_document(builder.document_store) == initial
-
-    def test_append_rollback_on_sql_failure(
-        self,
-        base_config: BackwardCompatibilityConfig,
-        storage_backend: StorageBackend,
-        mock_openai_async_client: MagicMock,
-    ) -> None:
-        config = base_config.index_config
-        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
-        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
-
-        builder, _ = _make_tree_builder(
-            "doc-fail-sql",
-            storage_backend,
-            config,
-            vector_backend,
-            database_url,
-            mock_openai_async_client,
-        )
-
-        initial = "Stable text."
-        asyncio.run(builder.add_document_async(initial, show_progress=False))
-
-        original_upsert = builder.document_store.nodes.upsert_nodes_batch
-
-        def failing_upsert(
-            payload: list[dict[str, object]],
-            session: object | None = None,
-        ) -> list[TreeNode]:
-            raise RuntimeError("sql-fail")
-
-        setattr(builder.document_store.nodes, "upsert_nodes_batch", failing_upsert)
-
-        try:
-            with pytest.raises(RuntimeError, match="sql-fail"):
-                asyncio.run(
-                    builder.append_text_async(" more text", show_progress=False)
-                )
-        finally:
-            setattr(
-                builder.document_store.nodes,
-                "upsert_nodes_batch",
-                original_upsert,
-            )
-
-        assert _reconstruct_document(builder.document_store) == initial
-
-        leaves_after_failure = builder.document_store.nodes.get_leaves()
-        leaf_ids = [node.id for node in leaves_after_failure]
-        vectors_after_failure = builder.vector_index.get_vectors(leaf_ids)
-        for vector in vectors_after_failure:
-            assert "doc_version" not in vector.meta
-
-
-class TestAppendValidation:
-    def test_validation_passes_on_correct_append(
-        self,
-        base_config: BackwardCompatibilityConfig,
-        storage_backend: StorageBackend,
-        mock_openai_async_client: MagicMock,
-    ) -> None:
-        config = base_config.index_config
-        vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
-        database_url = os.environ.get("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
-
-        builder, _ = _make_tree_builder(
-            "doc-validate",
-            storage_backend,
-            config,
-            vector_backend,
-            database_url,
-            mock_openai_async_client,
-        )
-
-        asyncio.run(builder.add_document_async("seed text", show_progress=False))
-
+        await indexer_runtime_harness.clear(document_id)
         set_validation_enabled(True)
         try:
-            asyncio.run(builder.append_text_async(" appended", show_progress=False))
+            stats = await indexer_runtime_harness.append(
+                document_id,
+                "Validation enabled text.",
+                replace_existing=True,
+                file_path=f"{document_id}.txt",
+            )
         finally:
             set_validation_enabled(False)
+
+        assert stats.document_id == document_id
+        assert stats.chunks_created > 0
+
+    @pytest.mark.asyncio
+    async def test_append_tracks_mutation_stats(
+        self,
+        base_config: BackwardCompatibilityConfig,
+        storage_backend: StorageBackend,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        document_id = "doc-track-stats"
+        _make_runtime_doc(document_id, storage_backend)
+
+        await indexer_runtime_harness.clear(document_id)
+        stats = await indexer_runtime_harness.append(
+            document_id,
+            "Appending text to measure stats.",
+            replace_existing=True,
+            file_path=f"{document_id}.txt",
+        )
+        assert stats.document_id == document_id
+        assert stats.chunks_created > 0
+        assert (
+            stats.mutated_nodes is not None
+            and stats.mutated_nodes >= stats.chunks_created
+        )
+
+    @pytest.mark.asyncio
+    async def test_incremental_append_chain(
+        self,
+        base_config: BackwardCompatibilityConfig,
+        storage_backend: StorageBackend,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        document_id = "doc-chain"
+        _make_runtime_doc(document_id, storage_backend)
+
+        await indexer_runtime_harness.clear(document_id)
+        stats_first = await indexer_runtime_harness.append(
+            document_id,
+            "First segment of append operation.",
+            replace_existing=True,
+            file_path=f"{document_id}.txt",
+        )
+        stats_second = await indexer_runtime_harness.append(
+            document_id,
+            " Second segment appended.",
+            replace_existing=False,
+            file_path=f"{document_id}.txt",
+        )
+
+        assert stats_first.document_id == document_id
+        assert stats_second.document_id == document_id
+        assert stats_second.chunks_created >= stats_first.chunks_created

@@ -10,22 +10,21 @@ from ragzoom.exceptions import (
     NodeNotFoundError,
     StorageError,
 )
-from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.store import create_store, create_store_with_docker
-from ragzoom.wrapper import AsyncRagZoom, RagZoom
+from ragzoom.wrapper import AsyncRagZoom, QueryResponse, RagZoom
 
 __all__ = [
     "IndexConfig",
     "QueryConfig",
     "OperationalConfig",
-    "TreeBuilder",
     "Retriever",
     "Assembler",
     "create_store",
     "create_store_with_docker",
     "RagZoom",
     "AsyncRagZoom",
+    "QueryResponse",
     "NodeNotFoundError",
     "DocumentNotFoundError",
     "InvalidOperationError",

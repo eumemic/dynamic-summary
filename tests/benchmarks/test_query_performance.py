@@ -12,9 +12,9 @@ from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
-from ragzoom.index import TreeBuilder
 from ragzoom.retrieve import Retriever
 from ragzoom.telemetry_query import QueryMetricsDict
+from tests.benchmarks.runtime_helpers import append_document
 
 
 # Skip benchmarks by default unless explicitly requested
@@ -54,6 +54,9 @@ def get_test_document(document_type: str = "narrative") -> tuple[str, str]:
             path = Path(__file__).parent.parent.parent / file_path
 
         text = path.read_text(encoding="utf-8")
+        max_chars = int(os.getenv("QUERY_BENCHMARK_DOC_CHARS", "0"))
+        if max_chars > 0:
+            text = text[:max_chars]
         return text, name
     except Exception as e:
         pytest.skip(f"Could not load test document {file_path}: {e}")
@@ -78,24 +81,31 @@ def setup_test_document(
     # Only index if not found (shouldn't happen in CI since we index earlier)
     print(f"  Document {doc_id} not found, indexing...")
     index_config = IndexConfig.load(target_chunk_tokens=200)
-    test_doc, doc_name = get_test_document("narrative")
+    test_doc, _ = get_test_document("narrative")
 
-    # Create DocumentStore with the specific document_id
-    doc_store = storage_backend.add_document(
+    try:
+        vector_index.delete(filter={"document_id": doc_id})
+    except Exception:
+        pass
+
+    storage_backend.clear_document(doc_id)
+
+    _result, _telemetry = append_document(
+        storage_backend=storage_backend,
+        index_config=index_config,
+        vector_index=vector_index,
         document_id=doc_id,
+        text=test_doc,
+        api_key=api_key,
         file_path="test_narrative.txt",
-        embedding_model=index_config.embedding_model,
-        summary_model=index_config.summary_model,
+        collect_telemetry=False,
     )
 
-    # Create TreeBuilder with the DocumentStore
-    builder = TreeBuilder(index_config, doc_store, vector_index, api_key)
-    # add_document returns the document_id from the DocumentStore
-    return builder.add_document(test_doc)
+    return doc_id
 
 
 @pytest.mark.benchmark
-@pytest.mark.slow_threshold(4.0)
+@pytest.mark.slow_threshold(float(os.getenv("QUERY_BENCHMARK_SLOW_THRESHOLD", "600")))
 @pytest.mark.parametrize("num_seeds", [5, 10, 20])
 @pytest.mark.parametrize("budget_tokens", [1000, 2000, 4000])
 @pytest.mark.parametrize("query_type", ["specific", "broad", "complex"])

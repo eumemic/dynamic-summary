@@ -131,6 +131,7 @@ class LLMService:
             max_concurrent: Maximum concurrent API requests
         """  # jscpd:ignore-end
         self.config = config
+        self._max_parallel_api_calls = max(1, max_concurrent)
 
         # Get API key from parameter or environment
         from ragzoom.config import ensure_secret_str
@@ -273,6 +274,11 @@ class LLMService:
             raise preserve_exception_chain(llm_error, e)
 
         return results
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Public wrapper to obtain embeddings for a batch of texts."""
+
+        return await self._get_embeddings_batch(texts)
 
     async def _make_summary_call(  # jscpd:ignore-start
         self,

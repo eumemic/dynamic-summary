@@ -1,0 +1,184 @@
+syntax = "proto3";
+
+package ragzoom.rpc;
+
+option go_package = "ragzoom/rpc";
+
+message DocumentStats {
+  string document_id = 1;
+  int32 chunks_created = 2;
+  int32 mutated_nodes = 3;
+  int32 resummarized_nodes = 4;
+  int32 new_leaves = 5;
+  int32 total_leaves = 6;
+  string telemetry_json = 7;
+  int32 tree_depth = 8;
+}
+
+message IndexDocumentRequest {
+  string document_id = 1;
+  oneof source {
+    bytes content = 2;
+    string file_path = 3;
+  }
+  bool collect_telemetry = 4;
+}
+
+message IndexDocumentResponse {
+  DocumentStats stats = 1;
+}
+
+message AppendTextRequest {
+  string document_id = 1;
+  bytes content = 2;
+  bool collect_telemetry = 3;
+  bool replace_existing = 4;
+}
+
+message AppendTextResponse {
+  DocumentStats stats = 1;
+  string telemetry_run_id = 2;
+}
+
+message RetrieveRequest {
+  string query = 1;
+  string document_id = 2;
+  int32 budget_tokens = 3;
+  int32 num_seeds = 4;
+}
+
+message Node {
+  string node_id = 1;
+  string text = 2;
+  int32 token_count = 3;
+  int32 span_start = 4;
+  int32 span_end = 5;
+  string parent_id = 6;
+  string left_child_id = 7;
+  string right_child_id = 8;
+  int32 height = 9;
+}
+
+message RetrieveResponse {
+  repeated string selected_ids = 1;
+  repeated string tiling_ids = 2;
+  map<string, double> scores = 3;
+  map<string, bool> coverage_map = 4;
+  map<string, Node> nodes = 5;
+}
+
+message ExecuteQueryRequest {
+  string query = 1;
+  string document_id = 2;
+  int32 budget_tokens = 3;
+  int32 num_seeds = 4;
+  string embedding_model = 5;
+  bool debug = 6;
+  int32 viz_width = 7;
+  bool use_token_coords = 8;
+}
+
+message ExecuteQueryResponse {
+  string summary = 1;
+  int32 token_count = 2;
+  int32 nodes_retrieved = 3;
+  int32 tiling_size = 4;
+  RetrieveResponse retrieval = 5;
+  string visualization = 6;
+  string validation_warning = 7;
+}
+
+enum WorkerRunMode {
+  WORKER_RUN_MODE_UNSPECIFIED = 0;
+  WORKER_RUN_MODE_UNTIL_IDLE = 1;
+  WORKER_RUN_MODE_CONTINUOUS = 2;
+}
+
+message RunWorkersRequest {
+  WorkerRunMode mode = 1;
+}
+
+message WorkerDocumentProgress {
+  string document_id = 1;
+  int32 pending = 2;
+  int32 inflight = 3;
+  int32 completed = 4;
+  int32 total = 5;
+}
+
+message RunWorkersResponse {
+  string message = 1;
+  bool idle = 2;
+  int32 queue_depth = 3;
+  int32 inflight = 4;
+  repeated WorkerDocumentProgress documents = 5;
+}
+
+message GetDocumentRequest {
+  string document_id = 1;
+}
+
+message DocumentStatus {
+  string document_id = 1;
+  int32 leaf_count = 2;
+  bool has_pending_work = 3;
+  int32 tree_depth = 4;
+}
+
+message GetDocumentResponse {
+  DocumentStatus status = 1;
+}
+
+message GetTelemetryRequest {
+  string document_id = 1;
+  string run_id = 2;
+  bool wait = 3;
+}
+
+message GetTelemetryResponse {
+  bool complete = 1;
+  string telemetry_json = 2;
+  string error = 3;
+}
+
+message ClearDocumentRequest {
+  repeated string document_ids = 1;
+  bool clear_all = 2;
+}
+
+message ClearDocumentResult {
+  string document_id = 1;
+  int32 deleted_nodes = 2;
+  bool document_existed = 3;
+}
+
+message ClearDocumentResponse {
+  repeated ClearDocumentResult results = 1;
+}
+
+message ExportTelemetryRequest {
+  string document_id = 1;
+}
+
+message ExportTelemetryResponse {
+  string telemetry_json = 1;
+  string error = 2;
+}
+
+service IndexerService {
+  rpc IndexDocument(IndexDocumentRequest) returns (IndexDocumentResponse);
+  rpc AppendText(AppendTextRequest) returns (AppendTextResponse);
+}
+
+service RetrievalService {
+  rpc Retrieve(RetrieveRequest) returns (RetrieveResponse);
+  rpc ExecuteQuery(ExecuteQueryRequest) returns (ExecuteQueryResponse);
+}
+
+service WorkerService {
+  rpc RunWorkers(RunWorkersRequest) returns (stream RunWorkersResponse);
+  rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse);
+  rpc GetTelemetry(GetTelemetryRequest) returns (GetTelemetryResponse);
+  rpc ClearDocument(ClearDocumentRequest) returns (ClearDocumentResponse);
+  rpc ExportTelemetry(ExportTelemetryRequest) returns (ExportTelemetryResponse);
+}

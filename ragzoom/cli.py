@@ -1,18 +1,34 @@
 """CLI interface for RagZoom."""
 
+from __future__ import annotations
+
+import inspect
 import json
 import logging
+import os
 import shutil
 import sys
+from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import Protocol, cast
 
 import click
 from dotenv import load_dotenv
 
+from ragzoom.client import (
+    DocumentStatusView,
+    GrpcRagzoomClient,
+    WorkerRunSnapshot,
+)
 from ragzoom.config import (
     IndexConfig,
     OperationalConfig,
     QueryConfig,
+)
+from ragzoom.constants import (
+    DEFAULT_GRPC_ADDRESS,
+    DEFAULT_GRPC_HOST,
+    DEFAULT_GRPC_PORT,
 )
 from ragzoom.exceptions import (
     ConfigurationError,
@@ -23,12 +39,26 @@ from ragzoom.exceptions import (
     ResourceError,
     ValidationError,
 )
+from ragzoom.progress_display import DocumentProgressTotals, WorkerProgressDisplay
+from ragzoom.server.app import ServerOptions, run_server
 from ragzoom.services.document_service import DocumentService
-from ragzoom.services.indexing_service import IndexingResult, IndexingService
-from ragzoom.services.query_service import QueryService
+from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.store import create_store_with_docker
-from ragzoom.tree_viz import build_ascii_tree
-from ragzoom.worktree_utils import DEFAULT_DATA_DIR_NAME
+from ragzoom.telemetry_types import TelemetryDataDict
+from ragzoom.validation import validate_document
+from ragzoom.vector_factory import create_vector_index
+
+
+class AppendTextCallable(Protocol):
+    def __call__(
+        self,
+        *,
+        document_id: str,
+        content: bytes,
+        collect_telemetry: bool,
+        replace_existing: bool = ...,  # optional keyword for rebuilds
+    ) -> IndexingResult: ...
+
 
 # Load environment variables
 load_dotenv()
@@ -49,6 +79,60 @@ logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
 logging.getLogger("chromadb").setLevel(logging.WARNING)
 logging.getLogger("chromadb.telemetry").setLevel(logging.ERROR)
 logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.ERROR)
+
+GRPC_ADDRESS_HELP = f"gRPC server address (defaults to {DEFAULT_GRPC_ADDRESS})"
+
+
+def _resolve_server_address(value: str | None) -> str:
+    """Resolve the gRPC server address with sensible defaults."""
+    if value:
+        return value
+    env_value = os.environ.get("RAGZOOM_SERVER_ADDRESS")
+    if env_value:
+        return env_value
+    return DEFAULT_GRPC_ADDRESS
+
+
+def _display_worker_snapshots(
+    snapshots: Iterable[WorkerRunSnapshot],
+    *,
+    target_document_id: str | None,
+) -> WorkerRunSnapshot | None:
+    focus = {target_document_id} if target_document_id else None
+    display = WorkerProgressDisplay(
+        focus_documents=focus,
+        stream=sys.stderr,
+        line_printer=click.echo,
+    )
+
+    last_snapshot: WorkerRunSnapshot | None = None
+    try:
+        for snapshot in snapshots:
+            last_snapshot = snapshot
+            documents = {
+                doc_id: DocumentProgressTotals(
+                    pending=progress.pending,
+                    inflight=progress.inflight,
+                    completed=progress.completed,
+                    total=progress.total,
+                )
+                for doc_id, progress in snapshot.documents.items()
+            }
+            display.update(
+                queue_depth=snapshot.queue_depth,
+                inflight=snapshot.inflight,
+                documents=documents,
+                message=snapshot.message,
+            )
+
+            if target_document_id:
+                progress = snapshot.documents.get(target_document_id)
+                if progress and progress.pending == 0 and progress.inflight == 0:
+                    break
+    finally:
+        display.finish()
+
+    return last_snapshot
 
 
 def handle_cli_error(e: Exception, operation: str) -> None:
@@ -107,7 +191,7 @@ def configure_logging_level(debug: bool) -> None:
 
 
 def setup_command_environment(
-    log_level: str | None, debug: bool, validate: bool
+    log_level: str | None, debug: bool, validate: bool = False
 ) -> None:
     """Set up logging and validation for CLI commands."""
     # Configure logging level
@@ -149,35 +233,6 @@ def cli(ctx: click.Context) -> None:
 @click.argument("file_path", type=click.Path(exists=True))
 @click.option("--document-id", help="Document ID (defaults to filename)")
 @click.option(
-    "--config",
-    "config_path",
-    type=click.Path(exists=True, path_type=Path),
-    help="Load configuration from JSON file",
-)
-@click.option(
-    "--target-chunk-tokens", type=int, help="Target size for leaf chunks in tokens"
-)
-@click.option(
-    "--preceding-context-tokens", type=int, help="Context tokens from adjacent chunks"
-)
-@click.option("--summary-model", "-m", type=str, help="Model for summarization")
-@click.option("--embedding-model", type=str, help="Model for embeddings")
-@click.option(
-    "--retry-threshold", type=float, help="Max deviation before retry (0.0-1.0)"
-)
-@click.option("--max-retries", type=int, help="Maximum summary retries")
-@click.option("--embedding-batch-size", type=int, help="Batch size for embeddings")
-@click.option(
-    "--data-dir",
-    type=click.Path(),
-    help="Directory for data storage (default: current directory)",
-)
-@click.option(
-    "--database",
-    type=str,
-    help="Database URL (sqlite:///path/to.db or postgresql+psycopg://host/db)",
-)
-@click.option(
     "--debug",
     is_flag=True,
     help="Show debug information including token usage statistics",
@@ -191,96 +246,57 @@ def cli(ctx: click.Context) -> None:
     default=None,
     help="Save telemetry data to JSON file",
 )
-@click.option("--validate", is_flag=True, help="Enable validation checks")
+@click.option(
+    "--collect-telemetry",
+    is_flag=True,
+    help="Enable document-scoped telemetry logging without waiting for export",
+)
 @click.option("--no-progress", is_flag=True, help="Disable progress bar")
 @click.option(
     "--append",
     is_flag=True,
     help="Append file contents to an existing document instead of rebuilding. Requires --document-id.",
 )
+@click.option(
+    "--server-address",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default=None,
+    show_default=False,
+    help=GRPC_ADDRESS_HELP,
+)
+@click.option(
+    "--await-workers/--no-await-workers",
+    "await_workers",
+    default=True,
+    show_default=True,
+    help=(
+        "Wait for background summarization to finish before exiting. "
+        "Disable to exit once leaf ingestion has been scheduled."
+    ),
+)
 @click.pass_context
 def index(
     ctx: click.Context,
     file_path: str,
     document_id: str | None,
-    config_path: Path | None,
-    target_chunk_tokens: int | None,
-    preceding_context_tokens: int | None,
-    summary_model: str | None,
-    embedding_model: str | None,
-    retry_threshold: float | None,
-    max_retries: int | None,
-    embedding_batch_size: int | None,
-    data_dir: str | None,
-    database: str | None,
     debug: bool,
     telemetry_file: str | None,
-    validate: bool,
     no_progress: bool,
     append: bool,
+    server_address: str | None,
+    await_workers: bool,
+    collect_telemetry: bool,
 ) -> None:
     """Index a document from file.
 
-    Configuration can be set via:
-    1. CLI options (highest priority)
-    2. Config file specified with --config
-    3. Default values from internal configuration
-
     Examples:
-      ragzoom index document.txt --target-chunk-tokens 300 --summary-model gpt-5-nano
-      ragzoom index document.txt --config myconfig.json
+      ragzoom index document.txt
+      ragzoom index notes.txt --document-id my-doc --append
     """
 
-    setup_command_environment(None, debug, validate)
+    setup_command_environment(None, debug)
 
     try:
-        # Load indexing configuration with CLI overrides
-        # Create config object with merged values
-        index_config = IndexConfig.load(
-            config_path,
-            target_chunk_tokens=target_chunk_tokens,
-            preceding_context_tokens=preceding_context_tokens,
-            summary_model=summary_model,
-            embedding_model=embedding_model,
-            retry_threshold=retry_threshold,
-            max_retries=max_retries,
-            embedding_batch_size=embedding_batch_size,
-        )
-        query_config = QueryConfig()  # Use defaults for indexing command
-        # Prefer Chroma by default in CLI; fail loudly if unavailable
-        operational_config = OperationalConfig(vector_backend="chroma")
-
-        # Override storage location if provided
-        if data_dir:
-            data_path = Path(data_dir)
-            # Choose URL based on backend
-            if operational_config.backend == "sqlite":
-                from ragzoom.worktree_utils import get_default_sqlite_url
-
-                operational_config = operational_config.replace(
-                    database_url=get_default_sqlite_url(data_path)
-                )
-            else:
-                # For postgres, form a sensible DB name under base_dir
-                dbname = (data_path / DEFAULT_DATA_DIR_NAME / "ragzoom").name
-                operational_config = operational_config.replace(
-                    database_url=f"postgresql+psycopg://localhost/{dbname}"
-                )
-
-        if database:
-            operational_config = operational_config.replace(database_url=database)
-
-        # Update context with new configs
-        ctx.obj["index_config"] = index_config
-        ctx.obj["query_config"] = query_config
-        ctx.obj["operational_config"] = operational_config
-
-        # Create services for this command (respects backend configured)
-        store = create_store_with_docker(
-            operational_config, embedding_model=index_config.embedding_model
-        )
-        indexing_service = IndexingService(store, index_config, operational_config)
-
         append_document_id: str | None = None
 
         if append:
@@ -288,30 +304,120 @@ def index(
                 raise click.UsageError("--document-id is required when using --append")
             append_document_id = document_id
 
-        result: IndexingResult
+        telemetry_requested = telemetry_file is not None
+        collect_requested = collect_telemetry or telemetry_requested
 
-        if append:
-            assert append_document_id is not None
-            click.echo(
-                f"Appending {Path(file_path).name} to document '{append_document_id}'..."
+        if telemetry_requested and not await_workers:
+            raise click.UsageError(
+                "--telemetry cannot be combined with --no-await-workers; the command must wait for telemetry collection."
             )
-            text_to_append = Path(file_path).read_text(encoding="utf-8")
-            result = indexing_service.append_to_document(
-                document_id=append_document_id,
-                new_text=text_to_append,
-                show_progress=not no_progress,
-                collect_telemetry=bool(telemetry_file),
-            )
-            success_message = "✅ Document appended successfully!"
-        else:
-            click.echo(f"Indexing {Path(file_path).name}...")
-            result = indexing_service.index_from_file(
-                file_path,
-                document_id=document_id,
-                show_progress=not no_progress,
-                collect_telemetry=bool(telemetry_file),
-            )
-            success_message = "✅ Document indexed successfully!"
+
+        result: IndexingResult
+        resolved_address = _resolve_server_address(server_address)
+        final_snapshot: WorkerRunSnapshot | None = None
+        refreshed_status: DocumentStatusView | None = None
+        refresh_error: str | None = None
+
+        content_bytes = Path(file_path).read_bytes()
+        target_document_id = append_document_id or document_id or Path(file_path).name
+
+        click.echo(
+            f"Appending {Path(file_path).name} to document '{target_document_id}'..."
+            if append
+            else f"Indexing {Path(file_path).name}..."
+        )
+
+        telemetry_run_id: str | None = None
+
+        with GrpcRagzoomClient(resolved_address) as client:
+            append_method = cast(AppendTextCallable, client.append_text)
+
+            target_callable_obj = append_method
+            side_effect = getattr(append_method, "side_effect", None)
+            if callable(side_effect):
+                target_callable_obj = side_effect
+            else:
+                wrapped = getattr(append_method, "__wrapped__", None)
+                if callable(wrapped):
+                    target_callable_obj = wrapped
+
+            try:
+                params: Mapping[str, inspect.Parameter] = inspect.signature(
+                    target_callable_obj
+                ).parameters
+            except (TypeError, ValueError):  # pragma: no cover - dynamic callables
+                params = {}
+
+            if "replace_existing" in params:
+                result = append_method(
+                    document_id=target_document_id,
+                    content=content_bytes,
+                    collect_telemetry=collect_requested,
+                    replace_existing=not append,
+                )
+            else:
+                result = append_method(
+                    document_id=target_document_id,
+                    content=content_bytes,
+                    collect_telemetry=collect_requested,
+                )
+            telemetry_run_id = result.telemetry_run_id
+            if await_workers:
+                final_snapshot = _display_worker_snapshots(
+                    client.iter_worker_snapshots(),
+                    target_document_id=target_document_id,
+                )
+
+                should_refresh_status = False
+                if final_snapshot is None:
+                    should_refresh_status = True
+                else:
+                    progress = final_snapshot.documents.get(target_document_id)
+                    if progress:
+                        should_refresh_status = (
+                            progress.pending == 0 and progress.inflight == 0
+                        )
+                    else:
+                        should_refresh_status = final_snapshot.idle
+
+                if should_refresh_status:
+                    try:
+                        refreshed_status = client.get_document_status(
+                            target_document_id
+                        )
+                    except Exception as exc:  # pragma: no cover - network failures
+                        refresh_error = str(exc)
+
+            else:
+                click.echo(
+                    "ℹ️ Leaf ingestion queued; summarization workers continue in the background."
+                )
+                click.echo(
+                    "   Use `ragzoom status --document-id "
+                    f"{target_document_id}` to monitor progress."
+                )
+                if collect_requested:
+                    click.echo(
+                        "   Run `ragzoom telemetry-export --document-id "
+                        f"{target_document_id}` once workers finish to synthesize telemetry."
+                    )
+
+        document_id = target_document_id
+
+        if await_workers:
+            if refreshed_status:
+                result.tree_depth = refreshed_status.tree_depth
+                result.chunks_created = refreshed_status.leaf_count
+            elif refresh_error:
+                click.echo(
+                    f"⚠️ Failed to refresh document status: {refresh_error}",
+                    err=True,
+                )
+        success_message = (
+            "✅ Document appended successfully!"
+            if append
+            else "✅ Document indexed successfully!"
+        )
 
         click.echo(success_message)
         click.echo(f"   Document ID: {result.document_id}")
@@ -323,65 +429,42 @@ def index(
             )
         if result.new_leaves is not None:
             click.echo(f"   New leaves: {result.new_leaves}")
-        click.echo(f"   Tree height: {result.tree_depth}")
+        if result.tree_depth is not None:
+            click.echo(f"   Tree height: {result.tree_depth}")
+        if telemetry_run_id:
+            click.echo(f"   Telemetry run ID: {telemetry_run_id}")
 
-        # Store telemetry reference for later use
-        telemetry_data = result.telemetry
-
-        # Run validation checks
-        if validate:
-            from ragzoom.validate import (
-                validate as run_validate,
-            )
-            from ragzoom.validate import (
-                validate_chunk_sizes,
-                validate_document_coverage,
-                validate_equal_leaf_depth,
-                validate_tree_structure,
-            )
-
-            doc_store_for_validate = store.for_document(result.document_id)
-            doc_leaves = doc_store_for_validate.nodes.get_leaves()
-
-            if append:
-                sorted_leaves = sorted(
-                    doc_leaves, key=lambda node: int(node.span_start)
-                )
-                text = "".join(leaf.text or "" for leaf in sorted_leaves)
-            else:
-                text = Path(file_path).read_text(encoding="utf-8")
-
-            run_validate(
-                lambda: validate_document_coverage(text, doc_leaves),
-                "document coverage",
-            )
-            run_validate(
-                lambda: validate_chunk_sizes(
-                    doc_leaves, index_config.target_chunk_tokens
-                ),
-                "chunk sizes",
-            )
-            doc_store = store.for_document(result.document_id)
-            run_validate(
-                lambda: validate_tree_structure(doc_store, text),
-                "tree structure",
-            )
-            run_validate(
-                lambda: validate_equal_leaf_depth(doc_store),
-                "equal leaf depth",
-            )
+        if telemetry_requested and await_workers:
+            telemetry_path = cast(str, telemetry_file)
+            export_result = None
+            export_error: str | None = None
+            try:
+                with GrpcRagzoomClient(resolved_address) as export_client:
+                    export_result = export_client.export_document_telemetry(
+                        document_id=target_document_id
+                    )
+            except Exception as exc:  # pragma: no cover - network failures
+                export_error = str(exc)
+            if export_result is not None:
+                if export_result.error:
+                    export_error = export_result.error
+                elif export_result.telemetry:
+                    try:
+                        with open(telemetry_path, "w", encoding="utf-8") as f:
+                            json.dump(export_result.telemetry, f, indent=2)
+                        click.echo(f"✅ Saved telemetry: {telemetry_path}")
+                    except OSError as exc:
+                        export_error = str(exc)
+                else:
+                    export_error = "Telemetry data was empty for this document."
+            if export_error:
+                click.echo(f"❌ Telemetry export failed: {export_error}", err=True)
 
         # Show debug hint if enabled
         if debug:
             click.echo(
                 "\n💡 Debug information (including token usage statistics) logged to stderr"
             )
-
-        # Save telemetry if requested
-        if telemetry_file and telemetry_data:
-            with open(telemetry_file, "w") as f:
-                json.dump(telemetry_data, f, indent=2)
-            click.echo(f"✅ Saved telemetry: {telemetry_file}")
 
     except OSError as e:
         # Clean user-friendly errors (no "Error indexing document" prefix)
@@ -431,6 +514,233 @@ def documents(ctx: click.Context) -> None:
 
 
 @cli.command()
+@click.option("--document-id", "document_id", required=True, help="Document ID")
+@click.option("--run-id", "run_id", required=True, help="Telemetry run ID")
+@click.option(
+    "--wait/--no-wait",
+    "wait",
+    default=False,
+    show_default=True,
+    help="Block until the telemetry run completes.",
+)
+@click.option(
+    "--output",
+    type=str,
+    help="Path to write telemetry JSON instead of stdout.",
+)
+@click.option(
+    "--server-address",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default=None,
+    show_default=False,
+    help=GRPC_ADDRESS_HELP,
+)
+@click.pass_context
+def telemetry(
+    ctx: click.Context,
+    document_id: str,
+    run_id: str,
+    wait: bool,
+    output: str | None,
+    server_address: str | None,
+) -> None:
+    """Fetch telemetry for a previous indexing run."""
+
+    resolved_address = _resolve_server_address(server_address)
+
+    try:
+        with GrpcRagzoomClient(resolved_address) as client:
+            response = client.get_telemetry(
+                document_id=document_id,
+                run_id=run_id,
+                wait=wait,
+            )
+    except Exception as exc:
+        handle_cli_error(exc, "fetching telemetry")
+        return
+
+    if not response.complete:
+        click.echo(
+            "⚠️ Telemetry run is still in progress; rerun with --wait or try later.",
+            err=True,
+        )
+        sys.exit(1)
+
+    if response.error:
+        click.echo(f"❌ Telemetry run failed: {response.error}", err=True)
+        sys.exit(1)
+
+    if response.telemetry is None:
+        click.echo(
+            "⚠️ Telemetry data is unavailable for this run.",
+            err=True,
+        )
+        return
+
+    if output:
+        try:
+            with open(output, "w", encoding="utf-8") as fh:
+                json.dump(response.telemetry, fh, indent=2)
+            click.echo(f"✅ Saved telemetry: {output}")
+        except OSError as exc:
+            click.echo(f"❌ Failed to write telemetry file: {exc}", err=True)
+            sys.exit(1)
+    else:
+        click.echo(json.dumps(response.telemetry, indent=2))
+
+
+@cli.command("telemetry-export")
+@click.option("--document-id", required=True, help="Document ID to export")
+@click.option(
+    "--output",
+    type=str,
+    default="telemetry.json",
+    show_default=True,
+    help="Path to write synthesized telemetry JSON",
+)
+@click.option(
+    "--server-address",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default=None,
+    show_default=False,
+    help=GRPC_ADDRESS_HELP,
+)
+def telemetry_export(document_id: str, output: str, server_address: str | None) -> None:
+    """Synthesize document-level telemetry from server logs."""
+
+    resolved_address = _resolve_server_address(server_address)
+    try:
+        with GrpcRagzoomClient(resolved_address) as client:
+            result = client.export_document_telemetry(document_id=document_id)
+    except Exception as exc:
+        handle_cli_error(exc, "exporting telemetry")
+        return
+
+    if result.error:
+        click.echo(f"❌ Telemetry export failed: {result.error}", err=True)
+        sys.exit(1)
+
+    if result.telemetry is None:
+        click.echo(
+            "⚠️ Telemetry data was empty for this document; nothing was written.",
+            err=True,
+        )
+        sys.exit(1)
+
+    try:
+        with open(output, "w", encoding="utf-8") as fh:
+            json.dump(result.telemetry, fh, indent=2)
+        click.echo(f"✅ Saved telemetry: {output}")
+    except OSError as exc:
+        click.echo(f"❌ Failed to write telemetry file: {exc}", err=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument("document_id", type=str)
+@click.option(
+    "--complete",
+    is_flag=True,
+    help="Require the document tree to be fully summarized (single root).",
+)
+@click.option(
+    "--telemetry-file",
+    type=click.Path(exists=True, dir_okay=False, readable=True),
+    help=(
+        "Path to telemetry JSON file; when provided, cross-check contents "
+        "against stored nodes."
+    ),
+)
+@click.pass_context
+def validate(
+    ctx: click.Context,
+    document_id: str,
+    complete: bool,
+    telemetry_file: str | None,
+) -> None:
+    """Validate invariants for a document tree."""
+
+    index_config: IndexConfig = ctx.obj["index_config"]
+    operational_config = OperationalConfig()
+
+    store = create_store_with_docker(
+        operational_config, embedding_model=index_config.embedding_model
+    )
+    vector_backend = (operational_config.vector_backend or "").strip().lower()
+    vector_index = None
+    if vector_backend != "python":
+        vector_index = create_vector_index(
+            operational_config.vector_backend,
+            operational_config.database_url,
+            index_config.embedding_model,
+        )
+
+    telemetry_payload: TelemetryDataDict | None = None
+    if telemetry_file:
+        try:
+            with open(telemetry_file, encoding="utf-8") as fh:
+                telemetry_json = json.load(fh)
+        except OSError as exc:
+            click.echo(f"❌ Failed to read telemetry file: {exc}", err=True)
+            raise SystemExit(1)
+        except json.JSONDecodeError as exc:
+            click.echo(
+                f"❌ Telemetry file is not valid JSON: {exc.msg}",
+                err=True,
+            )
+            raise SystemExit(1)
+
+        if not isinstance(telemetry_json, dict):
+            click.echo(
+                "❌ Telemetry file must contain a JSON object at the top level.",
+                err=True,
+            )
+            raise SystemExit(1)
+
+        telemetry_payload = cast(TelemetryDataDict, telemetry_json)
+
+    report = validate_document(
+        document_id=document_id,
+        store=store,
+        vector_index=vector_index,
+        require_complete=complete,
+        target_chunk_tokens=index_config.target_chunk_tokens,
+        telemetry=telemetry_payload,
+    )
+
+    heading = (
+        "✅ Document validation passed"
+        if report.status == "ok"
+        else "❌ Document validation failed"
+    )
+    if complete and report.status == "ok":
+        heading += " (complete tree required)"
+
+    click.echo(heading)
+    click.echo(
+        f"   Nodes: {report.metrics.get('node_count', 0)}, "
+        f"Leaves: {report.metrics.get('leaf_count', 0)}, "
+        f"Parentless: {report.metrics.get('parentless_count', 0)}"
+    )
+
+    if report.findings:
+        click.echo("\nFindings:")
+        ordered = sorted(
+            report.findings,
+            key=lambda finding: 0 if finding.severity == "error" else 1,
+        )
+        for finding in ordered:
+            prefix = "ERROR" if finding.severity == "error" else "WARN"
+            suffix = f" (node {finding.node_id})" if finding.node_id else ""
+            click.echo(f" - [{prefix}] {finding.message}{suffix}")
+    else:
+        click.echo("\nNo issues detected.")
+
+    if report.status == "failed":
+        raise SystemExit(1)
+
+
+@cli.command()
 @click.argument("query_text")
 @click.option("--document-id", "-d", required=True, help="Document ID to query within")
 @click.option("--num-seeds", type=int, help="Number of seed nodes to retrieve")
@@ -441,7 +751,6 @@ def documents(ctx: click.Context) -> None:
     is_flag=True,
     help="Show debug information including retrieval statistics",
 )
-@click.option("--validate", is_flag=True, help="Enable validation checks")
 @click.option(
     "--viz-width",
     type=int,
@@ -453,6 +762,13 @@ def documents(ctx: click.Context) -> None:
     default="output-tokens",
     help="Coordinate system for tree visualization (source-chars=source position, output-tokens=output budget)",
 )
+@click.option(
+    "--server-address",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default=None,
+    show_default=False,
+    help=GRPC_ADDRESS_HELP,
+)
 @click.pass_context
 def query(
     ctx: click.Context,
@@ -462,173 +778,95 @@ def query(
     token_budget: int | None,
     embedding_model: str | None,
     debug: bool,
-    validate: bool,
     viz_width: int | None,
     viz_coords: str,
+    server_address: str | None,
 ) -> None:
     """Query the system and get a summary."""
 
-    setup_command_environment(None, debug, validate)
+    setup_command_environment(None, debug)
 
     try:
-        # Get configs from context (set up during CLI initialization)
         query_config = ctx.obj["query_config"]
-        operational_config = ctx.obj["operational_config"]
 
-        # Override with CLI parameters if provided
         if token_budget is not None:
             query_config = query_config.replace(budget_tokens=token_budget)
         if embedding_model is not None:
             query_config = query_config.replace(embedding_model=embedding_model)
 
-        # Create services for this command
-        store = create_store_with_docker(
-            operational_config, embedding_model=query_config.embedding_model
-        )
-        query_service = QueryService(store, query_config, operational_config)
+        ctx.obj["query_config"] = query_config
 
-        # Execute query
-        query_result = query_service.execute_query(
-            query_text,
-            document_id,
-            num_seeds=num_seeds,
-            token_budget=token_budget,
-        )
+        effective_budget = token_budget or query_config.budget_tokens
+        resolved_address = _resolve_server_address(server_address)
 
-        # Get retrieval result for debug info (if needed)
-        result = None
         if debug:
-            # We need the raw retrieval result for debug visualization
-            from openai import OpenAI
+            if viz_width:
+                actual_viz_width = viz_width
+            else:
+                terminal_width = shutil.get_terminal_size(fallback=(120, 24)).columns
+                actual_viz_width = max(80, terminal_width - 1)
+        else:
+            actual_viz_width = viz_width or 0
 
-            # Create services
-            from ragzoom.config import IndexConfig
-            from ragzoom.retrieval.budget_planner import BudgetPlanner
-            from ragzoom.retrieval.embedding_service import EmbeddingService
-            from ragzoom.retrieve import Retriever
-            from ragzoom.vector_factory import create_vector_index
+        use_token_coords = viz_coords == "output-tokens"
 
-            client = OpenAI(
-                api_key=operational_config.openai_api_key.get_secret_value()
-            )
-            document_store = store.for_document(document_id)
-            embedding_service = EmbeddingService(
-                client, document_store, query_config.embedding_model
-            )
-            index_cfg = IndexConfig.load()
-            budget_planner = BudgetPlanner(
-                document_store, index_cfg.target_chunk_tokens
-            )
-            vector_index = create_vector_index(
-                operational_config.vector_backend,
-                operational_config.database_url,
-                query_config.embedding_model,
-            )
-            retriever = Retriever(
-                query_config,
-                document_store,
-                embedding_service,
-                budget_planner,
-                vector_index,
-            )
-            result = retriever.retrieve(
-                query_text,
-                budget_tokens=token_budget or query_config.budget_tokens,
+        with GrpcRagzoomClient(resolved_address) as client:
+            response = client.execute_query(
+                query=query_text,
                 document_id=document_id,
+                budget_tokens=effective_budget,
                 num_seeds=num_seeds,
+                embedding_model=query_config.embedding_model,
+                debug=debug,
+                viz_width=actual_viz_width,
+                use_token_coords=use_token_coords,
             )
 
-        # Tiling validation
-        if validate and result and getattr(result, "tiling", None) and result.tiling:
-            from ragzoom.validate import validate_tiling
+        query_result = response.query_result
+        retrieval = response.retrieval
 
-            doc_store = store.for_document(document_id)
-            error = validate_tiling(
-                result.tiling,
-                doc_store,
-                budget_tokens=query_config.budget_tokens,
-                preloaded_nodes=result.nodes,
-            )
-            if error:
-                click.echo(f"⚠️ Tiling validation warning: {error}", err=True)
-
-        # Output summary
         click.echo("\n" + "=" * 60)
         click.echo("SUMMARY")
         click.echo("=" * 60)
-        if debug and result and getattr(result, "tiling", None) and result.tiling:
-            # Create document-scoped store for node access
-            doc_store = store.for_document(document_id)
-            for idx, node_id in enumerate(result.tiling):
-                node = doc_store.nodes.get(node_id)
-                if node:
-                    # Node span is always the full span
-                    span_start, span_end = node.span_start, node.span_end
-                    span = f"{span_start}-{span_end}"
-                    height = node.height
-                    # Add asterisk to index if this is a seed node
-                    is_seed = node_id in result.node_ids
-                    idx_str = f"{idx}{'*' if is_seed else ' '}"
-                    click.echo(
-                        f"[{idx_str}| SPAN: {span} | HEIGHT: {height} | NODE: {node.id}]"
-                    )
-                    # Get the node text
-                    text = node.text
-                    click.echo(text)
-                    if idx < len(result.tiling) - 1:
+        if debug and retrieval.tiling_ids:
+            for idx, node_id in enumerate(retrieval.tiling_ids):
+                node = retrieval.nodes.get(node_id)
+                if node is None:
+                    continue
+                span = f"{node.span_start}-{node.span_end}"
+                height = node.height
+                is_seed = node_id in retrieval.selected_ids
+                idx_str = f"{idx}{'*' if is_seed else ' '}"
+                click.echo(
+                    f"[{idx_str}| SPAN: {span} | HEIGHT: {height} | NODE: {node.node_id}]"
+                )
+                if node.text:
+                    click.echo(node.text)
+                    if idx < len(retrieval.tiling_ids) - 1:
                         click.echo("")
         else:
-            click.echo(query_result.summary)
+            summary_text = query_result.summary or "<no summary>"
+            click.echo(summary_text)
         click.echo("")
 
-        # Show debug info if requested
-        if debug and result:
-            # Show ASCII tree visualization first
-            if result.tiling:
-                # Get terminal width with fallback, or use CLI override
-                if viz_width:
-                    actual_viz_width = viz_width
-                else:
-                    terminal_width = shutil.get_terminal_size(
-                        fallback=(120, 24)
-                    ).columns
-                    # Use width minus 1 to prevent wrapping on exact terminal width
-                    actual_viz_width = max(80, terminal_width - 1)
+        if debug and response.visualization:
+            click.echo("=" * 60)
+            click.echo("VISUALIZATION")
+            click.echo("=" * 60)
+            click.echo(response.visualization)
+            click.echo("")
 
-                click.echo("=" * 60)
-                click.echo("VISUALIZATION")
-                click.echo("=" * 60)
+        if response.validation_warning:
+            click.echo(f"⚠️ {response.validation_warning}", err=True)
 
-                doc_store = store.for_document(document_id)
-                tree_viz = build_ascii_tree(
-                    result.tiling,
-                    doc_store,
-                    width=actual_viz_width,
-                    coverage_map=result.coverage_map,
-                    seed_node_ids=set(result.node_ids),
-                    use_token_coords=(viz_coords == "output-tokens"),
-                    preloaded_nodes=result.nodes,
-                )
-                click.echo(tree_viz)
-                click.echo("")
-
-            # Show statistics after tree visualization
-            click.echo("=" * 60)
-            click.echo("STATISTICS")
-            click.echo("=" * 60)
-            click.echo(f"  Nodes retrieved: {query_result.nodes_retrieved}")
-            click.echo(f"  Tiling size: {query_result.tiling_size}")
-            click.echo(f"  Token count: {query_result.token_count}")
-            if result:
-                click.echo(f"  Coverage: {len(result.coverage_map)} nodes")
-        elif debug:
-            # Show basic statistics if debug but no detailed result
-            click.echo("=" * 60)
-            click.echo("STATISTICS")
-            click.echo("=" * 60)
-            click.echo(f"  Nodes retrieved: {query_result.nodes_retrieved}")
-            click.echo(f"  Tiling size: {query_result.tiling_size}")
-            click.echo(f"  Token count: {query_result.token_count}")
+        click.echo("=" * 60)
+        click.echo("STATISTICS")
+        click.echo("=" * 60)
+        click.echo(f"  Nodes retrieved: {query_result.nodes_retrieved}")
+        click.echo(f"  Tiling size: {query_result.tiling_size}")
+        click.echo(f"  Token count: {query_result.token_count}")
+        if debug:
+            click.echo(f"  Coverage: {len(retrieval.coverage_map)} nodes")
 
     except Exception as e:
         handle_cli_error(e, "processing query")
@@ -741,83 +979,36 @@ def serve(host: str, port: int, reload: bool) -> None:
 @click.option("--confirm", is_flag=True, help="Skip confirmation prompt")
 @click.pass_context
 def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
-    """Clear data from the database.
+    """Clear data from the database via the gRPC server."""
 
-    Without --document-id, clears all data.
-    With --document-id, clears only the specified document.
-    """
     try:
-        # Create services for this command
-        operational_config = ctx.obj["operational_config"]
-        index_config = ctx.obj["index_config"]
-        store = create_store_with_docker(
-            operational_config, embedding_model=index_config.embedding_model
-        )
-        document_service = DocumentService(store)
+        resolved_address = _resolve_server_address(ctx.obj.get("server_address"))
 
-        if document_id:
-            # Clear specific document
-            if not confirm:
-                click.confirm(
-                    f"⚠️  This will delete document '{document_id}' and all its data. Are you sure?",
-                    abort=True,
-                )
-
-            deleted_count = document_service.clear_document(document_id)
-            # Clear vectors for this document (fail-soft)
-            try:
-                from ragzoom.vector_factory import create_vector_index
-
-                # Use the document's embedding model if available
-                doc_row = store.get_document_by_id(document_id)
-                emb_model = (
-                    doc_row.embedding_model
-                    if doc_row and doc_row.embedding_model
-                    else index_config.embedding_model
-                )
-                vindex = create_vector_index(
-                    operational_config.vector_backend,
-                    operational_config.database_url,
-                    emb_model,
-                )
-                vindex.delete(filter={"document_id": document_id})
-            except Exception:
-                pass
-            click.echo(
-                f"✅ Cleared document '{document_id}' ({deleted_count} nodes deleted)"
-            )
-        else:
-            # Clear all data
-            if not confirm:
-                click.confirm("⚠️  This will delete ALL data. Are you sure?", abort=True)
-
-            deleted_count = document_service.clear_all_documents()
-            # Also clear all vectors for all documents
-            try:
-                from ragzoom.vector_factory import create_vector_index
-
-                # Attempt to clear vectors by iterating all documents first
-                docs = store.list_documents()
-                if docs:
-                    # Use embedding model from first doc, or default
-                    emb_model = (
-                        docs[0].embedding_model
-                        if hasattr(docs[0], "embedding_model")
-                        else index_config.embedding_model
+        with GrpcRagzoomClient(resolved_address) as client:
+            if document_id:
+                if not confirm:
+                    click.confirm(
+                        f"⚠️  This will delete document '{document_id}' and all its data. Are you sure?",
+                        abort=True,
                     )
-                    vindex = create_vector_index(
-                        operational_config.vector_backend,
-                        operational_config.database_url,
-                        emb_model,
+
+                result = client.clear_document(document_id)
+                if result.document_existed:
+                    click.echo(
+                        f"✅ Cleared document '{document_id}' ({result.deleted_nodes} nodes deleted)"
                     )
-                    for doc in docs:
-                        try:
-                            vindex.delete(filter={"document_id": doc.id})
-                        except Exception:
-                            continue
-            except Exception:
-                pass
-            click.echo(f"✅ Cleared {deleted_count} nodes from the database")
+                else:
+                    click.echo(f"⚠️ Document '{document_id}' does not exist")
+            else:
+                if not confirm:
+                    click.confirm(
+                        "⚠️  This will delete ALL data. Are you sure?", abort=True
+                    )
+
+                results = client.clear_all_documents()
+                existing = [entry for entry in results if entry.document_existed]
+                deleted_count = sum(entry.deleted_nodes for entry in existing)
+                click.echo(f"✅ Cleared {deleted_count} nodes from the database")
 
     except click.Abort:
         click.echo("❌ Clear operation cancelled")
@@ -1096,6 +1287,63 @@ def config(examples: bool, output_file: str | None) -> None:
         click.echo("  ragzoom config --examples     Show configuration examples")
         click.echo("  ragzoom config --create FILE  Create a sample config file")
         click.echo("\nFor detailed help: ragzoom config --help")
+
+
+@cli.group()
+def server() -> None:
+    """Manage the RagZoom gRPC server."""
+
+
+@server.command("start")
+@click.option(
+    "--host",
+    default=DEFAULT_GRPC_HOST,
+    show_default=True,
+    help="Host to bind",
+)
+@click.option(
+    "--port",
+    default=DEFAULT_GRPC_PORT,
+    type=int,
+    show_default=True,
+    help="Port to bind",
+)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Optional indexing config file",
+)
+@click.option("--debug", is_flag=True, help="Enable debug logging")
+@click.option(
+    "--collect-telemetry",
+    is_flag=True,
+    help="Persist document-scoped telemetry logs on the server",
+)
+@click.option(
+    "--telemetry-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Directory to store telemetry events (defaults near data dir)",
+)
+def start_server(
+    host: str,
+    port: int,
+    config_path: Path | None,
+    debug: bool,
+    collect_telemetry: bool,
+    telemetry_dir: Path | None,
+) -> None:
+    """Start the RagZoom gRPC server."""
+
+    setup_command_environment(None, debug)
+    options = ServerOptions(
+        host=host,
+        port=port,
+        config_path=str(config_path) if config_path else None,
+        collect_telemetry=collect_telemetry,
+        telemetry_dir=str(telemetry_dir) if telemetry_dir else None,
+    )
+    run_server(options)
 
 
 @cli.command()

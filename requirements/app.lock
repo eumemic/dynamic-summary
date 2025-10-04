@@ -76,10 +76,11 @@ googleapis-common-protos==1.70.0
     # via opentelemetry-exporter-otlp-proto-grpc
 greenlet==3.2.4
     # via sqlalchemy
-grpcio==1.74.0
+grpcio==1.75.0
     # via
     #   chromadb
     #   opentelemetry-exporter-otlp-proto-grpc
+    #   ragzoom
 h11==0.16.0
     # via
     #   httpcore
@@ -340,6 +341,7 @@ typing-extensions==4.15.0
     #   anyio
     #   chromadb
     #   fastapi
+    #   grpcio
     #   huggingface-hub
     #   langchain-core
     #   openai

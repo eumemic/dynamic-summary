@@ -63,6 +63,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install pip-tools
           pip-sync requirements/dev.lock
+
+      - name: Recompile protobuf sources
+        run: |
+          ./scripts/compile-proto.sh
+          git diff --exit-code ragzoom/rpc/dynamic_summary_pb2.py ragzoom/rpc/dynamic_summary_pb2_grpc.py
       
       - name: Run all quality checks
         env:
