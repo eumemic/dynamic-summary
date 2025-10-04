@@ -6,9 +6,9 @@ import asyncio
 import logging
 from collections import defaultdict
 from collections.abc import Callable
-from contextlib import AbstractContextManager, nullcontext, suppress
+from contextlib import suppress
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 
 from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
@@ -292,100 +292,95 @@ class DocumentIndexSession:
 
         store = self._runtime._store
         telemetry_manager = self._runtime._telemetry_manager
-        lock_cm = self._lock_document(store)
-
         run_context: IndexRunContext | None = None
         outcome: AppendOutcome | None = None
         result: IndexingResult | None = None
         previous_leaf_count = 0
 
         try:
-            with lock_cm:
-                doc_record = store.get_document_by_id(self._document_id)
-                embedding_model = (
-                    getattr(doc_record, "embedding_model", None)
-                    if doc_record is not None
-                    else None
-                ) or self._runtime._index_config.embedding_model
-                summary_model = (
-                    getattr(doc_record, "summary_model", None)
-                    if doc_record is not None
-                    else None
-                ) or self._runtime._index_config.summary_model
-                stored_path = getattr(doc_record, "file_path", None)
-                resolved_path = (
-                    self._file_path if self._file_path is not None else stored_path
-                )
+            doc_record = store.get_document_by_id(self._document_id)
+            embedding_model = (
+                getattr(doc_record, "embedding_model", None)
+                if doc_record is not None
+                else None
+            ) or self._runtime._index_config.embedding_model
+            summary_model = (
+                getattr(doc_record, "summary_model", None)
+                if doc_record is not None
+                else None
+            ) or self._runtime._index_config.summary_model
+            stored_path = getattr(doc_record, "file_path", None)
+            resolved_path = (
+                self._file_path if self._file_path is not None else stored_path
+            )
 
-                if doc_record is None:
-                    store.add_document(
-                        document_id=self._document_id,
-                        file_path=resolved_path,
-                        embedding_model=embedding_model,
-                        summary_model=summary_model,
-                    )
-                    doc_record = store.get_document_by_id(self._document_id)
-
-                document_store = store.for_document(self._document_id)
-                previous_leaf_count = document_store.nodes.leaf_count()
-
-                if collect_telemetry and telemetry_manager is not None:
-                    existing_tokens = sum(
-                        int(getattr(node, "token_count", 0))
-                        for node in document_store.nodes.get_leaves()
-                    )
-                    new_tokens = tokenizer.count_tokens(text)
-                    source_tokens = existing_tokens + new_tokens
-                    run_context = await telemetry_manager.start_run(
-                        self._document_id,
-                        collect=True,
-                        source_tokens=source_tokens,
-                        document_path=(
-                            self._file_path
-                            if self._file_path is not None
-                            else getattr(doc_record, "file_path", None)
-                        ),
-                        replace_existing=replace_existing,
-                    )
-
-                vector_index = self._runtime._vector_index_factory(embedding_model)
-                outcome = await self._runtime._append_executor.append(
-                    store=document_store,
-                    vector_index=vector_index,
+            if doc_record is None:
+                store.add_document(
                     document_id=self._document_id,
-                    new_text=text,
-                    reporter=run_context.telemetry_collector if run_context else None,
-                    run_context=run_context,
-                    telemetry_manager=telemetry_manager,
+                    file_path=resolved_path,
+                    embedding_model=embedding_model,
+                    summary_model=summary_model,
+                )
+                doc_record = store.get_document_by_id(self._document_id)
+
+            document_store = store.for_document(self._document_id)
+            previous_leaf_count = document_store.nodes.leaf_count()
+
+            if collect_telemetry and telemetry_manager is not None:
+                existing_tokens = sum(
+                    int(getattr(node, "token_count", 0))
+                    for node in document_store.nodes.get_leaves()
+                )
+                new_tokens = tokenizer.count_tokens(text)
+                source_tokens = existing_tokens + new_tokens
+                run_context = await telemetry_manager.start_run(
+                    self._document_id,
+                    collect=True,
+                    source_tokens=source_tokens,
+                    document_path=(
+                        self._file_path
+                        if self._file_path is not None
+                        else getattr(doc_record, "file_path", None)
+                    ),
+                    replace_existing=replace_existing,
                 )
 
-                root = document_store.tree.get_root()
-                tree_depth = int(getattr(root, "height", 0) or 0) if root else 0
-                mutated_nodes = len(outcome.new_leaf_ids) + len(
-                    outcome.deleted_node_ids
-                )
-                new_leaves = len(outcome.new_leaf_ids)
+            vector_index = self._runtime._vector_index_factory(embedding_model)
+            outcome = await self._runtime._append_executor.append(
+                store=document_store,
+                vector_index=vector_index,
+                document_id=self._document_id,
+                new_text=text,
+                reporter=run_context.telemetry_collector if run_context else None,
+                run_context=run_context,
+                telemetry_manager=telemetry_manager,
+            )
 
-                result = IndexingResult(
-                    document_id=outcome.document_id,
-                    chunks_created=outcome.total_leaves,
-                    tree_depth=tree_depth,
+            root = document_store.tree.get_root()
+            tree_depth = int(getattr(root, "height", 0) or 0) if root else 0
+            mutated_nodes = len(outcome.new_leaf_ids) + len(outcome.deleted_node_ids)
+            new_leaves = len(outcome.new_leaf_ids)
+
+            result = IndexingResult(
+                document_id=outcome.document_id,
+                chunks_created=outcome.total_leaves,
+                tree_depth=tree_depth,
+                mutated_nodes=mutated_nodes,
+                resummarized_nodes=0,
+                new_leaves=new_leaves,
+                telemetry=None,
+                telemetry_run_id=run_context.run_id if run_context else None,
+            )
+
+            if run_context is not None:
+                run_context.register_append_outcome(
+                    span_start=outcome.appended_span_start,
+                    span_end=outcome.appended_span_end,
                     mutated_nodes=mutated_nodes,
-                    resummarized_nodes=0,
                     new_leaves=new_leaves,
-                    telemetry=None,
-                    telemetry_run_id=run_context.run_id if run_context else None,
+                    previous_leaf_count=previous_leaf_count,
+                    total_leaves=outcome.total_leaves,
                 )
-
-                if run_context is not None:
-                    run_context.register_append_outcome(
-                        span_start=outcome.appended_span_start,
-                        span_end=outcome.appended_span_end,
-                        mutated_nodes=mutated_nodes,
-                        new_leaves=new_leaves,
-                        previous_leaf_count=previous_leaf_count,
-                        total_leaves=outcome.total_leaves,
-                    )
 
             if run_context is not None:
                 await self._runtime._worker_coordinator.attach_run(run_context)
@@ -420,33 +415,30 @@ class DocumentIndexSession:
         await self._runtime._worker_coordinator.cancel_document(self._document_id)
 
         store = self._runtime._store
-        lock_cm = self._lock_document(store)
+        doc_record = store.get_document_by_id(self._document_id)
+        if doc_record is None:
+            result = ClearedDocumentResult(
+                document_id=self._document_id,
+                deleted_nodes=0,
+                document_existed=False,
+            )
+            await self._runtime._emit_status(self._document_id)
+            return result
 
-        with lock_cm:
-            doc_record = store.get_document_by_id(self._document_id)
-            if doc_record is None:
-                result = ClearedDocumentResult(
-                    document_id=self._document_id,
-                    deleted_nodes=0,
-                    document_existed=False,
-                )
-                await self._runtime._emit_status(self._document_id)
-                return result
+        embedding_model = (
+            getattr(doc_record, "embedding_model", None)
+            or self._runtime._index_config.embedding_model
+        )
 
-            embedding_model = (
-                getattr(doc_record, "embedding_model", None)
-                or self._runtime._index_config.embedding_model
+        try:
+            vector_index = self._runtime._vector_index_factory(embedding_model)
+            vector_index.delete(filter={"document_id": self._document_id})
+        except Exception:  # pragma: no cover - defensive logging
+            logger.exception(
+                "Failed to clear vectors for document %s", self._document_id
             )
 
-            try:
-                vector_index = self._runtime._vector_index_factory(embedding_model)
-                vector_index.delete(filter={"document_id": self._document_id})
-            except Exception:  # pragma: no cover - defensive logging
-                logger.exception(
-                    "Failed to clear vectors for document %s", self._document_id
-                )
-
-            deleted_nodes = store.clear_document(self._document_id)
+        deleted_nodes = store.clear_document(self._document_id)
 
         await self._runtime._emit_status(self._document_id)
         telemetry_manager = self._runtime._telemetry_manager
@@ -460,15 +452,3 @@ class DocumentIndexSession:
 
     def register_progress_listener(self, callback: ProgressCallback) -> ProgressHandle:
         return self._runtime.register_progress_listener(self._document_id, callback)
-
-    def _lock_document(self, store: StorageBackend) -> AbstractContextManager[object]:
-        lock_fn = getattr(store, "lock_document", None)
-        if callable(lock_fn):
-            candidate = lock_fn(self._document_id)
-        if (
-            candidate is not None
-            and hasattr(candidate, "__enter__")
-            and hasattr(candidate, "__exit__")
-        ):
-            return cast(AbstractContextManager[object], candidate)
-        return cast(AbstractContextManager[object], nullcontext())
