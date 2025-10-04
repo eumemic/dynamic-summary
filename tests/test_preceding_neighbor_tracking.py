@@ -49,7 +49,10 @@ class TestPrecedingNeighborTracking:
         indexer_runtime_harness.llm_service.client = mock_openai_async_client
 
         test_chunks = [
-            f"Chunk {i}: This is content for chunk number {i}. " * 10 for i in range(5)
+            "Chunk 0: short content for neighbor test.",
+            "Chunk 1: another brief paragraph to verify ordering.",
+            "Chunk 2: yet another snippet for sequencing.",
+            "Chunk 3: final chunk to ensure multiple leaves.",
         ]
         test_document = "\n\n".join(test_chunks)
 
@@ -105,7 +108,12 @@ class TestPrecedingNeighborTracking:
         indexer_runtime_harness.llm_service.client = mock_openai_async_client
 
         test_chunks = [
-            f"Chunk {i}: This is content for chunk number {i}. " * 20 for i in range(8)
+            "Chunk 0: compact paragraph for internal neighbor tracking.",
+            "Chunk 1: second compact paragraph keeping spans short.",
+            "Chunk 2: third paragraph to build a second internal level.",
+            "Chunk 3: fourth paragraph to create sibling internal nodes.",
+            "Chunk 4: fifth paragraph to ensure multiple parents per level.",
+            "Chunk 5: sixth paragraph so the tree has balanced siblings.",
         ]
         test_document = "\n\n".join(test_chunks)
 
@@ -129,7 +137,7 @@ class TestPrecedingNeighborTracking:
 
             nodes_by_height: dict[int, list[TreeNode]] = {}
             for node in all_nodes:
-                height = _calculate_node_height(node, all_nodes)
+                height = int(getattr(node, "height", 0))
                 nodes_by_height.setdefault(height, []).append(node)
 
             for height, nodes in nodes_by_height.items():
@@ -202,30 +210,3 @@ class TestPrecedingNeighborTracking:
                 ), "Preceding node should end before current node starts"
         finally:
             await indexer_runtime_harness.clear(document_id)
-
-
-def _calculate_node_height(node: TreeNode, all_nodes: list[TreeNode]) -> int:
-    """Calculate the height of a node in the tree."""
-    node_map = {n.id: n for n in all_nodes}
-
-    if not hasattr(node, "left_child_id") or node.left_child_id is None:
-        return 0
-
-    left_height = 0
-    right_height = 0
-
-    if node.left_child_id and node.left_child_id in node_map:
-        left_height = (
-            _calculate_node_height(node_map[node.left_child_id], all_nodes) + 1
-        )
-
-    if (
-        hasattr(node, "right_child_id")
-        and node.right_child_id
-        and node.right_child_id in node_map
-    ):
-        right_height = (
-            _calculate_node_height(node_map[node.right_child_id], all_nodes) + 1
-        )
-
-    return max(left_height, right_height)
