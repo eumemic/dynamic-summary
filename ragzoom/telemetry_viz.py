@@ -1604,6 +1604,8 @@ class TelemetryVisualizer:
                 )
 
             span_start, span_end = node_spans[node_id]
+            node_start_time: float | None = None
+            node_end_time: float | None = None
 
             # Render leaf text generation windows using chunk split telemetry
             if node.get("height") == 0 and append_chunks:
@@ -1623,6 +1625,16 @@ class TelemetryVisualizer:
                     start_time = chunk_info.get("start_time")
                     end_time = chunk_info.get("end_time")
                     if isinstance(start_time, float) and isinstance(end_time, float):
+                        node_start_time = (
+                            start_time
+                            if node_start_time is None
+                            else min(node_start_time, start_time)
+                        )
+                        node_end_time = (
+                            end_time
+                            if node_end_time is None
+                            else max(node_end_time, end_time)
+                        )
                         if indexing_start_time is None and min_time is None:
                             min_time = start_time
                         baseline, min_time = self._calculate_timeline_baseline(
@@ -1652,6 +1664,16 @@ class TelemetryVisualizer:
                 embed_end_time = embedding.get("end_time")
 
                 if embed_start_time is not None and embed_end_time is not None:
+                    node_start_time = (
+                        float(embed_start_time)
+                        if node_start_time is None
+                        else min(node_start_time, float(embed_start_time))
+                    )
+                    node_end_time = (
+                        float(embed_end_time)
+                        if node_end_time is None
+                        else max(node_end_time, float(embed_end_time))
+                    )
                     # Update min_time tracking for fallback
                     if indexing_start_time is None and min_time is None:
                         min_time = float(embed_start_time)
@@ -1680,6 +1702,17 @@ class TelemetryVisualizer:
 
             # Skip leaf nodes for summary processing - they don't have summaries
             if node["height"] == 0:
+                if node_start_time is None:
+                    created_at = _to_float(node.get("created_at"))
+                    if created_at is not None:
+                        node_start_time = created_at
+                if node_end_time is None:
+                    node_end_time = node_start_time
+                if node_start_time is not None and node_end_time is not None:
+                    max_time = max(max_time, node_end_time)
+                    _baseline, min_time = self._calculate_timeline_baseline(
+                        indexing_start_time, min_time, node_start_time
+                    )
                 continue
 
             # Handle passthrough nodes (no summary attempts) - draw as single pixel line
@@ -1689,6 +1722,17 @@ class TelemetryVisualizer:
 
                 # Update max_time
                 max_time = max(max_time, float(created_at))
+                created_at_float = float(created_at)
+                node_start_time = (
+                    created_at_float
+                    if node_start_time is None
+                    else min(node_start_time, created_at_float)
+                )
+                node_end_time = (
+                    created_at_float
+                    if node_end_time is None
+                    else max(node_end_time, created_at_float)
+                )
 
                 # Calculate relative time from indexing start
                 # Three-level fallback: indexed_at -> min_time -> current node time
@@ -1738,6 +1782,14 @@ class TelemetryVisualizer:
                     cumulative_start = start_time
 
                 max_time = max(max_time, end_time)
+                node_start_time = (
+                    start_time
+                    if node_start_time is None
+                    else min(node_start_time, start_time)
+                )
+                node_end_time = (
+                    end_time if node_end_time is None else max(node_end_time, end_time)
+                )
 
                 # Determine color based on attempt number
                 attempt_num = attempt_idx + 1  # Convert to 1-based
@@ -1769,6 +1821,19 @@ class TelemetryVisualizer:
                 )
                 ax.add_patch(rect)
                 cumulative_start = end_time
+
+            if node_start_time is None:
+                created_at = _to_float(node.get("created_at"))
+                if created_at is not None:
+                    node_start_time = created_at
+            if node_end_time is None:
+                node_end_time = node_start_time
+
+            if node_start_time is not None and node_end_time is not None:
+                max_time = max(max_time, node_end_time)
+                _baseline, min_time = self._calculate_timeline_baseline(
+                    indexing_start_time, min_time, node_start_time
+                )
 
         # Set axis limits and labels
         if max_span > min_span:
