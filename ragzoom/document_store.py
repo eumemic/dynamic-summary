@@ -40,6 +40,7 @@ class DocumentNodeRepository:
         token_count: int = 0,
         height: int = 0,
         is_left_child: bool | None = None,
+        level_index: int = 0,
     ) -> TreeNode:
         """Add a node scoped to this document."""
         # Ensure embedding type matches repository protocol
@@ -62,6 +63,7 @@ class DocumentNodeRepository:
             token_count=token_count,
             height=height,
             is_left_child=is_left_child,
+            level_index=level_index,
         )
 
     def add_batch(
@@ -103,6 +105,31 @@ class DocumentNodeRepository:
             raise NotImplementedError("Underlying repository does not support upsert")
         return cast(list[TreeNode], upserts(processed, session=session))
 
+    def delete_nodes(
+        self,
+        node_ids: Sequence[str],
+        *,
+        session: Session | None = None,
+    ) -> None:
+        """Delete a set of nodes while enforcing document scope."""
+
+        deleter = getattr(self._repo, "delete_nodes", None)
+        if not callable(deleter):
+            raise NotImplementedError("Underlying repository does not support deletion")
+
+        scoped: list[str] = []
+        for node_id in node_ids:
+            if not node_id:
+                continue
+            node = self.get(node_id)
+            if node is None:
+                continue
+            scoped.append(node_id)
+
+        if not scoped:
+            return
+        deleter(scoped, session=session)
+
     def get(self, node_id: str) -> TreeNode | None:
         """Get a node by ID, ensuring it belongs to this document."""
         node = self._repo.get_node(node_id)
@@ -121,6 +148,19 @@ class DocumentNodeRepository:
         nodes = self._repo.get_nodes(node_ids)
         return [node for node in nodes if node.document_id == self.document_id]
 
+    def get_by_height_and_level(
+        self, *, height: int, level_index: int
+    ) -> TreeNode | None:
+        """Lookup a node at a specific height/level within this document."""
+
+        getter = getattr(self._repo, "get_node_by_height_and_level", None)
+        if not callable(getter):
+            return None
+        return cast(
+            TreeNode | None,
+            getter(self.document_id, height, level_index),
+        )
+
     def get_root_nodes(self, document_id: str | None = None) -> list[TreeNode]:
         """Get root nodes scoped to the provided or default document."""
 
@@ -129,6 +169,24 @@ class DocumentNodeRepository:
         if target_doc is None:
             return nodes
         return [node for node in nodes if node.document_id == target_doc]
+
+    def get_parentless_nodes(self) -> list[TreeNode]:
+        """Return nodes without parents for this document."""
+
+        getter = getattr(self._repo, "get_parentless_nodes_for_document", None)
+        if not callable(getter):
+            raise NotImplementedError(
+                "Underlying repository does not support parentless node queries"
+            )
+        return list(getter(self.document_id))
+
+    def get_ready_left_children(self) -> list[str]:
+        getter = getattr(self._repo, "get_ready_left_children", None)
+        if not callable(getter):
+            raise NotImplementedError(
+                "Underlying repository does not support ready left child queries"
+            )
+        return list(getter(self.document_id))
 
     def get_rightmost_leaf_for_document(
         self, document_id: str | None

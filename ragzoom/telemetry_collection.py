@@ -54,9 +54,12 @@ logger = logging.getLogger(__name__)
 # - 4.2: Re-added span fields:
 #   - Added span_start and span_end from actual TreeNode data
 #   - These are the real character positions from the document
+# - 4.3: Chunk splitting telemetry:
+#   - Added raw chunk splitting timing metadata to telemetry payload
+#   - Exposed chunk split details for visualization of preprocessing overhead
 #
 # Current format version (increment for breaking changes)
-TELEMETRY_FORMAT_VERSION = "4.2"
+TELEMETRY_FORMAT_VERSION = "4.3"
 
 
 @dataclass
@@ -283,6 +286,8 @@ class TelemetryCollector:
 
         # Node telemetry storage
         self.node_telemetry: dict[str, NodeTelemetry] = {}
+        self._chunk_split_info: dict[str, object] | None = None
+        self._chunk_split_start_time: float | None = None
 
         # Internal state
         self._current_height = 0
@@ -360,6 +365,48 @@ class TelemetryCollector:
         # Track for leaf-height nodes
         if self._current_height == 0:
             self._nodes_at_current_height += 1
+        self._update_memory_usage()
+
+    def record_chunk_split_start(
+        self,
+        *,
+        start_time: float,
+        new_text_chars: int,
+        existing_tail_chars: int,
+        combined_chars: int,
+    ) -> None:
+        """Record the start of a chunk splitting operation."""
+
+        self._chunk_split_start_time = start_time
+        self._chunk_split_info = {
+            "new_text_chars": int(new_text_chars),
+            "existing_tail_chars": int(existing_tail_chars),
+            "combined_chars": int(combined_chars),
+        }
+        self._update_memory_usage()
+
+    def record_chunk_split_end(
+        self,
+        *,
+        end_time: float,
+        chunk_count: int,
+        total_tokens: int,
+    ) -> None:
+        """Record completion details for chunk splitting."""
+
+        info = self._chunk_split_info or {}
+        info.update(
+            {
+                "chunk_count": int(chunk_count),
+                "total_tokens": int(total_tokens),
+            }
+        )
+        start_time = self._chunk_split_start_time
+        if start_time is not None:
+            info["start_time"] = start_time
+            info["end_time"] = end_time
+            info["duration"] = max(0.0, end_time - start_time)
+        self._chunk_split_info = info
         self._update_memory_usage()
 
     def record_embedding_call(self, batch_size: int, token_counts: list[int]) -> None:
@@ -535,6 +582,23 @@ class TelemetryCollector:
         self.tree_height = max(self.tree_height, height)
         self._update_memory_usage()
 
+    def metadata_snapshot(self) -> dict[str, object]:
+        """Build the immutable metadata payload for persistent telemetry."""
+
+        metadata: dict[str, object] = {
+            "format_version": TELEMETRY_FORMAT_VERSION,
+            "document_id": self.document_id,
+            "config": asdict(self.config),
+            "model_metadata": self._get_model_metadata(),
+            "system_prompts": self._get_system_prompts(),
+            "runtime_info": self._get_runtime_info(),
+        }
+
+        if self.document_path:
+            metadata["document_path"] = self.document_path
+
+        return metadata
+
     def finalize(self) -> TelemetryDataDict:
         """Finalize telemetry collection and return raw telemetry data.
 
@@ -610,6 +674,9 @@ class TelemetryCollector:
 
         if self.append_metadata is not None:
             telemetry_data["append_metadata"] = self.append_metadata
+
+        if self._chunk_split_info is not None:
+            telemetry_data["chunk_split"] = dict(self._chunk_split_info)
 
         return cast(TelemetryDataDict, telemetry_data)
 

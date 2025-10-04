@@ -1,0 +1,414 @@
+"""Thin client wrapper around the RagZoom gRPC services."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Iterator
+from dataclasses import dataclass
+from types import TracebackType
+from typing import cast
+
+import grpc
+
+from ragzoom.constants import (
+    DEFAULT_GRPC_ADDRESS,
+    DEFAULT_GRPC_STREAM_TIMEOUT,
+    DEFAULT_GRPC_TIMEOUT,
+)
+from ragzoom.rpc import dynamic_summary_pb2 as pb2
+from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
+from ragzoom.services.indexing_service import IndexingResult
+from ragzoom.services.query_service import QueryResult
+from ragzoom.telemetry_types import TelemetryDataDict
+
+
+def _decode_telemetry(payload: str) -> TelemetryDataDict | None:
+    if not payload:
+        return None
+    data = json.loads(payload)
+    return cast(TelemetryDataDict, data)
+
+
+def _document_stats_to_result(
+    stats: pb2.DocumentStats, *, telemetry_run_id: str | None = None
+) -> IndexingResult:
+    telemetry = _decode_telemetry(stats.telemetry_json)
+    return IndexingResult(
+        document_id=stats.document_id,
+        chunks_created=stats.chunks_created,
+        tree_depth=stats.tree_depth,
+        mutated_nodes=stats.mutated_nodes,
+        resummarized_nodes=stats.resummarized_nodes,
+        new_leaves=stats.new_leaves,
+        telemetry=telemetry,
+        telemetry_run_id=telemetry_run_id,
+    )
+
+
+def _map_rpc_error(error: object) -> RuntimeError:
+    status = getattr(error, "code", lambda: None)()
+    details = getattr(error, "details", lambda: "")() or ""
+    name = getattr(status, "name", None)
+    message = f"gRPC {name}: {details}" if name else details
+    return RuntimeError(message)
+
+
+@dataclass
+class NodeSummary:
+    node_id: str
+    text: str
+    token_count: int
+    span_start: int
+    span_end: int
+    parent_id: str
+    left_child_id: str
+    right_child_id: str
+    height: int
+
+
+@dataclass
+class RetrievalView:
+    selected_ids: list[str]
+    tiling_ids: list[str]
+    scores: dict[str, float]
+    coverage_map: dict[str, bool]
+    nodes: dict[str, NodeSummary]
+
+
+@dataclass
+class ExecuteQueryOutput:
+    query_result: QueryResult
+    retrieval: RetrievalView
+    visualization: str
+    validation_warning: str
+
+
+@dataclass
+class DocumentProgressSnapshot:
+    pending: int
+    inflight: int
+    completed: int
+    total: int
+
+
+@dataclass
+class WorkerRunSnapshot:
+    message: str
+    idle: bool
+    queue_depth: int
+    inflight: int
+    documents: dict[str, DocumentProgressSnapshot]
+
+
+@dataclass
+class ClearedDocumentResult:
+    document_id: str
+    deleted_nodes: int
+    document_existed: bool
+
+
+@dataclass
+class TelemetryFetchResult:
+    complete: bool
+    telemetry: TelemetryDataDict | None
+    error: str | None
+
+
+@dataclass
+class TelemetryExportResult:
+    telemetry: TelemetryDataDict | None
+    error: str | None
+
+
+@dataclass
+class DocumentStatusView:
+    document_id: str
+    leaf_count: int
+    tree_depth: int
+    has_pending_work: bool
+
+
+class GrpcRagzoomClient:
+    """Synchronous convenience wrapper for the RagZoom gRPC services."""
+
+    def __init__(
+        self,
+        address: str = DEFAULT_GRPC_ADDRESS,
+        *,
+        timeout: float | None = None,
+        stream_timeout: float | None = DEFAULT_GRPC_STREAM_TIMEOUT,
+    ) -> None:
+        self._address = address
+        self._timeout = DEFAULT_GRPC_TIMEOUT if timeout is None else timeout
+        self._stream_timeout = stream_timeout
+        self._channel = grpc.insecure_channel(address)
+        self._indexer: pb2_grpc.IndexerServiceStub = pb2_grpc.IndexerServiceStub(
+            self._channel
+        )
+        self._retrieval: pb2_grpc.RetrievalServiceStub = pb2_grpc.RetrievalServiceStub(
+            self._channel
+        )
+        self._workers: pb2_grpc.WorkerServiceStub = pb2_grpc.WorkerServiceStub(
+            self._channel
+        )
+
+    def __enter__(self) -> GrpcRagzoomClient:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self._channel.close()
+
+    def index_document(
+        self,
+        *,
+        document_id: str | None,
+        content: bytes,
+        collect_telemetry: bool,
+    ) -> IndexingResult:
+        request = pb2.IndexDocumentRequest(
+            document_id=document_id or "",
+            content=content,
+            collect_telemetry=collect_telemetry,
+        )
+        try:
+            response = self._indexer.IndexDocument(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover - network failures
+            raise _map_rpc_error(error) from error
+        return _document_stats_to_result(response.stats)
+
+    def append_text(
+        self,
+        *,
+        document_id: str,
+        content: bytes,
+        collect_telemetry: bool,
+        replace_existing: bool,
+    ) -> IndexingResult:
+        request = pb2.AppendTextRequest(
+            document_id=document_id,
+            content=content,
+            collect_telemetry=collect_telemetry,
+        )
+        setattr(request, "replace_existing", replace_existing)
+        try:
+            response = self._indexer.AppendText(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+        telemetry_run_id = getattr(response, "telemetry_run_id", "") or None
+        return _document_stats_to_result(
+            response.stats,
+            telemetry_run_id=telemetry_run_id,
+        )
+
+    def execute_query(
+        self,
+        *,
+        query: str,
+        document_id: str,
+        budget_tokens: int | None,
+        num_seeds: int | None,
+        embedding_model: str | None,
+        debug: bool,
+        viz_width: int,
+        use_token_coords: bool,
+    ) -> ExecuteQueryOutput:
+        request = pb2.ExecuteQueryRequest(
+            query=query,
+            document_id=document_id,
+            budget_tokens=budget_tokens or 0,
+            num_seeds=num_seeds or 0,
+            embedding_model=embedding_model or "",
+            debug=debug,
+            viz_width=viz_width,
+            use_token_coords=use_token_coords,
+        )
+        try:
+            response = self._retrieval.ExecuteQuery(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        query_result = QueryResult(
+            summary=response.summary,
+            token_count=response.token_count,
+            nodes_retrieved=response.nodes_retrieved,
+            tiling_size=response.tiling_size,
+        )
+
+        nodes_payload: dict[str, NodeSummary] = {}
+        for node_id, node in response.retrieval.nodes.items():
+            nodes_payload[node_id] = NodeSummary(
+                node_id=node.node_id,
+                text=node.text,
+                token_count=node.token_count,
+                span_start=node.span_start,
+                span_end=node.span_end,
+                parent_id=node.parent_id,
+                left_child_id=node.left_child_id,
+                right_child_id=node.right_child_id,
+                height=node.height,
+            )
+
+        retrieval_view = RetrievalView(
+            selected_ids=list(response.retrieval.selected_ids),
+            tiling_ids=list(response.retrieval.tiling_ids),
+            scores=dict(response.retrieval.scores),
+            coverage_map=dict(response.retrieval.coverage_map),
+            nodes=nodes_payload,
+        )
+
+        return ExecuteQueryOutput(
+            query_result=query_result,
+            retrieval=retrieval_view,
+            visualization=response.visualization,
+            validation_warning=response.validation_warning,
+        )
+
+    def run_workers_once(self) -> list[WorkerRunSnapshot]:
+        return list(self.iter_worker_snapshots())
+
+    def iter_worker_snapshots(self) -> Iterator[WorkerRunSnapshot]:
+        request = pb2.RunWorkersRequest(mode=pb2.WORKER_RUN_MODE_UNTIL_IDLE)
+        try:
+            responses = self._workers.RunWorkers(request, timeout=self._stream_timeout)
+            for resp in responses:
+                documents: dict[str, DocumentProgressSnapshot] = {}
+                for progress in resp.documents:
+                    doc_id = progress.document_id
+                    if not doc_id:
+                        continue
+                    pending = progress.pending
+                    inflight = progress.inflight
+                    completed = getattr(progress, "completed", 0)
+                    total = getattr(progress, "total", 0)
+                    if total <= 0:
+                        total = pending + inflight + completed
+                    documents[doc_id] = DocumentProgressSnapshot(
+                        pending=pending,
+                        inflight=inflight,
+                        completed=completed,
+                        total=total,
+                    )
+                yield WorkerRunSnapshot(
+                    message=resp.message,
+                    idle=resp.idle,
+                    queue_depth=resp.queue_depth,
+                    inflight=resp.inflight,
+                    documents=documents,
+                )
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+    def get_document_status(self, document_id: str) -> DocumentStatusView:
+        request = pb2.GetDocumentRequest(document_id=document_id)
+        try:
+            response = self._workers.GetDocument(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover - network failures
+            raise _map_rpc_error(error) from error
+
+        status = getattr(response, "status", None)
+        if status is None or not getattr(status, "document_id", ""):
+            raise RuntimeError("Worker service returned empty document status")
+
+        return DocumentStatusView(
+            document_id=status.document_id,
+            leaf_count=status.leaf_count,
+            tree_depth=status.tree_depth,
+            has_pending_work=status.has_pending_work,
+        )
+
+    def clear_document(self, document_id: str) -> ClearedDocumentResult:
+        results = self.clear_documents(document_ids=[document_id])
+        if results:
+            return results[0]
+        return ClearedDocumentResult(
+            document_id=document_id, deleted_nodes=0, document_existed=False
+        )
+
+    def clear_all_documents(self) -> list[ClearedDocumentResult]:
+        return self.clear_documents(clear_all=True)
+
+    def clear_documents(
+        self,
+        document_ids: list[str] | None = None,
+        *,
+        clear_all: bool = False,
+    ) -> list[ClearedDocumentResult]:
+        request_type = getattr(pb2, "ClearDocumentRequest")
+        request = request_type(
+            document_ids=document_ids or [],
+            clear_all=clear_all,
+        )
+        try:
+            clear_rpc = getattr(self._workers, "ClearDocument")
+            response = clear_rpc(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        results: list[ClearedDocumentResult] = []
+        for result in getattr(response, "results", []):
+            results.append(
+                ClearedDocumentResult(
+                    document_id=getattr(result, "document_id", ""),
+                    deleted_nodes=int(getattr(result, "deleted_nodes", 0)),
+                    document_existed=bool(getattr(result, "document_existed", False)),
+                )
+            )
+        return results
+
+    def get_telemetry(
+        self,
+        *,
+        document_id: str,
+        run_id: str,
+        wait: bool = False,
+    ) -> TelemetryFetchResult:
+        request_cls = getattr(pb2, "GetTelemetryRequest")
+        request = request_cls(
+            document_id=document_id,
+            run_id=run_id,
+            wait=wait,
+        )
+        try:
+            get_telemetry = getattr(self._workers, "GetTelemetry")
+            response = get_telemetry(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        telemetry_json = getattr(response, "telemetry_json", "")
+        telemetry = _decode_telemetry(telemetry_json)
+        error_message = getattr(response, "error", "") or ""
+
+        return TelemetryFetchResult(
+            complete=bool(getattr(response, "complete", False)),
+            telemetry=telemetry,
+            error=error_message or None,
+        )
+
+    def export_document_telemetry(
+        self,
+        *,
+        document_id: str,
+    ) -> TelemetryExportResult:
+        request = pb2.ExportTelemetryRequest(document_id=document_id)
+        try:
+            export_rpc = getattr(self._workers, "ExportTelemetry")
+            response = export_rpc(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        telemetry_json = getattr(response, "telemetry_json", "")
+        telemetry = _decode_telemetry(telemetry_json)
+        error_message = getattr(response, "error", "") or ""
+
+        return TelemetryExportResult(
+            telemetry=telemetry,
+            error=error_message or None,
+        )

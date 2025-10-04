@@ -30,7 +30,6 @@ def profile_indexing() -> None:
             "test_data/the_hobbit.txt",
             "--target-chunk-tokens",
             "50",
-            "--validate",
             "--debug",
             "--no-progress",
         ],

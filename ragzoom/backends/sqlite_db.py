@@ -55,6 +55,7 @@ class SQLiteTreeNode(SqliteBase):
     document_id: Mapped[str | None] = mapped_column(String, nullable=True)
     preceding_neighbor_id: Mapped[str | None] = mapped_column(String, nullable=True)
     following_neighbor_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    level_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     height: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     def is_leaf(self) -> bool:
@@ -126,6 +127,18 @@ class SqliteDatabaseManager:
                 try:
                     conn.exec_driver_sql(
                         "ALTER TABLE documents DROP COLUMN chunk_count"
+                    )
+                except Exception:
+                    pass
+                try:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE tree_nodes ADD COLUMN level_index INTEGER NOT NULL DEFAULT 0"
+                    )
+                except Exception:
+                    pass
+                try:
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS idx_tree_nodes_document_height_level ON tree_nodes (document_id, height, level_index)"
                     )
                 except Exception:
                     pass

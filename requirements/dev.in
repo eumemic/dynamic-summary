@@ -8,6 +8,7 @@ ruff
 mypy[dmypy]
 bandit
 pre-commit
+grpcio-tools
 types-tqdm
 types-seaborn
 pandas-stubs

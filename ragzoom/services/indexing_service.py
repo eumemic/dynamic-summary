@@ -2,19 +2,40 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
 from ragzoom.config import IndexConfig, OperationalConfig
+from ragzoom.constants import DEFAULT_GRPC_ADDRESS
 from ragzoom.contracts.storage_backend import StorageBackend
-from ragzoom.index import AppendStats, TreeBuilder
 from ragzoom.telemetry_types import TelemetryDataDict
 
-if TYPE_CHECKING:
-    from ragzoom.telemetry_collection import TelemetryCollector
-from ragzoom.vector_factory import create_vector_index
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ragzoom.client.grpc_client import GrpcRagzoomClient
+
+T = TypeVar("T")
+
+
+class _IndexSession(Protocol):
+    async def append_text(
+        self,
+        text: str,
+        *,
+        replace_existing: bool,
+        collect_telemetry: bool,
+    ) -> IndexingResult: ...
+
+
+class _Runtime(Protocol):
+    def get_session(
+        self, document_id: str, *, file_path: str | None = None
+    ) -> _IndexSession: ...
+
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +51,7 @@ class IndexingResult:
     resummarized_nodes: int | None = None
     new_leaves: int | None = None
     telemetry: TelemetryDataDict | None = None
+    telemetry_run_id: str | None = None
 
 
 class IndexingService:
@@ -40,77 +62,118 @@ class IndexingService:
         store: StorageBackend,
         index_config: IndexConfig,
         operational_config: OperationalConfig,
+        *,
+        grpc_address: str | None = None,
+        client_factory: Callable[[str], GrpcRagzoomClient] | None = None,
+        index_runtime: _Runtime | None = None,
     ):
-        """Initialize indexing service.
-
-        Args:
-            store: Store instance for data access
-            index_config: Configuration for indexing
-            operational_config: Operational configuration
-        """
         self.store = store
         self.index_config = index_config
         self.operational_config = operational_config
-        # TreeBuilder will be created per-request with a DocumentStore
+        if index_runtime is not None and (
+            grpc_address is not None or client_factory is not None
+        ):
+            raise ValueError(
+                "IndexingService cannot mix runtime and gRPC client configuration"
+            )
 
-    def _finalize_result(
+        self._index_runtime: _Runtime | None = index_runtime
+        self._client_factory: Callable[[str], GrpcRagzoomClient] | None
+        self._grpc_address: str | None
+
+        if index_runtime is None:
+            resolved_address = self._resolve_address(grpc_address)
+            self._grpc_address = resolved_address
+            self._client_factory = client_factory or self._default_client_factory
+        else:
+            self._grpc_address = None
+            self._client_factory = None
+
+    def _resolve_address(self, explicit: str | None) -> str:
+        if explicit:
+            return explicit
+        env_address = os.environ.get("RAGZOOM_SERVER_ADDRESS")
+        if env_address:
+            return env_address
+        return DEFAULT_GRPC_ADDRESS
+
+    def _default_client_factory(self, address: str) -> GrpcRagzoomClient:
+        from ragzoom.client.grpc_client import GrpcRagzoomClient as _GrpcClient
+
+        return _GrpcClient(address)
+
+    def _append_via_grpc(
         self,
-        document_id: str,
-        telemetry: TelemetryDataDict | None,
         *,
-        mutated_nodes: int | None = None,
-        resummarized_nodes: int | None = None,
-        new_leaves: int | None = None,
+        document_id: str,
+        text: str,
+        collect_telemetry: bool,
+        replace_existing: bool,
     ) -> IndexingResult:
-        doc_store_final = self.store.for_document(document_id)
-        leaves = doc_store_final.nodes.get_leaves()
-        root = doc_store_final.tree.get_root()
-        tree_height = root.height if root else 0
+        if self._client_factory is None or self._grpc_address is None:
+            raise RuntimeError("IndexingService is not configured for gRPC access")
+        if not text:
+            raise ValueError("text must be non-empty")
 
-        total_leaves = len(leaves)
+        with self._client_factory(self._grpc_address) as client:
+            result = client.append_text(
+                document_id=document_id,
+                content=text.encode("utf-8"),
+                collect_telemetry=collect_telemetry,
+                replace_existing=replace_existing,
+            )
+        return result
 
-        if mutated_nodes is None:
-            mutated_nodes = doc_store_final.nodes.count()
-        if resummarized_nodes is None:
-            resummarized_nodes = max(mutated_nodes - total_leaves, 0)
-        if new_leaves is None:
-            new_leaves = total_leaves
-
-        return IndexingResult(
-            document_id=document_id,
-            chunks_created=total_leaves,
-            tree_depth=tree_height,
-            mutated_nodes=mutated_nodes,
-            resummarized_nodes=resummarized_nodes,
-            new_leaves=new_leaves,
-            telemetry=telemetry,
+    def _append_via_runtime(
+        self,
+        *,
+        document_id: str,
+        text: str,
+        collect_telemetry: bool,
+        replace_existing: bool,
+        file_path: str | None = None,
+    ) -> IndexingResult:
+        runtime = self._index_runtime
+        if runtime is None:
+            raise RuntimeError("IndexingService is not configured with a local runtime")
+        if not text:
+            raise ValueError("text must be non-empty")
+        session = runtime.get_session(document_id, file_path=file_path)
+        return self._await_runtime(
+            session.append_text(
+                text,
+                replace_existing=replace_existing,
+                collect_telemetry=collect_telemetry,
+            )
         )
 
-    def _from_append_result(self, append_result: AppendStats) -> IndexingResult:
-        """Convert append stats into a finalized indexing result."""
+    def _await_runtime(self, awaitable: Coroutine[object, object, T]) -> T:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(awaitable)
+        if loop.is_running():
+            raise RuntimeError(
+                "Runtime-backed IndexingService methods must use the async API when an event loop is running"
+            )
+        return loop.run_until_complete(awaitable)
 
-        return self._finalize_result(
-            append_result.document_id,
-            append_result.telemetry,
-            mutated_nodes=append_result.mutated_nodes,
-            resummarized_nodes=append_result.resummarized_nodes,
-            new_leaves=append_result.new_leaves,
-        )
-
-    def _create_tree_builder(self, document_id: str) -> TreeBuilder:
-        document_store = self.store.for_document(document_id)
-        vector_index = create_vector_index(
-            self.operational_config.vector_backend,
-            self.operational_config.database_url,
-            self.index_config.embedding_model,
-        )
-        return TreeBuilder(
-            self.index_config,
-            document_store,
-            api_key=self.operational_config.openai_api_key.get_secret_value(),
-            max_concurrent=30,
-            vector_index=vector_index,
-        )
+    def _index_via_grpc(
+        self,
+        *,
+        document_id: str,
+        text: str,
+        collect_telemetry: bool,
+    ) -> IndexingResult:
+        if self._client_factory is None or self._grpc_address is None:
+            raise RuntimeError("IndexingService is not configured for gRPC access")
+        with self._client_factory(self._grpc_address) as client:
+            result = client.index_document(
+                document_id=document_id,
+                content=text.encode("utf-8"),
+                collect_telemetry=collect_telemetry,
+            )
+        return result
 
     def index_document(
         self,
@@ -120,30 +183,31 @@ class IndexingService:
         show_progress: bool = True,
         collect_telemetry: bool = False,
     ) -> IndexingResult:
-        """Index a document from text.
+        """Index (rebuild) a document by delegating to the gRPC server."""
 
-        Args:
-            text: Document text to index
-            document_id: Optional document ID (defaults to filename if file_path provided)
-            file_path: Optional file path for metadata
-            show_progress: Whether to show progress bar
-            collect_telemetry: Whether to collect telemetry data
+        if not text:
+            raise ValueError("text must be non-empty")
 
-        Returns:
-            IndexingResult with document stats and optional telemetry
-        """
-        import asyncio
+        resolved_id = document_id or ""
+        if not resolved_id:
+            if file_path:
+                resolved_id = Path(file_path).name
+        if not resolved_id:
+            raise ValueError("document_id or file_path must be provided")
 
-        # Simply delegate to async version using asyncio.run
-        # This ensures both sync and async paths are ALWAYS identical
-        return asyncio.run(
-            self.index_document_async(
+        if self._index_runtime is not None:
+            return self._append_via_runtime(
+                document_id=resolved_id,
                 text=text,
-                document_id=document_id,
-                file_path=file_path,
-                show_progress=show_progress,
                 collect_telemetry=collect_telemetry,
+                replace_existing=True,
+                file_path=file_path,
             )
+
+        return self._index_via_grpc(
+            document_id=resolved_id,
+            text=text,
+            collect_telemetry=collect_telemetry,
         )
 
     # jscpd:ignore-start - Legitimate sync wrapper pattern
@@ -206,73 +270,30 @@ class IndexingService:
         Returns:
             IndexingResult with document stats and optional telemetry
         """
-        # Generate document ID if not provided
-        if not document_id:
-            if file_path:
-                document_id = Path(file_path).name
-            else:
-                raise ValueError("Either document_id or file_path must be provided")
+        if self._index_runtime is not None:
+            resolved_id = document_id or ""
+            if not resolved_id and file_path:
+                resolved_id = Path(file_path).name
+            if not resolved_id:
+                raise ValueError("document_id or file_path must be provided")
+            session = self._index_runtime.get_session(resolved_id, file_path=file_path)
+            return await session.append_text(
+                text,
+                replace_existing=True,
+                collect_telemetry=collect_telemetry,
+            )
 
-        # Acquire per-document lock when supported by backend
-        from contextlib import AbstractContextManager, nullcontext
-
-        _lock_fn = getattr(self.store, "lock_document", None)
-        cm_any = _lock_fn(document_id) if callable(_lock_fn) else None
-        # Some test doubles (unconfigured Mocks) may return non-context managers; coerce to a valid one
-        if not (hasattr(cm_any, "__enter__") and hasattr(cm_any, "__exit__")):
-            lock_cm = cast(AbstractContextManager[object], nullcontext())
-        else:
-            lock_cm = cast(AbstractContextManager[object], cm_any)
-
-        with lock_cm:
-            # Clear existing data for the document
-            deleted_count = self.store.clear_document(document_id)
-            if deleted_count > 0:
-                logger.info(
-                    f"Cleared existing data for '{document_id}' ({deleted_count} nodes)"
-                )
-            # Also clear vectors for this document to avoid stale candidates
-            try:
-                vector_index_for_clear = create_vector_index(
-                    self.operational_config.vector_backend,
-                    self.operational_config.database_url,
-                    self.index_config.embedding_model,
-                )
-                _ = vector_index_for_clear.delete(filter={"document_id": document_id})
-            except Exception:
-                # Non-fatal; retrieval path defensively filters any stale vectors
-                pass
-
-            # Create document with full metadata BEFORE indexing
-            # This ensures the document exists with proper metadata before TreeBuilder runs
-            self.store.add_document(
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self.index_document(
+                text,
                 document_id=document_id,
                 file_path=file_path,
-                embedding_model=self.index_config.embedding_model,
-                summary_model=self.index_config.summary_model,
-            )
-
-            # Create document-scoped store and TreeBuilder
-            tree_builder = self._create_tree_builder(document_id)
-
-            reporter: TelemetryCollector | None = None
-            if collect_telemetry:
-                from ragzoom.telemetry_collection import TelemetryCollector
-
-                reporter = TelemetryCollector(
-                    document_id,
-                    tree_builder.tokenizer.count_tokens(text),
-                    self.index_config,
-                    document_path=file_path,
-                )
-
-            append_result = await tree_builder.append_text_async(
-                text,
                 show_progress=show_progress,
-                reporter=reporter,
-            )
-
-            return self._from_append_result(append_result)
+                collect_telemetry=collect_telemetry,
+            ),
+        )
 
     def append_to_document(
         self,
@@ -281,17 +302,27 @@ class IndexingService:
         show_progress: bool = False,
         collect_telemetry: bool = False,
     ) -> IndexingResult:
-        """Sync wrapper for append_to_document_async."""
+        """Append new text to a document via gRPC."""
 
-        import asyncio
+        if not document_id:
+            raise ValueError("document_id is required for append")
 
-        return asyncio.run(
-            self.append_to_document_async(
+        # Compatibility shim – progress display is handled client-side for gRPC workflows.
+        _ = show_progress
+
+        if self._index_runtime is not None:
+            return self._append_via_runtime(
                 document_id=document_id,
-                new_text=new_text,
-                show_progress=show_progress,
+                text=new_text,
                 collect_telemetry=collect_telemetry,
+                replace_existing=False,
             )
+
+        return self._append_via_grpc(
+            document_id=document_id,
+            text=new_text,
+            collect_telemetry=collect_telemetry,
+            replace_existing=False,
         )
 
     async def append_to_document_async(
@@ -301,48 +332,23 @@ class IndexingService:
         show_progress: bool = False,
         collect_telemetry: bool = False,
     ) -> IndexingResult:
-        """Append new text to an existing document incrementally."""
+        """Async wrapper for append_to_document."""
 
-        if not document_id:
-            raise ValueError("document_id is required for append")
-
-        from contextlib import AbstractContextManager, nullcontext
-
-        _lock_fn = getattr(self.store, "lock_document", None)
-        cm_any = _lock_fn(document_id) if callable(_lock_fn) else None
-        if not (hasattr(cm_any, "__enter__") and hasattr(cm_any, "__exit__")):
-            lock_cm = cast(AbstractContextManager[object], nullcontext())
-        else:
-            lock_cm = cast(AbstractContextManager[object], cm_any)
-
-        with lock_cm:
-            doc_record = self.store.get_document_by_id(document_id)
-            if doc_record is None:
-                self.store.add_document(
-                    document_id=document_id,
-                    file_path=None,
-                    embedding_model=self.index_config.embedding_model,
-                    summary_model=self.index_config.summary_model,
-                )
-
-            tree_builder = self._create_tree_builder(document_id)
-
-            reporter = None
-            if collect_telemetry:
-                from ragzoom.telemetry_collection import TelemetryCollector
-
-                token_estimate = tree_builder.tokenizer.count_tokens(new_text)
-                reporter = TelemetryCollector(
-                    document_id,
-                    token_estimate,
-                    self.index_config,
-                    document_path=None,
-                )
-
-            append_result = await tree_builder.append_text_async(
+        if self._index_runtime is not None:
+            session = self._index_runtime.get_session(document_id)
+            return await session.append_text(
                 new_text,
-                show_progress=show_progress,
-                reporter=reporter,
+                replace_existing=False,
+                collect_telemetry=collect_telemetry,
             )
 
-            return self._from_append_result(append_result)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self.append_to_document(
+                document_id=document_id,
+                new_text=new_text,
+                show_progress=show_progress,
+                collect_telemetry=collect_telemetry,
+            ),
+        )

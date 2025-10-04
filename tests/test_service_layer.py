@@ -102,181 +102,222 @@ class TestDocumentService:
         mock_store.clear_document.assert_called_once_with("test-doc")
 
 
+class _StubSession:
+    def __init__(self, result: IndexingResult) -> None:
+        self._result = result
+        self.calls: list[dict[str, object]] = []
+
+    async def append_text(
+        self,
+        text: str,
+        *,
+        replace_existing: bool,
+        collect_telemetry: bool,
+    ) -> IndexingResult:
+        self.calls.append(
+            {
+                "text": text,
+                "replace_existing": replace_existing,
+                "collect_telemetry": collect_telemetry,
+            }
+        )
+        return self._result
+
+
+class _StubRuntime:
+    def __init__(self, session: _StubSession) -> None:
+        self._session = session
+        self.requests: list[tuple[str, str | None]] = []
+
+    def get_session(
+        self, document_id: str, *, file_path: str | None = None
+    ) -> _StubSession:
+        self.requests.append((document_id, file_path))
+        return self._session
+
+
 class TestIndexingService:
-    """Test the IndexingService."""
+    """Tests for the gRPC-backed IndexingService."""
 
-    def test_index_document(self, storage_backend: StorageBackend) -> None:
-        """Test indexing a document."""
-        # Create configs
-        index_config = IndexConfig.load()
-        operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
-        # Patch OpenAI client
-        mock_async_client = MagicMock()
+    def _make_service(self) -> tuple[IndexingService, MagicMock]:
+        store = MagicMock()
+        client_mock = MagicMock()
+        client_mock.__enter__.return_value = client_mock
+        client_mock.__exit__.return_value = None
+        service = IndexingService(
+            store,
+            IndexConfig.load(),
+            OperationalConfig(openai_api_key=SecretStr("test-key")),
+            client_factory=lambda _address: client_mock,
+        )
+        return service, client_mock
 
-        async def mock_embeddings(*args: object, **kwargs: object) -> object:
-            from typing import cast
+    def test_index_document_calls_grpc(self) -> None:
+        service, client_mock = self._make_service()
+        expected = IndexingResult(
+            document_id="doc-1",
+            chunks_created=4,
+            tree_depth=2,
+            mutated_nodes=4,
+            resummarized_nodes=0,
+            new_leaves=1,
+            telemetry=None,
+        )
+        client_mock.index_document.return_value = expected
 
-            input_texts = cast(list[str] | str, kwargs.get("input", []))
-            if isinstance(input_texts, str):
-                input_texts = [input_texts]
-            return MagicMock(
-                data=[MagicMock(embedding=[0.1] * 1536) for _ in input_texts]
-            )
-
-        mock_async_client.embeddings.create = mock_embeddings
-        mock_async_client.chat.completions.create = MagicMock(
-            return_value=MagicMock(
-                choices=[
-                    MagicMock(
-                        message=MagicMock(content="Summary of left and right content")
-                    )
-                ]
-            )
+        result = service.index_document(
+            "Test content",
+            document_id="doc-1",
+            collect_telemetry=True,
         )
 
-        with patch(
-            "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
-        ):
-            # Ensure any stale lock file is removed
-            import os
-            from pathlib import Path
-
-            lock_path = Path("data/.ragzoom/locks/test-doc.lock")
-            try:
-                if lock_path.exists():
-                    os.remove(lock_path)
-            except Exception:
-                pass
-
-            service = IndexingService(storage_backend, index_config, operational_config)
-            result = service.index_document("test text", document_id="test-doc")
-
-            assert isinstance(result, IndexingResult)
-            assert result.document_id == "test-doc"
-            assert result.chunks_created >= 1
-            assert result.tree_depth >= 0
-            assert result.telemetry is None
-
-    def test_append_handles_missing_version_metadata(
-        self,
-        storage_backend: StorageBackend,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Ensure append proceeds even when documents have no version metadata."""
-
-        index_config = IndexConfig.load()
-        operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
-        mock_async_client = MagicMock()
-
-        async def mock_embeddings(*args: object, **kwargs: object) -> object:
-            from typing import cast
-
-            input_texts = cast(list[str] | str, kwargs.get("input", []))
-            if isinstance(input_texts, str):
-                input_texts = [input_texts]
-            return MagicMock(
-                data=[MagicMock(embedding=[0.1] * 1536) for _ in input_texts]
-            )
-
-        mock_async_client.embeddings.create = mock_embeddings
-        mock_async_client.chat.completions.create = MagicMock(
-            return_value=MagicMock(
-                choices=[
-                    MagicMock(
-                        message=MagicMock(content="Summary of left and right content")
-                    )
-                ]
-            )
+        assert result == expected
+        client_mock.index_document.assert_called_once_with(
+            document_id="doc-1",
+            content=b"Test content",
+            collect_telemetry=True,
         )
 
-        with patch(
-            "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
-        ):
-            service = IndexingService(storage_backend, index_config, operational_config)
-            service.index_document("seed text", document_id="doc-append")
+    def test_index_document_uses_filename_when_missing_id(self) -> None:
+        service, client_mock = self._make_service()
+        expected = IndexingResult(
+            document_id="file.txt",
+            chunks_created=1,
+            tree_depth=0,
+        )
+        client_mock.index_document.return_value = expected
 
-            doc = service.store.get_document_by_id("doc-append")
-            assert doc is not None
-
-            monkeypatch.setattr(
-                service.store,
-                "get_document_by_id",
-                lambda _doc_id: doc,
-            )
-
-            async def attempt() -> None:
-                await service.append_to_document_async(
-                    document_id="doc-append",
-                    new_text=" more text",
-                    show_progress=False,
-                )
-
-            asyncio.run(attempt())
-
-    def test_append_creates_document_when_missing(
-        self,
-        storage_backend: StorageBackend,
-    ) -> None:
-        """Initial append seeds metadata and builds the tree."""
-
-        index_config = IndexConfig.load()
-        operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
-        mock_async_client = MagicMock()
-
-        async def mock_embeddings(*args: object, **kwargs: object) -> object:
-            from typing import cast
-
-            input_texts = cast(list[str] | str, kwargs.get("input", []))
-            if isinstance(input_texts, str):
-                input_texts = [input_texts]
-            return MagicMock(
-                data=[MagicMock(embedding=[0.1] * 1536) for _ in input_texts]
-            )
-
-        mock_async_client.embeddings.create = mock_embeddings
-        mock_async_client.chat.completions.create = MagicMock(
-            return_value=MagicMock(
-                choices=[
-                    MagicMock(
-                        message=MagicMock(content="Summary of left and right content")
-                    )
-                ]
-            )
+        result = service.index_document(
+            "content",
+            document_id=None,
+            file_path="/tmp/file.txt",
         )
 
-        with patch(
-            "ragzoom.services.llm_service.AsyncOpenAI", return_value=mock_async_client
-        ):
-            service = IndexingService(storage_backend, index_config, operational_config)
+        assert result.document_id == "file.txt"
+        client_mock.index_document.assert_called_once_with(
+            document_id="file.txt",
+            content=b"content",
+            collect_telemetry=False,
+        )
 
-            async def do_append() -> None:
-                await service.append_to_document_async(
-                    document_id="doc-new",
-                    new_text="Seed text for incremental append.",
-                    show_progress=False,
-                )
+    def test_index_document_requires_identifier(self) -> None:
+        service, _ = self._make_service()
+        with pytest.raises(ValueError):
+            service.index_document("content")
 
-            asyncio.run(do_append())
+    def test_append_to_document_calls_grpc(self) -> None:
+        service, client_mock = self._make_service()
+        expected = IndexingResult(
+            document_id="doc-1",
+            chunks_created=5,
+            tree_depth=3,
+        )
+        client_mock.append_text.return_value = expected
 
-            doc = service.store.get_document_by_id("doc-new")
-            assert doc is not None
-            assert not hasattr(doc, "version")
+        result = service.append_to_document("doc-1", "more", collect_telemetry=True)
 
-            doc_store = service.store.for_document("doc-new")
-            leaves = doc_store.nodes.get_leaves()
-            assert leaves, "Append should create leaf nodes"
-            assert doc_store.nodes.count() >= len(leaves)
+        assert result == expected
+        client_mock.append_text.assert_called_once_with(
+            document_id="doc-1",
+            content=b"more",
+            collect_telemetry=True,
+            replace_existing=False,
+        )
 
-            async def do_second_append() -> None:
-                await service.append_to_document_async(
-                    document_id="doc-new",
-                    new_text=" Additional slice.",
-                    show_progress=False,
-                )
+    def test_index_document_uses_runtime_when_available(self) -> None:
+        store = MagicMock()
+        runtime_result = IndexingResult(
+            document_id="doc-1",
+            chunks_created=2,
+            tree_depth=1,
+            mutated_nodes=2,
+        )
+        session = _StubSession(runtime_result)
+        runtime = _StubRuntime(session)
 
-            asyncio.run(do_second_append())
-            doc_after = service.store.get_document_by_id("doc-new")
-            assert not hasattr(doc_after, "version")
+        service = IndexingService(
+            store,
+            IndexConfig.load(),
+            OperationalConfig(openai_api_key=SecretStr("test-key")),
+            index_runtime=runtime,
+        )
+        assert service._index_runtime is runtime
+        assert service._client_factory is None
+
+        result = service.index_document("content", document_id="doc-1")
+
+        assert result == runtime_result
+        assert runtime.requests == [("doc-1", None)]
+        assert session.calls[0]["replace_existing"] is True
+
+    def test_append_to_document_uses_runtime_when_available(self) -> None:
+        store = MagicMock()
+        runtime_result = IndexingResult(
+            document_id="doc-1",
+            chunks_created=3,
+            tree_depth=2,
+        )
+        session = _StubSession(runtime_result)
+        runtime = _StubRuntime(session)
+
+        service = IndexingService(
+            store,
+            IndexConfig.load(),
+            OperationalConfig(openai_api_key=SecretStr("test-key")),
+            index_runtime=runtime,
+        )
+        assert service._client_factory is None
+
+        with patch.object(
+            service, "_append_via_grpc", wraps=service._append_via_grpc
+        ) as grpc_stub:
+            result = service.append_to_document("doc-1", "more text")
+
+        assert result == runtime_result
+        assert not grpc_stub.called
+        assert session.calls[0]["replace_existing"] is False
+        assert runtime.requests == [("doc-1", None)]
+
+    @pytest.mark.asyncio
+    async def test_index_document_async_uses_runtime(self) -> None:
+        store = MagicMock()
+        runtime_result = IndexingResult(
+            document_id="doc-async",
+            chunks_created=5,
+            tree_depth=3,
+        )
+        session = _StubSession(runtime_result)
+        runtime = _StubRuntime(session)
+
+        service = IndexingService(
+            store,
+            IndexConfig.load(),
+            OperationalConfig(openai_api_key=SecretStr("test-key")),
+            index_runtime=runtime,
+        )
+        assert service._client_factory is None
+
+        result = await service.index_document_async("body", document_id="doc-async")
+
+        assert result == runtime_result
+        assert runtime.requests == [("doc-async", None)]
+        assert session.calls[0]["replace_existing"] is True
+
+    def test_append_to_document_async(self) -> None:
+        service, client_mock = self._make_service()
+        expected = IndexingResult(
+            document_id="doc-async",
+            chunks_created=3,
+            tree_depth=1,
+        )
+        client_mock.append_text.return_value = expected
+
+        result = asyncio.run(
+            service.append_to_document_async("doc-async", "chunk", show_progress=False)
+        )
+
+        assert result == expected
+        client_mock.append_text.assert_called_once()
 
 
 class TestQueryService:

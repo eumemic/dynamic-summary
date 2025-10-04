@@ -19,8 +19,25 @@ TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
 
 # Global variable to track created database for cleanup
 CREATED_DB_NAME=""
+OWN_SERVER_PID=""
+OWN_SERVER_HOST=""
+OWN_SERVER_PORT=""
+STARTED_SERVER=false
+declare -a SERVER_ENV
+declare -a RUN_ENV
 
-# Cleanup function for error handling
+DEFAULT_SERVER_HOST=$(python - <<'PY'
+from ragzoom.constants import DEFAULT_GRPC_HOST
+print(DEFAULT_GRPC_HOST)
+PY
+)
+DEFAULT_SERVER_PORT=$(python - <<'PY'
+from ragzoom.constants import DEFAULT_GRPC_PORT
+print(DEFAULT_GRPC_PORT)
+PY
+)
+
+# Cleanup helpers
 cleanup_benchmark_db() {
     # Only clean up if we explicitly created a database and it's still marked for cleanup
     if [ -n "$CREATED_DB_NAME" ] && [ "$CREATED_DB_NAME" != "" ]; then
@@ -41,8 +58,86 @@ except Exception as e:
     fi
 }
 
+stop_grpc_server() {
+    if [ "$STARTED_SERVER" = true ] && [ -n "$OWN_SERVER_PID" ]; then
+        echo "🛑 Stopping RagZoom gRPC server (pid: $OWN_SERVER_PID)"
+        kill "$OWN_SERVER_PID" >/dev/null 2>&1 || true
+        wait "$OWN_SERVER_PID" >/dev/null 2>&1 || true
+        OWN_SERVER_PID=""
+        STARTED_SERVER=false
+    fi
+}
+
+ensure_server_running() {
+    python - "$1" "$2" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+
+try:
+    with socket.create_connection((host, port), timeout=0.5):
+        sys.exit(0)
+except OSError:
+    sys.exit(1)
+PY
+}
+
+wait_for_server() {
+    local host="$1"
+    local port="$2"
+    local timeout="${3:-30}"
+    local elapsed=0
+    while [ "$elapsed" -lt "$timeout" ]; do
+        if ensure_server_running "$host" "$port"; then
+            return 0
+        fi
+        sleep 0.5
+        elapsed=$((elapsed + 1))
+    done
+    return 1
+}
+
+start_grpc_server() {
+    local host="$1"
+    local port="$2"
+    local log_file="$3"
+
+    if ensure_server_running "$host" "$port"; then
+        echo "🔌 Reusing existing RagZoom gRPC server at $host:$port"
+        STARTED_SERVER=false
+        return 0
+    fi
+
+    echo "🚀 Starting RagZoom gRPC server on $host:$port (log: $log_file)"
+    if [ ${#SERVER_ENV[@]} -gt 0 ]; then
+        env "${SERVER_ENV[@]}" python -m ragzoom.cli server start --host "$host" --port "$port" --collect-telemetry \
+            >"$log_file" 2>&1 &
+    else
+        python -m ragzoom.cli server start --host "$host" --port "$port" --collect-telemetry \
+            >"$log_file" 2>&1 &
+    fi
+    OWN_SERVER_PID=$!
+    STARTED_SERVER=true
+
+    if ! wait_for_server "$host" "$port" 60; then
+        echo "❌ Failed to start RagZoom gRPC server (see $log_file for details)"
+        stop_grpc_server
+        return 1
+    fi
+
+    echo "✅ RagZoom gRPC server is ready"
+    return 0
+}
+
+cleanup_all() {
+    cleanup_benchmark_db
+    stop_grpc_server
+}
+
 # Set trap for cleanup on exit
-trap cleanup_benchmark_db EXIT INT TERM
+trap cleanup_all EXIT INT TERM
 
 # Check required dependencies
 check_dependencies() {
@@ -120,7 +215,7 @@ Document:
 Additional Options:
     All other options are passed through to the ragzoom index command.
     The script automatically:
-    - Adds: --telemetry --validate --debug --no-progress
+    - Adds: --telemetry --debug --no-progress
     - Uses current default_config.json for all settings
     - Applies any CLI overrides (e.g., --target-chunk-tokens 400)
 
@@ -385,56 +480,125 @@ else
     echo ""
 fi
 
-# Run indexing with telemetry
-# Implicitly adds: --telemetry <file> --validate --debug --no-progress
-echo "📝 Running indexing with telemetry..."
+# Build environment configuration for server and client based on database/vector settings
+SERVER_ENV=()
+if [ -n "$DATABASE_URL" ]; then
+    SERVER_ENV+=(RAGZOOM_DATABASE_URL="$DATABASE_URL")
+fi
+if [ "$SKIP_DB_SETUP" != true ]; then
+    SERVER_ENV+=(RAGZOOM_BACKEND="sqlite")
+fi
 
-# Build command args
-INDEX_ARGS=(
-    "$DOCUMENT"
-    --telemetry "$TELEMETRY_FILE"
-    --database "$DATABASE_URL"
-    --validate
-    --debug
-    --no-progress
+VECTOR_BACKEND_VALUE="${RAGZOOM_VECTOR_BACKEND:-}"
+VECTOR_PERSIST_DIR_VALUE="${RAGZOOM_VECTOR_PERSIST_DIR:-}"
+if [ -z "$VECTOR_BACKEND_VALUE" ]; then
+    if python -c "import chromadb" 2>/dev/null; then
+        VECTOR_BACKEND_VALUE="chroma"
+    else
+        echo "⚠️  chromadb not installed; falling back to RAGZOOM_VECTOR_BACKEND=python" | tee -a "$LOG_FILE"
+        VECTOR_BACKEND_VALUE="python"
+    fi
+fi
+if [ "$VECTOR_BACKEND_VALUE" = "chroma" ] && [ -z "$VECTOR_PERSIST_DIR_VALUE" ]; then
+    VECTOR_PERSIST_DIR_VALUE="$OUTPUT_DIR/chroma"
+fi
+SERVER_ENV+=(RAGZOOM_VECTOR_BACKEND="$VECTOR_BACKEND_VALUE")
+if [ -n "$VECTOR_PERSIST_DIR_VALUE" ]; then
+    SERVER_ENV+=(RAGZOOM_VECTOR_PERSIST_DIR="$VECTOR_PERSIST_DIR_VALUE")
+fi
+
+# Determine gRPC server configuration (start unless explicitly disabled)
+SERVER_HOST="${RAGZOOM_SERVER_HOST:-$DEFAULT_SERVER_HOST}"
+SERVER_PORT="${RAGZOOM_SERVER_PORT:-$DEFAULT_SERVER_PORT}"
+if [ "${RAGZOOM_START_GRPC_SERVER:-1}" != "0" ]; then
+    if ensure_server_running "$SERVER_HOST" "$SERVER_PORT"; then
+        ORIGINAL_PORT="$SERVER_PORT"
+        SERVER_PORT=$(python - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(('', 0))
+    print(sock.getsockname()[1])
+PY
 )
+        echo "ℹ️  Existing RagZoom server detected on $SERVER_HOST:$ORIGINAL_PORT; starting benchmark server on $SERVER_HOST:$SERVER_PORT" | tee -a "$LOG_FILE"
+    fi
+    mkdir -p "$OUTPUT_DIR"
+    SERVER_LOG_FILE="$OUTPUT_DIR/server.log"
+    if ! start_grpc_server "$SERVER_HOST" "$SERVER_PORT" "$SERVER_LOG_FILE"; then
+        exit 1
+    fi
+    OWN_SERVER_HOST="$SERVER_HOST"
+    OWN_SERVER_PORT="$SERVER_PORT"
+else
+    echo "⚙️  RAGZOOM_START_GRPC_SERVER=0 – assuming server already running at $SERVER_HOST:$SERVER_PORT"
+fi
 
-# All configuration comes from default_config.json plus any CLI overrides
-# No settings are extracted from baseline - each run uses current defaults
+# Determine document ID for validation (default to filename unless overridden)
+EFFECTIVE_DOCUMENT_ID=""
+for ((idx = 0; idx < ${#EXTRA_ARGS[@]}; idx++)); do
+    arg="${EXTRA_ARGS[idx]}"
+    case "$arg" in
+        --document-id)
+            next_index=$((idx + 1))
+            if [ $next_index -lt ${#EXTRA_ARGS[@]} ]; then
+                EFFECTIVE_DOCUMENT_ID="${EXTRA_ARGS[next_index]}"
+            fi
+            ;;
+        --document-id=*)
+            EFFECTIVE_DOCUMENT_ID="${arg#--document-id=}"
+            ;;
+    esac
+done
 
-# Add any extra arguments
-if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
-    INDEX_ARGS+=("${EXTRA_ARGS[@]}")
+if [ -z "$EFFECTIVE_DOCUMENT_ID" ]; then
+    EFFECTIVE_DOCUMENT_ID="$(basename "$DOCUMENT")"
 fi
 
 # Configure backend defaults for the run when not explicitly set
 # Prefer chroma vector backend if installed; otherwise fall back to python
 RUN_ENV=()
 
-# If we created a local SQLite DB, set backend accordingly
-if [ "$SKIP_DB_SETUP" != true ]; then
-    RUN_ENV+=(RAGZOOM_BACKEND="sqlite")
+if [ ${#SERVER_ENV[@]} -gt 0 ]; then
+    RUN_ENV+=("${SERVER_ENV[@]}")
+fi
+RUN_ENV+=(RAGZOOM_SERVER_ADDRESS="${SERVER_HOST}:${SERVER_PORT}")
+
+CHUNK_COUNT="${BENCHMARK_CHUNKS:-16}"
+INCREMENTAL_MODULE="ragzoom.tools.incremental_index"
+PYTHON_EXEC="${PYTHON:-python}"
+
+FORWARDED_ARGS=(
+    --collect-telemetry
+    --debug
+    --no-progress
+)
+if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
+    FORWARDED_ARGS+=("${EXTRA_ARGS[@]}")
 fi
 
-if [ -z "${RAGZOOM_VECTOR_BACKEND:-}" ]; then
-    if python -c "import chromadb" 2>/dev/null; then
-        RUN_ENV+=(RAGZOOM_VECTOR_BACKEND="chroma")
-    else
-        echo "⚠️  chromadb not installed; falling back to RAGZOOM_VECTOR_BACKEND=python" | tee -a "$LOG_FILE"
-        RUN_ENV+=(RAGZOOM_VECTOR_BACKEND="python")
-    fi
-fi
+# Run incremental indexing without waiting between appends
+echo "📝 Running incremental indexing (chunks: $CHUNK_COUNT)..."
+env "${RUN_ENV[@]}" "$PYTHON_EXEC" -m "$INCREMENTAL_MODULE" \
+    "$DOCUMENT" \
+    --chunks "$CHUNK_COUNT" \
+    --document-id "$EFFECTIVE_DOCUMENT_ID" \
+    --python "$PYTHON_EXEC" \
+    --validate \
+    --telemetry-output "$TELEMETRY_FILE" \
+    -- "${FORWARDED_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
 
-env "${RUN_ENV[@]}" python -m ragzoom.cli index "${INDEX_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
-
-# Check if indexing succeeded
 if [ ${PIPESTATUS[0]} -ne 0 ]; then
-    echo "❌ Indexing failed. Check $LOG_FILE for details."
+    echo "❌ Incremental indexing failed. Check $LOG_FILE for details."
+    exit 1
+fi
+
+if [ ! -f "$TELEMETRY_FILE" ]; then
+    echo "❌ Expected telemetry output not found at $TELEMETRY_FILE" | tee -a "$LOG_FILE"
     exit 1
 fi
 
 echo ""
-echo "✅ Indexing completed. Telemetry saved to $TELEMETRY_FILE"
+echo "✅ Validation completed for document $EFFECTIVE_DOCUMENT_ID"
 echo ""
 
 # Generate comparison report and visualization

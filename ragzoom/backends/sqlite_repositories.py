@@ -12,7 +12,7 @@ from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
-from sqlalchemy import case, delete, func, insert, select, update
+from sqlalchemy import case, delete, func, insert, or_, select, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -75,6 +75,7 @@ class SqliteNodeRepository:
                         str | None, data.get("following_neighbor_id")
                     ),
                     "height": cast(int, data.get("height", 0)),
+                    "level_index": cast(int, data.get("level_index", 0)),
                 }
                 for data in nodes_data
             ]
@@ -133,6 +134,7 @@ class SqliteNodeRepository:
                         str | None, raw.get("following_neighbor_id")
                     ),
                     height=cast(int, raw.get("height", 0)),
+                    level_index=cast(int, raw.get("level_index", 0)),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=[SQLiteTreeNode.id],
@@ -147,6 +149,7 @@ class SqliteNodeRepository:
                         "token_count": stmt.excluded.token_count,
                         "preceding_neighbor_id": stmt.excluded.preceding_neighbor_id,
                         "following_neighbor_id": stmt.excluded.following_neighbor_id,
+                        "level_index": stmt.excluded.level_index,
                     },
                 )
                 session.execute(stmt)
@@ -170,7 +173,7 @@ class SqliteNodeRepository:
             if own_session:
                 session.close()
 
-    # jscpd:ignore-start - Small wrapper mirrors NodeRepository signature for tests
+    # jscpd:ignore-start - Signature mirrors NodeRepository.add_node for protocol parity
     def add_node(
         self,
         node_id: str,
@@ -185,6 +188,7 @@ class SqliteNodeRepository:
         token_count: int = 0,
         height: int = 0,
         is_left_child: bool | None = None,
+        level_index: int = 0,
     ) -> TreeNode:
         created = self.add_nodes_batch(
             [
@@ -199,6 +203,7 @@ class SqliteNodeRepository:
                     "document_id": document_id,
                     "token_count": token_count,
                     "height": height,
+                    "level_index": level_index,
                 }
             ]
         )
@@ -435,6 +440,90 @@ class SqliteNodeRepository:
             result = session.execute(stmt).scalar_one()
             return int(result or 0)
 
+    def get_ready_left_children(self, document_id: str | None) -> list[str]:
+        if not document_id:
+            return []
+        with self.SessionLocal() as session:
+            doc_span_end = session.execute(
+                select(func.max(SQLiteTreeNode.span_end)).where(
+                    SQLiteTreeNode.document_id == document_id
+                )
+            ).scalar()
+            if doc_span_end is None:
+                return []
+
+            stmt = (
+                select(SQLiteTreeNode.id)
+                .where(SQLiteTreeNode.document_id == document_id)
+                .where(SQLiteTreeNode.parent_id.is_(None))
+                .where((SQLiteTreeNode.level_index % 2) == 0)
+                .where(
+                    or_(
+                        SQLiteTreeNode.span_start > 0,
+                        SQLiteTreeNode.span_end < doc_span_end,
+                    )
+                )
+                .where(
+                    or_(
+                        SQLiteTreeNode.span_start == 0,
+                        SQLiteTreeNode.preceding_neighbor_id.is_not(None),
+                    )
+                )
+                .where(
+                    or_(
+                        SQLiteTreeNode.span_end == doc_span_end,
+                        SQLiteTreeNode.following_neighbor_id.is_not(None),
+                    )
+                )
+                .order_by(SQLiteTreeNode.height, SQLiteTreeNode.level_index)
+            )
+            return [str(row) for row in session.execute(stmt).scalars().all()]
+
+    def get_node_by_height_and_level(
+        self,
+        document_id: str | None,
+        height: int,
+        level_index: int,
+    ) -> TreeNode | None:
+        with self.SessionLocal() as session:
+            stmt = select(SQLiteTreeNode).where(
+                SQLiteTreeNode.height == height,
+                SQLiteTreeNode.level_index == level_index,
+            )
+            if document_id is not None:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+            row = session.execute(stmt).scalars().first()
+            if not row:
+                return None
+            try:
+                session.expunge(row)
+            except Exception:
+                pass
+            return cast(TreeNode, row)
+
+    def get_parentless_nodes_for_document(
+        self, document_id: str | None
+    ) -> list[TreeNode]:
+        with self.SessionLocal() as session:
+            stmt = select(SQLiteTreeNode).where(SQLiteTreeNode.parent_id.is_(None))
+            if document_id is None:
+                stmt = stmt.where(SQLiteTreeNode.document_id.is_(None))
+            else:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+
+            rows = (
+                session.execute(
+                    stmt.order_by(
+                        SQLiteTreeNode.height,
+                        SQLiteTreeNode.level_index,
+                        SQLiteTreeNode.span_start,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return _detach_rows(session, rows)
+
     def get_pinned_nodes_for_document(
         self, document_id: str, depth_max: int | None = None
     ) -> list[TreeNode]:
@@ -480,6 +569,30 @@ class SqliteNodeRepository:
                 row.access_count = (row.access_count or 0) + 1
                 session.add(row)
                 session.commit()
+
+    def delete_nodes(
+        self,
+        node_ids: Sequence[str],
+        *,
+        session: Session | None = None,
+    ) -> None:
+        if not node_ids:
+            return
+        own_session = False
+        if session is None:
+            session = self.SessionLocal()
+            own_session = True
+        try:
+            session.execute(
+                delete(SQLiteTreeNode).where(SQLiteTreeNode.id.in_(node_ids))
+            )
+            if own_session:
+                session.commit()
+            for node_id in node_ids:
+                self.cache_manager.invalidate(node_id)
+        finally:
+            if own_session:
+                session.close()
 
 
 class SqliteDocumentRepository:

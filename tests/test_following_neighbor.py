@@ -1,16 +1,26 @@
 """Tests for following_neighbor_id column and bidirectional neighbor relationships."""
 
-# Type imports for test configuration
+from __future__ import annotations
 
 import numpy as np
+import pytest
 from numpy.typing import NDArray
-from openai import AsyncOpenAI
 
+from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
-from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.models import PostgresTreeNode as ORMTreeNode
-from tests.conftest import BackwardCompatibilityConfig
+from ragzoom.splitter import TextSplitter
+from tests.conftest import BackwardCompatibilityConfig, IndexerRuntimeHarness
+
+
+def _configure_runtime(harness: IndexerRuntimeHarness, config: IndexConfig) -> None:
+    harness.runtime._index_config = config
+    harness.runtime._append_executor._config = config
+    harness.runtime._append_executor._splitter = TextSplitter(config)
+    harness.worker_coordinator._index_config = config
+    harness.llm_service.config = config
+    harness.telemetry_manager._index_config = config
 
 
 class TestFollowingNeighbor:
@@ -18,21 +28,15 @@ class TestFollowingNeighbor:
 
     def test_tree_node_has_following_neighbor_id_column(self) -> None:
         """TreeNode model should have following_neighbor_id column."""
-        # Verify the column exists on the model
         assert hasattr(ORMTreeNode, "following_neighbor_id")
-
-        # Verify it's a mapped column
         column = ORMTreeNode.__table__.columns.get("following_neighbor_id")
         assert column is not None
-        assert (
-            column.nullable is True
-        )  # Should be nullable (last node has no following)
+        assert column.nullable is True
 
     def test_bidirectional_neighbor_consistency(
         self, base_config: BackwardCompatibilityConfig, storage_backend: StorageBackend
     ) -> None:
         """Verify bidirectional consistency: if A.following = B, then B.preceding = A."""
-        # Create some test nodes with neighbor relationships
         nodes_data: list[
             dict[
                 str, str | int | float | bool | list[float] | NDArray[np.float64] | None
@@ -41,24 +45,22 @@ class TestFollowingNeighbor:
         node_ids = ["node1", "node2", "node3", "node4"]
 
         for i, node_id in enumerate(node_ids):
-            node_data: dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ] = {
-                "node_id": node_id,
-                "text": f"Node {i} text",
-                "embedding": [0.1] * 10,  # Simple embedding
-                "span_start": i * 100,
-                "span_end": (i + 1) * 100,
-                "document_id": "test-doc",
-                "height": 0,  # Leaf nodes
-                "preceding_neighbor_id": node_ids[i - 1] if i > 0 else None,
-                "following_neighbor_id": (
-                    node_ids[i + 1] if i < len(node_ids) - 1 else None
-                ),
-            }
-            nodes_data.append(node_data)
+            nodes_data.append(
+                {
+                    "node_id": node_id,
+                    "text": f"Node {i} text",
+                    "embedding": [0.1] * 10,
+                    "span_start": i * 100,
+                    "span_end": (i + 1) * 100,
+                    "document_id": "test-doc",
+                    "height": 0,
+                    "preceding_neighbor_id": node_ids[i - 1] if i > 0 else None,
+                    "following_neighbor_id": (
+                        node_ids[i + 1] if i < len(node_ids) - 1 else None
+                    ),
+                }
+            )
 
-        # Create document with proper metadata and get document store
         doc_store = storage_backend.for_document("test-doc")
         doc_store.set_metadata(
             file_path="test.txt",
@@ -66,165 +68,96 @@ class TestFollowingNeighbor:
             summary_model="gpt-4o-mini",
         )
         created_nodes = doc_store.nodes.add_batch(nodes_data)
-
-        # Verify bidirectional consistency
         nodes_by_id = {node.id: node for node in created_nodes}
 
         for node in created_nodes:
-            # If this node has a following neighbor
             if node.following_neighbor_id:
                 following = nodes_by_id.get(node.following_neighbor_id)
-                assert (
-                    following is not None
-                ), f"Following neighbor {node.following_neighbor_id} not found"
-                # The following node's preceding should point back to this node
-                assert following.preceding_neighbor_id == node.id, (
-                    f"Bidirectional inconsistency: {node.id}.following={node.following_neighbor_id}, "
-                    f"but {following.id}.preceding={following.preceding_neighbor_id}"
-                )
-
-            # If this node has a preceding neighbor
+                assert following is not None
+                assert following.preceding_neighbor_id == node.id
             if node.preceding_neighbor_id:
                 preceding = nodes_by_id.get(node.preceding_neighbor_id)
-                assert (
-                    preceding is not None
-                ), f"Preceding neighbor {node.preceding_neighbor_id} not found"
-                # The preceding node's following should point to this node
-                assert preceding.following_neighbor_id == node.id, (
-                    f"Bidirectional inconsistency: {node.id}.preceding={node.preceding_neighbor_id}, "
-                    f"but {preceding.id}.following={preceding.following_neighbor_id}"
-                )
+                assert preceding is not None
+                assert preceding.following_neighbor_id == node.id
 
-    def test_leaf_nodes_have_correct_neighbor_relationships(
+    @pytest.mark.asyncio
+    async def test_leaf_nodes_have_correct_neighbor_relationships(
         self,
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
-        mock_openai_async_client: AsyncOpenAI,
-        vector_index: _VectorIndexProtocol,
+        indexer_runtime_harness: IndexerRuntimeHarness,
     ) -> None:
-        """Test that leaf nodes created during indexing have correct neighbor relationships."""
-        import asyncio
-
-        from ragzoom.index import TreeBuilder
-
-        # Create a simple test document
-        test_doc = "First chunk. Second chunk. Third chunk. Fourth chunk."
-
-        # Create tree builder with small chunk size to ensure multiple chunks
+        """Leaf nodes generated during indexing should have correct neighbors."""
+        document_id = "neighbor-test"
         config = base_config.index_config.replace(target_chunk_tokens=5)
-        # Create document with proper metadata
-        doc_store = storage_backend.for_document("neighbor-test")
-        doc_store.set_metadata(
+        _configure_runtime(indexer_runtime_harness, config)
+
+        storage_backend.clear_document(document_id)
+        await indexer_runtime_harness.clear(document_id)
+
+        test_doc = "First chunk. Second chunk. Third chunk. Fourth chunk."
+        await indexer_runtime_harness.append(
+            document_id,
+            test_doc,
+            replace_existing=True,
             file_path="test.txt",
-            embedding_model="text-embedding-3-small",
-            summary_model="gpt-4o-mini",
         )
-        tree_builder = TreeBuilder(config, doc_store, vector_index)
-        tree_builder.llm_service.client = mock_openai_async_client
 
-        # Index the document
-        asyncio.run(tree_builder.add_document_async(test_doc))
-
-        # Get all leaf nodes (height=0)
-        all_nodes = doc_store.nodes.get_all()
-        leaf_nodes = [node for node in all_nodes if node.height == 0]
-
-        # Sort by span_start to get document order
+        doc_store = indexer_runtime_harness.runtime._store.for_document(document_id)
+        leaf_nodes = [node for node in doc_store.nodes.get_all() if node.height == 0]
         leaf_nodes.sort(key=lambda n: n.span_start)
 
-        # Verify neighbor relationships
         for i, node in enumerate(leaf_nodes):
             if i == 0:
-                # First node has no preceding neighbor
-                assert (
-                    node.preceding_neighbor_id is None
-                ), f"First leaf should have no preceding neighbor, got {node.preceding_neighbor_id}"
-                # But should have following (unless it's the only node)
+                assert node.preceding_neighbor_id is None
                 if len(leaf_nodes) > 1:
-                    assert (
-                        node.following_neighbor_id == leaf_nodes[i + 1].id
-                    ), "First leaf's following should be second leaf"
+                    assert node.following_neighbor_id == leaf_nodes[i + 1].id
             elif i == len(leaf_nodes) - 1:
-                # Last node has no following neighbor
-                assert (
-                    node.following_neighbor_id is None
-                ), f"Last leaf should have no following neighbor, got {node.following_neighbor_id}"
-                # But should have preceding
-                assert (
-                    node.preceding_neighbor_id == leaf_nodes[i - 1].id
-                ), "Last leaf's preceding should be previous leaf"
+                assert node.following_neighbor_id is None
+                assert node.preceding_neighbor_id == leaf_nodes[i - 1].id
             else:
-                # Middle nodes have both
-                assert (
-                    node.preceding_neighbor_id == leaf_nodes[i - 1].id
-                ), f"Leaf {i} preceding should be leaf {i-1}"
-                assert (
-                    node.following_neighbor_id == leaf_nodes[i + 1].id
-                ), f"Leaf {i} following should be leaf {i+1}"
+                assert node.preceding_neighbor_id == leaf_nodes[i - 1].id
+                assert node.following_neighbor_id == leaf_nodes[i + 1].id
 
-    def test_parent_nodes_have_correct_neighbor_relationships(
+    @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(2.0)
+    async def test_parent_nodes_have_correct_neighbor_relationships(
         self,
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
-        mock_openai_async_client: AsyncOpenAI,
-        vector_index: _VectorIndexProtocol,
+        indexer_runtime_harness: IndexerRuntimeHarness,
     ) -> None:
-        """Test that parent nodes at each level have correct neighbor relationships."""
-        import asyncio
-
-        from ragzoom.index import TreeBuilder
-
-        # Create a document that will create multiple levels
-        test_doc = " ".join([f"Chunk {i}." for i in range(8)])  # 8 chunks -> 3 levels
-
-        # Create tree builder with small chunk size
+        """Parent nodes at each level should maintain neighbor relationships."""
+        document_id = "parent-neighbor-test"
         config = base_config.index_config.replace(target_chunk_tokens=3)
-        # Create document with proper metadata
-        doc_store = storage_backend.for_document("parent-neighbor-test")
-        doc_store.set_metadata(
+        _configure_runtime(indexer_runtime_harness, config)
+
+        storage_backend.clear_document(document_id)
+        await indexer_runtime_harness.clear(document_id)
+
+        test_doc = " ".join([f"Chunk {i}." for i in range(8)])
+        await indexer_runtime_harness.append(
+            document_id,
+            test_doc,
+            replace_existing=True,
             file_path="test.txt",
-            embedding_model="text-embedding-3-small",
-            summary_model="gpt-4o-mini",
         )
-        tree_builder = TreeBuilder(config, doc_store, vector_index)
-        tree_builder.llm_service.client = mock_openai_async_client
 
-        # Index the document
-        asyncio.run(tree_builder.add_document_async(test_doc))
-
-        # Get all nodes and group by height
-        all_nodes = doc_store.nodes.get_all()
-
+        doc_store = indexer_runtime_harness.runtime._store.for_document(document_id)
         nodes_by_height: dict[int, list[TreeNode]] = {}
-        for node in all_nodes:
-            if node.height not in nodes_by_height:
-                nodes_by_height[node.height] = []
-            nodes_by_height[node.height].append(node)
+        for node in doc_store.nodes.get_all():
+            nodes_by_height.setdefault(node.height, []).append(node)
 
-        # Check each level
-        for height, level_nodes in nodes_by_height.items():
-            # Sort by span_start to get logical order
-            level_nodes.sort(key=lambda n: n.span_start)
-            for i, node in enumerate(level_nodes):
-                if i == 0:
-                    assert (
-                        node.preceding_neighbor_id is None
-                    ), f"First node at height {height} should have no preceding"
-                    if len(level_nodes) > 1:
-                        assert (
-                            node.following_neighbor_id == level_nodes[i + 1].id
-                        ), f"First node at height {height} should point to second"
-                elif i == len(level_nodes) - 1:
-                    assert (
-                        node.following_neighbor_id is None
-                    ), f"Last node at height {height} should have no following"
-                    assert (
-                        node.preceding_neighbor_id == level_nodes[i - 1].id
-                    ), f"Last node at height {height} should have preceding"
+        for height, nodes in nodes_by_height.items():
+            nodes.sort(key=lambda n: n.span_start)
+            for idx, node in enumerate(nodes):
+                if height == 0:
+                    continue
+                if idx == 0:
+                    assert node.preceding_neighbor_id is None
                 else:
-                    assert (
-                        node.preceding_neighbor_id == level_nodes[i - 1].id
-                    ), f"Node {i} at height {height} has wrong preceding"
-                    assert (
-                        node.following_neighbor_id == level_nodes[i + 1].id
-                    ), f"Node {i} at height {height} has wrong following"
+                    assert node.preceding_neighbor_id == nodes[idx - 1].id
+                if idx == len(nodes) - 1:
+                    assert node.following_neighbor_id is None
+                else:
+                    assert node.following_neighbor_id == nodes[idx + 1].id

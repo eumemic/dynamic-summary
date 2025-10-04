@@ -1,36 +1,44 @@
-"""Dynamic programming algorithm integration tests.
+"""Dynamic programming algorithm integration tests using the runtime harness."""
 
-These tests verify the DP tiling algorithm's correctness, including:
-- No duplicate content in assembled output
-- Proper parent-child deduplication
-- Correct span coverage
-- Budget constraints
-"""
+from __future__ import annotations
 
-from collections.abc import Callable, Generator
+from collections.abc import Callable
 from unittest.mock import Mock
 
 import pytest
 from pytest import MonkeyPatch
 
 from ragzoom.assemble import Assembler
+from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
-from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
-from ragzoom.index import TreeBuilder
-from tests.conftest import BackwardCompatibilityConfig
+from ragzoom.splitter import TextSplitter
+from tests.conftest import BackwardCompatibilityConfig, IndexerRuntimeHarness
 from tests.utils import (
     create_hash_based_embedding_mock,
     create_predictable_summary_mock,
+    create_retriever,
     mock_openai_context,
 )
+from tests.vector_index_stubs import RecordingVectorIndex
+
+
+def _configure_runtime(
+    harness: IndexerRuntimeHarness,
+    config: IndexConfig,
+    vector_index: RecordingVectorIndex,
+) -> None:
+    harness.runtime._index_config = config
+    harness.runtime._append_executor._config = config
+    harness.runtime._append_executor._splitter = TextSplitter(config)
+    harness.worker_coordinator._index_config = config
+    harness.llm_service.config = config
+    harness.telemetry_manager._index_config = config
+    harness.runtime._vector_index_factory = lambda _model: vector_index
+    harness.worker_coordinator._vector_index_factory = lambda _doc_id: vector_index
 
 
 class TestDPIntegration:
-    """Test DP algorithm integration with indexing and assembly.
-
-    Focus: Verifying the dynamic programming tiling algorithm produces
-    correct results when integrated with the full retrieval pipeline.
-    """
+    """Exercise the DP tiling pipeline end-to-end against a runtime instance."""
 
     @pytest.fixture
     def config(
@@ -39,30 +47,21 @@ class TestDPIntegration:
             [int, int, int, str, str | None], BackwardCompatibilityConfig
         ],
     ) -> BackwardCompatibilityConfig:
-        """Create test configuration."""
-        config = config_factory(50, 0, 500, "test-key", None)
-        # OperationalConfig contains Any in its type hierarchy through dataclass internals
-        return config
+        return config_factory(50, 0, 500, "test-key", None)
 
     @pytest.fixture
-    def mock_openai(
-        self, monkeypatch: MonkeyPatch
-    ) -> Generator[tuple[Mock, Mock], None, None]:
-        """Mock OpenAI for consistent embeddings and summaries."""
+    def mock_openai(self, monkeypatch: MonkeyPatch) -> tuple[Mock, Mock]:
+        """Provide deterministic embedding and summarisation clients."""
         monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-
-        # Use centralized mocking with hash-based embeddings and predictable summaries
         with mock_openai_context() as (mock_index, mock_retrieve, mock_assemble):
-            # Override with hash-based embedding behavior
             hash_sync, hash_async = create_hash_based_embedding_mock()
             mock_index.embeddings.create = hash_async
             mock_retrieve.embeddings.create = hash_sync
 
-            # Override with predictable summary behavior
             chat_sync, chat_async = create_predictable_summary_mock()
             mock_index.chat.completions.create = chat_async
 
-            yield mock_retrieve, mock_index
+            return mock_retrieve, mock_index
 
     @pytest.mark.asyncio
     @pytest.mark.slow_threshold(2.0)
@@ -70,139 +69,124 @@ class TestDPIntegration:
         self,
         config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
-        mock_openai: tuple[object, object],
-        monkeypatch: MonkeyPatch,
+        mock_openai: tuple[Mock, Mock],
+        indexer_runtime_harness: IndexerRuntimeHarness,
     ) -> None:
-        """Test that the full DP pipeline produces no duplicate content."""
-        mock_client, mock_async_client = mock_openai
+        mock_client, mock_index_client = mock_openai
+        index_config = config.index_config
+        query_config = config.query_config
+        vector_index = RecordingVectorIndex()
+        _configure_runtime(indexer_runtime_harness, index_config, vector_index)
+        indexer_runtime_harness.llm_service.client = mock_index_client
 
-        # Create a document with clear chunk boundaries
+        document_id = "dp-doc"
+        storage_backend.clear_document(document_id)
+        doc_store = storage_backend.for_document(document_id)
+        doc_store.set_metadata(
+            file_path="dp_integration_test.txt",
+            embedding_model=index_config.embedding_model,
+            summary_model=index_config.summary_model,
+        )
+
         base_lines = [
             "First chunk of text that should appear once.",
             "Second chunk of text that should also appear once.",
             "Third chunk of text with unique content.",
             "Fourth chunk of text to complete the document.",
         ]
-        # Repeat to ensure multiple chunks
         document = "\n".join(base_lines * 8)
 
-        # Index the document
-        # Create document with proper metadata
-        doc_store = storage_backend.for_document("doc1")
-        doc_store.set_metadata(
-            file_path="dp_integration_test.txt",
-            embedding_model="text-embedding-3-small",
-            summary_model="gpt-4o-mini",
-        )
-        # Type assertion for test compatibility
-        assert hasattr(doc_store, "nodes"), "Expected DocumentStore-like object"
-        from ragzoom.vector_factory import create_vector_index
+        try:
+            await indexer_runtime_harness.clear(document_id)
+            await indexer_runtime_harness.append(
+                document_id,
+                document,
+                replace_existing=True,
+                file_path="dp_integration_test.txt",
+            )
+            await indexer_runtime_harness.wait_for_idle(document_id)
 
-        vi = create_vector_index(
-            "python", "sqlite:///:memory:", config.index_config.embedding_model
-        )
-        tree_builder = TreeBuilder(
-            config.index_config, doc_store, vi, api_key=config.openai_api_key
-        )
-        await tree_builder.add_document_async(document, show_progress=False)
+            retriever = create_retriever(
+                query_config,
+                doc_store,
+                document_id=document_id,
+                api_key=config.openai_api_key,
+                client=mock_client,
+                vector_index=vector_index,
+            )
+            result = await retriever.retrieve_async(
+                "First chunk Second chunk", document_id=document_id
+            )
 
-        # Retrieve with a query
-        from tests.utils import create_retriever
-
-        retriever = create_retriever(
-            config.query_config,
-            doc_store,
-            document_id="doc1",  # Specify the document we indexed
-            api_key=config.openai_api_key,
-            client=mock_client,
-            vector_index=vi,
-        )
-        query = "First chunk Second chunk"  # Query that should match the first half
-        result = await retriever.retrieve_async(query, document_id="doc1")
-
-        # Assemble the result
-        assembler = Assembler(doc_store)
-        assembled = assembler.assemble(result)
-        # With the new leaf node behavior, check for no duplicate content
-        # Count occurrences of each unique line
-        lines = assembled.strip().split("\n")
-        unique_lines = set(lines) - {""}  # Remove empty lines
-
-        # No line should appear more than 8 times (since we repeated base_lines 8 times)
-        for line in unique_lines:
-            count = lines.count(line)
-            assert (
-                count <= 8
-            ), f"Line '{line}' appears {count} times, more than the 8 repetitions in source"
-
-        # Verify we have content from the document
-        assert "First chunk" in assembled
-        assert "Second chunk" in assembled
+            assembler = Assembler(doc_store)
+            assembled = assembler.assemble(result)
+            lines = assembled.strip().split("\n")
+            unique_lines = {line for line in lines if line}
+            for line in unique_lines:
+                assert (
+                    lines.count(line) <= 8
+                ), f"Line '{line}' appears more than source repetitions"
+            assert "First chunk" in assembled
+            assert "Second chunk" in assembled
+        finally:
+            await indexer_runtime_harness.clear(document_id)
 
     @pytest.mark.asyncio
     async def test_parent_child_deduplication(
         self,
         config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
-        mock_openai: tuple[object, object],
-        monkeypatch: MonkeyPatch,
+        mock_openai: tuple[Mock, Mock],
+        indexer_runtime_harness: IndexerRuntimeHarness,
     ) -> None:
-        """Test that DP tiling doesn't include both parent and child."""
-        from tests.utils import create_retriever
+        mock_client, mock_index_client = mock_openai
+        small_config = config.index_config.replace(target_chunk_tokens=10)
+        vector_index = RecordingVectorIndex()
+        _configure_runtime(indexer_runtime_harness, small_config, vector_index)
+        indexer_runtime_harness.llm_service.client = mock_index_client
 
-        mock_client, mock_async_client = mock_openai
-
-        # Create a simple document
-        document = "This is a test document with some content."
-
-        # Index with very small chunks to force tree structure
-        small_config = config.index_config.replace(
-            target_chunk_tokens=10
-        )  # Very small chunks
-        # Create document-scoped store
-        # Create document with proper metadata
-        doc_store = storage_backend.for_document("doc1")
+        document_id = "dp-doc"
+        storage_backend.clear_document(document_id)
+        doc_store = storage_backend.for_document(document_id)
         doc_store.set_metadata(
             file_path="dp_integration_test.txt",
-            embedding_model="text-embedding-3-small",
-            summary_model="gpt-4o-mini",
+            embedding_model=small_config.embedding_model,
+            summary_model=small_config.summary_model,
         )
-        from ragzoom.vector_factory import create_vector_index
 
-        vi = create_vector_index(
-            "python", "sqlite:///:memory:", small_config.embedding_model
-        )
-        tree_builder = TreeBuilder(
-            config=small_config,
-            document_store=doc_store,
-            vector_index=vi,
-            api_key=config.openai_api_key,
-        )
-        await tree_builder.add_document_async(document, show_progress=False)
+        document = "This is a test document with some content."
 
-        # Retrieve
-        retriever = create_retriever(
-            config.query_config,
-            doc_store,
-            document_id="doc1",  # Specify the document we indexed
-            api_key=config.openai_api_key,
-            client=mock_client,
-            vector_index=vi,
-        )
-        result = await retriever.retrieve_async("test document", document_id="doc1")
+        try:
+            await indexer_runtime_harness.clear(document_id)
+            await indexer_runtime_harness.append(
+                document_id,
+                document,
+                replace_existing=True,
+                file_path="dp_integration_test.txt",
+            )
+            await indexer_runtime_harness.wait_for_idle(document_id)
 
-        # Check tiling doesn't have both parent and child
-        # Extract unique node IDs from tiling
-        tiling_node_ids = list(
-            set(result.tiling or [])
-        )  # tiling is now a list of node IDs
-        tiling_nodes = [doc_store.nodes.get_node(nid) for nid in tiling_node_ids]
-        # Filter out None nodes for type safety
-        valid_nodes = [node for node in tiling_nodes if node is not None]
-        for i, node in enumerate(valid_nodes):
-            for j, other in enumerate(valid_nodes):
-                if i != j:
-                    # Check if one is ancestor of the other
+            retriever = create_retriever(
+                config.query_config,
+                doc_store,
+                document_id=document_id,
+                api_key=config.openai_api_key,
+                client=mock_client,
+                vector_index=vector_index,
+            )
+            result = await retriever.retrieve_async(
+                "test document", document_id=document_id
+            )
+
+            tiling_node_ids = list(set(result.tiling or []))
+            tiling_nodes = [
+                doc_store.nodes.get_node(node_id) for node_id in tiling_node_ids
+            ]
+            valid_nodes = [node for node in tiling_nodes if node is not None]
+            for i, node in enumerate(valid_nodes):
+                for j, other in enumerate(valid_nodes):
+                    if i == j:
+                        continue
                     if (
                         node.left_child_id == other.id
                         or node.right_child_id == other.id
@@ -210,71 +194,67 @@ class TestDPIntegration:
                         pytest.fail(
                             f"Tiling contains both parent {node.id} and child {other.id}"
                         )
+        finally:
+            await indexer_runtime_harness.clear(document_id)
 
     @pytest.mark.asyncio
     async def test_span_coverage(
         self,
         config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
-        mock_openai: tuple[object, object],
-        monkeypatch: MonkeyPatch,
-        vector_index: _VectorIndexProtocol,
+        mock_openai: tuple[Mock, Mock],
+        indexer_runtime_harness: IndexerRuntimeHarness,
     ) -> None:
-        """Test that the assembled text covers the document span correctly."""
-        from tests.utils import create_retriever
+        mock_client, mock_index_client = mock_openai
+        small_config = config.index_config.replace(target_chunk_tokens=5)
+        vector_index = RecordingVectorIndex()
+        _configure_runtime(indexer_runtime_harness, small_config, vector_index)
+        indexer_runtime_harness.llm_service.client = mock_index_client
 
-        mock_client, mock_async_client = mock_openai
-
-        # Create a document with known content
-        document = "AAAA BBBB CCCC DDDD"
-
-        # Index the document
-        small_config = config.index_config.replace(
-            target_chunk_tokens=5
-        )  # One word per chunk approximately
-        # Create document-scoped store
-        # Create document with proper metadata
-        doc_store = storage_backend.for_document("doc1")
+        document_id = "dp-doc"
+        storage_backend.clear_document(document_id)
+        doc_store = storage_backend.for_document(document_id)
         doc_store.set_metadata(
             file_path="dp_integration_test.txt",
-            embedding_model="text-embedding-3-small",
-            summary_model="gpt-4o-mini",
-        )
-        tree_builder = TreeBuilder(
-            config=small_config,
-            document_store=doc_store,
-            vector_index=vector_index,
-            api_key=config.openai_api_key,
-        )
-        await tree_builder.add_document_async(document, show_progress=False)
-
-        # Retrieve with different queries
-        retriever = create_retriever(
-            config.query_config,
-            doc_store,
-            document_id="doc1",  # Specify the document we indexed
-            api_key=config.openai_api_key,
-            client=mock_client,
-            vector_index=vector_index,
+            embedding_model=small_config.embedding_model,
+            summary_model=small_config.summary_model,
         )
 
-        # Patch retriever client for sync
-        # Query for first half
-        result1 = await retriever.retrieve_async("AAAA BBBB", document_id="doc1")
-        assembler = Assembler(doc_store)
-        assembled1 = assembler.assemble(result1)
-        # Should contain content from first half
-        # Note: This test might be flaky due to how the tree is built with very small chunks
-        # The tiling selection depends on the exact tree structure which can vary
-        assert assembled1  # Just check we got something back
+        document = "AAAA BBBB CCCC DDDD"
 
-        # Query for second half
-        result2 = await retriever.retrieve_async("CCCC DDDD", document_id="doc1")
-        assembled2 = assembler.assemble(result2)
+        try:
+            await indexer_runtime_harness.clear(document_id)
+            await indexer_runtime_harness.append(
+                document_id,
+                document,
+                replace_existing=True,
+                file_path="dp_integration_test.txt",
+            )
+            await indexer_runtime_harness.wait_for_idle(document_id)
 
-        # Should contain content from second half
-        # Note: This test might be flaky due to how the tree is built with very small chunks
-        assert assembled2  # Just check we got something back
+            retriever = create_retriever(
+                config.query_config,
+                doc_store,
+                document_id=document_id,
+                api_key=config.openai_api_key,
+                client=mock_client,
+                vector_index=vector_index,
+            )
+
+            assembler = Assembler(doc_store)
+            result1 = await retriever.retrieve_async(
+                "AAAA BBBB", document_id=document_id
+            )
+            assembled1 = assembler.assemble(result1)
+            assert assembled1
+
+            result2 = await retriever.retrieve_async(
+                "CCCC DDDD", document_id=document_id
+            )
+            assembled2 = assembler.assemble(result2)
+            assert assembled2
+        finally:
+            await indexer_runtime_harness.clear(document_id)
 
     @pytest.mark.asyncio
     @pytest.mark.slow_threshold(2.0)
@@ -282,63 +262,52 @@ class TestDPIntegration:
         self,
         config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
-        mock_openai: tuple[object, object],
-        monkeypatch: MonkeyPatch,
+        mock_openai: tuple[Mock, Mock],
+        indexer_runtime_harness: IndexerRuntimeHarness,
     ) -> None:
-        """Test that DP respects token budget."""
-        from tests.utils import create_retriever
+        mock_client, mock_index_client = mock_openai
+        vector_index = RecordingVectorIndex()
+        _configure_runtime(indexer_runtime_harness, config.index_config, vector_index)
+        indexer_runtime_harness.llm_service.client = mock_index_client
 
-        mock_client, mock_async_client = mock_openai
-
-        # Create a large document
-        document = " ".join([f"Sentence {i}." for i in range(100)])
-
-        # Set a small budget
-        small_query_config = config.query_config.replace(budget_tokens=100)
-
-        # Index
-        # Create document-scoped store
-        # Create document with proper metadata
-        doc_store = storage_backend.for_document("doc1")
+        document_id = "dp-doc"
+        storage_backend.clear_document(document_id)
+        doc_store = storage_backend.for_document(document_id)
         doc_store.set_metadata(
             file_path="dp_integration_test.txt",
-            embedding_model="text-embedding-3-small",
-            summary_model="gpt-4o-mini",
-        )
-        from ragzoom.vector_factory import create_vector_index
-
-        vi = create_vector_index(
-            "python", "sqlite:///:memory:", config.index_config.embedding_model
-        )
-        tree_builder = TreeBuilder(
-            config=config.index_config,
-            document_store=doc_store,
-            vector_index=vi,
-            api_key=config.openai_api_key,
-        )
-        await tree_builder.add_document_async(document, show_progress=False)
-
-        # Retrieve with budget
-        retriever = create_retriever(
-            small_query_config,
-            doc_store,
-            document_id="doc1",  # Specify the document we indexed
-            api_key=config.openai_api_key,
-            client=mock_client,
-            vector_index=vi,
-        )
-        result = await retriever.retrieve_async(
-            "Sentence", document_id="doc1", budget_tokens=100
+            embedding_model=config.index_config.embedding_model,
+            summary_model=config.index_config.summary_model,
         )
 
-        # Assemble
-        assembler = Assembler(doc_store)
-        assembled = assembler.assemble(result)
+        document = " ".join([f"Sentence {i}." for i in range(100)])
 
-        # Count tokens
-        token_count = assembler.get_token_count(assembled)
+        small_query_config = config.query_config.replace(budget_tokens=100)
 
-        # Allow some slack for token counting differences
-        assert (
-            token_count <= small_query_config.budget_tokens * 1.1
-        ), f"Token count {token_count} exceeds budget {small_query_config.budget_tokens}"
+        try:
+            await indexer_runtime_harness.clear(document_id)
+            await indexer_runtime_harness.append(
+                document_id,
+                document,
+                replace_existing=True,
+                file_path="dp_integration_test.txt",
+            )
+            await indexer_runtime_harness.wait_for_idle(document_id)
+
+            retriever = create_retriever(
+                small_query_config,
+                doc_store,
+                document_id=document_id,
+                api_key=config.openai_api_key,
+                client=mock_client,
+                vector_index=vector_index,
+            )
+            result = await retriever.retrieve_async(
+                "Sentence", document_id=document_id, budget_tokens=100
+            )
+
+            assembler = Assembler(doc_store)
+            assembled = assembler.assemble(result)
+            token_count = assembler.get_token_count(assembled)
+            assert token_count <= small_query_config.budget_tokens * 1.1
+        finally:
+            await indexer_runtime_harness.clear(document_id)
