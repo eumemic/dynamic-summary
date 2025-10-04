@@ -3,101 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import os
-from collections.abc import AsyncIterator, Sequence
-from pathlib import Path
-from typing import cast
 
-import grpc
 import pytest
 
 from ragzoom.client.grpc_client import GrpcRagzoomClient, WorkerRunSnapshot
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
-from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
-from ragzoom.server.servicers import (
-    GrpcServerProto,
-    IndexerServicer,
-    RetrievalServicer,
-    WorkerServicer,
-    shutdown_gracefully,
-)
 from ragzoom.server.state import ServerState
-
-
-@pytest.fixture()
-async def grpc_test_environment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> AsyncIterator[tuple[str, ServerState]]:
-    """Spin up a lightweight gRPC server backed by in-memory components."""
-
-    database_path = tmp_path / "integration.db"
-    os.environ["PYTEST_CURRENT_TEST"] = "grpc-server-integration"
-
-    class _StubEmbeddings:
-        def __init__(self) -> None:
-            self._vector = [1.0] + [0.0] * 7
-
-        def create(self, *, model: str, input: object, **_: object) -> object:
-            if isinstance(input, str):
-                texts = [input]
-            else:
-                texts = list(cast(Sequence[str], input))
-
-            class _Item:
-                def __init__(self, embedding: list[float]) -> None:
-                    self.embedding = embedding
-
-            class _Resp:
-                def __init__(self, items: list[_Item]) -> None:
-                    self.data = items
-
-            return _Resp([_Item(list(self._vector)) for _ in texts])
-
-    class _StubOpenAI:
-        def __init__(self, **_: object) -> None:
-            self.embeddings = _StubEmbeddings()
-
-    monkeypatch.setattr("openai.OpenAI", _StubOpenAI, raising=False)
-    monkeypatch.setattr("ragzoom.server.servicers.OpenAI", _StubOpenAI, raising=False)
-    monkeypatch.setattr(
-        "ragzoom.retrieval.embedding_service.OpenAI", _StubOpenAI, raising=False
-    )
-
-    operational_cfg = OperationalConfig(
-        openai_api_key=SecretStr("test-key"),
-        backend="sqlite",
-        database_url=f"sqlite:///{database_path}",
-        vector_backend="python",
-    )
-    state = ServerState.create(
-        index_config=IndexConfig.load(),
-        query_config=QueryConfig(),
-        operational_config=operational_cfg,
-    )
-
-    server = grpc.aio.server()
-    pb2_grpc.add_IndexerServiceServicer_to_server(IndexerServicer(state), server)
-    pb2_grpc.add_RetrievalServiceServicer_to_server(RetrievalServicer(state), server)
-    pb2_grpc.add_WorkerServiceServicer_to_server(WorkerServicer(state), server)
-
-    port = server.add_insecure_port("127.0.0.1:0")
-    await state.worker_coordinator.start()
-    await server.start()
-
-    address = f"127.0.0.1:{port}"
-
-    try:
-        yield address, state
-    finally:
-        try:
-            await asyncio.wait_for(
-                state.worker_coordinator.wait_until_idle(), timeout=5
-            )
-        except Exception:
-            pass
-        await shutdown_gracefully(cast(GrpcServerProto, server))
-        await state.worker_coordinator.shutdown()
-        state.store.close()
 
 
 @pytest.mark.asyncio

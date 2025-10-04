@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
-from collections.abc import Sequence
+import sys
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
 from pytest import CaptureFixture
 
 from ragzoom.constants import DEFAULT_GRPC_ADDRESS
+from ragzoom.server.state import ServerState
 from ragzoom.tools import incremental_index as incremental
 
 
@@ -108,6 +111,66 @@ def test_run_incremental_indexing_respects_server_address(
     assert recorded == [DEFAULT_GRPC_ADDRESS]
 
 
+def test_run_incremental_indexing_runs_validation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    recorded: list[tuple[str, ...]] = []
+
+    def fake_run_cli(_python: str, args: Sequence[str]) -> None:
+        recorded.append(tuple(str(arg) for arg in args))
+
+    def fake_chunk_document(
+        source: Path, _count: int, output_dir: Path
+    ) -> tuple[Path, ...]:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        chunk = output_dir / "chunk_1.txt"
+        chunk.write_text("chunk", encoding="utf-8")
+        return (chunk,)
+
+    wait_calls: list[tuple[str, str]] = []
+
+    def fake_wait(address: str, document_id: str, _echo: Callable[[str], None]) -> None:
+        wait_calls.append((address, document_id))
+
+    doc = tmp_path / "doc.txt"
+    doc.write_text("hello world", encoding="utf-8")
+    monkeypatch.setattr(incremental, "_run_cli", fake_run_cli)
+    monkeypatch.setattr(incremental, "chunk_document", fake_chunk_document)
+    monkeypatch.setattr(incremental, "_wait_for_workers", fake_wait)
+    monkeypatch.setattr(incremental, "ensure_server_running", lambda *_: None)
+
+    telemetry_path = tmp_path / "telemetry.json"
+    result = incremental.run_incremental_indexing(
+        source=doc,
+        chunk_count=1,
+        python_exec=sys.executable,
+        forward_args=["--server-address", "127.0.0.1:5555", "--collect-telemetry"],
+        output_dir=tmp_path / "chunks",
+        echo=lambda *_: None,
+        validate=True,
+        telemetry_output=telemetry_path,
+    )
+
+    assert wait_calls == [("127.0.0.1:5555", "doc")]
+    telemetry_cmd = (
+        "telemetry-export",
+        "--document-id",
+        "doc",
+        "--output",
+        str(telemetry_path),
+    )
+    validate_cmd = (
+        "validate",
+        "--complete",
+        "--telemetry-file",
+        str(telemetry_path),
+        "doc",
+    )
+    assert telemetry_cmd in recorded
+    assert validate_cmd in recorded
+    assert result.telemetry_path == telemetry_path
+
+
 def test_cli_main_reports_missing_server(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -131,3 +194,43 @@ def test_cli_main_reports_missing_server(
     assert excinfo.value.code == 1
     err = capsys.readouterr().err
     assert "No RagZoom gRPC server detected" in err
+
+
+@pytest.mark.asyncio
+@pytest.mark.slow_threshold(30.0)
+async def test_incremental_index_cli_validates_document(
+    grpc_test_environment: tuple[str, ServerState],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    address, state = grpc_test_environment
+    monkeypatch.setenv("RAGZOOM_SERVER_ADDRESS", address)
+    monkeypatch.setenv("RAGZOOM_DATABASE_URL", state.operational_config.database_url)
+    monkeypatch.setenv(
+        "RAGZOOM_VECTOR_BACKEND",
+        state.operational_config.vector_backend or "python",
+    )
+
+    telemetry_path = tmp_path / "telemetry.json"
+    chunk_root = tmp_path / "chunks"
+    doc_path = Path("test_data/smoke_test_larger.txt")
+
+    result = await asyncio.to_thread(
+        incremental.run_incremental_indexing,
+        source=doc_path,
+        chunk_count=3,
+        python_exec=sys.executable,
+        forward_args=[
+            "--server-address",
+            address,
+            "--collect-telemetry",
+            "--no-progress",
+        ],
+        output_dir=chunk_root,
+        echo=lambda *_: None,
+        validate=True,
+        telemetry_output=telemetry_path,
+    )
+
+    assert telemetry_path.exists()
+    assert result.document_id == "smoke_test_larger"

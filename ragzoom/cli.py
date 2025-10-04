@@ -666,11 +666,14 @@ def validate(
     store = create_store_with_docker(
         operational_config, embedding_model=index_config.embedding_model
     )
-    vector_index = create_vector_index(
-        operational_config.vector_backend,
-        operational_config.database_url,
-        index_config.embedding_model,
-    )
+    vector_backend = (operational_config.vector_backend or "").strip().lower()
+    vector_index = None
+    if vector_backend != "python":
+        vector_index = create_vector_index(
+            operational_config.vector_backend,
+            operational_config.database_url,
+            index_config.embedding_model,
+        )
 
     telemetry_payload: TelemetryDataDict | None = None
     if telemetry_file:

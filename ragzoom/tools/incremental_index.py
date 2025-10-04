@@ -13,6 +13,7 @@ from pathlib import Path
 
 import grpc
 
+from ragzoom.client.grpc_client import GrpcRagzoomClient
 from ragzoom.constants import DEFAULT_GRPC_ADDRESS
 
 
@@ -25,6 +26,7 @@ class IncrementalIndexResult:
     chunk_paths: tuple[Path, ...]
     sanitized_args: tuple[str, ...]
     applied_no_await: bool
+    telemetry_path: Path | None = None
 
 
 def chunk_document(source: Path, chunks: int, output_dir: Path) -> tuple[Path, ...]:
@@ -94,6 +96,26 @@ def _run_cli(python_exec: str, args: Sequence[str]) -> None:
     subprocess.run([python_exec, "-m", "ragzoom.cli", *args], check=True)
 
 
+def _wait_for_workers(
+    address: str, document_id: str, echo: Callable[[str], None]
+) -> None:
+    """Block until all workers for *document_id* are idle."""
+
+    echo(f"[info] Waiting for summarization workers to finish for '{document_id}'...")
+    client = GrpcRagzoomClient(address, stream_timeout=None)
+    try:
+        for snapshot in client.iter_worker_snapshots():
+            progress = snapshot.documents.get(document_id)
+            if progress is None:
+                if snapshot.idle:
+                    break
+                continue
+            if progress.pending == 0 and progress.inflight == 0:
+                break
+    finally:
+        client.close()
+
+
 def run_incremental_indexing(
     *,
     source: Path,
@@ -103,8 +125,15 @@ def run_incremental_indexing(
     forward_args: Sequence[str] | None = None,
     output_dir: Path | None = None,
     echo: Callable[[str], None] = print,
+    validate: bool = False,
+    telemetry_output: Path | None = None,
 ) -> IncrementalIndexResult:
-    """Drive `ragzoom index --append` for an entire document."""
+    """Drive `ragzoom index --append` for an entire document.
+
+    When ``validate`` is ``True`` the helper waits for worker idle, exports
+    telemetry (to ``telemetry_output`` if provided), and runs
+    ``ragzoom validate --complete`` before returning.
+    """
 
     python_exec = python_exec or sys.executable
     forward_args = list(forward_args or [])
@@ -155,6 +184,37 @@ def run_incremental_indexing(
         cmd.extend(sanitized_args)
         _run_cli(python_exec, cmd)
 
+    telemetry_path: Path | None = None
+
+    if validate:
+        _wait_for_workers(server_address, doc_id, echo)
+        if telemetry_output is None:
+            telemetry_path = (chunk_root / f"{doc_id}_telemetry.json").resolve()
+        else:
+            telemetry_path = telemetry_output.resolve()
+
+        telemetry_path.parent.mkdir(parents=True, exist_ok=True)
+
+        echo(f"[info] Exporting telemetry to {telemetry_path}")
+        _run_cli(
+            python_exec,
+            [
+                "telemetry-export",
+                "--document-id",
+                doc_id,
+                "--output",
+                str(telemetry_path),
+            ],
+        )
+
+        validate_cmd: list[str] = ["validate", "--complete"]
+        if telemetry_path is not None:
+            validate_cmd.extend(["--telemetry-file", str(telemetry_path)])
+        validate_cmd.append(doc_id)
+
+        echo("[info] Running document validation")
+        _run_cli(python_exec, validate_cmd)
+
     echo("[done] Incremental indexing complete")
     return IncrementalIndexResult(
         document_id=doc_id,
@@ -162,6 +222,7 @@ def run_incremental_indexing(
         chunk_paths=chunk_paths,
         sanitized_args=tuple(sanitized_args),
         applied_no_await=add_no_await,
+        telemetry_path=telemetry_path,
     )
 
 
@@ -227,6 +288,16 @@ def cli_main(argv: Sequence[str] | None = None) -> None:
         default=sys.executable,
         help="Python interpreter used to invoke the RagZoom CLI.",
     )
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Wait for workers, export telemetry, and run document validation after indexing.",
+    )
+    parser.add_argument(
+        "--telemetry-output",
+        type=Path,
+        help="Optional path for telemetry export when --validate is set.",
+    )
 
     args, forward_args = parser.parse_known_args(argv)
     try:
@@ -237,6 +308,8 @@ def cli_main(argv: Sequence[str] | None = None) -> None:
             python_exec=args.python,
             forward_args=forward_args,
             output_dir=args.output_dir,
+            validate=args.validate,
+            telemetry_output=args.telemetry_output,
         )
     except RuntimeError as exc:
         message = str(exc)
