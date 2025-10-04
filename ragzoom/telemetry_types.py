@@ -4,7 +4,7 @@ This module provides TypedDict definitions for all telemetry-related data struct
 enabling type-safe access to telemetry data and preventing bugs from accessing
 non-existent fields.
 
-Supports only v4.2 telemetry format. All legacy formats have been removed.
+Supports telemetry format v4.3. All legacy formats have been removed.
 """
 
 from typing_extensions import NotRequired, TypedDict
@@ -156,12 +156,21 @@ class ConfigDict(TypedDict):
 
 
 # Top-level telemetry structure for v4.2 (current format)
-class TelemetryDataDict(TypedDict):
-    """Type definition for v4.2 telemetry data structure (current format).
+class ChunkSplitTelemetryDict(TypedDict, total=False):
+    """Details captured during chunk splitting."""
 
-    This is the current telemetry format with full model metadata,
-    system prompts, and runtime information for reproducibility.
-    """
+    start_time: float
+    end_time: float
+    duration: float
+    chunk_count: int
+    total_tokens: int
+    new_text_chars: int
+    existing_tail_chars: int
+    combined_chars: int
+
+
+class TelemetryDataDict(TypedDict):
+    """Type definition for v4.3 telemetry data structure (current format)."""
 
     format_version: str
     document_id: str
@@ -175,6 +184,7 @@ class TelemetryDataDict(TypedDict):
     # Optional document path
     document_path: NotRequired[str]
     append_metadata: NotRequired[dict[str, object]]
+    chunk_split: NotRequired[ChunkSplitTelemetryDict]
 
 
 # Analysis result types

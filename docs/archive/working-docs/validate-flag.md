@@ -1,5 +1,8 @@
 # Validate Flag Implementation
 
+> **Historical Note:** The `--validate` CLI flag has been replaced by the standalone
+> `ragzoom validate` command. This document captures the original design rationale.
+
 ## Overview
 
 The `--validate` flag enables comprehensive validation checks throughout the RagZoom pipeline to ensure correctness of indexing and retrieval operations.

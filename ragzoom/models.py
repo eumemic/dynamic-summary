@@ -47,6 +47,9 @@ class PostgresTreeNode(Base):
     following_neighbor_id: Mapped[str | None] = mapped_column(
         String, nullable=True
     )  # ID of the node that immediately follows this one at the same tree level
+    level_index: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )  # 0-based index within nodes of the same height
     height: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )  # Distance to furthest leaf (0 for leaves, incrementing upward)
@@ -61,6 +64,13 @@ class PostgresTreeNode(Base):
         Index("idx_tree_nodes_document_root", "document_id", "parent_id"),
         # Index on following_neighbor_id for dataflow navigation
         Index("idx_tree_nodes_following_neighbor_id", "following_neighbor_id"),
+        # Index for quickly scanning siblings by height and level_index
+        Index(
+            "idx_tree_nodes_document_height_level",
+            "document_id",
+            "height",
+            "level_index",
+        ),
     )
 
     def is_leaf(self) -> bool:

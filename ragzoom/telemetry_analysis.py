@@ -34,7 +34,7 @@ from ragzoom.telemetry_types import (
 logger = logging.getLogger(__name__)
 
 # Current supported telemetry format version
-SUPPORTED_TELEMETRY_VERSION = "4.2"
+SUPPORTED_TELEMETRY_VERSION = "4.3"
 
 
 def _calculate_mad_and_std(values: Sequence[float | int]) -> tuple[float, float]:

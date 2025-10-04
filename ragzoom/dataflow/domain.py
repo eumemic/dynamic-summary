@@ -31,6 +31,7 @@ class DomainNode:
     height: int = 0
     is_pinned: bool = False
     depth: int = 0
+    level_index: int = 0
 
     # Neighbor relationships used by dataflow
     preceding_neighbor_id: str | None = None

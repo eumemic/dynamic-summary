@@ -1,13 +1,14 @@
-"""Test for LLMService refactor regressions to ensure behavior matches original."""
+"""Tests validating LLMService retry/summarization behaviour."""
 
+from __future__ import annotations
+
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from ragzoom.config import IndexConfig
-from ragzoom.contracts.storage_backend import StorageBackend
-from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
-from ragzoom.index import TreeBuilder
 from ragzoom.services.llm_service import LLMService
 from ragzoom.telemetry_collection import TelemetryCollector
 
@@ -30,10 +31,46 @@ class MockOpenAIResponse:
         )
 
 
+def _fake_encode(text: str) -> list[int]:
+    return [0] * len(text)
+
+
+def _fake_count(text: str) -> int:
+    return len(text)
+
+
+def _fake_decode(_tokens: object) -> str:
+    return "decoded"
+
+
+@contextmanager
+def patched_tokenizers() -> Iterator[None]:
+    """Temporarily make tokenizer behave deterministically for tests."""
+
+    with ExitStack() as stack:
+        for path in (
+            "ragzoom.services.summary_utils.tokenizer.encode",
+            "ragzoom.services.llm_service.tokenizer.encode",
+        ):
+            stack.enter_context(patch(path, side_effect=_fake_encode))
+
+        for path in (
+            "ragzoom.services.summary_utils.tokenizer.count_tokens",
+            "ragzoom.services.llm_service.tokenizer.count_tokens",
+        ):
+            stack.enter_context(patch(path, side_effect=_fake_count))
+
+        for path in (
+            "ragzoom.services.summary_utils.tokenizer.decode",
+            "ragzoom.services.llm_service.tokenizer.decode",
+        ):
+            stack.enter_context(patch(path, side_effect=_fake_decode))
+
+        yield
+
+
 @pytest.mark.asyncio
-async def test_mark_accepted_attempt_is_called(
-    storage_backend: StorageBackend, vector_index: _VectorIndexProtocol
-) -> None:
+async def test_mark_accepted_attempt_is_called() -> None:
     """Test that mark_accepted_attempt is called after summarization completes."""
     config = IndexConfig.load(
         retry_threshold=0.2,  # 20% deviation triggers retry
@@ -41,15 +78,7 @@ async def test_mark_accepted_attempt_is_called(
         target_chunk_tokens=100,
     )
 
-    # Create a document store for testing
-    doc_store = storage_backend.for_document("test_doc")
-    doc_store.set_metadata(
-        file_path="llm_regression_test.txt",
-        embedding_model="text-embedding-3-small",
-        summary_model="gpt-4o-mini",
-    )
-
-    indexer = TreeBuilder(config, doc_store, vector_index)
+    llm_service = LLMService(config, api_key="test-key")
 
     # Track API calls and telemetry calls
     api_calls = []
@@ -95,26 +124,9 @@ async def test_mark_accepted_attempt_is_called(
     # Pre-track the test node
     reporter.track_node_created("test_node", height=1)
 
-    with patch.object(
-        indexer.llm_service.client.chat.completions, "create", new=mock_create
-    ):
-        # Mock tokenizer
-        with (
-            patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
-            patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),
-            patch(
-                "ragzoom.services.llm_service.tokenizer.encode",
-                side_effect=lambda x: [0] * len(x),
-            ),
-            patch(
-                "ragzoom.services.llm_service.tokenizer.count_tokens", side_effect=len
-            ),
-            patch(
-                "ragzoom.services.llm_service.tokenizer.decode",
-                side_effect=lambda x: "decoded",
-            ),
-        ):
-            summary, retry_count, token_count = await indexer._summarize_text(
+    with patch.object(llm_service.client.chat.completions, "create", new=mock_create):
+        with patched_tokenizers():
+            summary, retry_count, token_count = await llm_service._summarize_text(
                 left_text="Test left text " * 10,
                 right_text="Test right text " * 10,
                 target_tokens=100,
@@ -134,7 +146,7 @@ async def test_mark_accepted_attempt_is_called(
 
 
 @pytest.mark.asyncio
-async def test_is_better_summary_logic(storage_backend: StorageBackend) -> None:
+async def test_is_better_summary_logic() -> None:
     """Test that _is_better_summary logic correctly prioritizes under-target summaries."""
     config = IndexConfig.load(
         retry_threshold=0.2,
@@ -185,9 +197,7 @@ async def test_is_better_summary_logic(storage_backend: StorageBackend) -> None:
 
 
 @pytest.mark.asyncio
-async def test_retry_selection_uses_proper_logic(
-    storage_backend: StorageBackend, vector_index: _VectorIndexProtocol
-) -> None:
+async def test_retry_selection_uses_proper_logic() -> None:
     """Test that retry selection uses the proper _is_better_summary logic."""
     config = IndexConfig.load(
         retry_threshold=0.2,
@@ -195,18 +205,9 @@ async def test_retry_selection_uses_proper_logic(
         target_chunk_tokens=100,
     )
 
-    # Create a document store for testing
-    doc_store = storage_backend.for_document("test_doc")
-    doc_store.set_metadata(
-        file_path="llm_retry_test.txt",
-        embedding_model="text-embedding-3-small",
-        summary_model="gpt-4o-mini",
-    )
-
-    indexer = TreeBuilder(config, doc_store, vector_index)
+    llm_service = LLMService(config, api_key="test-key")
 
     api_calls = []
-    summaries_returned = []
 
     async def mock_create(**kwargs: object) -> MockOpenAIResponse:
         """Mock OpenAI API calls with specific token counts."""
@@ -227,28 +228,15 @@ async def test_retry_selection_uses_proper_logic(
         else:
             content = "E" * 100
 
-        summaries_returned.append(content)
         return MockOpenAIResponse(
             content=content,
             prompt_tokens=500,
             completion_tokens=len(content),
         )
 
-    with patch.object(
-        indexer.llm_service.client.chat.completions, "create", new=mock_create
-    ):
-        with (
-            patch("ragzoom.index.tokenizer.encode", side_effect=lambda x: [0] * len(x)),
-            patch("ragzoom.index.tokenizer.count_tokens", side_effect=len),
-            patch(
-                "ragzoom.services.llm_service.tokenizer.encode",
-                side_effect=lambda x: [0] * len(x),
-            ),
-            patch(
-                "ragzoom.services.llm_service.tokenizer.count_tokens", side_effect=len
-            ),
-        ):
-            summary, retry_count, token_count = await indexer._summarize_text(
+    with patch.object(llm_service.client.chat.completions, "create", new=mock_create):
+        with patched_tokenizers():
+            summary, retry_count, token_count = await llm_service._summarize_text(
                 left_text="Test " * 50,
                 right_text="Text " * 50,
                 target_tokens=100,

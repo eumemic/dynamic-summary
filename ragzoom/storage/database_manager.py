@@ -169,6 +169,34 @@ class DatabaseManager:
                     )
                 )
 
+                # Add level_index column to preserve sibling ordering deterministically
+                conn.execute(
+                    text(
+                        """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'tree_nodes'
+                            AND column_name = 'level_index'
+                        ) THEN
+                            ALTER TABLE tree_nodes
+                            ADD COLUMN level_index INTEGER NOT NULL DEFAULT 0;
+                        END IF;
+                    END $$;
+                """
+                    )
+                )
+
+                conn.execute(
+                    text(
+                        """
+                    CREATE INDEX IF NOT EXISTS idx_tree_nodes_document_height_level
+                    ON tree_nodes (document_id, height, level_index);
+                """
+                    )
+                )
+
                 # Drop legacy document metadata columns no longer used
                 conn.execute(
                     text(

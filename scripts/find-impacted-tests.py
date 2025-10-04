@@ -118,7 +118,10 @@ def impacted_tests(changed_files: list[str]) -> list[str]:
         except Exception:
             mods = set()
         if mods & impacted_mods:
-            tests.add(str(tfile))
+            if tfile.name.startswith("test_"):
+                tests.add(str(tfile))
+            else:
+                tests.add(str(ROOT / "tests"))
     return sorted(tests)
 
 

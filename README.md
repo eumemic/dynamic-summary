@@ -28,7 +28,7 @@ storage migrations have introduced the required columns:
 - PostgreSQL: migrations run automatically on startup.
 - SQLite: the bundled migrations add the same columns on first access.
 
-`IndexingService.append_to_document(...)` and the CLI `ragzoom index --append` path reuse
+The gRPC `AppendText` endpoint—and, by proxy, the `ragzoom index --append` CLI path—reuse
 the existing tree, resummarize only the affected rightmost path, and rely on storage
 consistency checks (missing nodes are filtered after vector search) so queries see a
 coherent snapshot. Telemetry files produced during append
@@ -195,6 +195,16 @@ Commit the updated lock files. CI installs from locks via `pip-sync` to guarante
 
 Workflow guard: `scripts/run-checks.sh` contains a check that fails if workflows include unpinned `pip install` lines. Only pip-tools/pip-sync or specific tooling installs (e.g. pytest-cov, awscli) are allowed.
 
+### gRPC API code generation
+
+Generated protobuf stubs live in `ragzoom/rpc/`. When you update files in `proto/`, regenerate the Python code with:
+
+```
+python -m grpc_tools.protoc -I proto --python_out=ragzoom/rpc --grpc_python_out=ragzoom/rpc proto/dynamic_summary.proto
+```
+
+Install `grpcio-tools` via `pip-sync requirements/dev.lock` to make sure the compiler is available.
+
 ### Running checks
 
 ```
@@ -211,7 +221,10 @@ Workflow guard: `scripts/run-checks.sh` contains a check that fails if workflows
 ### First Time Use
 
 ```bash
-# Index your first document (SQLite + local vector index)
+# Start the gRPC server (leave running in its own terminal)
+ragzoom server start
+
+# Index your first document
 ragzoom index document.txt
 
 # Query the document
@@ -228,6 +241,9 @@ ragzoom index document.txt
 
 # Index with custom document ID
 ragzoom index document.txt --document-id my-doc
+
+# Index without waiting for background summarization
+ragzoom index document.txt --no-await-workers
 
 # Re-index a document (automatically clears existing data)
 ragzoom index document.txt
@@ -255,6 +271,9 @@ ragzoom pin <node-id>
 
 # Start API server
 ragzoom serve
+
+# Start gRPC server
+ragzoom server start
 ```
 
 ### Python API
@@ -446,8 +465,9 @@ ragzoom index doc.txt \
   --embedding-batch-size 50 \
   --cache-size 500
 
-# Debugging: Verbose output with validation
-ragzoom index doc.txt --debug --validate --log-level DEBUG
+# Debugging: Verbose output followed by structural validation
+ragzoom index doc.txt --debug --log-level DEBUG
+ragzoom validate doc.txt
 ```
 
 ## Architecture

@@ -7,6 +7,7 @@ simplified metrics in telemetry_cli.py.
 
 import json
 import logging
+import numbers
 import os
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -397,7 +398,7 @@ class TelemetryVisualizer:
 
         # Handle format 4.2
         if "format_version" in data:
-            # Standard format 4.2: {"format_version": "4.2", ...}
+            # Standard format 4.2: {"format_version": "4.3", ...}
             telemetry = data
         else:
             print(f"Warning: No telemetry data found in {benchmark_path}")
@@ -1490,6 +1491,50 @@ class TelemetryVisualizer:
         # Extract nodes from telemetry
         nodes = self._extract_nodes_from_telemetry(telemetry)
 
+        def _to_float(value: object) -> float | None:
+            return float(value) if isinstance(value, numbers.Real) else None
+
+        append_chunks: list[dict[str, float | None]] = []
+        append_history = telemetry.get("append_history")
+        if isinstance(append_history, list):
+            for entry in append_history:
+                if not isinstance(entry, dict):
+                    continue
+                chunk_split = entry.get("chunk_split")
+                if not isinstance(chunk_split, dict):
+                    continue
+                start_time = _to_float(chunk_split.get("start_time"))
+                end_time = _to_float(chunk_split.get("end_time"))
+                span_start = _to_float(entry.get("span_start"))
+                span_end = _to_float(entry.get("span_end"))
+                append_chunks.append(
+                    {
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "span_start": span_start,
+                        "span_end": span_end,
+                    }
+                )
+
+        if not append_chunks:
+            chunk_split = telemetry.get("chunk_split")
+            if isinstance(chunk_split, dict):
+                start_time = _to_float(chunk_split.get("start_time"))
+                end_time = _to_float(chunk_split.get("end_time"))
+                span_start = span_end = None
+                append_meta = telemetry.get("append_metadata")
+                if isinstance(append_meta, dict):
+                    span_start = _to_float(append_meta.get("span_start"))
+                    span_end = _to_float(append_meta.get("span_end"))
+                append_chunks.append(
+                    {
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "span_start": span_start,
+                        "span_end": span_end,
+                    }
+                )
+
         # Define retry attempt colors (1=blue, 2=green, 3=yellow, 4=orange, 5+=red)
         attempt_colors = ATTEMPT_COLORS
 
@@ -1559,6 +1604,58 @@ class TelemetryVisualizer:
                 )
 
             span_start, span_end = node_spans[node_id]
+            node_start_time: float | None = None
+            node_end_time: float | None = None
+
+            # Render leaf text generation windows using chunk split telemetry
+            if node.get("height") == 0 and append_chunks:
+                chunk_info = None
+                for info in append_chunks:
+                    start_span = info.get("span_start")
+                    end_span = info.get("span_end")
+                    if start_span is not None and end_span is not None:
+                        if span_start >= start_span and span_end <= end_span:
+                            chunk_info = info
+                            break
+                    elif info.get("start_time") is not None:
+                        chunk_info = info
+                        break
+
+                if chunk_info is not None:
+                    start_time = chunk_info.get("start_time")
+                    end_time = chunk_info.get("end_time")
+                    if isinstance(start_time, float) and isinstance(end_time, float):
+                        node_start_time = (
+                            start_time
+                            if node_start_time is None
+                            else min(node_start_time, start_time)
+                        )
+                        node_end_time = (
+                            end_time
+                            if node_end_time is None
+                            else max(node_end_time, end_time)
+                        )
+                        if indexing_start_time is None and min_time is None:
+                            min_time = start_time
+                        baseline, min_time = self._calculate_timeline_baseline(
+                            indexing_start_time, min_time, start_time
+                        )
+                        duration = max(end_time - start_time, 0.1)
+                        max_time = max(max_time, end_time)
+                        rect = Rectangle(
+                            (
+                                span_start,
+                                start_time - baseline,
+                            ),
+                            max(1, span_end - span_start - gap),
+                            duration,
+                            facecolor=attempt_colors[0],
+                            edgecolor="none",
+                            linewidth=0,
+                            alpha=0.9,
+                            zorder=1,
+                        )
+                        ax.add_patch(rect)
 
             # First, process embedding operations for ALL nodes (including leaves)
             embedding = node.get("embedding")
@@ -1567,6 +1664,16 @@ class TelemetryVisualizer:
                 embed_end_time = embedding.get("end_time")
 
                 if embed_start_time is not None and embed_end_time is not None:
+                    node_start_time = (
+                        float(embed_start_time)
+                        if node_start_time is None
+                        else min(node_start_time, float(embed_start_time))
+                    )
+                    node_end_time = (
+                        float(embed_end_time)
+                        if node_end_time is None
+                        else max(node_end_time, float(embed_end_time))
+                    )
                     # Update min_time tracking for fallback
                     if indexing_start_time is None and min_time is None:
                         min_time = float(embed_start_time)
@@ -1595,6 +1702,17 @@ class TelemetryVisualizer:
 
             # Skip leaf nodes for summary processing - they don't have summaries
             if node["height"] == 0:
+                if node_start_time is None:
+                    created_at = _to_float(node.get("created_at"))
+                    if created_at is not None:
+                        node_start_time = created_at
+                if node_end_time is None:
+                    node_end_time = node_start_time
+                if node_start_time is not None and node_end_time is not None:
+                    max_time = max(max_time, node_end_time)
+                    _baseline, min_time = self._calculate_timeline_baseline(
+                        indexing_start_time, min_time, node_start_time
+                    )
                 continue
 
             # Handle passthrough nodes (no summary attempts) - draw as single pixel line
@@ -1604,6 +1722,17 @@ class TelemetryVisualizer:
 
                 # Update max_time
                 max_time = max(max_time, float(created_at))
+                created_at_float = float(created_at)
+                node_start_time = (
+                    created_at_float
+                    if node_start_time is None
+                    else min(node_start_time, created_at_float)
+                )
+                node_end_time = (
+                    created_at_float
+                    if node_end_time is None
+                    else max(node_end_time, created_at_float)
+                )
 
                 # Calculate relative time from indexing start
                 # Three-level fallback: indexed_at -> min_time -> current node time
@@ -1624,8 +1753,8 @@ class TelemetryVisualizer:
                     ),  # Width = span coverage minus gap
                     0.5,  # Minimal height (0.5 seconds for visibility)
                     facecolor=color,
-                    edgecolor="black",
-                    linewidth=0.5,
+                    edgecolor="none",
+                    linewidth=0,
                     alpha=0.9,
                     zorder=1,  # Draw beneath embeddings
                 )
@@ -1634,7 +1763,6 @@ class TelemetryVisualizer:
 
             # Process summary nodes with attempts
             attempts = node["summary_attempts"]
-            accepted_idx = node.get("accepted_attempt", len(attempts) - 1)
 
             # Color will be determined per attempt
 
@@ -1654,6 +1782,14 @@ class TelemetryVisualizer:
                     cumulative_start = start_time
 
                 max_time = max(max_time, end_time)
+                node_start_time = (
+                    start_time
+                    if node_start_time is None
+                    else min(node_start_time, start_time)
+                )
+                node_end_time = (
+                    end_time if node_end_time is None else max(node_end_time, end_time)
+                )
 
                 # Determine color based on attempt number
                 attempt_num = attempt_idx + 1  # Convert to 1-based
@@ -1661,8 +1797,6 @@ class TelemetryVisualizer:
                     color = attempt_colors[-1]  # 5+ attempts = darkest red
                 else:
                     color = attempt_colors[attempt_num - 1]  # Convert to 0-indexed
-                is_accepted = attempt_idx == accepted_idx
-
                 # Calculate baseline for relative time
                 # Three-level fallback: indexed_at -> min_time -> current attempt time
                 baseline, min_time = self._calculate_timeline_baseline(
@@ -1680,13 +1814,26 @@ class TelemetryVisualizer:
                     ),  # width = span coverage minus gap
                     end_time - cumulative_start,  # height = duration
                     facecolor=color,
-                    edgecolor="black" if is_accepted else "none",
-                    linewidth=0.5 if is_accepted else 0,
+                    edgecolor="none",
+                    linewidth=0,
                     alpha=0.9,
                     zorder=1,  # Draw beneath embeddings
                 )
                 ax.add_patch(rect)
                 cumulative_start = end_time
+
+            if node_start_time is None:
+                created_at = _to_float(node.get("created_at"))
+                if created_at is not None:
+                    node_start_time = created_at
+            if node_end_time is None:
+                node_end_time = node_start_time
+
+            if node_start_time is not None and node_end_time is not None:
+                max_time = max(max_time, node_end_time)
+                _baseline, min_time = self._calculate_timeline_baseline(
+                    indexing_start_time, min_time, node_start_time
+                )
 
         # Set axis limits and labels
         if max_span > min_span:

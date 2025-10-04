@@ -1,279 +1,302 @@
-"""High-level wrapper classes for simplified RagZoom usage."""
+"""High-level Python client for the RagZoom gRPC services."""
 
-from ragzoom.assemble import Assembler
-from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
-from ragzoom.contracts.storage_backend import StorageBackend
-from ragzoom.index import TreeBuilder
-from ragzoom.retrieve import Retriever
-from ragzoom.store import create_store
+from __future__ import annotations
+
+import asyncio
+import os
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, ParamSpec, Protocol, TypeVar
+
+from ragzoom.client.grpc_client import ExecuteQueryOutput, GrpcRagzoomClient
+from ragzoom.constants import DEFAULT_GRPC_ADDRESS
+from ragzoom.services.indexing_service import IndexingResult
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from ragzoom.indexing import ClearedDocumentResult
 
 
-def _initialize_components(
-    index_config: IndexConfig | None,
-    query_config: QueryConfig | None,
-    operational_config: OperationalConfig | None,
-) -> tuple[
-    IndexConfig,
-    QueryConfig,
-    OperationalConfig,
-    StorageBackend,
-]:
-    """Initialize common RagZoom components.
+def _resolve_address(explicit: str | None) -> str:
+    if explicit:
+        return explicit
+    env_value = os.environ.get("RAGZOOM_SERVER_ADDRESS")
+    if env_value:
+        return env_value
+    return DEFAULT_GRPC_ADDRESS
 
-    Note: Retriever and Assembler are no longer pre-initialized as they require
-    document-scoped stores. Create them per-request using store.for_document().
 
-    Args:
-        index_config: Configuration for document indexing
-        query_config: Configuration for querying
-        operational_config: Operational configuration (API keys, storage)
+T = TypeVar("T")
 
-    Returns:
-        Tuple of initialized components
-    """
-    index_config = index_config or IndexConfig.load()
-    query_config = query_config or QueryConfig()
-    operational_config = operational_config or OperationalConfig()
 
-    store = create_store(operational_config)
+@dataclass
+class QueryResponse:
+    """Convenience container for query outputs."""
 
-    return (
-        index_config,
-        query_config,
-        operational_config,
-        store,
-    )
+    summary: str
+    token_count: int
+    nodes_retrieved: int
+    tiling_size: int
+    raw: ExecuteQueryOutput
+
+
+class _SessionProtocol(Protocol):
+    async def append_text(
+        self,
+        text: str,
+        *,
+        replace_existing: bool,
+        collect_telemetry: bool,
+    ) -> IndexingResult: ...
+
+    async def clear(self) -> ClearedDocumentResult: ...
+
+
+class _RuntimeProtocol(Protocol):
+    def get_session(
+        self, document_id: str, *, file_path: str | None = None
+    ) -> _SessionProtocol: ...
 
 
 class RagZoom:
-    """High-level synchronous interface to RagZoom.
-
-    Provides a simplified API for common indexing and querying operations.
-    """
+    """Synchronous wrapper around the RagZoom gRPC services."""
 
     def __init__(
         self,
-        index_config: IndexConfig | None = None,
-        query_config: QueryConfig | None = None,
-        operational_config: OperationalConfig | None = None,
-    ):
-        """Initialize RagZoom with optional configurations.
+        *,
+        server_address: str | None = None,
+        timeout: float | None = None,
+        runtime: _RuntimeProtocol | None = None,
+    ) -> None:
+        self._runtime = runtime
+        self._address: str | None
+        if runtime is None or server_address is not None:
+            self._address = _resolve_address(server_address)
+        else:
+            self._address = None
+        self._timeout = timeout
 
-        Args:
-            index_config: Configuration for document indexing
-            query_config: Configuration for querying
-            operational_config: Operational configuration (API keys, storage)
-        """
-        (
-            self.index_config,
-            self.query_config,
-            self.operational_config,
-            self.store,
-        ) = _initialize_components(index_config, query_config, operational_config)
+    def _client(self) -> GrpcRagzoomClient:
+        if self._address is None:
+            raise RuntimeError(
+                "RagZoom was configured without a server address; network operations require a gRPC endpoint"
+            )
+        return GrpcRagzoomClient(self._address, timeout=self._timeout)
 
-    def index(self, text: str, document_id: str) -> str:
-        """Index a document.
+    def _run_runtime(self, awaitable: Coroutine[object, object, T]) -> T:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(awaitable)
+        if loop.is_running():
+            raise RuntimeError(
+                "Runtime-backed RagZoom operations must use AsyncRagZoom when an event loop is already running"
+            )
+        return loop.run_until_complete(awaitable)
 
-        Args:
-            text: Document text to index
-            document_id: Unique identifier for the document
+    # ------------------------------------------------------------------
+    # Indexing helpers
+    # ------------------------------------------------------------------
+    def index(
+        self,
+        document_id: str,
+        text: str,
+        *,
+        collect_telemetry: bool = False,
+    ) -> IndexingResult:
+        """Rebuild a document by clearing existing nodes then appending text."""
 
-        Returns:
-            Document ID that was indexed
-        """
-        # jscpd:ignore-start - Legitimate pattern for document-scoped TreeBuilder creation
-        # Clear existing data if needed
-        self.store.clear_document(document_id)
-
-        # Create document with metadata BEFORE creating TreeBuilder
-        self.store.add_document(
+        return self._append(
             document_id=document_id,
-            file_path=None,
-            embedding_model=self.index_config.embedding_model,
-            summary_model=self.index_config.summary_model,
+            text=text,
+            collect_telemetry=collect_telemetry,
+            replace_existing=True,
         )
 
-        # Create document-scoped store and TreeBuilder
-        document_store = self.store.for_document(document_id)
-        from ragzoom.vector_factory import create_vector_index
+    def append(
+        self,
+        document_id: str,
+        text: str,
+        *,
+        collect_telemetry: bool = False,
+    ) -> IndexingResult:
+        """Append text to an existing document without clearing it."""
 
-        vector_index = create_vector_index(
-            self.operational_config.vector_backend,
-            self.operational_config.database_url,
-            self.index_config.embedding_model,
+        return self._append(
+            document_id=document_id,
+            text=text,
+            collect_telemetry=collect_telemetry,
+            replace_existing=False,
         )
-        tree_builder = TreeBuilder(
-            self.index_config,
-            document_store,
-            vector_index,
-            api_key=self.operational_config.openai_api_key,
+
+    def _append(
+        self,
+        *,
+        document_id: str,
+        text: str,
+        collect_telemetry: bool,
+        replace_existing: bool,
+    ) -> IndexingResult:
+        if not document_id:
+            raise ValueError("document_id is required")
+        if not text:
+            raise ValueError("text must be non-empty")
+
+        if self._runtime is not None:
+            session = self._runtime.get_session(document_id)
+            return self._run_runtime(
+                session.append_text(
+                    text,
+                    replace_existing=replace_existing,
+                    collect_telemetry=collect_telemetry,
+                )
+            )
+
+        with self._client() as client:
+            return client.append_text(
+                document_id=document_id,
+                content=text.encode("utf-8"),
+                collect_telemetry=collect_telemetry,
+                replace_existing=replace_existing,
+            )
+
+    def clear(self, document_id: str) -> None:
+        """Delete all nodes for a document and cancel in-flight work."""
+
+        if not document_id:
+            raise ValueError("document_id is required")
+        if self._runtime is not None:
+            session = self._runtime.get_session(document_id)
+            self._run_runtime(session.clear())
+            return
+
+        with self._client() as client:
+            client.clear_document(document_id)
+
+    # ------------------------------------------------------------------
+    # Retrieval helpers
+    # ------------------------------------------------------------------
+    def query(
+        self,
+        document_id: str,
+        query_text: str,
+        *,
+        budget_tokens: int | None = None,
+        num_seeds: int | None = None,
+        embedding_model: str | None = None,
+        debug: bool = False,
+        viz_width: int = 120,
+        use_token_coords: bool = False,
+    ) -> QueryResponse:
+        if not document_id:
+            raise ValueError("document_id is required")
+        if not query_text:
+            raise ValueError("query_text must be non-empty")
+
+        with self._client() as client:
+            output = client.execute_query(
+                query=query_text,
+                document_id=document_id,
+                budget_tokens=budget_tokens,
+                num_seeds=num_seeds,
+                embedding_model=embedding_model,
+                debug=debug,
+                viz_width=viz_width,
+                use_token_coords=use_token_coords,
+            )
+
+        result = output.query_result
+        return QueryResponse(
+            summary=result.summary,
+            token_count=result.token_count,
+            nodes_retrieved=result.nodes_retrieved,
+            tiling_size=result.tiling_size,
+            raw=output,
         )
-
-        return tree_builder.add_document(text)
-        # jscpd:ignore-end
-
-    # jscpd:ignore-start - Legitimate sync/async pattern duplication
-    def query(self, query_text: str, document_id: str) -> str:
-        """Query within a specific document.
-
-        Args:
-            query_text: Query string
-            document_id: Document to search within
-
-        Returns:
-            Generated summary response
-        """
-        # Create document-scoped components
-        from openai import OpenAI
-
-        from ragzoom.retrieval.budget_planner import BudgetPlanner
-        from ragzoom.retrieval.embedding_service import EmbeddingService
-        from ragzoom.vector_factory import create_vector_index
-
-        client = OpenAI(
-            api_key=self.operational_config.openai_api_key.get_secret_value()
-        )
-        document_store = self.store.for_document(document_id)
-        embedding_service = EmbeddingService(
-            client, document_store, self.query_config.embedding_model
-        )
-        budget_planner = BudgetPlanner(
-            document_store, self.index_config.target_chunk_tokens
-        )
-        vector_index = create_vector_index(
-            self.operational_config.vector_backend,
-            self.operational_config.database_url,
-            self.query_config.embedding_model,
-        )
-        retriever = Retriever(
-            self.query_config,
-            document_store,
-            embedding_service,
-            budget_planner,
-            vector_index,
-        )
-        assembler = Assembler(document_store)
-
-        # Execute query
-        node_scores = retriever.retrieve(query_text, document_id=document_id)
-        return assembler.assemble(node_scores)
-
-    # jscpd:ignore-end
 
 
 class AsyncRagZoom:
-    """High-level asynchronous interface to RagZoom.
+    """Async wrapper around the RagZoom gRPC services."""
 
-    Provides a simplified async API for common indexing and querying operations.
-    """
-
-    def __init__(  # jscpd:ignore-start
+    def __init__(
         self,
-        index_config: IndexConfig | None = None,
-        query_config: QueryConfig | None = None,
-        operational_config: OperationalConfig | None = None,
-    ):
-        """Initialize AsyncRagZoom with optional configurations.
-
-        Args:
-            index_config: Configuration for document indexing
-            query_config: Configuration for querying
-            operational_config: Operational configuration (API keys, storage)
-        """  # jscpd:ignore-end
-        (
-            self.index_config,
-            self.query_config,
-            self.operational_config,
-            self.store,
-        ) = _initialize_components(index_config, query_config, operational_config)
-
-    async def index_async(self, text: str, document_id: str) -> str:
-        """Index a document asynchronously.
-
-        Args:
-            text: Document text to index
-            document_id: Unique identifier for the document
-
-        Returns:
-            Document ID that was indexed
-        """
-        # jscpd:ignore-start - Legitimate pattern for document-scoped TreeBuilder creation
-        # Clear existing data if needed
-        self.store.clear_document(document_id)
-
-        # Create document with metadata BEFORE creating TreeBuilder
-        self.store.add_document(
-            document_id=document_id,
-            file_path=None,
-            embedding_model=self.index_config.embedding_model,
-            summary_model=self.index_config.summary_model,
+        *,
+        server_address: str | None = None,
+        timeout: float | None = None,
+        runtime: _RuntimeProtocol | None = None,
+    ) -> None:
+        self._sync = RagZoom(
+            server_address=server_address,
+            timeout=timeout,
+            runtime=runtime,
         )
 
-        # Create document-scoped store and TreeBuilder
-        document_store = self.store.for_document(document_id)
-        from ragzoom.vector_factory import create_vector_index
+    async def _call(
+        self,
+        func: Callable[P, R],
+        /,
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> R:
+        return await asyncio.to_thread(func, *args, **kwargs)
 
-        vector_index = create_vector_index(
-            self.operational_config.vector_backend,
-            self.operational_config.database_url,
-            self.index_config.embedding_model,
-        )
-        tree_builder = TreeBuilder(
-            self.index_config,
-            document_store,
-            vector_index,
-            api_key=self.operational_config.openai_api_key,
+    # jscpd:ignore-start - Async wrappers intentionally mirror sync API
+    async def index(
+        self,
+        document_id: str,
+        text: str,
+        *,
+        collect_telemetry: bool = False,
+    ) -> IndexingResult:
+        return await self._call(
+            self._sync.index,
+            document_id,
+            text,
+            collect_telemetry=collect_telemetry,
         )
 
-        return await tree_builder.add_document_async(text)
-        # jscpd:ignore-end
-
-    # jscpd:ignore-start - Legitimate sync/async pattern duplication
-    async def query_async(self, query_text: str, document_id: str) -> str:
-        """Query within a specific document asynchronously.
-
-        Args:
-            query_text: Query string
-            document_id: Document to search within
-
-        Returns:
-            Generated summary response
-        """
-        # Create document-scoped components
-        from openai import OpenAI
-
-        from ragzoom.retrieval.budget_planner import BudgetPlanner
-        from ragzoom.retrieval.embedding_service import EmbeddingService
-        from ragzoom.vector_factory import create_vector_index
-
-        client = OpenAI(
-            api_key=self.operational_config.openai_api_key.get_secret_value()
+    async def append(
+        self,
+        document_id: str,
+        text: str,
+        *,
+        collect_telemetry: bool = False,
+    ) -> IndexingResult:
+        return await self._call(
+            self._sync.append,
+            document_id,
+            text,
+            collect_telemetry=collect_telemetry,
         )
-        document_store = self.store.for_document(document_id)
-        embedding_service = EmbeddingService(
-            client, document_store, self.query_config.embedding_model
-        )
-        budget_planner = BudgetPlanner(
-            document_store, self.index_config.target_chunk_tokens
-        )
-        vector_index = create_vector_index(
-            self.operational_config.vector_backend,
-            self.operational_config.database_url,
-            self.query_config.embedding_model,
-        )
-        retriever = Retriever(
-            self.query_config,
-            document_store,
-            embedding_service,
-            budget_planner,
-            vector_index,
-        )
-        assembler = Assembler(document_store)
 
-        # Execute query
-        node_scores = await retriever.retrieve_async(
-            query_text, document_id=document_id
+    async def clear(self, document_id: str) -> None:
+        await self._call(self._sync.clear, document_id)
+
+    async def query(
+        self,
+        document_id: str,
+        query_text: str,
+        *,
+        budget_tokens: int | None = None,
+        num_seeds: int | None = None,
+        embedding_model: str | None = None,
+        debug: bool = False,
+        viz_width: int = 120,
+        use_token_coords: bool = False,
+    ) -> QueryResponse:
+        return await self._call(
+            self._sync.query,
+            document_id,
+            query_text,
+            budget_tokens=budget_tokens,
+            num_seeds=num_seeds,
+            embedding_model=embedding_model,
+            debug=debug,
+            viz_width=viz_width,
+            use_token_coords=use_token_coords,
         )
-        return assembler.assemble(node_scores)
 
     # jscpd:ignore-end
+
+
+P = ParamSpec("P")
+R = TypeVar("R")

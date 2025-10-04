@@ -1,11 +1,13 @@
 """Tests for progress tracking functionality."""
 
 import asyncio
+import io
 from unittest.mock import Mock, patch
 
 import pytest
 
 from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
+from ragzoom.progress_display import DocumentProgressTotals, WorkerProgressDisplay
 
 
 class TestGlobalProgressTracker:
@@ -180,6 +182,45 @@ class TestAsyncProgressWrapper:
         # Check that all values were passed
         called_values = [call[0][0] for call in mock_tracker.update.call_args_list]
         assert sorted(called_values) == [1, 2, 3, 4, 5]
+
+
+class TestWorkerProgressDisplay:
+    """Tests for the shared worker progress renderer."""
+
+    def test_focus_documents_filters_output(self) -> None:
+        buffer = io.StringIO()
+        display = WorkerProgressDisplay(
+            focus_documents={"docA"},
+            stream=buffer,
+            line_printer=lambda msg: buffer.write(msg + "\n"),
+            enable_bars=False,
+        )
+
+        documents = {
+            "docA": DocumentProgressTotals(pending=3, inflight=1, completed=2, total=6),
+            "docB": DocumentProgressTotals(pending=5, inflight=0, completed=0, total=5),
+        }
+
+        display.update(queue_depth=8, inflight=1, documents=documents, message="status")
+        output = buffer.getvalue()
+        assert "docA" in output
+        assert "docB" not in output
+        assert display.is_focus_complete() is False
+
+        buffer.truncate(0)
+        buffer.seek(0)
+        display.update(
+            queue_depth=0,
+            inflight=0,
+            documents={
+                "docA": DocumentProgressTotals(
+                    pending=0, inflight=0, completed=6, total=6
+                )
+            },
+            message=None,
+        )
+        assert display.is_focus_complete() is True
+        display.finish()
 
 
 class TestProgressIntegration:

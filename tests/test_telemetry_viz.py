@@ -127,7 +127,7 @@ class TestTelemetryVisualizer:
         """Test that visualize_single_benchmark creates expected outputs."""
         # Create minimal telemetry data that won't trigger complex plotting
         minimal_data: TelemetryDataDict = {
-            "format_version": "4.2",
+            "format_version": "4.3",
             "document_id": "test",
             "source_document_tokens": 0,
             "indexed_at": 0,
@@ -192,7 +192,7 @@ class TestTelemetryVisualizer:
         # Test empty batch efficiency
         fig, ax = plt.subplots()
         empty_telemetry: TelemetryDataDict = {
-            "format_version": "4.2",
+            "format_version": "4.3",
             "document_id": "empty",
             "source_document_tokens": 0,
             "indexed_at": 0,
@@ -224,7 +224,7 @@ class TestTelemetryVisualizer:
 
         fig, ax = plt.subplots()
         telemetry: TelemetryDataDict = {
-            "format_version": "4.2",
+            "format_version": "4.3",
             "document_id": "test",
             "source_document_tokens": 100,
             "indexed_at": 1234567890.0,
@@ -335,7 +335,7 @@ class TestTelemetryVisualizer:
 
         fig, ax = plt.subplots()
         telemetry: TelemetryDataDict = {
-            "format_version": "4.2",
+            "format_version": "4.3",
             "document_id": "test",
             "source_document_tokens": 300,
             "indexed_at": 0,
@@ -456,7 +456,7 @@ def generate_test_telemetry(num_nodes: int) -> TelemetryDataDict:
             )
 
     return {
-        "format_version": "4.2",
+        "format_version": "4.3",
         "document_id": "test_doc",
         "source_document_tokens": num_nodes * 100,
         "indexed_at": 1234567890.0,

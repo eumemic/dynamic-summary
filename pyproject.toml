@@ -26,6 +26,7 @@ dependencies = [
     "python-dotenv==1.1.1",
     "httpx==0.28.1",
     "psutil==7.0.0",
+    "grpcio==1.75.0",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -48,6 +49,7 @@ dev = [
     "types-psutil",
     "types-seaborn",
     "tomli>=1.0.0; python_version < '3.11'",
+    "grpcio-tools>=1.75.0",
 ]
  chroma = [
     "chromadb>=1.0.15",
@@ -93,6 +95,15 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "tomllib"
+ignore_missing_imports = true
+
+# grpc does not ship type information yet
+[[tool.mypy.overrides]]
+module = "grpc"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "grpc.*"
 ignore_missing_imports = true
 
 # matplotlib doesn't have complete type stubs

@@ -38,9 +38,8 @@ ragzoom index <input> [OPTIONS]
 - `--data-dir PATH` - Base directory for databases and vector stores
 - `--database URL` - Explicit database URL (sqlite:///... or postgresql+psycopg://...)
 - `--no-progress` - Disable progress bars
-- `--validate` - Enable validation checks during indexing
 - `--debug` - Emit detailed debug logging (includes token usage)
-- `--telemetry [PATH]` - Persist telemetry JSON (defaults to `telemetry.json` when flag is provided without a value)
+- `--telemetry [PATH]` - Request telemetry collection. The CLI waits for server workers to finish, persists the telemetry JSON (default `telemetry.json` if no path is provided), and prints the telemetry run ID. Use `ragzoom telemetry` to fetch the same run later if needed.
 - `--append` - Append the file's contents to an existing document (requires `--document-id`)
 
 The command clears the target document before indexing unless `--append` is provided. Both paths run through the incremental patch engine, so fresh indexes and appends share the same invariants and telemetry.
@@ -56,14 +55,14 @@ ragzoom index document.txt --document-id my-doc
 # Re-index a document (automatically clears existing data)
 ragzoom index document.txt
 
-# Index with validation
-ragzoom index document.txt --validate
-
 # Index with debug logging
 ragzoom index document.txt --debug
 
 # Index with telemetry collection
 ragzoom index document.txt --telemetry
+
+# Validate the tree after indexing
+ragzoom validate document.txt
 
 # Append new content to an existing document
 ragzoom index delta.txt --document-id my-doc --append
@@ -87,7 +86,6 @@ ragzoom query <query_text> [OPTIONS]
 - `--num-seeds` - Number of seed nodes to retrieve
 - `--token-budget` - Token budget for summary
 - `--debug` - Show debug information and tree visualization
-- `--validate` - Enable validation checks
 - `--viz-width` - Tree visualization width (defaults to terminal width)
 - `--viz-coords` - Coordinate system: `source-chars` or `output-tokens` (default: output-tokens)
 
@@ -102,8 +100,8 @@ ragzoom query "neural networks" -d my-doc -n 10 -b 4000
 # Debug mode with visualization
 ragzoom query "transformer architecture" -d my-doc --debug
 
-# Validate tiling coverage
-ragzoom query "attention mechanism" -d my-doc --validate
+# Validate the document tree separately
+ragzoom validate my-doc
 ```
 
 ### `ragzoom documents`
@@ -120,6 +118,32 @@ Documents in database:
   - my-doc (1234 nodes, indexed: 2025-01-15 10:30:00)
   - paper.pdf (567 nodes, indexed: 2025-01-14 15:45:00)
 ```
+
+### `ragzoom telemetry`
+
+Fetch telemetry produced by a previous indexing run. The command is helpful when `--telemetry` was used with `ragzoom index` but the results need to be retrieved later.
+
+```bash
+ragzoom telemetry --document-id my-doc --run-id <run_id> [--wait] [--output telemetry.json]
+```
+
+If `--wait` is provided the command blocks until the run finishes collecting telemetry. Otherwise it returns immediately when the run is still active. Passing `--output` writes the telemetry JSON to disk; without it the payload is printed to stdout.
+
+### `ragzoom validate`
+
+Validate structural invariants for an indexed document.
+
+```bash
+ragzoom validate <document_id> [--complete]
+```
+
+**Arguments:**
+- `document_id` - Target document identifier
+
+**Options:**
+- `--complete` - Require the tree to have converged to a single root (fails otherwise)
+
+The validator reads from the active storage backend and executes the invariant suite in `ragzoom/validation/tree.py`. It exits with a non-zero status when any errors are detected.
 
 ### `ragzoom pin`
 
@@ -220,12 +244,12 @@ Currently no authentication is required. In production, implement appropriate au
 
 #### `POST /index`
 
-Index a new document.
+Append text to a document.
 
 **Request Body:**
 ```json
 {
-  "text": "Document content to index",
+  "text": "Text to append to the document",
   "document_id": "my-doc",
   "file_path": "path/used/for/metadata.json"
 }
@@ -240,9 +264,30 @@ Index a new document.
 }
 ```
 
-The endpoint clears any existing nodes for the document before invoking the same patch
-engine used by CLI indexing. Append-style updates are currently surfaced via the CLI and
-service layer (`IndexingService.append_to_document`).
+If the document does not exist it will be created automatically. Existing nodes remain
+in place—new content is appended to the rightmost leaf and the gRPC worker service takes
+care of rebuilding summaries. To start over from scratch, call the `/clear` endpoint
+before appending new content.
+
+#### `POST /clear`
+
+Clear a document and delete all of its nodes.
+
+**Request Body:**
+```json
+{
+  "document_id": "my-doc"
+}
+```
+
+**Response:**
+```json
+{
+  "document_id": "my-doc",
+  "deleted_nodes": 127,
+  "document_existed": true
+}
+```
 
 #### `GET /documents`
 
@@ -358,7 +403,7 @@ Health check endpoint.
 ```python
 from ragzoom import RagZoom
 
-# Initialize
+# Initialize (or pass runtime=existing_runtime to reuse the in-process pipeline)
 rz = RagZoom()
 
 # Index a document
@@ -391,26 +436,30 @@ asyncio.run(main())
 ### Advanced Usage
 
 ```python
-from ragzoom import Store, TreeBuilder, Retriever, IndexConfig, QueryConfig, OperationalConfig
+from ragzoom.client import GrpcRagzoomClient
 
-# Custom configuration
-index_config = IndexConfig(
-    target_chunk_tokens=300
-)
-query_config = QueryConfig(
-    budget_tokens=10000,
-    mmr_lambda=0.8
-)
-operational_config = OperationalConfig()
+with GrpcRagzoomClient("localhost:50051") as client:
+    # Rebuild the document (clear + append)
+    client.append_text(
+        document_id="my-doc",
+        content=b"Document content...",
+        collect_telemetry=False,
+        replace_existing=True,
+    )
 
-# Initialize components
-store = Store(operational_config)
-builder = TreeBuilder(index_config, store, operational_config.openai_api_key)
-retriever = Retriever(query_config, index_config, store, operational_config.openai_api_key)
+    # Issue an ad-hoc query with custom parameters
+    output = client.execute_query(
+        query="What is this about?",
+        document_id="my-doc",
+        budget_tokens=6000,
+        num_seeds=None,
+        embedding_model=None,
+        debug=False,
+        viz_width=120,
+        use_token_coords=False,
+    )
 
-# Direct component usage
-nodes = store.get_leaf_nodes(document_id="my-doc")
-result = retriever.retrieve("query", document_id="my-doc")
+print(output.query_result.summary)
 ```
 
 ## Configuration
@@ -551,7 +600,7 @@ operational_config = OperationalConfig(
 
 1. **Document IDs**: Use meaningful, URL-safe identifiers
 2. **Token Budgets**: Start with defaults, adjust based on output quality
-3. **Validation**: Use `--validate` flag during development
+3. **Validation**: Run `ragzoom validate <document_id>` regularly during development
 4. **Caching**: Enable caching for repeated queries
 5. **Batch Operations**: Use async API for bulk indexing
 6. **Error Handling**: Always handle potential errors in production

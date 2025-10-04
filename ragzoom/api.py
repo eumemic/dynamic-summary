@@ -1,20 +1,33 @@
 """FastAPI routes for RagZoom REST interface."""
 
 import logging
+import os
 from dataclasses import asdict
+from pathlib import Path
 from typing import cast
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from pydantic.config import ConfigDict
 from typing_extensions import TypedDict
 
 from ragzoom.api_middleware import create_error_handling_middleware
+from ragzoom.client.grpc_client import GrpcRagzoomClient
 from ragzoom.config import IndexConfig, IndexConfigDict, OperationalConfig, QueryConfig
+from ragzoom.constants import DEFAULT_GRPC_ADDRESS
 from ragzoom.services.document_service import DocumentInfo, DocumentService
-from ragzoom.services.indexing_service import IndexingService
 from ragzoom.services.query_service import QueryService
 from ragzoom.store import create_store_with_docker
+
+
+def _resolve_grpc_address(configured: str | None = None) -> str:
+    if configured:
+        return configured
+    env_value = os.environ.get("RAGZOOM_SERVER_ADDRESS")
+    if env_value:
+        return env_value
+    return DEFAULT_GRPC_ADDRESS
+
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +40,7 @@ class ServiceContainer:
     - Services are initialized with the multi-document Store
     - Each service internally creates DocumentStore instances as needed
     - This ensures document isolation is enforced at the service layer
-    - IndexingService and QueryService handle document scoping transparently
+    - QueryService handles document scoping for retrieval operations
     - This pattern prevents cross-document contamination through the type system
     """
 
@@ -43,15 +56,14 @@ class ServiceContainer:
             self.operational_config, embedding_model=self.index_config.embedding_model
         )
 
+        self.grpc_address = _resolve_grpc_address()
+
         # Initialize services with the multi-document store
         # Each service handles document isolation internally:
         # - DocumentService: manages document metadata across all documents
-        # - IndexingService: creates DocumentStore for each indexing operation
         # - QueryService: creates DocumentStore for each query operation
+        # Indexing operations are proxied to the gRPC server via GrpcRagzoomClient
         self.document_service = DocumentService(self.store)
-        self.indexing_service = IndexingService(
-            self.store, self.index_config, self.operational_config
-        )
         self.query_service = QueryService(
             self.store, self.query_config, self.operational_config
         )
@@ -82,7 +94,7 @@ app.add_middleware(create_error_handling_middleware(include_traceback=False))
 # Request/Response models
 # Pydantic BaseModel inherits from type containing Any, required for serialization
 class IndexDocumentRequest(BaseModel):  # type: ignore[explicit-any]
-    """Request to index a new document."""
+    """Request to append text to a document."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -95,7 +107,7 @@ class IndexDocumentRequest(BaseModel):  # type: ignore[explicit-any]
 
 # Pydantic BaseModel inherits from type containing Any, required for serialization
 class IndexDocumentResponse(BaseModel):  # type: ignore[explicit-any]
-    """Response from document indexing."""
+    """Response from document append."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -223,6 +235,24 @@ class DocumentsResponse(BaseModel):  # type: ignore[explicit-any]
     documents: list[DocumentInfoResponse]
 
 
+class ClearDocumentRequest(BaseModel):  # type: ignore[explicit-any]
+    """Request to clear a document and delete its nodes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    document_id: str = Field(description="Document ID to clear")
+
+
+class ClearDocumentResponse(BaseModel):  # type: ignore[explicit-any]
+    """Response confirming document clearing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    document_id: str
+    deleted_nodes: int
+    document_existed: bool
+
+
 # Routes
 @app.get("/")
 async def root() -> dict[str, str]:
@@ -235,21 +265,39 @@ async def index_document(
     request: IndexDocumentRequest,
     services: ServiceContainer = Depends(get_service_container),
 ) -> IndexDocumentResponse:
-    """Index a new document."""
-    # Use service layer - error handling is done by middleware
-    result = await services.indexing_service.index_document_async(
-        request.text,
-        document_id=request.document_id,
-        file_path=request.file_path,
-        show_progress=False,
-    )
+    """Append text to a document via the gRPC server."""
+
+    text = request.text or ""
+    if not text:
+        raise HTTPException(status_code=400, detail="`text` must be non-empty")
+
+    resolved_document_id = request.document_id or ""
+    if not resolved_document_id:
+        if request.file_path:
+            resolved_document_id = Path(request.file_path).name
+    if not resolved_document_id:
+        raise HTTPException(
+            status_code=400,
+            detail="`document_id` is required when `file_path` is not provided",
+        )
+
+    address = services.grpc_address
+    try:
+        with GrpcRagzoomClient(address) as client:
+            result = client.append_text(
+                document_id=resolved_document_id,
+                content=text.encode("utf-8"),
+                collect_telemetry=False,
+                replace_existing=False,
+            )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return IndexDocumentResponse(
         document_id=result.document_id,
         chunks_created=result.chunks_created,
         tree_depth=result.tree_depth,
     )
-    # Error handling is now done by middleware
 
 
 @app.get("/documents", response_model=DocumentsResponse)
@@ -261,6 +309,31 @@ async def list_documents(
     documents = [DocumentInfoResponse.from_domain(doc) for doc in doc_infos]
     return DocumentsResponse(documents=documents)
     # Error handling is now done by middleware
+
+
+@app.post("/clear", response_model=ClearDocumentResponse)
+async def clear_document(
+    request: ClearDocumentRequest,
+    services: ServiceContainer = Depends(get_service_container),
+) -> ClearDocumentResponse:
+    """Clear a document via the gRPC worker service."""
+
+    document_id = request.document_id.strip()
+    if not document_id:
+        raise HTTPException(status_code=400, detail="`document_id` must be provided")
+
+    address = services.grpc_address
+    try:
+        with GrpcRagzoomClient(address) as client:
+            result = client.clear_document(document_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return ClearDocumentResponse(
+        document_id=result.document_id,
+        deleted_nodes=result.deleted_nodes,
+        document_existed=result.document_existed,
+    )
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -309,12 +382,9 @@ async def update_config(
 
     # Update index config if needed
     if request.leaf_tokens is not None:
-        services.index_config = services.index_config.replace(
-            target_chunk_tokens=request.leaf_tokens
-        )
-        # Recreate indexing service with new config
-        services.indexing_service = IndexingService(
-            services.store, services.index_config, services.operational_config
+        raise HTTPException(
+            status_code=400,
+            detail="Updating `leaf_tokens` is not supported via the REST API; configure the gRPC server instead.",
         )
 
     return {"message": "Configuration updated successfully"}
