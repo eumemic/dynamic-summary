@@ -1638,8 +1638,8 @@ class TelemetryVisualizer:
                             max(1, span_end - span_start - gap),
                             duration,
                             facecolor=attempt_colors[0],
-                            edgecolor="black",
-                            linewidth=0.5,
+                            edgecolor="none",
+                            linewidth=0,
                             alpha=0.9,
                             zorder=1,
                         )
@@ -1709,8 +1709,8 @@ class TelemetryVisualizer:
                     ),  # Width = span coverage minus gap
                     0.5,  # Minimal height (0.5 seconds for visibility)
                     facecolor=color,
-                    edgecolor="black",
-                    linewidth=0.5,
+                    edgecolor="none",
+                    linewidth=0,
                     alpha=0.9,
                     zorder=1,  # Draw beneath embeddings
                 )
@@ -1719,7 +1719,6 @@ class TelemetryVisualizer:
 
             # Process summary nodes with attempts
             attempts = node["summary_attempts"]
-            accepted_idx = node.get("accepted_attempt", len(attempts) - 1)
 
             # Color will be determined per attempt
 
@@ -1746,8 +1745,6 @@ class TelemetryVisualizer:
                     color = attempt_colors[-1]  # 5+ attempts = darkest red
                 else:
                     color = attempt_colors[attempt_num - 1]  # Convert to 0-indexed
-                is_accepted = attempt_idx == accepted_idx
-
                 # Calculate baseline for relative time
                 # Three-level fallback: indexed_at -> min_time -> current attempt time
                 baseline, min_time = self._calculate_timeline_baseline(
@@ -1765,8 +1762,8 @@ class TelemetryVisualizer:
                     ),  # width = span coverage minus gap
                     end_time - cumulative_start,  # height = duration
                     facecolor=color,
-                    edgecolor="black" if is_accepted else "none",
-                    linewidth=0.5 if is_accepted else 0,
+                    edgecolor="none",
+                    linewidth=0,
                     alpha=0.9,
                     zorder=1,  # Draw beneath embeddings
                 )
