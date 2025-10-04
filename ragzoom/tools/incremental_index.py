@@ -159,6 +159,17 @@ def run_incremental_indexing(
     sanitized_args = sanitize_forward_args(forward_args)
     add_no_await = should_append_no_await(forward_args)
 
+    def _has_flag(flag: str, args: Sequence[str]) -> bool:
+        return any(arg == flag or arg.startswith(f"{flag}=") for arg in args)
+
+    if validate and not (
+        _has_flag("--collect-telemetry", forward_args)
+        or _has_flag("--collect-telemetry", sanitized_args)
+        or _has_flag("--no-collect-telemetry", forward_args)
+    ):
+        echo("[info] Enabling telemetry collection for validation")
+        sanitized_args.append("--collect-telemetry")
+
     if add_no_await:
         echo(
             "[info] Using --no-await-workers; summarization will continue asynchronously."

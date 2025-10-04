@@ -166,8 +166,10 @@ def test_run_incremental_indexing_runs_validation(
         str(telemetry_path),
         "doc",
     )
+    index_cmd = next(cmd for cmd in recorded if cmd[0] == "index")
     assert telemetry_cmd in recorded
     assert validate_cmd in recorded
+    assert "--collect-telemetry" in index_cmd
     assert result.telemetry_path == telemetry_path
 
 
