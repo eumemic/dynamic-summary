@@ -178,7 +178,6 @@ class TestTelemetryCollection:
         # Check telemetry
         node = reporter.node_telemetry["parent-1"]
         assert len(node.summary_attempts) == 2
-
         # First attempt (30% over)
         attempt1 = node.summary_attempts[0]
         assert attempt1.deviation_percent == 30.0  # 130/100 - 1 = 30%
@@ -192,6 +191,32 @@ class TestTelemetryCollection:
         assert attempt2.completion_tokens == 95
         assert attempt2.start_time >= attempt1.end_time
         assert attempt2.end_time >= attempt2.start_time
+
+    def test_record_chunk_split(self, reporter: TelemetryCollector) -> None:
+        """Chunk split timings should be captured in telemetry output."""
+
+        start = time.time()
+        reporter.record_chunk_split_start(
+            start_time=start,
+            new_text_chars=120,
+            existing_tail_chars=40,
+            combined_chars=160,
+        )
+        reporter.record_chunk_split_end(
+            end_time=start + 0.5,
+            chunk_count=6,
+            total_tokens=420,
+        )
+
+        telemetry = reporter.get_telemetry_data("test-doc", 100)
+        assert "chunk_split" in telemetry
+        chunk_split = telemetry["chunk_split"]
+        assert chunk_split["chunk_count"] == 6
+        assert chunk_split["total_tokens"] == 420
+        assert chunk_split["new_text_chars"] == 120
+        assert chunk_split["existing_tail_chars"] == 40
+        assert chunk_split["combined_chars"] == 160
+        assert chunk_split["duration"] == pytest.approx(0.5, rel=1e-6)
 
     def test_backward_compatibility(self, reporter: TelemetryCollector) -> None:
         """Test that old methods still work without telemetry."""
@@ -293,8 +318,8 @@ class TestTelemetryIntegration:
         telemetry_data = completed.result
         assert telemetry_data is not None
 
-        # Verify telemetry was collected (v4.2 format)
-        assert telemetry_data["format_version"] == "4.2"
+        # Verify telemetry was collected (current format)
+        assert telemetry_data["format_version"] == "4.3"
         assert telemetry_data["document_id"] == "telemetry-test"
         assert "nodes" in telemetry_data
 

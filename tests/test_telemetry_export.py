@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import cast
 
@@ -35,6 +36,34 @@ async def test_run_manager_writes_document_telemetry(tmp_path: Path) -> None:
     # Simulate node creation during the run
     collector = context.telemetry_collector
     collector.track_node_created("node-1", height=1, span=(0, 64))
+
+    start = time.time()
+    collector.record_chunk_split_start(
+        start_time=start,
+        new_text_chars=64,
+        existing_tail_chars=0,
+        combined_chars=64,
+    )
+    collector.record_chunk_split_end(
+        end_time=start + 0.25,
+        chunk_count=4,
+        total_tokens=256,
+    )
+
+    await manager.log_chunk_event(
+        context,
+        event="chunk_split_started",
+        new_text_chars=64,
+        existing_tail_chars=0,
+        combined_chars=64,
+    )
+    await manager.log_chunk_event(
+        context,
+        event="chunk_split_completed",
+        chunk_count=4,
+        duration=0.25,
+        total_tokens=256,
+    )
 
     context.register_append_outcome(
         span_start=0,
@@ -70,6 +99,14 @@ async def test_run_manager_writes_document_telemetry(tmp_path: Path) -> None:
     assert nodes[0]["node_id"] == "node-1"
     assert tuple(nodes[0]["span"]) == (0, 64)
 
+    chunk_split = telemetry.get("chunk_split")
+    assert chunk_split is not None
+    assert chunk_split["chunk_count"] == 4
+    assert chunk_split["total_tokens"] == 256
+
+    history = cast(list[dict[str, object]], telemetry.get("append_history", []))
+    assert history and "chunk_split" in history[0]
+
     history = cast(list[dict[str, object]], telemetry.get("append_history", []))
     assert history and history[0].get("status") == "completed"
 
@@ -88,7 +125,7 @@ async def test_export_filters_and_updates_active_nodes(tmp_path: Path) -> None:
 
     log = DocumentTelemetryLog(tmp_path)
     metadata = {
-        "format_version": "4.2",
+        "format_version": "4.3",
         "document_id": "doc",
         "source_document_tokens": 0,
     }

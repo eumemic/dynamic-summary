@@ -24,7 +24,7 @@ class TestTelemetryFormatParsing:
         were all testing the same thing (v4.2 format only).
         """
         telemetry_data: TelemetryDataDict = {
-            "format_version": "4.2",
+            "format_version": "4.3",
             "document_id": "test_doc",
             "source_document_tokens": 5000,
             "indexed_at": 1234567890.0,
@@ -52,7 +52,7 @@ class TestTelemetryFormatParsing:
         result = parse_telemetry_format(telemetry_data)
 
         # Should parse correctly to current format
-        assert result["format_version"] == "4.2"
+        assert result["format_version"] == "4.3"
         assert result["document_id"] == "test_doc"
         assert result["source_document_tokens"] == 5000
         assert result["config"]["target_chunk_tokens"] == 200
@@ -209,7 +209,7 @@ class TestSimplifiedMetrics:
     def sample_telemetry(self) -> TelemetryDataDict:
         """Create sample telemetry data with summary attempts."""
         return {
-            "format_version": "4.2",
+            "format_version": "4.3",
             "document_id": "test_doc",
             "source_document_tokens": 1000,
             "indexed_at": 1234567890.0,
@@ -303,7 +303,7 @@ class TestSimplifiedMetrics:
     def test_simplified_metrics_only_leaf_nodes(self) -> None:
         """Test simplified metrics with only leaf nodes (no summaries)."""
         leaf_only_telemetry: TelemetryDataDict = {
-            "format_version": "4.2",
+            "format_version": "4.3",
             "document_id": "test_doc",
             "source_document_tokens": 1000,
             "indexed_at": 1234567890.0,
@@ -372,7 +372,7 @@ class TestBatchEfficiency:
     def test_compute_batch_efficiency(self) -> None:
         """Test computing batch efficiency from telemetry."""
         telemetry_data: TelemetryDataDict = {
-            "format_version": "4.2",
+            "format_version": "4.3",
             "document_id": "test_doc",
             "source_document_tokens": 1000,
             "indexed_at": 1234567890.0,
@@ -463,7 +463,7 @@ class TestRetryAnalysis:
         """Test that successful attempts equals number of summary nodes (new format)."""
         # Create telemetry with 3 summary nodes, some with multiple attempts
         telemetry_data: TelemetryDataDict = {
-            "format_version": "4.2",
+            "format_version": "4.3",
             "document_id": "test",
             "source_document_tokens": 1000,
             "indexed_at": 1234567890.0,
@@ -582,7 +582,7 @@ class TestRetryAnalysis:
         """Test backward compatibility without accepted_attempt field."""
         # Format without accepted_attempt field (should use last attempt)
         telemetry_data: TelemetryDataDict = {
-            "format_version": "4.2",
+            "format_version": "4.3",
             "document_id": "test",
             "source_document_tokens": 1000,
             "indexed_at": 1234567890.0,
@@ -638,7 +638,7 @@ class TestRetryAnalysis:
     def test_analyze_retry_patterns(self) -> None:
         """Test analyzing retry patterns from telemetry."""
         telemetry_data: TelemetryDataDict = {
-            "format_version": "4.2",
+            "format_version": "4.3",
             "document_id": "test_doc",
             "source_document_tokens": 1000,
             "indexed_at": 1234567890.0,
@@ -757,7 +757,7 @@ class TestRetryAnalysis:
     def test_retry_analysis_no_retries(self) -> None:
         """Test retry analysis with no retries."""
         telemetry_data: TelemetryDataDict = {
-            "format_version": "4.2",
+            "format_version": "4.3",
             "document_id": "test_doc",
             "source_document_tokens": 1000,
             "indexed_at": 1234567890.0,
@@ -810,7 +810,7 @@ class TestFullMetricsComputation:
     def full_telemetry(self) -> TelemetryDataDict:
         """Create comprehensive telemetry data."""
         return {
-            "format_version": "4.2",
+            "format_version": "4.3",
             "document_id": "test_doc",
             "source_document_tokens": 2000,
             "indexed_at": 1234567890.0,
@@ -915,7 +915,7 @@ class TestFullMetricsComputation:
     def test_metrics_include_retry_attempts(self) -> None:
         """Test that metrics include ALL attempts, not just accepted ones."""
         telemetry: TelemetryDataDict = {
-            "format_version": "4.2",
+            "format_version": "4.3",
             "document_id": "test_doc",
             "source_document_tokens": 100,
             "indexed_at": 1234567890.0,

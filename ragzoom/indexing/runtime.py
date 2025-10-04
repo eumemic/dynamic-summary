@@ -355,6 +355,8 @@ class DocumentIndexSession:
                     document_id=self._document_id,
                     new_text=text,
                     reporter=run_context.telemetry_collector if run_context else None,
+                    run_context=run_context,
+                    telemetry_manager=telemetry_manager,
                 )
 
                 root = document_store.tree.get_root()

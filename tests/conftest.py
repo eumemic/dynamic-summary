@@ -633,7 +633,7 @@ def sample_telemetry_data() -> TelemetryDataDict:
     replacing the duplicate fixtures previously scattered across multiple files.
     """
     return {
-        "format_version": "4.2",
+        "format_version": "4.3",
         "document_id": "test_doc",
         "source_document_tokens": 1000,
         "indexed_at": 1234567890.0,
@@ -790,7 +790,7 @@ def empty_telemetry_data() -> TelemetryDataDict:
     functions handle empty data scenarios.
     """
     return {
-        "format_version": "4.2",
+        "format_version": "4.3",
         "document_id": "test_doc",
         "source_document_tokens": 0,
         "indexed_at": 1234567890.0,

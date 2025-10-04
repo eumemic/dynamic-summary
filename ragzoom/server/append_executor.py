@@ -8,7 +8,7 @@ import time
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 from numpy.typing import NDArray
@@ -79,6 +79,8 @@ class AppendExecutor:
         document_id: str,
         new_text: str,
         reporter: TelemetryCollector | None = None,
+        run_context: IndexRunContext | None = None,
+        telemetry_manager: TelemetryRunManager | None = None,
     ) -> AppendOutcome:
         if not new_text:
             raise ValueError("append requires non-empty text")
@@ -103,6 +105,29 @@ class AppendExecutor:
         if not combined_text:
             raise ValueError("append produced no text to index")
 
+        split_start_time = time.time()
+
+        if (
+            telemetry_manager is not None
+            and run_context is not None
+            and run_context.collect_telemetry
+        ):
+            await telemetry_manager.log_chunk_event(
+                run_context,
+                event="chunk_split_started",
+                new_text_chars=len(new_text),
+                existing_tail_chars=len(existing_tail_text),
+                combined_chars=len(combined_text),
+            )
+
+        if reporter is not None:
+            reporter.record_chunk_split_start(
+                start_time=split_start_time,
+                new_text_chars=len(new_text),
+                existing_tail_chars=len(existing_tail_text),
+                combined_chars=len(combined_text),
+            )
+
         chunks = self._splitter.split_text(combined_text)
         if not chunks:
             raise ValueError("splitter returned no chunks for append")
@@ -124,6 +149,29 @@ class AppendExecutor:
             tail_start,
             right_leaf.id if right_leaf else None,
         )
+
+        split_end_time = time.time()
+        total_leaf_tokens = sum(leaf.token_count for leaf in leaf_specs)
+
+        if reporter is not None:
+            reporter.record_chunk_split_end(
+                end_time=split_end_time,
+                chunk_count=len(leaf_specs),
+                total_tokens=total_leaf_tokens,
+            )
+
+        if (
+            telemetry_manager is not None
+            and run_context is not None
+            and run_context.collect_telemetry
+        ):
+            await telemetry_manager.log_chunk_event(
+                run_context,
+                event="chunk_split_completed",
+                chunk_count=len(leaf_specs),
+                duration=split_end_time - split_start_time,
+                total_tokens=total_leaf_tokens,
+            )
 
         if reporter is not None:
             for leaf in leaf_specs:
@@ -484,3 +532,7 @@ class AppendExecutor:
             vector_index.delete(ids=list(node_ids))
         except Exception:  # pragma: no cover - defensive logging
             logger.exception("Failed to delete vectors during append")
+
+
+if TYPE_CHECKING:
+    from ragzoom.server.run_manager import IndexRunContext, TelemetryRunManager

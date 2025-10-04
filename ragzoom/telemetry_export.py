@@ -100,6 +100,10 @@ def synthesize_document_telemetry(
                     "summary_nodes": outcome.get("summary_nodes") if outcome else None,
                 }
             )
+            if outcome is not None:
+                chunk_split = _as_mapping(outcome.get("chunk_split"))
+                if chunk_split:
+                    entry["chunk_split"] = dict(chunk_split)
             last_outcome = dict(outcome) if outcome is not None else None
             if history_key and history_key not in append_order:
                 append_order.append(history_key)
@@ -165,6 +169,9 @@ def synthesize_document_telemetry(
         result["append_metadata"] = {
             key: value for key, value in append_metadata.items() if value is not None
         }
+        chunk_split = _as_mapping(last_outcome.get("chunk_split"))
+        if chunk_split:
+            result["chunk_split"] = dict(chunk_split)
 
     ordered_history = [
         append_history[append_id]

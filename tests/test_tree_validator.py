@@ -128,7 +128,7 @@ def _make_telemetry_payload(
         telemetry_nodes.append(node_payload)
 
     return {
-        "format_version": "4.2",
+        "format_version": "4.3",
         "document_id": document_id,
         "source_document_tokens": sum(int(node.token_count) for node in nodes),
         "indexed_at": 0.0,

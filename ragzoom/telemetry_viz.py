@@ -397,7 +397,7 @@ class TelemetryVisualizer:
 
         # Handle format 4.2
         if "format_version" in data:
-            # Standard format 4.2: {"format_version": "4.2", ...}
+            # Standard format 4.2: {"format_version": "4.3", ...}
             telemetry = data
         else:
             print(f"Warning: No telemetry data found in {benchmark_path}")

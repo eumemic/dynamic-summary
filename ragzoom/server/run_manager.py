@@ -205,6 +205,29 @@ class TelemetryRunManager:
             await self._log_run_completed(log_context)
         return log_context
 
+    async def log_chunk_event(
+        self,
+        context: IndexRunContext,
+        *,
+        event: str,
+        **payload: object,
+    ) -> None:
+        """Append a chunk-splitting telemetry event for the given context."""
+
+        if not context.collect_telemetry:
+            return
+        telemetry_log = self._telemetry_log
+        if telemetry_log is None:
+            return
+
+        event_payload: dict[str, object] = {
+            "event": event,
+            "run_id": context.run_id,
+            "append_id": context.append_id,
+        }
+        event_payload.update(payload)
+        await telemetry_log.append_event(context.document_id, event_payload)
+
     async def wait_for_completion(self, run: IndexRunContext) -> IndexRunContext:
         future = run.add_awaiter()
         result = await future
@@ -353,6 +376,13 @@ class TelemetryRunManager:
             meta = telemetry.get("append_metadata")
             if isinstance(meta, dict):
                 append_metadata = dict(meta)
+            chunk_split = telemetry.get("chunk_split")
+            if isinstance(chunk_split, dict):
+                outcome_chunk_split = dict(chunk_split)
+            else:
+                outcome_chunk_split = None
+        else:
+            outcome_chunk_split = None
 
         mutated_nodes = (
             context.mutated_nodes if context.mutated_nodes is not None else 0
@@ -381,6 +411,8 @@ class TelemetryRunManager:
             outcome["span_end"] = context.append_span_end
         if append_metadata is not None:
             outcome["append_metadata"] = append_metadata
+        if outcome_chunk_split is not None:
+            outcome["chunk_split"] = outcome_chunk_split
 
         completed_event: dict[str, object] = {
             **base_event,

@@ -21,9 +21,17 @@ from ragzoom.server.worker_coordinator import WorkerCoordinator, WorkerStatus
 class StubAppendExecutor:
     def __init__(self, outcome: AppendOutcome) -> None:
         self.outcome = outcome
-        self.calls: list[tuple[DocumentStore, VectorIndex, str, str, object | None]] = (
-            []
-        )
+        self.calls: list[
+            tuple[
+                DocumentStore,
+                VectorIndex,
+                str,
+                str,
+                object | None,
+                object | None,
+                object | None,
+            ]
+        ] = []
 
     async def append(
         self,
@@ -33,8 +41,20 @@ class StubAppendExecutor:
         document_id: str,
         new_text: str,
         reporter: object | None = None,
+        run_context: object | None = None,
+        telemetry_manager: object | None = None,
     ) -> AppendOutcome:
-        self.calls.append((store, vector_index, document_id, new_text, reporter))
+        self.calls.append(
+            (
+                store,
+                vector_index,
+                document_id,
+                new_text,
+                reporter,
+                run_context,
+                telemetry_manager,
+            )
+        )
         return self.outcome
 
 
