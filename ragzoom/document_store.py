@@ -161,6 +161,19 @@ class DocumentNodeRepository:
             getter(self.document_id, height, level_index),
         )
 
+    def get_by_height_levels(
+        self, coordinates: Sequence[tuple[int, int]]
+    ) -> list[TreeNode]:
+        """Bulk lookup by coordinate pairs within this document."""
+
+        getter = getattr(self._repo, "get_nodes_by_height_levels", None)
+        if not callable(getter):
+            return []
+        return cast(
+            list[TreeNode],
+            getter(self.document_id, coordinates),
+        )
+
     def get_root_nodes(self, document_id: str | None = None) -> list[TreeNode]:
         """Get root nodes scoped to the provided or default document."""
 
@@ -356,6 +369,30 @@ class DocumentTreeNavigator:
             return False
 
         return self._navigator.is_root_node(node_id)
+
+    def get_sibling(self, node_id: str) -> TreeNode | None:
+        """Get sibling of a node within this document."""
+
+        sibling = self._navigator.get_sibling_node(node_id)
+        if sibling and sibling.document_id == self.document_id:
+            return sibling
+        return None
+
+    def get_preceding_neighbor(self, node_id: str) -> TreeNode | None:
+        """Get preceding neighbor of a node within this document."""
+
+        neighbor = self._navigator.get_preceding_neighbor(node_id)
+        if neighbor and neighbor.document_id == self.document_id:
+            return neighbor
+        return None
+
+    def get_following_neighbor(self, node_id: str) -> TreeNode | None:
+        """Get following neighbor of a node within this document."""
+
+        neighbor = self._navigator.get_following_neighbor(node_id)
+        if neighbor and neighbor.document_id == self.document_id:
+            return neighbor
+        return None
 
 
 class DocumentStore:

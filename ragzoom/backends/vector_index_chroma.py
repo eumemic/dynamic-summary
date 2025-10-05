@@ -230,9 +230,12 @@ def _as_meta(meta: dict[str, object]) -> MetaDict:
         return str(x) if x is not None else ""
 
     return {
-        "span_start": _to_int(meta.get("span_start")),
-        "span_end": _to_int(meta.get("span_end")),
-        "parent_id": _to_str(meta.get("parent_id")),
-        "document_id": _to_str(meta.get("document_id")),
-        "is_leaf": _to_int(meta.get("is_leaf")),
+        "span_start": _to_int(meta.get("span_start", 0)),
+        "span_end": _to_int(meta.get("span_end", 0)),
+        "parent_id": _to_str(meta.get("parent_id", "")),
+        "document_id": _to_str(meta.get("document_id", "")),
+        "is_leaf": _to_int(meta.get("is_leaf", 0)),
+        "height": _to_int(meta.get("height", 0)),
+        "level_index": _to_int(meta.get("level_index", 0)),
+        "coord_version": _to_int(meta.get("coord_version", 0)),
     }
