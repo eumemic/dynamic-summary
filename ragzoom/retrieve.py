@@ -220,8 +220,16 @@ class Retriever:
 
         # Phase 4: Build coverage map
         # Use document-scoped coverage builder
+        seed_meta_all = {v.id: v.meta for v in vec_candidates}
+        seed_metadata = {
+            node_id: seed_meta_all[node_id]
+            for node_id in selected_ids
+            if node_id in seed_meta_all
+        }
         doc_coverage_builder = CoverageBuilder(self.document_store)
-        coverage_result = doc_coverage_builder.build_complete_coverage(selected_ids)
+        coverage_result = doc_coverage_builder.build_complete_coverage(
+            selected_ids, seed_metadata=seed_metadata
+        )
         coverage_map = coverage_result.coverage_map
         if telemetry_collector:
             telemetry_collector.end_phase("coverage_map")

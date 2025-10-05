@@ -139,6 +139,7 @@ class TestStoreSQLite:
                 "height": 0,
                 "level_index": 0,
                 "document_id": doc_store.document_id,
+                "coord_version": 1,
             },
             {
                 "node_id": "leaf-2",
@@ -149,6 +150,7 @@ class TestStoreSQLite:
                 "height": 0,
                 "level_index": 1,
                 "document_id": doc_store.document_id,
+                "coord_version": 1,
             },
             {
                 "node_id": "root",
@@ -161,6 +163,7 @@ class TestStoreSQLite:
                 "right_child_id": "leaf-2",
                 "level_index": 0,
                 "document_id": doc_store.document_id,
+                "coord_version": 1,
             },
         ]
 

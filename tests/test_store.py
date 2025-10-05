@@ -146,6 +146,7 @@ class TestStore:
                 "left_child_id": None,
                 "right_child_id": None,
                 "level_index": 0,
+                "coord_version": 1,
             },
             {
                 "node_id": "child2",
@@ -159,6 +160,7 @@ class TestStore:
                 "left_child_id": None,
                 "right_child_id": None,
                 "level_index": 1,
+                "coord_version": 1,
             },
             {
                 "node_id": "parent",
@@ -172,6 +174,7 @@ class TestStore:
                 "left_child_id": "child1",
                 "right_child_id": "child2",
                 "level_index": 0,
+                "coord_version": 1,
             },
         ]
         doc_store.nodes.add_batch(nodes)

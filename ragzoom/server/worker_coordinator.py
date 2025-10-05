@@ -1330,6 +1330,8 @@ class WorkerCoordinator:
                                 "span_end": span_end_final,
                                 "is_leaf": 0,
                                 "height": height,
+                                "level_index": parent_level_index,
+                                "coord_version": 1,
                             },
                         )
                     ]
