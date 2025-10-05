@@ -137,6 +137,9 @@ class TestStoreSQLite:
                 "span_start": 0,
                 "span_end": 10,
                 "height": 0,
+                "level_index": 0,
+                "document_id": doc_store.document_id,
+                "coord_version": 1,
             },
             {
                 "node_id": "leaf-2",
@@ -145,6 +148,9 @@ class TestStoreSQLite:
                 "span_start": 10,
                 "span_end": 20,
                 "height": 0,
+                "level_index": 1,
+                "document_id": doc_store.document_id,
+                "coord_version": 1,
             },
             {
                 "node_id": "root",
@@ -155,6 +161,9 @@ class TestStoreSQLite:
                 "height": 1,
                 "left_child_id": "leaf-1",
                 "right_child_id": "leaf-2",
+                "level_index": 0,
+                "document_id": doc_store.document_id,
+                "coord_version": 1,
             },
         ]
 
@@ -193,6 +202,15 @@ class TestStoreSQLite:
             root = doc_store.nodes.get_node("root")
             assert root is not None
             assert root.id == "root"
+
+        sibling = doc_store.tree.get_sibling("leaf-1")
+        assert sibling is not None and sibling.id == "leaf-2"
+
+        preceding = doc_store.tree.get_preceding_neighbor("leaf-2")
+        assert preceding is not None and preceding.id == "leaf-1"
+
+        following = doc_store.tree.get_following_neighbor("leaf-1")
+        assert following is not None and following.id == "leaf-2"
 
     def test_node_pinning(self, doc_store: DocumentStore) -> None:
         """Test node pinning functionality."""

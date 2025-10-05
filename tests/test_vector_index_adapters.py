@@ -158,6 +158,8 @@ def sample_items() -> (
         "parent_id": "",
         "document_id": "doc-1",
         "is_leaf": 1,
+        "height": 0,
+        "level_index": 0,
     }
     return [
         ("n1", [1.0, 0.0], dict(meta)),

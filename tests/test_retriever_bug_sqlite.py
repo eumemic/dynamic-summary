@@ -58,6 +58,8 @@ class TestRetrieverBugSQLite:
                 "document_id": "test-doc",
                 "token_count": 50,
                 "height": 0,
+                "level_index": 0,
+                "coord_version": 1,
                 "parent_id": None,  # Will be set in update_parent_references_batch
                 "left_child_id": None,
                 "right_child_id": None,
@@ -70,6 +72,8 @@ class TestRetrieverBugSQLite:
                 "document_id": "test-doc",
                 "token_count": 50,
                 "height": 0,
+                "level_index": 1,
+                "coord_version": 1,
                 "parent_id": None,  # Will be set in update_parent_references_batch
                 "left_child_id": None,
                 "right_child_id": None,
@@ -82,6 +86,8 @@ class TestRetrieverBugSQLite:
                 "document_id": "test-doc",
                 "token_count": 50,
                 "height": 0,
+                "level_index": 2,
+                "coord_version": 1,
                 "parent_id": None,  # Will be set in update_parent_references_batch
                 "left_child_id": None,
                 "right_child_id": None,
@@ -94,6 +100,8 @@ class TestRetrieverBugSQLite:
                 "document_id": "test-doc",
                 "token_count": 50,
                 "height": 0,
+                "level_index": 3,
+                "coord_version": 1,
                 "parent_id": None,  # Will be set in update_parent_references_batch
                 "left_child_id": None,
                 "right_child_id": None,
@@ -106,6 +114,8 @@ class TestRetrieverBugSQLite:
                 "document_id": "test-doc",
                 "token_count": 75,
                 "height": 1,
+                "level_index": 0,
+                "coord_version": 1,
                 "parent_id": None,  # Will be set in update_parent_references_batch
                 "left_child_id": "L1",
                 "right_child_id": "L2",
@@ -118,6 +128,8 @@ class TestRetrieverBugSQLite:
                 "document_id": "test-doc",
                 "token_count": 75,
                 "height": 1,
+                "level_index": 1,
+                "coord_version": 1,
                 "parent_id": None,  # Will be set in update_parent_references_batch
                 "left_child_id": "L3",
                 "right_child_id": "L4",
@@ -130,6 +142,8 @@ class TestRetrieverBugSQLite:
                 "document_id": "test-doc",
                 "token_count": 100,
                 "height": 2,
+                "level_index": 0,
+                "coord_version": 1,
                 "parent_id": None,
                 "left_child_id": "P1",
                 "right_child_id": "P2",

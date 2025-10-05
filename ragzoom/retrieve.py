@@ -220,8 +220,17 @@ class Retriever:
 
         # Phase 4: Build coverage map
         # Use document-scoped coverage builder
+        seed_meta_all = {v.id: v.meta for v in vec_candidates}
+        seed_metadata = {
+            node_id: seed_meta_all[node_id]
+            for node_id in selected_ids
+            if node_id in seed_meta_all
+        }
         doc_coverage_builder = CoverageBuilder(self.document_store)
-        coverage_map = doc_coverage_builder.build_complete_coverage_map(selected_ids)
+        coverage_result = doc_coverage_builder.build_complete_coverage(
+            selected_ids, seed_metadata=seed_metadata
+        )
+        coverage_map = coverage_result.coverage_map
         if telemetry_collector:
             telemetry_collector.end_phase("coverage_map")
             telemetry_collector.start_phase()
@@ -238,10 +247,10 @@ class Retriever:
             telemetry_collector.start_phase()
 
         # Load all nodes in coverage map
-        nodes: dict[str, TreeNode] = {}
-        node_ids_to_load = list(coverage_map.keys())
-        if node_ids_to_load:
-            loaded_nodes = self.document_store.nodes.get_nodes(node_ids_to_load)
+        nodes: dict[str, TreeNode] = dict(coverage_result.nodes)
+        missing_ids = [nid for nid in coverage_map.keys() if nid not in nodes]
+        if missing_ids:
+            loaded_nodes = self.document_store.nodes.get_nodes(missing_ids)
             for node in loaded_nodes:
                 nodes[node.id] = node
 

@@ -755,6 +755,8 @@ class TreeBuilder:
                 embedding = getattr(node, "embedding", None)
                 if embedding is None:
                     continue
+                height = int(getattr(node, "height", 0))
+                level_index = int(getattr(node, "level_index", 0))
                 upsert_items.append(
                     (
                         node.id,
@@ -764,7 +766,10 @@ class TreeBuilder:
                             "span_end": int(node.span_end),
                             "parent_id": node.parent_id or "",
                             "document_id": node.document_id or "",
-                            "is_leaf": 1 if int(getattr(node, "height", 0)) == 0 else 0,
+                            "is_leaf": 1 if height == 0 else 0,
+                            "height": height,
+                            "level_index": level_index,
+                            "coord_version": 1,
                         },
                     )
                 )
@@ -935,6 +940,9 @@ class TreeBuilder:
                 "parent_id": node.parent_id or "",
                 "document_id": node.document_id,
                 "is_leaf": 1 if int(node.height) == 0 else 0,
+                "height": int(node.height),
+                "level_index": int(getattr(node, "level_index", 0)),
+                "coord_version": 1,
             }
             vector_node_ids.append(node.id)
             vector_upserts.append((node.id, [float(x) for x in node.embedding], meta))
