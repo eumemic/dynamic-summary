@@ -509,14 +509,33 @@ class SqliteNodeRepository:
         if not coordinates:
             return []
 
+        unique: list[tuple[int, int]] = []
+        seen: set[tuple[int, int]] = set()
+        for pair in coordinates:
+            if pair in seen:
+                continue
+            seen.add(pair)
+            unique.append(pair)
+
+        results: list[TreeNode] = []
+        if not unique:
+            return results
+
+        chunk_size = 400  # 400 tuples → 800 bound params; SQLite limit is 999
+
         with self.SessionLocal() as session:
             tuple_expr = tuple_(SQLiteTreeNode.height, SQLiteTreeNode.level_index)
-            stmt = select(SQLiteTreeNode).where(tuple_expr.in_(coordinates))
-            if document_id is not None:
-                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
 
-            rows = session.execute(stmt).scalars().all()
-            return _detach_rows(session, rows)
+            for start in range(0, len(unique), chunk_size):
+                chunk = unique[start : start + chunk_size]
+                stmt = select(SQLiteTreeNode).where(tuple_expr.in_(chunk))
+                if document_id is not None:
+                    stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+
+                rows = session.execute(stmt).scalars().all()
+                results.extend(_detach_rows(session, rows))
+
+        return results
 
     def get_parentless_nodes_for_document(
         self, document_id: str | None
