@@ -36,12 +36,11 @@ def normalize_upsert_items(
         else:
             dense = [float(x) for x in cast(Sequence[float], embedding)]
 
-        normalized.append(
-            (
-                str(node_id),
-                dense,
-                {k: v for k, v in meta.items()},
-            )
-        )
+        meta_copy = {k: v for k, v in meta.items()}
+        meta_copy.setdefault("height", 0)
+        meta_copy.setdefault("level_index", 0)
+        meta_copy.setdefault("coord_version", 0)
+
+        normalized.append((str(node_id), dense, meta_copy))
 
     return normalized

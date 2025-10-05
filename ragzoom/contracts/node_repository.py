@@ -83,6 +83,12 @@ class NodeRepository(Protocol):
         level_index: int,
     ) -> TreeNode | None: ...
 
+    def get_nodes_by_height_levels(
+        self,
+        document_id: str | None,
+        coordinates: Sequence[tuple[int, int]],
+    ) -> list[TreeNode]: ...
+
     # Mutations
     def update_node_access(self, node_id: str) -> None: ...
     def update_parent_references_batch(

@@ -69,7 +69,7 @@ class PgVectorIndexAdapter(VectorIndex):
         q: list[float] = [float(x) for x in cast(Sequence[float], query_embedding)]
 
         sql = (
-            "SELECT id, embedding, document_id, span_start, span_end, parent_id, is_leaf "
+            "SELECT id, embedding, document_id, span_start, span_end, parent_id, is_leaf, height, level_index, coord_version "
             "FROM node_vectors "
         )
         params: dict[str, object] = {"q": q, "k": int(k)}
@@ -92,7 +92,7 @@ class PgVectorIndexAdapter(VectorIndex):
         # Use ANY array binding to avoid constructing SQL fragments
         params: dict[str, object] = {"ids": list(ids)}
         sql = text(
-            "SELECT id, embedding, document_id, span_start, span_end, parent_id, is_leaf "
+            "SELECT id, embedding, document_id, span_start, span_end, parent_id, is_leaf, height, level_index, coord_version "
             "FROM node_vectors WHERE id = ANY(:ids)"
         )
         out: list[Vector] = []
@@ -114,15 +114,18 @@ class PgVectorIndexAdapter(VectorIndex):
             return
         sql = text(
             """
-            INSERT INTO node_vectors (id, embedding, document_id, span_start, span_end, parent_id, is_leaf)
-            VALUES (:id, :emb, :doc, :ss, :se, :pid, :leaf)
+            INSERT INTO node_vectors (id, embedding, document_id, span_start, span_end, parent_id, is_leaf, height, level_index, coord_version)
+            VALUES (:id, :emb, :doc, :ss, :se, :pid, :leaf, :height, :level_index, :coord_version)
             ON CONFLICT (id)
             DO UPDATE SET embedding = EXCLUDED.embedding,
                           document_id = EXCLUDED.document_id,
                           span_start = EXCLUDED.span_start,
                           span_end = EXCLUDED.span_end,
                           parent_id = EXCLUDED.parent_id,
-                          is_leaf = EXCLUDED.is_leaf
+                          is_leaf = EXCLUDED.is_leaf,
+                          height = EXCLUDED.height,
+                          level_index = EXCLUDED.level_index,
+                          coord_version = EXCLUDED.coord_version
             """
         )
         with self._engine.begin() as conn:
@@ -135,6 +138,11 @@ class PgVectorIndexAdapter(VectorIndex):
                     "se": int(cast(int | float, meta.get("span_end", 0))),
                     "pid": str(meta.get("parent_id", "")),
                     "leaf": int(cast(int | float | bool, meta.get("is_leaf", 0))),
+                    "height": int(cast(int | float, meta.get("height", 0))),
+                    "level_index": int(cast(int | float, meta.get("level_index", 0))),
+                    "coord_version": int(
+                        cast(int | float, meta.get("coord_version", 0))
+                    ),
                 }
                 conn.execute(sql, params)
 
@@ -172,7 +180,10 @@ class PgVectorIndexAdapter(VectorIndex):
                         span_start INTEGER,
                         span_end INTEGER,
                         parent_id TEXT,
-                        is_leaf SMALLINT
+                        is_leaf SMALLINT,
+                        height INTEGER DEFAULT 0,
+                        level_index INTEGER DEFAULT 0,
+                        coord_version SMALLINT DEFAULT 0
                     );
                     """
                 )
@@ -197,6 +208,27 @@ class PgVectorIndexAdapter(VectorIndex):
                             ALTER TABLE node_vectors
                             DROP COLUMN doc_version;
                         END IF;
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'node_vectors'
+                            AND column_name = 'height'
+                        ) THEN
+                            ALTER TABLE node_vectors ADD COLUMN height INTEGER NOT NULL DEFAULT 0;
+                        END IF;
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'node_vectors'
+                            AND column_name = 'level_index'
+                        ) THEN
+                            ALTER TABLE node_vectors ADD COLUMN level_index INTEGER NOT NULL DEFAULT 0;
+                        END IF;
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'node_vectors'
+                            AND column_name = 'coord_version'
+                        ) THEN
+                            ALTER TABLE node_vectors ADD COLUMN coord_version SMALLINT NOT NULL DEFAULT 0;
+                        END IF;
                     END $$;
                     """
                 )
@@ -211,6 +243,9 @@ class PgVectorIndexAdapter(VectorIndex):
             "span_end": int(cast(int | float | None, row[4]) or 0),
             "parent_id": str(row[5]) if row[5] is not None else "",
             "is_leaf": int(cast(int | float | None, row[6]) or 0),
+            "height": int(cast(int | float | None, row[7]) or 0),
+            "level_index": int(cast(int | float | None, row[8]) or 0),
+            "coord_version": int(cast(int | float | None, row[9]) or 0),
         }
         return Vector(
             id=node_id, vec=emb, meta=meta, model_id=self._model_id, dim=len(emb)

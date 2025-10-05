@@ -142,6 +142,9 @@ class PythonVectorIndexAdapter(VectorIndex):
                 "parent_id": str(getattr(meta_obj, "parent_id")),
                 "document_id": str(getattr(meta_obj, "document_id")),
                 "is_leaf": _coerce_int(getattr(meta_obj, "is_leaf")),
+                "height": _coerce_int(getattr(meta_obj, "height", 0)),
+                "level_index": _coerce_int(getattr(meta_obj, "level_index", 0)),
+                "coord_version": _coerce_int(getattr(meta_obj, "coord_version", 0)),
             }
         if isinstance(meta_obj, dict):
             return {
@@ -150,6 +153,9 @@ class PythonVectorIndexAdapter(VectorIndex):
                 "parent_id": str(meta_obj.get("parent_id", "")),
                 "document_id": str(meta_obj.get("document_id", "")),
                 "is_leaf": _coerce_int(meta_obj.get("is_leaf", 0)),
+                "height": _coerce_int(meta_obj.get("height", 0)),
+                "level_index": _coerce_int(meta_obj.get("level_index", 0)),
+                "coord_version": _coerce_int(meta_obj.get("coord_version", 0)),
             }
         return {}
 
@@ -171,6 +177,9 @@ def _as_meta(meta: object) -> MetaDict:
             "parent_id": str(getattr(meta, "parent_id")),
             "document_id": str(getattr(meta, "document_id")),
             "is_leaf": _coerce_int(getattr(meta, "is_leaf")),
+            "height": _coerce_int(getattr(meta, "height", 0)),
+            "level_index": _coerce_int(getattr(meta, "level_index", 0)),
+            "coord_version": _coerce_int(getattr(meta, "coord_version", 0)),
         }
     if isinstance(meta, dict):
         return {
@@ -179,5 +188,8 @@ def _as_meta(meta: object) -> MetaDict:
             "parent_id": str(meta.get("parent_id", "")),
             "document_id": str(meta.get("document_id", "")),
             "is_leaf": _coerce_int(meta.get("is_leaf", 0)),
+            "height": _coerce_int(meta.get("height", 0)),
+            "level_index": _coerce_int(meta.get("level_index", 0)),
+            "coord_version": _coerce_int(meta.get("coord_version", 0)),
         }
     return {}

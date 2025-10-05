@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Iterable
-from typing import cast
 
 from ragzoom.contracts.node_repository import NodeRepository as NodeRepositoryProtocol
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.exceptions import NodeNotFoundError
+from ragzoom.tree_coordinate import TreeCoordinate
 
 
 class TreeNavigator:
@@ -41,6 +42,16 @@ class TreeNavigator:
             return self.node_repo.get_node(parent_id)
         except Exception:  # pragma: no cover - repository handles errors
             return None
+
+    def _coordinate_for(self, node: TreeNode) -> TreeCoordinate | None:
+        raw_index = getattr(node, "level_index", None)
+        if raw_index is None:
+            return None
+        return TreeCoordinate(
+            document_id=getattr(node, "document_id", None),
+            height=int(getattr(node, "height", 0)),
+            level_index=int(raw_index),
+        )
 
     def get_children(self, node_id: str) -> tuple[TreeNode | None, TreeNode | None]:
         """Get left and right children of a node.
@@ -77,34 +88,136 @@ class TreeNavigator:
     def get_ancestors(self, node_ids: list[str]) -> list[TreeNode]:
         """Return ancestors for the supplied nodes using structural traversal."""
 
-        current = self._batched_fetch(node_ids)
-        if not current:
+        initial = self._batched_fetch(node_ids)
+        if not initial:
             return []
 
-        seen: set[str] = set(current.keys())
+        visited: set[str] = set(initial.keys())
         ancestors: list[TreeNode] = []
-        frontier: set[str] = {
-            cast(str, node.parent_id)
-            for node in current.values()
-            if getattr(node, "parent_id", None)
-        }
 
-        while frontier:
-            parents = self._batched_fetch(frontier)
-            if not parents:
-                break
+        coords_by_doc: defaultdict[str | None, set[TreeCoordinate]] = defaultdict(set)
+        pending_coords: defaultdict[str | None, set[tuple[int, int]]] = defaultdict(set)
 
-            frontier = set()
-            for parent in parents.values():
-                if parent.id in seen:
+        for node in initial.values():
+            raw_index = getattr(node, "level_index", None)
+            if raw_index is None:
+                continue
+            coord = TreeCoordinate(
+                document_id=getattr(node, "document_id", None),
+                height=int(getattr(node, "height", 0)),
+                level_index=int(raw_index),
+            )
+            parent_coord = coord.parent()
+            coords_by_doc[parent_coord.document_id].add(parent_coord)
+
+        while coords_by_doc:
+            next_coords: defaultdict[str | None, set[TreeCoordinate]] = defaultdict(set)
+
+            for doc_id, coords in coords_by_doc.items():
+                tuples = []
+                seen_tuples = pending_coords[doc_id]
+                for coord in coords:
+                    key = coord.as_tuple()
+                    if key in seen_tuples or coord.level_index < 0:
+                        continue
+                    seen_tuples.add(key)
+                    tuples.append(key)
+
+                if not tuples:
                     continue
-                ancestors.append(parent)
-                seen.add(parent.id)
-                parent_key = getattr(parent, "parent_id", None)
-                if parent_key:
-                    frontier.add(cast(str, parent_key))
+
+                fetched = self.node_repo.get_nodes_by_height_levels(doc_id, tuples)
+                for node in fetched:
+                    if node.id in visited:
+                        continue
+                    ancestors.append(node)
+                    visited.add(node.id)
+
+                    raw_index = getattr(node, "level_index", None)
+                    if raw_index is None:
+                        continue
+                    coord = TreeCoordinate(
+                        document_id=getattr(node, "document_id", None),
+                        height=int(getattr(node, "height", 0)),
+                        level_index=int(raw_index),
+                    )
+                    next_coords[coord.parent().document_id].add(coord.parent())
+
+            coords_by_doc = next_coords
 
         return ancestors
+
+    def get_sibling_node(self, node_id: str) -> TreeNode | None:
+        """Return the structural sibling of ``node_id`` if it exists."""
+
+        node = self._get_node(node_id)
+        if node is None:
+            return None
+        coord = self._coordinate_for(node)
+        if coord is not None:
+            try:
+                sibling_coord = coord.sibling()
+            except ValueError:
+                sibling_coord = None
+            if sibling_coord is not None:
+                fetched = self.node_repo.get_nodes_by_height_levels(
+                    sibling_coord.document_id, [sibling_coord.as_tuple()]
+                )
+                for sibling in fetched:
+                    if sibling.id != node.id:
+                        return sibling
+
+        parent = self._get_parent(node)
+        if parent is None:
+            return None
+        if parent.left_child_id == node.id:
+            sibling_id = parent.right_child_id
+        elif parent.right_child_id == node.id:
+            sibling_id = parent.left_child_id
+        else:
+            sibling_id = None
+        if not sibling_id:
+            return None
+        siblings = self._batched_fetch([sibling_id])
+        return siblings.get(sibling_id)
+
+    def get_neighbor_node(self, node_id: str, offset: int) -> TreeNode | None:
+        """Return a neighbor ``offset`` positions away on the same height."""
+
+        node = self._get_node(node_id)
+        if node is None:
+            return None
+        coord = self._coordinate_for(node)
+        if coord is not None:
+            try:
+                neighbor_coord = coord.neighbor(offset)
+            except ValueError:
+                neighbor_coord = None
+            if neighbor_coord is not None:
+                fetched = self.node_repo.get_nodes_by_height_levels(
+                    neighbor_coord.document_id, [neighbor_coord.as_tuple()]
+                )
+                if fetched:
+                    return fetched[0]
+
+        neighbor_attr = (
+            "preceding_neighbor_id" if offset < 0 else "following_neighbor_id"
+        )
+        neighbor_id = getattr(node, neighbor_attr, None)
+        if not neighbor_id:
+            return None
+        neighbors = self._batched_fetch([neighbor_id])
+        return neighbors.get(neighbor_id)
+
+    def get_preceding_neighbor(self, node_id: str) -> TreeNode | None:
+        """Return the immediate preceding neighbor at the same height."""
+
+        return self.get_neighbor_node(node_id, -1)
+
+    def get_following_neighbor(self, node_id: str) -> TreeNode | None:
+        """Return the immediate following neighbor at the same height."""
+
+        return self.get_neighbor_node(node_id, 1)
 
     def get_root_node(self) -> TreeNode | None:
         """Get the root node (node with no parent).
@@ -231,44 +344,6 @@ class TreeNavigator:
             return None
 
         return self._get_parent(node)
-
-    def get_sibling_node(self, node_id: str) -> TreeNode | None:
-        """Return the sibling node using the shared parent reference.
-
-        Args:
-            node_id: Node identifier
-
-        Returns:
-            Sibling TreeNode or None if no sibling or node not found
-        """
-        node = self._get_node(node_id)
-        if not node:
-            return None
-        parent = self._get_parent(node)
-        if parent is None:
-            return None
-
-        child_ids = [
-            child_id
-            for child_id in (parent.left_child_id, parent.right_child_id)
-            if child_id
-        ]
-        if not child_ids:
-            return None
-
-        children = self._batched_fetch(child_ids)
-
-        if parent.left_child_id == node.id:
-            sibling_id = parent.right_child_id
-        elif parent.right_child_id == node.id:
-            sibling_id = parent.left_child_id
-        else:
-            sibling_id = None
-
-        if not sibling_id:
-            return None
-
-        return children.get(sibling_id)
 
     def is_left_child(self, node_id: str) -> bool:
         """Check if node is the left child of its parent.

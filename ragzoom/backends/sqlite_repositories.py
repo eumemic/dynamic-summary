@@ -12,7 +12,7 @@ from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
-from sqlalchemy import case, delete, func, insert, or_, select, update
+from sqlalchemy import case, delete, func, insert, or_, select, tuple_, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -500,6 +500,42 @@ class SqliteNodeRepository:
             except Exception:
                 pass
             return cast(TreeNode, row)
+
+    def get_nodes_by_height_levels(
+        self,
+        document_id: str | None,
+        coordinates: Sequence[tuple[int, int]],
+    ) -> list[TreeNode]:
+        if not coordinates:
+            return []
+
+        unique: list[tuple[int, int]] = []
+        seen: set[tuple[int, int]] = set()
+        for pair in coordinates:
+            if pair in seen:
+                continue
+            seen.add(pair)
+            unique.append(pair)
+
+        results: list[TreeNode] = []
+        if not unique:
+            return results
+
+        chunk_size = 400  # 400 tuples → 800 bound params; SQLite limit is 999
+
+        with self.SessionLocal() as session:
+            tuple_expr = tuple_(SQLiteTreeNode.height, SQLiteTreeNode.level_index)
+
+            for start in range(0, len(unique), chunk_size):
+                chunk = unique[start : start + chunk_size]
+                stmt = select(SQLiteTreeNode).where(tuple_expr.in_(chunk))
+                if document_id is not None:
+                    stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+
+                rows = session.execute(stmt).scalars().all()
+                results.extend(_detach_rows(session, rows))
+
+        return results
 
     def get_parentless_nodes_for_document(
         self, document_id: str | None

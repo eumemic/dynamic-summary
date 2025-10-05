@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, TypedDict, cast
 import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import func, or_, text, update
+from sqlalchemy import func, or_, text, tuple_, update
 
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.models import PostgresTreeNode
@@ -704,6 +704,33 @@ class PostgresNodeRepository(BaseRepository):
                 return None
             self._force_load_and_detach(session, node)
             return node
+
+    def get_nodes_by_height_levels(
+        self,
+        document_id: str | None,
+        coordinates: Sequence[tuple[int, int]],
+    ) -> list[TreeNode]:
+        if not coordinates:
+            return []
+
+        with self.SessionLocal() as session:
+            tuple_expr = tuple_(
+                PostgresTreeNode.height,
+                PostgresTreeNode.level_index,
+            )
+
+            query = session.query(PostgresTreeNode).filter(tuple_expr.in_(coordinates))
+            if document_id is not None:
+                query = query.filter(PostgresTreeNode.document_id == document_id)
+
+            db_nodes = query.all()
+
+            out: list[TreeNode] = []
+            for node in db_nodes:
+                self._force_load_and_detach(session, node)
+                self.cache_manager.put(node.id, node)
+                out.append(node)
+            return out
 
     def count_pinned_for_document(self, document_id: str | None) -> int:
         """Return count of pinned nodes for a document."""

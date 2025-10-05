@@ -300,6 +300,9 @@ class AppendExecutor:
                                 "span_start": leaf.span_start,
                                 "span_end": leaf.span_end,
                                 "is_leaf": 1,
+                                "height": 0,
+                                "level_index": leaf.level_index,
+                                "coord_version": 1,
                             },
                         )
                     )
