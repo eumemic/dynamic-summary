@@ -145,6 +145,7 @@ class TestStore:
                 "parent_id": None,
                 "left_child_id": None,
                 "right_child_id": None,
+                "level_index": 0,
             },
             {
                 "node_id": "child2",
@@ -157,6 +158,7 @@ class TestStore:
                 "parent_id": None,
                 "left_child_id": None,
                 "right_child_id": None,
+                "level_index": 1,
             },
             {
                 "node_id": "parent",
@@ -169,6 +171,7 @@ class TestStore:
                 "parent_id": None,
                 "left_child_id": "child1",
                 "right_child_id": "child2",
+                "level_index": 0,
             },
         ]
         doc_store.nodes.add_batch(nodes)
@@ -226,6 +229,15 @@ class TestStore:
         ancestors = doc_store.tree.get_ancestors(["child1", "child2"])
         assert len(ancestors) == 1
         assert ancestors[0].id == "parent"
+
+        sibling = doc_store.tree.get_sibling("child1")
+        assert sibling is not None and sibling.id == "child2"
+
+        preceding = doc_store.tree.get_preceding_neighbor("child2")
+        assert preceding is not None and preceding.id == "child1"
+
+        following = doc_store.tree.get_following_neighbor("child1")
+        assert following is not None and following.id == "child2"
 
     def test_search_similar(
         self, doc_store: DocumentStore, vector_index: VectorIndex

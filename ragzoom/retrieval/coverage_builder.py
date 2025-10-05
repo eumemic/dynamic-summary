@@ -1,12 +1,24 @@
 """Service for building coverage maps during retrieval."""
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ragzoom.tree_coordinate import TreeCoordinate
+
 if TYPE_CHECKING:
+    from ragzoom.contracts.tree_node import TreeNode
     from ragzoom.document_store import DocumentStore
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class CoverageResult:
+    """Container for coverage map construction output."""
+
+    coverage_map: dict[str, bool]
+    nodes: dict[str, "TreeNode"]
 
 
 class CoverageBuilder:
@@ -21,15 +33,14 @@ class CoverageBuilder:
         self.store = store
 
     def build_complete_coverage_map(self, selected_ids: list[str]) -> dict[str, bool]:
-        """Build complete coverage map including selected nodes, ancestors, and pinned nodes.
+        """Backward-compatible wrapper returning only the coverage map."""
 
-        Args:
-            selected_ids: List of selected node IDs
+        return self.build_complete_coverage(selected_ids).coverage_map
 
-        Returns:
-            Coverage map with node IDs as keys
-        """
-        coverage_map = self.build_coverage_map(selected_ids)
+    def build_complete_coverage(self, selected_ids: list[str]) -> CoverageResult:
+        """Build coverage along with the materialised nodes needed downstream."""
+
+        coverage_map, nodes = self._build_coordinate_closure(selected_ids)
 
         # Ensure every root node participates in coverage so forests remain contiguous.
         try:
@@ -39,16 +50,15 @@ class CoverageBuilder:
         else:
             for root in root_nodes:
                 coverage_map[root.id] = True
+                nodes.setdefault(root.id, root)
 
         # Include pinned nodes, scoped appropriately if a DocumentStore is provided.
         try:
             depth_max = getattr(self.store, "PIN_DEPTH_MAX", 2)
 
-            # Preferred: Store exposes get_pinned_nodes (system-wide)
             if hasattr(self.store, "get_pinned_nodes"):
                 pinned_nodes = self.store.get_pinned_nodes(depth_max)
             else:
-                # DocumentStore path: pull from underlying repo and filter by document
                 pinned_nodes = []
                 nodes_wrapper = getattr(self.store, "nodes", None)
                 repo = getattr(nodes_wrapper, "_repo", None)
@@ -60,10 +70,11 @@ class CoverageBuilder:
                     ]
             for node in pinned_nodes:
                 coverage_map[node.id] = True
-        except Exception as e:
+                nodes.setdefault(node.id, node)
+        except Exception as e:  # pragma: no cover - defensive logging
             logger.warning(f"Failed to include pinned nodes in coverage map: {e}")
 
-        return coverage_map
+        return CoverageResult(coverage_map=coverage_map, nodes=nodes)
 
     # jscpd:ignore-start - Similar docstring structure for related methods (false positive)
     def build_coverage_map(self, selected_ids: list[str]) -> dict[str, bool]:
@@ -83,61 +94,63 @@ class CoverageBuilder:
         if not selected_ids:
             return {}
 
-        # Start with only node IDs that actually exist in the store
-        existing_nodes = []
+        coverage_map, _ = self._build_coordinate_closure(selected_ids)
+        return coverage_map
+
+    def _build_coordinate_closure(
+        self, selected_ids: list[str]
+    ) -> tuple[dict[str, bool], dict[str, "TreeNode"]]:
+        """Compute coverage and load nodes using coordinate batching."""
+
+        coverage_map: dict[str, bool] = {}
+        nodes: dict[str, TreeNode] = {}
+        if not selected_ids:
+            return coverage_map, nodes
+
         try:
             existing_nodes = self.store.nodes.get_nodes(selected_ids)
         except Exception:
             existing_nodes = []
-        coverage_map = {node.id: True for node in existing_nodes}
+
         for node in existing_nodes:
-            self.store.nodes.update_access(node.id)
+            coverage_map[node.id] = True
+            nodes[node.id] = node
 
-        # Only fetch ancestors for existing nodes to avoid phantom IDs
-        ancestors = self.store.tree.get_ancestors(list(coverage_map.keys()))
-        for ancestor in ancestors:
-            coverage_map[ancestor.id] = True
+        touched_ids: set[str] = {node.id for node in existing_nodes}
 
-        self._ensure_sibling_coverage(coverage_map)
+        if existing_nodes:
+            document_id = getattr(self.store, "document_id", None)
+            max_height = self.store.nodes.max_height()
+            coordinates: list[TreeCoordinate] = []
 
-        return coverage_map
-
-    def _ensure_sibling_coverage(self, coverage_map: dict[str, bool]) -> None:
-        """Ensure coverage property by including siblings via structural traversal."""
-        while True:
-            nodes_in_coverage = self.store.nodes.get_nodes(list(coverage_map.keys()))
-            if not nodes_in_coverage:
-                return
-
-            missing_siblings: set[str] = set()
-
-            for node in nodes_in_coverage:
-                left_id = getattr(node, "left_child_id", None)
-                right_id = getattr(node, "right_child_id", None)
-
-                if not left_id or not right_id:
+            for node in existing_nodes:
+                raw_index = getattr(node, "level_index", None)
+                if raw_index is None:
                     continue
+                coord = TreeCoordinate(
+                    document_id=document_id,
+                    height=int(getattr(node, "height", 0)),
+                    level_index=int(raw_index),
+                )
+                coords_for_node = [coord]
+                coords_for_node.extend(
+                    coord.ancestors(include_self=False, stop_height=max_height)
+                )
 
-                left_present = left_id in coverage_map
-                right_present = right_id in coverage_map
+                for c in coords_for_node:
+                    coordinates.append(c)
+                    coordinates.append(c.sibling())
 
-                if left_present and not right_present:
-                    missing_siblings.add(right_id)
-                elif right_present and not left_present:
-                    missing_siblings.add(left_id)
+            unique_coords = TreeCoordinate.unique(coordinates)
+            coordinate_tuples = [coord.as_tuple() for coord in unique_coords]
 
-            if not missing_siblings:
-                return
+            fetched = self.store.nodes.get_by_height_levels(coordinate_tuples)
+            for node in fetched:
+                coverage_map[node.id] = True
+                nodes.setdefault(node.id, node)
+                touched_ids.add(node.id)
 
-            fetched = self.store.nodes.get_nodes(list(missing_siblings))
-            if not fetched:
-                return
+        for node_id in touched_ids:
+            self.store.nodes.update_access(node_id)
 
-            new_nodes_added = False
-            for sibling in fetched:
-                if sibling.id not in coverage_map:
-                    coverage_map[sibling.id] = True
-                    new_nodes_added = True
-
-            if not new_nodes_added:
-                return
+        return coverage_map, nodes

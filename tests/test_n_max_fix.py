@@ -52,6 +52,7 @@ class TestNumSeedsFixSQLite:
                 "token_count": 100,
                 "height": 0,
                 "parent_id": "nodeA",
+                "level_index": 0,
             },
             {
                 "node_id": "leaf2",
@@ -63,6 +64,7 @@ class TestNumSeedsFixSQLite:
                 "token_count": 100,
                 "height": 0,
                 "parent_id": "nodeA",
+                "level_index": 1,
             },
             {
                 "node_id": "leaf3",
@@ -74,6 +76,7 @@ class TestNumSeedsFixSQLite:
                 "token_count": 100,
                 "height": 0,
                 "parent_id": "nodeB",
+                "level_index": 2,
             },
             {
                 "node_id": "leaf4",
@@ -85,6 +88,7 @@ class TestNumSeedsFixSQLite:
                 "token_count": 100,
                 "height": 0,
                 "parent_id": "nodeB",
+                "level_index": 3,
             },
             # Internal nodes
             {
@@ -99,6 +103,7 @@ class TestNumSeedsFixSQLite:
                 "left_child_id": "leaf1",
                 "right_child_id": "leaf2",
                 "parent_id": "root",
+                "level_index": 0,
             },
             {
                 "node_id": "nodeB",
@@ -112,6 +117,7 @@ class TestNumSeedsFixSQLite:
                 "left_child_id": "leaf3",
                 "right_child_id": "leaf4",
                 "parent_id": "root",
+                "level_index": 1,
             },
             # Root node
             {
@@ -126,6 +132,7 @@ class TestNumSeedsFixSQLite:
                 "left_child_id": "nodeA",
                 "right_child_id": "nodeB",
                 "parent_id": None,
+                "level_index": 0,
             },
         ]
         document_store.nodes.add_batch(nodes)
