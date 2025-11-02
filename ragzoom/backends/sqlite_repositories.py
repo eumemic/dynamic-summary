@@ -12,7 +12,17 @@ from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
-from sqlalchemy import case, delete, func, insert, or_, select, tuple_, update
+from sqlalchemy import (
+    case,
+    delete,
+    func,
+    insert,
+    literal_column,
+    or_,
+    select,
+    tuple_,
+    update,
+)
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -306,6 +316,53 @@ class SqliteNodeRepository:
                 stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
             rows = session.execute(stmt).scalars().all()
             return _detach_rows(session, rows)
+
+    # jscpd:ignore-start - span query mirrors Postgres implementation for parity
+    def get_nodes_overlapping_span(
+        self,
+        document_id: str | None,
+        span_start: int,
+        span_end: int,
+        *,
+        limit: int,
+        min_height: int | None = None,
+    ) -> tuple[list[TreeNode], int]:
+        """Fetch nodes overlapping a span ordered for visualisation."""
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        if span_end <= span_start:
+            raise ValueError("span_end must be greater than span_start")
+
+        with self.SessionLocal() as session:
+            filters = [
+                SQLiteTreeNode.span_start < span_end,
+                SQLiteTreeNode.span_end > span_start,
+            ]
+            if document_id is not None:
+                filters.append(SQLiteTreeNode.document_id == document_id)
+            if min_height is not None:
+                filters.append(SQLiteTreeNode.height >= int(min_height))
+
+            base_stmt = select(SQLiteTreeNode).where(*filters)
+
+            count_stmt = select(func.count(literal_column("1"))).select_from(
+                base_stmt.subquery()
+            )
+            total = int(session.execute(count_stmt).scalar_one() or 0)
+
+            ordered_stmt = base_stmt.order_by(
+                SQLiteTreeNode.height.desc(),
+                SQLiteTreeNode.span_start.asc(),
+                SQLiteTreeNode.level_index.asc(),
+                SQLiteTreeNode.id.asc(),
+            ).limit(limit)
+            rows = session.execute(ordered_stmt).scalars().all()
+            nodes = _detach_rows(session, rows)
+            for node in nodes:
+                self.cache_manager.put(node.id, node)
+            return nodes, total
+
+    # jscpd:ignore-end
 
     def get_rightmost_leaf_for_document(
         self, document_id: str | None

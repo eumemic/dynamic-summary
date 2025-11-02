@@ -230,6 +230,33 @@ class DocumentNodeRepository:
             self.document_id, page_size=page_size
         )
 
+    def get_in_span(
+        self,
+        span_start: int,
+        span_end: int,
+        *,
+        limit: int,
+        min_height: int | None = None,
+    ) -> tuple[list[TreeNode], int]:
+        """Return nodes overlapping the requested span ordered for visualization."""
+        getter = getattr(self._repo, "get_nodes_overlapping_span", None)
+        if not callable(getter):
+            raise NotImplementedError(
+                "Underlying repository does not support span queries"
+            )
+        nodes, total = getter(
+            self.document_id,
+            int(span_start),
+            int(span_end),
+            limit=int(limit),
+            min_height=None if min_height is None else int(min_height),
+        )
+        if self.document_id is None:
+            # Repository already returns scoped records when document_id is None.
+            return nodes, total
+        scoped = [node for node in nodes if node.document_id == self.document_id]
+        return scoped, total
+
     def count(self) -> int:
         """Get count of nodes for this document efficiently."""
         counter = getattr(self._repo, "count_nodes_for_document", None)
@@ -518,6 +545,22 @@ class DocumentStore:
             if depth_max is None or depth <= depth_max:
                 filtered.append(node)
         return filtered
+
+    def get_nodes_in_span(
+        self,
+        span_start: int,
+        span_end: int,
+        *,
+        limit: int,
+        min_height: int | None = None,
+    ) -> tuple[list[TreeNode], int]:
+        """Shortcut for DocumentNodeRepository.get_in_span."""
+        return self.nodes.get_in_span(
+            span_start,
+            span_end,
+            limit=limit,
+            min_height=min_height,
+        )
 
     def update_parent_reference(self, node_id: str, parent_id: str) -> None:
         """Update a node's parent reference and invalidate cache.

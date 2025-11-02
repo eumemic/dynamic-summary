@@ -195,6 +195,66 @@ Commit the updated lock files. CI installs from locks via `pip-sync` to guarante
 
 Workflow guard: `scripts/run-checks.sh` contains a check that fails if workflows include unpinned `pip install` lines. Only pip-tools/pip-sync or specific tooling installs (e.g. pytest-cov, awscli) are allowed.
 
+### Inspector UI
+
+An interactive web UI for browsing document trees lives under `ui/inspector/`.
+
+```
+cd ui/inspector
+npm install
+npm run dev               # proxies to FastAPI on http://localhost:8000 by default
+```
+
+Building for production writes static assets to `ui/inspector/dist`:
+
+```
+npm run build
+```
+
+The Vite dev server proxies API calls to `http://localhost:8000`. Override by setting
+`RAGZOOM_API_URL` before running `npm run dev` if your FastAPI instance listens on a
+different origin.
+
+### Docker Dev Stack
+
+To avoid clashing ports across worktrees and run the full system (gRPC server, REST
+API, inspector UI) in a single command, use the bundled docker-compose stack:
+
+```
+# Set your OpenAI key for summarisation before starting
+export OPENAI_API_KEY="sk-..."
+
+./scripts/devstack.sh start
+# UI available at http://localhost:${RAGZOOM_UI_PORT:-55300}
+# CLI now talks to the stack automatically (gRPC is exposed on 127.0.0.1:50051)
+
+# Tail logs
+./scripts/devstack.sh logs
+
+# Run CLI commands inside the stack
+./scripts/devstack.sh exec-cli index README.md --document-id readme --collect-telemetry --await-workers
+
+# Tear everything down
+./scripts/devstack.sh stop
+```
+
+Values from `.env` are loaded automatically. You can customise exposed ports via
+environment variables before calling `start` (either exported or listed in
+`.env`):
+
+```
+export RAGZOOM_GRPC_PORT=56100   # only change this if you need to avoid clashes
+export RAGZOOM_API_PORT=56200
+export RAGZOOM_UI_PORT=56300
+./scripts/devstack.sh start
+```
+
+Each worktree mounting its own `data/` directory keeps the SQLite database and
+telemetry files isolated, so parallel stacks never collide. The inspector UI served
+from the container already points at the REST API port you expose on the host. When
+the stack is running the regular `python -m ragzoom.cli ...` commands will hit the
+containerised gRPC server automatically.
+
 ### gRPC API code generation
 
 Generated protobuf stubs live in `ragzoom/rpc/`. When you update files in `proto/`, regenerate the Python code with:

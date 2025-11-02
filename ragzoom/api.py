@@ -1,12 +1,21 @@
 """FastAPI routes for RagZoom REST interface."""
 
+import asyncio
+import json
 import logging
 import os
+import re
+import time
+from collections.abc import AsyncGenerator
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlparse
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from pydantic.config import ConfigDict
 from typing_extensions import TypedDict
@@ -18,6 +27,7 @@ from ragzoom.constants import DEFAULT_GRPC_ADDRESS
 from ragzoom.services.document_service import DocumentInfo, DocumentService
 from ragzoom.services.query_service import QueryService
 from ragzoom.store import create_store_with_docker
+from ragzoom.worktree_utils import DEFAULT_DATA_DIR_NAME
 
 
 def _resolve_grpc_address(configured: str | None = None) -> str:
@@ -27,6 +37,119 @@ def _resolve_grpc_address(configured: str | None = None) -> str:
     if env_value:
         return env_value
     return DEFAULT_GRPC_ADDRESS
+
+
+_TELEMETRY_HEARTBEAT_SECONDS = 10.0
+_STREAM_EVENT_TYPES = {
+    "append_started",
+    "append_completed",
+    "append_failed",
+    "node_committed",
+    "nodes_deleted",
+}
+
+
+def _sanitize_document_id(document_id: str) -> str:
+    """Map document identifiers to filesystem-safe paths (mirrors telemetry log)."""
+    sanitized = re.sub(r"[^0-9A-Za-z._-]", "_", document_id)
+    return sanitized or "document"
+
+
+def _resolve_telemetry_dir_from_config(config: OperationalConfig) -> Path:
+    """Compute telemetry directory using the same policy as the gRPC server."""
+    url = (config.database_url or "").strip()
+    if url.startswith("sqlite") and ":memory:" not in url:
+        parsed = urlparse(url)
+        raw_path = parsed.path or ""
+        if url.startswith("sqlite:////"):
+            sqlite_path = Path(raw_path)
+        else:
+            sqlite_path = Path(raw_path.lstrip("/"))
+            if not sqlite_path.is_absolute():
+                sqlite_path = Path.cwd() / sqlite_path
+        if sqlite_path.suffix:
+            return sqlite_path.parent / "telemetry"
+        return sqlite_path / "telemetry"
+
+    data_root = os.environ.get("RAGZOOM_DATA_DIR")
+    if data_root:
+        return Path(data_root) / DEFAULT_DATA_DIR_NAME / "telemetry"
+
+    return Path.cwd() / DEFAULT_DATA_DIR_NAME / "telemetry"
+
+
+def _events_path_for_document(base_dir: Path, document_id: str) -> Path:
+    return base_dir / _sanitize_document_id(document_id) / "telemetry.events.jsonl"
+
+
+def _read_new_telemetry_lines(path: Path, offset: int) -> tuple[list[str], int]:
+    if not path.exists():
+        return [], offset
+
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return [], offset
+
+    if size < offset:
+        offset = 0
+
+    if size == offset:
+        return [], offset
+
+    with path.open("r", encoding="utf-8") as handle:
+        handle.seek(offset)
+        lines = handle.readlines()
+        offset = handle.tell()
+    return lines, offset
+
+
+async def _document_event_stream(
+    document_id: str, telemetry_dir: Path
+) -> AsyncGenerator[str, None]:
+    """Async generator emitting SSE payloads for document telemetry events."""
+    events_path = _events_path_for_document(telemetry_dir, document_id)
+    offset = 0
+    last_emit = time.monotonic()
+
+    try:
+        while True:
+            if not events_path.exists():
+                now = time.monotonic()
+                if now - last_emit >= _TELEMETRY_HEARTBEAT_SECONDS:
+                    yield ": keep-alive\n\n"
+                    last_emit = now
+                await asyncio.sleep(1.0)
+                continue
+
+            lines, offset = await asyncio.to_thread(
+                _read_new_telemetry_lines,
+                events_path,
+                offset,
+            )
+
+            emitted = False
+            for line in lines:
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                event_type = payload.get("event")
+                if event_type not in _STREAM_EVENT_TYPES:
+                    continue
+                data = json.dumps(payload, separators=(",", ":"))
+                yield f"data: {data}\n\n"
+                last_emit = time.monotonic()
+                emitted = True
+
+            if not emitted:
+                now = time.monotonic()
+                if now - last_emit >= _TELEMETRY_HEARTBEAT_SECONDS:
+                    yield ": keep-alive\n\n"
+                    last_emit = now
+                await asyncio.sleep(0.5)
+    except asyncio.CancelledError:
+        return
 
 
 logger = logging.getLogger(__name__)
@@ -85,6 +208,30 @@ app = FastAPI(
     title="RagZoom API",
     description="Incremental, hierarchical RAG memory system",
     version="0.1.0",
+)
+
+
+def _allowed_cors_origins() -> list[str]:
+    configured = os.environ.get("RAGZOOM_CORS_ORIGINS")
+    if configured:
+        origins = [origin.strip() for origin in configured.split(",") if origin.strip()]
+        if origins:
+            return origins
+    # Development default to unblock local inspector
+    return [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:55300",
+        "http://127.0.0.1:55300",
+    ]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_cors_origins(),
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=False,
 )
 
 # Add error handling middleware
@@ -235,6 +382,57 @@ class DocumentsResponse(BaseModel):  # type: ignore[explicit-any]
     documents: list[DocumentInfoResponse]
 
 
+# jscpd:ignore-start - NodeResponse schema mirrors the service snapshot dataclass
+class NodeResponse(BaseModel):  # type: ignore[explicit-any]
+    """Serialized node."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str
+    document_id: str | None
+    parent_id: str | None
+    left_child_id: str | None
+    right_child_id: str | None
+    span_start: int
+    span_end: int
+    text: str
+    token_count: int
+    height: int
+    level_index: int
+    preceding_neighbor_id: str | None
+    following_neighbor_id: str | None
+    is_pinned: bool
+    created_at: datetime | None
+
+
+# jscpd:ignore-end
+
+
+class NodesPageResponse(BaseModel):  # type: ignore[explicit-any]
+    """Response for span-based node queries."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nodes: list[NodeResponse]
+    total_matching: int
+
+
+class NodeBatchRequest(BaseModel):  # type: ignore[explicit-any]
+    """Request body for batch node retrieval."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    node_ids: list[str]
+
+
+class NodeBatchResponse(BaseModel):  # type: ignore[explicit-any]
+    """Response body for batch node retrieval."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nodes: list[NodeResponse]
+
+
 class ClearDocumentRequest(BaseModel):  # type: ignore[explicit-any]
     """Request to clear a document and delete its nodes."""
 
@@ -309,6 +507,71 @@ async def list_documents(
     documents = [DocumentInfoResponse.from_domain(doc) for doc in doc_infos]
     return DocumentsResponse(documents=documents)
     # Error handling is now done by middleware
+
+
+@app.get(
+    "/documents/{document_id}/nodes",
+    response_model=NodesPageResponse,
+)
+async def get_document_nodes(
+    document_id: str,
+    span_start: int = Query(..., ge=0),
+    span_end: int = Query(..., gt=0),
+    limit: int = Query(200, gt=0, le=2000),
+    min_height: int | None = Query(None, ge=0),
+    services: ServiceContainer = Depends(get_service_container),
+) -> NodesPageResponse:
+    """Return nodes within the requested span ordered from top to bottom."""
+    try:
+        result = services.document_service.get_nodes_in_span(
+            document_id,
+            span_start,
+            span_end,
+            limit=limit,
+            min_height=min_height,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    nodes = [NodeResponse(**asdict(snapshot)) for snapshot in result.nodes]
+    return NodesPageResponse(nodes=nodes, total_matching=result.total_matching)
+
+
+@app.post(
+    "/documents/{document_id}/nodes/batch",
+    response_model=NodeBatchResponse,
+)
+async def get_nodes_batch(
+    document_id: str,
+    request: NodeBatchRequest,
+    services: ServiceContainer = Depends(get_service_container),
+) -> NodeBatchResponse:
+    """Return details for a set of node IDs."""
+    try:
+        nodes = services.document_service.get_nodes_by_ids(
+            document_id,
+            request.node_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    serialized = [NodeResponse(**asdict(snapshot)) for snapshot in nodes]
+    return NodeBatchResponse(nodes=serialized)
+
+
+@app.get("/documents/{document_id}/events")
+async def stream_document_events(document_id: str) -> StreamingResponse:
+    """Server-Sent Events stream for document telemetry."""
+    telemetry_dir = _resolve_telemetry_dir_from_config(OperationalConfig())
+    if not telemetry_dir.exists():
+        raise HTTPException(
+            status_code=503,
+            detail="Telemetry logging is not enabled on the server.",
+        )
+
+    stream = _document_event_stream(document_id, telemetry_dir)
+    headers = {"Cache-Control": "no-cache"}
+    return StreamingResponse(stream, media_type="text/event-stream", headers=headers)
 
 
 @app.post("/clear", response_model=ClearDocumentResponse)

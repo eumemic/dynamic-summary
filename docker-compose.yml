@@ -1,36 +1,41 @@
-# Optional Docker Compose for RagZoom development
-# 
-# This is an alternative to the automatic Docker PostgreSQL setup.
-# Advanced users can use this for more control over the database setup.
-#
-# Usage:
-#   docker-compose up -d        # Start PostgreSQL in background
-#   docker-compose down         # Stop and remove containers
-#   docker-compose logs db      # View PostgreSQL logs
-
-version: '3.8'
-
 services:
-  db:
-    image: pgvector/pgvector:pg16
-    container_name: ragzoom-postgres
-    restart: unless-stopped
+  grpc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "ragzoom.cli", "server", "start", "--host", "0.0.0.0", "--port", "50051", "--collect-telemetry"]
     environment:
-      POSTGRES_DB: ragzoom
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
+      - RAGZOOM_DATABASE_URL=sqlite:////data/sqlite.db
+      - RAGZOOM_VECTOR_BACKEND=python
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
     volumes:
-      # Persist database data
-      - ragzoom_postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d ragzoom"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      - ./data:/data
+    ports:
+      - "${RAGZOOM_GRPC_PORT:-50051}:50051"
 
-volumes:
-  ragzoom_postgres_data:
-    name: ragzoom_postgres_data
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["uvicorn", "ragzoom.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    depends_on:
+      - grpc
+    environment:
+      - RAGZOOM_SERVER_ADDRESS=grpc:50051
+      - RAGZOOM_DATABASE_URL=sqlite:////data/sqlite.db
+      - RAGZOOM_CORS_ORIGINS=http://localhost:${RAGZOOM_UI_PORT:-55300},http://127.0.0.1:${RAGZOOM_UI_PORT:-55300}
+    volumes:
+      - ./data:/data
+    ports:
+      - "${RAGZOOM_API_PORT:-55200}:8000"
+
+  ui:
+    build:
+      context: ui/inspector
+      dockerfile: Dockerfile
+      args:
+        - VITE_RAGZOOM_API_URL=http://localhost:${RAGZOOM_API_PORT:-55200}
+    depends_on:
+      - api
+    ports:
+      - "${RAGZOOM_UI_PORT:-55300}:80"
