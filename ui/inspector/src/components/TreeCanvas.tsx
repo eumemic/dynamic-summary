@@ -108,27 +108,8 @@ export default function TreeCanvas({
         PADDING.top + innerHeight - levelStride * level - levelStride / 2;
       const y = bandCenter - rowHeight / 2;
 
-      const normalizedText = node.text.replace(/\s+/g, " ").trim();
-      const baseLabel = normalizedText === "" ? "(empty node)" : normalizedText;
-
-      const totalSpan = Math.max(node.span_end - node.span_start, 1);
-      const hiddenLeftSpan = Math.max(spanStart - node.span_start, 0);
-      const hiddenRightSpan = Math.max(node.span_end - spanEnd, 0);
-      const hiddenLeftChars = Math.min(
-        baseLabel.length,
-        Math.floor((hiddenLeftSpan / totalSpan) * baseLabel.length)
-      );
-      const hiddenRightChars = Math.min(
-        baseLabel.length - hiddenLeftChars,
-        Math.floor((hiddenRightSpan / totalSpan) * baseLabel.length)
-      );
-      const visibleStart = hiddenLeftChars;
-      const visibleEnd = baseLabel.length - hiddenRightChars;
-      const visibleLabel =
-        visibleStart >= visibleEnd
-          ? baseLabel
-          : baseLabel.slice(visibleStart, visibleEnd).trim();
-      const label = visibleLabel === "" ? baseLabel : visibleLabel;
+      const collapsedText = node.text.replace(/\s+/g, " ").trim();
+      const label = collapsedText === "" ? "(empty node)" : collapsedText;
 
       return {
         node,
