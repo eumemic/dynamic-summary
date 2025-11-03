@@ -12,12 +12,37 @@ services:
       - ./data:/data
     ports:
       - "${RAGZOOM_GRPC_PORT:-50051}:50051"
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./ragzoom
+          target: /app/ragzoom
+        - action: sync+restart
+          path: ./proto
+          target: /app/proto
+        - action: rebuild
+          path: ./pyproject.toml
+        - action: rebuild
+          path: ./requirements
+        - action: rebuild
+          path: ./Dockerfile
 
   api:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["uvicorn", "ragzoom.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    command:
+      [
+        "uvicorn",
+        "ragzoom.api:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+        "--reload-dir",
+        "/app/ragzoom",
+      ]
     depends_on:
       - grpc
     environment:
@@ -28,14 +53,51 @@ services:
       - ./data:/data
     ports:
       - "${RAGZOOM_API_PORT:-55200}:8000"
+    develop:
+      watch:
+        - action: sync
+          path: ./ragzoom
+          target: /app/ragzoom
+        - action: sync
+          path: ./proto
+          target: /app/proto
+        - action: rebuild
+          path: ./pyproject.toml
+        - action: rebuild
+          path: ./requirements
+        - action: rebuild
+          path: ./Dockerfile
 
   ui:
     build:
       context: ui/inspector
       dockerfile: Dockerfile
+      target: dev
       args:
         - VITE_RAGZOOM_API_URL=http://localhost:${RAGZOOM_API_PORT:-55200}
     depends_on:
       - api
     ports:
-      - "${RAGZOOM_UI_PORT:-55300}:80"
+      - "${RAGZOOM_UI_PORT:-55300}:4173"
+    environment:
+      - VITE_RAGZOOM_API_URL=http://localhost:${RAGZOOM_API_PORT:-55200}
+    develop:
+      watch:
+        - action: sync
+          path: ./ui/inspector/src
+          target: /app/src
+        - action: sync
+          path: ./ui/inspector/index.html
+          target: /app/index.html
+        - action: rebuild
+          path: ./ui/inspector/package.json
+        - action: rebuild
+          path: ./ui/inspector/package-lock.json
+        - action: rebuild
+          path: ./ui/inspector/vite.config.ts
+        - action: rebuild
+          path: ./ui/inspector/tsconfig.json
+        - action: rebuild
+          path: ./ui/inspector/tsconfig.node.json
+        - action: rebuild
+          path: ./ui/inspector/Dockerfile
