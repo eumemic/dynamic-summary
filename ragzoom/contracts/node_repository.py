@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
+# jscpd:ignore-start - Protocol declares signatures mirrored by implementations
 from ragzoom.contracts.tree_node import TreeNode
 
 try:  # Optional typing import; not required at runtime
@@ -113,6 +114,7 @@ class NodeRepository(Protocol):
     ) -> TreeNode | None: ...
     def pin_node(self, node_id: str) -> None: ...
 
+    # jscpd:ignore-end
     def delete_nodes(
         self,
         node_ids: Sequence[str],

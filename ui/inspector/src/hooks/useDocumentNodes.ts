@@ -45,6 +45,8 @@ export function useDocumentNodes(
   const [refreshToken, setRefreshToken] = useState(0);
   const [sseEpoch, setSseEpoch] = useState(0);
   const nodeIdSetRef = useRef<Set<string>>(new Set());
+  const previousRequestKeyRef = useRef<string | null>(null);
+  const lastSseRefreshRef = useRef<number>(0);
 
   // Fetch span data whenever dependencies change or refresh is triggered.
   useEffect(() => {
@@ -55,6 +57,16 @@ export function useDocumentNodes(
       setError(null);
       return;
     }
+
+    if (spanEnd <= spanStart) {
+      return;
+    }
+
+    const requestKey = `${documentId}|${spanStart}|${spanEnd}|${limit}|${minHeight ?? ""}|${refreshToken}`;
+    if (previousRequestKeyRef.current === requestKey) {
+      return;
+    }
+    previousRequestKeyRef.current = requestKey;
 
     const controller = new AbortController();
     setLoading(true);
@@ -118,7 +130,11 @@ export function useDocumentNodes(
         if (payload.event === "node_committed") {
           const { span_start, span_end } = payload;
           if (spansOverlap(spanStart, spanEnd, span_start, span_end)) {
-            setRefreshToken((token) => token + 1);
+            const now = Date.now();
+            if (now - lastSseRefreshRef.current > 150) {
+              lastSseRefreshRef.current = now;
+              setRefreshToken((token) => token + 1);
+            }
           }
         } else if (payload.event === "nodes_deleted") {
           const incoming = payload.node_ids ?? [];
@@ -126,13 +142,21 @@ export function useDocumentNodes(
             nodeIdSetRef.current.has(id)
           );
           if (intersects) {
-            setRefreshToken((token) => token + 1);
+            const now = Date.now();
+            if (now - lastSseRefreshRef.current > 150) {
+              lastSseRefreshRef.current = now;
+              setRefreshToken((token) => token + 1);
+            }
           }
         } else if (
           payload.event === "append_completed" ||
           payload.event === "append_failed"
         ) {
-          setRefreshToken((token) => token + 1);
+          const now = Date.now();
+          if (now - lastSseRefreshRef.current > 150) {
+            lastSseRefreshRef.current = now;
+            setRefreshToken((token) => token + 1);
+          }
         }
       } catch (err) {
         console.warn("Failed to parse event stream payload", err);

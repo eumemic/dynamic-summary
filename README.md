@@ -224,19 +224,32 @@ API, inspector UI) in a single command, use the bundled docker-compose stack:
 # Set your OpenAI key for summarisation before starting
 export OPENAI_API_KEY="sk-..."
 
-./scripts/devstack.sh start
+./scripts/devstack start
 # UI available at http://localhost:${RAGZOOM_UI_PORT:-55300}
 # CLI now talks to the stack automatically (gRPC is exposed on 127.0.0.1:50051)
 
 # Tail logs
-./scripts/devstack.sh logs
+./scripts/devstack logs
 
 # Run CLI commands inside the stack
-./scripts/devstack.sh exec-cli index README.md --document-id readme --collect-telemetry --await-workers
+./scripts/devstack exec-cli index README.md --document-id readme --collect-telemetry --await-workers
+
+# Rebuild + restart individual services when needed
+./scripts/devstack restart api ui
 
 # Tear everything down
-./scripts/devstack.sh stop
+./scripts/devstack stop
 ```
+
+For hot reload during development, run the stack in foreground watching mode:
+
+```
+./scripts/devstack watch
+```
+
+This uses `docker compose watch` so Python services restart automatically when
+files change, FastAPI reloads in place, and the Vite dev server serves the UI
+with HMR.
 
 Values from `.env` are loaded automatically. You can customise exposed ports via
 environment variables before calling `start` (either exported or listed in
@@ -246,7 +259,7 @@ environment variables before calling `start` (either exported or listed in
 export RAGZOOM_GRPC_PORT=56100   # only change this if you need to avoid clashes
 export RAGZOOM_API_PORT=56200
 export RAGZOOM_UI_PORT=56300
-./scripts/devstack.sh start
+./scripts/devstack start
 ```
 
 Each worktree mounting its own `data/` directory keeps the SQLite database and

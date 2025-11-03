@@ -11,7 +11,6 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import cast
-from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,10 +23,10 @@ from ragzoom.api_middleware import create_error_handling_middleware
 from ragzoom.client.grpc_client import GrpcRagzoomClient
 from ragzoom.config import IndexConfig, IndexConfigDict, OperationalConfig, QueryConfig
 from ragzoom.constants import DEFAULT_GRPC_ADDRESS
+from ragzoom.server.state import _resolve_telemetry_dir
 from ragzoom.services.document_service import DocumentInfo, DocumentService
 from ragzoom.services.query_service import QueryService
 from ragzoom.store import create_store_with_docker
-from ragzoom.worktree_utils import DEFAULT_DATA_DIR_NAME
 
 
 def _resolve_grpc_address(configured: str | None = None) -> str:
@@ -53,29 +52,6 @@ def _sanitize_document_id(document_id: str) -> str:
     """Map document identifiers to filesystem-safe paths (mirrors telemetry log)."""
     sanitized = re.sub(r"[^0-9A-Za-z._-]", "_", document_id)
     return sanitized or "document"
-
-
-def _resolve_telemetry_dir_from_config(config: OperationalConfig) -> Path:
-    """Compute telemetry directory using the same policy as the gRPC server."""
-    url = (config.database_url or "").strip()
-    if url.startswith("sqlite") and ":memory:" not in url:
-        parsed = urlparse(url)
-        raw_path = parsed.path or ""
-        if url.startswith("sqlite:////"):
-            sqlite_path = Path(raw_path)
-        else:
-            sqlite_path = Path(raw_path.lstrip("/"))
-            if not sqlite_path.is_absolute():
-                sqlite_path = Path.cwd() / sqlite_path
-        if sqlite_path.suffix:
-            return sqlite_path.parent / "telemetry"
-        return sqlite_path / "telemetry"
-
-    data_root = os.environ.get("RAGZOOM_DATA_DIR")
-    if data_root:
-        return Path(data_root) / DEFAULT_DATA_DIR_NAME / "telemetry"
-
-    return Path.cwd() / DEFAULT_DATA_DIR_NAME / "telemetry"
 
 
 def _events_path_for_document(base_dir: Path, document_id: str) -> Path:
@@ -562,7 +538,7 @@ async def get_nodes_batch(
 @app.get("/documents/{document_id}/events")
 async def stream_document_events(document_id: str) -> StreamingResponse:
     """Server-Sent Events stream for document telemetry."""
-    telemetry_dir = _resolve_telemetry_dir_from_config(OperationalConfig())
+    telemetry_dir = _resolve_telemetry_dir(OperationalConfig(), None)
     if not telemetry_dir.exists():
         raise HTTPException(
             status_code=503,
