@@ -63,6 +63,14 @@ export default function DocumentTreeView({
   });
   const nodeCacheRef = useRef<Map<string, NodeResponse>>(new Map());
   const [cacheVersion, bumpCacheVersion] = useState(0);
+  const sliderRef = useRef<HTMLDivElement | null>(null);
+  const sliderSelectionRef = useRef<HTMLDivElement | null>(null);
+  const sliderDragRef = useRef<{
+    pointerId: number;
+    spanLength: number;
+    startValue: number;
+    clientX: number;
+  } | null>(null);
 
   useEffect(() => {
     const hasInitialSpan =
@@ -247,6 +255,26 @@ export default function DocumentTreeView({
 
   const sliderMax =
     documentSpanEnd > 0 ? documentSpanEnd : Math.max(spanEnd, spanStart + 1);
+  const sliderRange = sliderMax > 0 ? sliderMax : 1;
+  const spanStartRatio = useMemo(() => {
+    if (sliderRange <= 0) {
+      return 0;
+    }
+    return Math.min(Math.max(span.start / sliderRange, 0), 1);
+  }, [sliderRange, span.start]);
+  const spanEndRatio = useMemo(() => {
+    if (sliderRange <= 0) {
+      return 0;
+    }
+    return Math.min(Math.max(span.end / sliderRange, 0), 1);
+  }, [sliderRange, span.end]);
+  const activeSpanStyle = useMemo(() => {
+    const widthRatio = Math.max(spanEndRatio - spanStartRatio, 0);
+    return {
+      left: `${spanStartRatio * 100}%`,
+      width: `${widthRatio * 100}%`,
+    };
+  }, [spanStartRatio, spanEndRatio]);
 
   const applySpanUpdate = (
     nextStart: number,
@@ -420,6 +448,99 @@ export default function DocumentTreeView({
     return nodeCacheRef.current.get(selectedNodeId) ?? null;
   }, [cacheVersion, selectedNodeId]);
 
+  const handleSliderDragStart = (
+    event: React.PointerEvent<HTMLDivElement>
+  ) => {
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    if (!sliderRef.current) {
+      return;
+    }
+    const spanLength = span.end - span.start;
+    if (spanLength <= 0) {
+      return;
+    }
+    sliderDragRef.current = {
+      pointerId: event.pointerId,
+      spanLength,
+      startValue: span.start,
+      clientX: event.clientX,
+    };
+    setHasManualRange(true);
+    const target = event.currentTarget;
+    target.setPointerCapture(event.pointerId);
+    target.style.cursor = "grabbing";
+    sliderSelectionRef.current = target;
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+  };
+
+  const handleSliderDragMove = (
+    event: React.PointerEvent<HTMLDivElement>
+  ) => {
+    const dragState = sliderDragRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+    if (!sliderRef.current) {
+      return;
+    }
+    const rect = sliderRef.current.getBoundingClientRect();
+    if (rect.width <= 0) {
+      return;
+    }
+    const deltaRatio = (event.clientX - dragState.clientX) / rect.width;
+    const rawStart = dragState.startValue + deltaRatio * sliderRange;
+    const maxStart = Math.max(0, sliderRange - dragState.spanLength);
+    const boundedStart = Math.min(
+      Math.max(rawStart, 0),
+      maxStart
+    );
+    const boundedEnd = boundedStart + dragState.spanLength;
+    applySpanUpdate(boundedStart, boundedEnd, { immediate: true });
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+  };
+
+  const releaseSliderPointer = (
+    pointerId: number,
+    target: EventTarget & Element
+  ) => {
+    const dragState = sliderDragRef.current;
+    if (!dragState || dragState.pointerId !== pointerId) {
+      return;
+    }
+    sliderDragRef.current = null;
+    if (target.hasPointerCapture(pointerId)) {
+      target.releasePointerCapture(pointerId);
+    }
+    if (sliderSelectionRef.current) {
+      sliderSelectionRef.current.style.cursor = "grab";
+      sliderSelectionRef.current = null;
+    }
+  };
+
+  const handleSliderDragEnd = (
+    event: React.PointerEvent<HTMLDivElement>
+  ) => {
+    releaseSliderPointer(event.pointerId, event.currentTarget);
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+  };
+
+  const handleSliderDragCancel = (
+    event: React.PointerEvent<HTMLDivElement>
+  ) => {
+    releaseSliderPointer(event.pointerId, event.currentTarget);
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+  };
+
   useEffect(() => {
     if (!onStateChange) {
       return;
@@ -479,7 +600,16 @@ export default function DocumentTreeView({
               </label>
             </div>
           </div>
-          <div className="span-slider">
+          <div className="span-slider" ref={sliderRef}>
+            <div
+              className="span-slider__selection"
+              style={activeSpanStyle}
+              aria-hidden="true"
+              onPointerDown={handleSliderDragStart}
+              onPointerMove={handleSliderDragMove}
+              onPointerUp={handleSliderDragEnd}
+              onPointerCancel={handleSliderDragCancel}
+            />
             <input
               type="range"
               min={0}

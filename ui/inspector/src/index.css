@@ -110,15 +110,45 @@ body {
 }
 
 .span-slider {
+  --slider-thumb-size: 18px;
+  --slider-track-height: 6px;
   position: relative;
-  height: 36px;
+  height: calc(var(--slider-thumb-size) + 12px);
   display: flex;
   align-items: center;
 }
 
+.span-slider::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: var(--slider-track-height);
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.span-slider__selection {
+  position: absolute;
+  top: 50%;
+  height: var(--slider-track-height);
+  background: rgba(78, 156, 255, 0.6);
+  border-radius: 999px;
+  transform: translateY(-50%);
+  pointer-events: all;
+  cursor: grab;
+}
+
 .span-slider input[type="range"] {
   position: absolute;
-  width: 100%;
+  left: calc(var(--slider-thumb-size) / -2);
+  right: calc(var(--slider-thumb-size) / -2);
+  top: 50%;
+  transform: translateY(-50%);
+  height: var(--slider-thumb-size);
   margin: 0;
   background: transparent;
   pointer-events: none;
@@ -128,34 +158,36 @@ body {
 .span-slider input[type="range"]::-webkit-slider-thumb {
   pointer-events: all;
   -webkit-appearance: none;
-  height: 18px;
-  width: 18px;
+  height: var(--slider-thumb-size);
+  width: var(--slider-thumb-size);
   background: #4e9cff;
   border-radius: 50%;
   border: none;
   cursor: pointer;
+  box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.65);
+  margin-top: calc((var(--slider-thumb-size) - var(--slider-track-height)) / -2);
 }
 
 .span-slider input[type="range"]::-moz-range-thumb {
   pointer-events: all;
-  height: 18px;
-  width: 18px;
+  height: var(--slider-thumb-size);
+  width: var(--slider-thumb-size);
   background: #4e9cff;
   border-radius: 50%;
   border: none;
   cursor: pointer;
+  box-shadow: 0 0 0 3px rgba(17, 17, 17, 0.65);
+  transform: translateY(calc((var(--slider-track-height) - var(--slider-thumb-size)) / 2));
 }
 
 .span-slider input[type="range"]::-webkit-slider-runnable-track {
-  height: 6px;
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 999px;
+  height: var(--slider-track-height);
+  background: transparent;
 }
 
 .span-slider input[type="range"]::-moz-range-track {
-  height: 6px;
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 999px;
+  height: var(--slider-track-height);
+  background: transparent;
 }
 
 .render-controls {
