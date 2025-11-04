@@ -9,6 +9,13 @@ export interface DocumentsResponse {
   documents: DocumentInfo[];
 }
 
+export interface DocumentsStreamEvent {
+  event: "documents_changed";
+  documents: DocumentInfo[];
+  added_ids: string[];
+  removed_ids: string[];
+}
+
 export interface NodeResponse {
   node_id: string;
   document_id: string | null;

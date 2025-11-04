@@ -128,6 +128,61 @@ async def _document_event_stream(
         return
 
 
+async def _documents_event_stream(
+    services: "ServiceContainer",
+) -> AsyncGenerator[str, None]:
+    """Async generator emitting SSE payloads when the document catalog changes."""
+    document_service = services.document_service
+    last_emit = time.monotonic()
+    known_documents: dict[str, DocumentInfo] = {}
+
+    try:
+        while True:
+            documents = await asyncio.to_thread(document_service.list_documents)
+            document_map = {doc.document_id: doc for doc in documents}
+
+            added_ids = sorted(set(document_map) - set(known_documents))
+            removed_ids = sorted(set(known_documents) - set(document_map))
+
+            metadata_changed = False
+            if not added_ids and not removed_ids:
+                for doc_id, doc in document_map.items():
+                    previous = known_documents.get(doc_id)
+                    if previous is None:
+                        continue
+                    if (
+                        previous.node_count != doc.node_count
+                        or previous.file_path != doc.file_path
+                        or previous.indexed_at != doc.indexed_at
+                    ):
+                        metadata_changed = True
+                        break
+
+            if added_ids or removed_ids or metadata_changed or not known_documents:
+                payload = {
+                    "event": "documents_changed",
+                    "documents": [
+                        DocumentInfoResponse.from_domain(doc).model_dump()
+                        for doc in documents
+                    ],
+                    "added_ids": added_ids,
+                    "removed_ids": removed_ids,
+                }
+                data = json.dumps(payload, separators=(",", ":"))
+                yield f"data: {data}\n\n"
+                known_documents = document_map
+                last_emit = time.monotonic()
+            else:
+                now = time.monotonic()
+                if now - last_emit >= _TELEMETRY_HEARTBEAT_SECONDS:
+                    yield ": keep-alive\n\n"
+                    last_emit = now
+
+            await asyncio.sleep(1.0)
+    except asyncio.CancelledError:
+        return
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -483,6 +538,27 @@ async def list_documents(
     documents = [DocumentInfoResponse.from_domain(doc) for doc in doc_infos]
     return DocumentsResponse(documents=documents)
     # Error handling is now done by middleware
+
+
+@app.get("/documents/events")
+async def stream_documents_events(
+    services: "ServiceContainer" = Depends(get_service_container),
+) -> StreamingResponse:
+    """Server-Sent Events stream for document catalog updates."""
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        try:
+            async for chunk in _documents_event_stream(services):
+                yield chunk
+        finally:
+            services.close()
+
+    headers = {"Cache-Control": "no-cache"}
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers=headers,
+    )
 
 
 @app.get(

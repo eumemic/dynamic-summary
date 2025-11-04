@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DocumentTreeView from "./components/DocumentTreeView";
 import { fetchDocuments } from "./api/client";
-import { DocumentInfo } from "./types";
+import { DocumentInfo, DocumentsStreamEvent } from "./types";
 
 const MIN_NODE_LIMIT = 1;
 const MAX_NODE_LIMIT = 2000;
@@ -75,8 +75,8 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    let pending = false;
-    const firstFetchRef = { current: true };
+    let source: EventSource | null = null;
+    let reconnectTimer: number | null = null;
 
     const resolveSelection = (available: DocumentInfo[]) => {
       setSelectedId((current) => {
@@ -108,13 +108,7 @@ export default function App() {
     };
 
     const loadDocuments = async () => {
-      if (pending) {
-        return;
-      }
-      pending = true;
-      if (firstFetchRef.current) {
-        setLoading(true);
-      }
+      setLoading(true);
       try {
         const payload = await fetchDocuments();
         if (cancelled) {
@@ -133,23 +127,70 @@ export default function App() {
         if (!cancelled) {
           setLoading(false);
         }
-        firstFetchRef.current = false;
-        pending = false;
       }
     };
 
-    const intervalId = window.setInterval(loadDocuments, 5000);
-    const handleFocus = () => {
-      void loadDocuments();
+    const cleanupSource = () => {
+      if (source) {
+        source.close();
+        source = null;
+      }
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    };
+
+    const connect = () => {
+      if (cancelled) {
+        return;
+      }
+      cleanupSource();
+      const nextSource = new EventSource("/documents/events");
+      source = nextSource;
+
+      nextSource.onmessage = (event) => {
+        if (cancelled || !event.data) {
+          return;
+        }
+        try {
+          const payload = JSON.parse(event.data) as DocumentsStreamEvent;
+          if (payload.event !== "documents_changed") {
+            return;
+          }
+          setDocuments(payload.documents);
+          setError(null);
+          resolveSelection(payload.documents);
+          setLoading(false);
+        } catch (err) {
+          console.warn("Failed to parse documents stream payload", err);
+        }
+      };
+
+      nextSource.onerror = () => {
+        if (cancelled) {
+          return;
+        }
+        if (source) {
+          source.close();
+          source = null;
+        }
+        if (reconnectTimer !== null) {
+          return;
+        }
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null;
+          connect();
+        }, 2000);
+      };
     };
 
     void loadDocuments();
-    window.addEventListener("focus", handleFocus);
+    connect();
 
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
-      window.removeEventListener("focus", handleFocus);
+      cleanupSource();
     };
   }, [initialQueryState]);
 
