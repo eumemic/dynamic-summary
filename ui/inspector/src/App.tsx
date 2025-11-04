@@ -1,11 +1,74 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import DocumentTreeView from "./components/DocumentTreeView";
 import { fetchDocuments } from "./api/client";
 import { DocumentInfo } from "./types";
 
+const MIN_NODE_LIMIT = 1;
+const MAX_NODE_LIMIT = 2000;
+
+interface QueryState {
+  documentId: string | null;
+  spanStart: number | null;
+  spanEnd: number | null;
+  limit: number | null;
+  selectedNodeId: string | null;
+}
+
+function parseNonNegativeInt(value: string | null): number | null {
+  if (value === null) {
+    return null;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || Number.isNaN(parsed) || parsed < 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function readInitialQueryState(): QueryState {
+  const params = new URLSearchParams(window.location.search);
+  const documentId = params.get("document_id");
+  const spanStart = parseNonNegativeInt(params.get("span_start"));
+  const spanEndValue = parseNonNegativeInt(params.get("span_end"));
+  const limitValue = parseNonNegativeInt(params.get("limit"));
+  const selectedNodeId = params.get("node_id");
+
+  const spanEnd =
+    spanStart !== null &&
+    spanEndValue !== null &&
+    spanEndValue > spanStart
+      ? spanEndValue
+      : null;
+
+  const limit =
+    limitValue === null
+      ? null
+      : Math.min(Math.max(limitValue, MIN_NODE_LIMIT), MAX_NODE_LIMIT);
+
+  return {
+    documentId: documentId && documentId.length > 0 ? documentId : null,
+    spanStart,
+    spanEnd,
+    limit,
+    selectedNodeId:
+      selectedNodeId && selectedNodeId.length > 0 ? selectedNodeId : null,
+  };
+}
+
+interface ViewStatePayload {
+  documentId: string;
+  spanStart: number;
+  spanEnd: number;
+  limit: number;
+  selectedNodeId: string | null;
+}
+
 export default function App() {
+  const initialQueryState = useMemo(() => readInitialQueryState(), []);
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    initialQueryState.documentId
+  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -20,9 +83,26 @@ export default function App() {
         }
         setDocuments(payload.documents);
         if (payload.documents.length > 0) {
-          setSelectedId((previous) =>
-            previous ?? payload.documents[0].document_id
-          );
+          setSelectedId((previous) => {
+            if (
+              previous &&
+              payload.documents.some(
+                (candidate) => candidate.document_id === previous
+              )
+            ) {
+              return previous;
+            }
+            if (
+              initialQueryState.documentId &&
+              payload.documents.some(
+                (candidate) =>
+                  candidate.document_id === initialQueryState.documentId
+              )
+            ) {
+              return initialQueryState.documentId;
+            }
+            return payload.documents[0].document_id;
+          });
         }
       })
       .catch((err: unknown) => {
@@ -42,6 +122,47 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  const handleViewStateChange = useCallback(
+    ({
+      documentId,
+      spanStart,
+      spanEnd,
+      limit,
+      selectedNodeId,
+    }: ViewStatePayload) => {
+      const params = new URLSearchParams(window.location.search);
+      params.set("document_id", documentId);
+      params.set("span_start", Math.floor(spanStart).toString());
+      params.set("span_end", Math.floor(spanEnd).toString());
+      params.set("limit", Math.floor(limit).toString());
+      if (selectedNodeId) {
+        params.set("node_id", selectedNodeId);
+      } else {
+        params.delete("node_id");
+      }
+      const search = params.toString();
+      const nextUrl = `${window.location.pathname}${
+        search ? `?${search}` : ""
+      }${window.location.hash}`;
+      window.history.replaceState(null, "", nextUrl);
+    },
+    []
+  );
+
+  const initialSpanStart =
+    selectedId && selectedId === initialQueryState.documentId
+      ? initialQueryState.spanStart
+      : null;
+  const initialSpanEnd =
+    selectedId && selectedId === initialQueryState.documentId
+      ? initialQueryState.spanEnd
+      : null;
+  const initialNodeId =
+    selectedId && selectedId === initialQueryState.documentId
+      ? initialQueryState.selectedNodeId
+      : null;
+  const initialLimit = initialQueryState.limit;
 
   return (
     <div className="app">
@@ -68,7 +189,14 @@ export default function App() {
       </aside>
       <main className="content">
         {selectedId ? (
-          <DocumentTreeView documentId={selectedId} />
+          <DocumentTreeView
+            documentId={selectedId}
+            initialSpanStart={initialSpanStart}
+            initialSpanEnd={initialSpanEnd}
+            initialLimit={initialLimit}
+            initialSelectedNodeId={initialNodeId}
+            onStateChange={handleViewStateChange}
+          />
         ) : (
           <p>Select a document to inspect the tree.</p>
         )}

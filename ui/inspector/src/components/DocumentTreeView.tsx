@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { fetchNodesBatch } from "../api/client";
 import { useDocumentNodes } from "../hooks/useDocumentNodes";
 import TreeCanvas from "./TreeCanvas";
 import NodeDetailsPanel from "./NodeDetailsPanel";
@@ -6,9 +7,21 @@ import { NodeResponse } from "../types";
 
 interface DocumentTreeViewProps {
   documentId: string;
+  initialSpanStart?: number | null;
+  initialSpanEnd?: number | null;
+  initialLimit?: number | null;
+  initialSelectedNodeId?: string | null;
+  onStateChange?: (state: {
+    documentId: string;
+    spanStart: number;
+    spanEnd: number;
+    limit: number;
+    selectedNodeId: string | null;
+  }) => void;
 }
 
 const DEFAULT_WINDOW = 2000;
+const DEFAULT_LIMIT = 200;
 const clampLimit = (value: number) => Math.max(1, Math.min(2000, value));
 const numberFormatter = new Intl.NumberFormat();
 const MIN_WINDOW = 50;
@@ -22,12 +35,21 @@ function normalizeSpan(start: number, end: number): { start: number; end: number
 
 export default function DocumentTreeView({
   documentId,
+  initialSpanStart,
+  initialSpanEnd,
+  initialLimit,
+  initialSelectedNodeId,
+  onStateChange,
 }: DocumentTreeViewProps) {
   const [spanStart, setSpanStart] = useState(0);
   const [spanEnd, setSpanEnd] = useState(DEFAULT_WINDOW);
-  const [limit, setLimit] = useState(200);
+  const [limit, setLimit] = useState(() =>
+    clampLimit(initialLimit ?? DEFAULT_LIMIT)
+  );
   const [minHeight, setMinHeight] = useState<number | null>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(
+    initialSelectedNodeId ?? null
+  );
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hasManualRange, setHasManualRange] = useState(false);
   const panAnchorRef = useRef<number | null>(null);
@@ -40,19 +62,43 @@ export default function DocumentTreeView({
     end: DEFAULT_WINDOW,
   });
   const nodeCacheRef = useRef<Map<string, NodeResponse>>(new Map());
+  const [cacheVersion, bumpCacheVersion] = useState(0);
 
   useEffect(() => {
-    setSpanStart(0);
-    setSpanEnd(DEFAULT_WINDOW);
-    setSelectedNodeId(null);
+    const hasInitialSpan =
+      (initialSpanStart ?? null) !== null || (initialSpanEnd ?? null) !== null;
+    const nextSpanStart =
+      initialSpanStart !== undefined && initialSpanStart !== null
+        ? Math.max(0, Math.floor(initialSpanStart))
+        : 0;
+    const rawSpanEnd =
+      initialSpanEnd !== undefined && initialSpanEnd !== null
+        ? Math.max(nextSpanStart + 1, Math.floor(initialSpanEnd))
+        : DEFAULT_WINDOW;
+    const nextSpanEnd = Math.max(nextSpanStart + 1, rawSpanEnd);
+
+    setSpanStart(nextSpanStart);
+    setSpanEnd(nextSpanEnd);
+    setSelectedNodeId(initialSelectedNodeId ?? null);
     setHoveredNodeId(null);
-    setHasManualRange(false);
+    setHasManualRange(hasInitialSpan);
     panAnchorRef.current = null;
-    setQuerySpanStart(0);
-    setQuerySpanEnd(DEFAULT_WINDOW);
-    querySpanRef.current = { start: 0, end: DEFAULT_WINDOW };
+    panRangeRef.current = nextSpanEnd - nextSpanStart;
+    setQuerySpanStart(nextSpanStart);
+    setQuerySpanEnd(nextSpanEnd);
+    querySpanRef.current = { start: nextSpanStart, end: nextSpanEnd };
     nodeCacheRef.current = new Map();
-  }, [documentId]);
+    if (initialLimit !== undefined && initialLimit !== null) {
+      setLimit(clampLimit(initialLimit));
+    }
+    bumpCacheVersion((value) => value + 1);
+  }, [
+    documentId,
+    initialSpanStart,
+    initialSpanEnd,
+    initialSelectedNodeId,
+    initialLimit,
+  ]);
 
   const span = useMemo(
     () => normalizeSpan(spanStart, spanEnd),
@@ -164,7 +210,40 @@ export default function DocumentTreeView({
     for (const node of nodes) {
       cache.set(node.node_id, node);
     }
+    bumpCacheVersion((value) => value + 1);
   }, [nodes]);
+
+  useEffect(() => {
+    if (!selectedNodeId) {
+      return;
+    }
+    if (nodeCacheRef.current.has(selectedNodeId)) {
+      return;
+    }
+
+    let cancelled = false;
+    fetchNodesBatch(documentId, [selectedNodeId])
+      .then((result) => {
+        if (cancelled) {
+          return;
+        }
+        if (result.length === 0) {
+          return;
+        }
+        const cache = nodeCacheRef.current;
+        for (const node of result) {
+          cache.set(node.node_id, node);
+        }
+        bumpCacheVersion((value) => value + 1);
+      })
+      .catch((err) => {
+        console.warn("Failed to fetch node details", err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [documentId, selectedNodeId]);
 
   const sliderMax =
     documentSpanEnd > 0 ? documentSpanEnd : Math.max(spanEnd, spanStart + 1);
@@ -331,12 +410,35 @@ export default function DocumentTreeView({
   const handleSelect = (node: NodeResponse) => {
     setSelectedNodeId(node.node_id);
     nodeCacheRef.current.set(node.node_id, node);
+    bumpCacheVersion((value) => value + 1);
   };
 
-  const selectedNode =
-    selectedNodeId !== null
-      ? nodeCacheRef.current.get(selectedNodeId) ?? null
-      : null;
+  const selectedNode = useMemo(() => {
+    if (!selectedNodeId) {
+      return null;
+    }
+    return nodeCacheRef.current.get(selectedNodeId) ?? null;
+  }, [cacheVersion, selectedNodeId]);
+
+  useEffect(() => {
+    if (!onStateChange) {
+      return;
+    }
+    onStateChange({
+      documentId,
+      spanStart: span.start,
+      spanEnd: span.end,
+      limit,
+      selectedNodeId,
+    });
+  }, [
+    documentId,
+    span.start,
+    span.end,
+    limit,
+    selectedNodeId,
+    onStateChange,
+  ]);
 
   return (
     <section className="document-view">

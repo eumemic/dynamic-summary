@@ -151,7 +151,6 @@ export default function TreeCanvas({
   const [activePointerId, setActivePointerId] = useState<number | null>(null);
   const clickCandidateRef = useRef<NodeResponse | null>(null);
   const clickPointerIdRef = useRef<number | null>(null);
-  const panStartRatioRef = useRef<number | null>(null);
   const panStartClientXRef = useRef<number | null>(null);
   const hasDraggedRef = useRef(false);
 
@@ -203,7 +202,6 @@ export default function TreeCanvas({
       setActivePointerId(event.pointerId);
       setIsPanning(true);
       onPanStart?.(ratio);
-      panStartRatioRef.current = ratio;
       panStartClientXRef.current = event.clientX;
       hasDraggedRef.current = false;
       const target = event.target as Element | null;
@@ -253,7 +251,6 @@ export default function TreeCanvas({
         }
         clickCandidateRef.current = null;
         clickPointerIdRef.current = null;
-        panStartRatioRef.current = null;
         panStartClientXRef.current = null;
         hasDraggedRef.current = false;
       }
@@ -273,7 +270,6 @@ export default function TreeCanvas({
       }
       clickCandidateRef.current = null;
       clickPointerIdRef.current = null;
-      panStartRatioRef.current = null;
       panStartClientXRef.current = null;
       hasDraggedRef.current = false;
     },
@@ -292,7 +288,6 @@ export default function TreeCanvas({
       }
       clickCandidateRef.current = null;
       clickPointerIdRef.current = null;
-      panStartRatioRef.current = null;
       panStartClientXRef.current = null;
       hasDraggedRef.current = false;
     },
