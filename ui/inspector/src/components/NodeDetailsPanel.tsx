@@ -2,57 +2,48 @@ import { NodeResponse } from "../types";
 
 interface NodeDetailsPanelProps {
   node: NodeResponse | null;
-  hoveredNode: NodeResponse | null;
 }
 
-export default function NodeDetailsPanel({
-  node,
-  hoveredNode,
-}: NodeDetailsPanelProps) {
-  const active = node ?? hoveredNode;
-
-  if (!active) {
+export default function NodeDetailsPanel({ node }: NodeDetailsPanelProps) {
+  if (!node) {
     return (
       <aside className="node-details">
-        <p>Select a node to inspect its contents.</p>
+        <p>Click a node to view its details.</p>
       </aside>
     );
   }
 
-  const createdLabel = active.created_at
-    ? new Date(active.created_at).toLocaleString()
+  const createdLabel = node.created_at
+    ? new Date(node.created_at).toLocaleString()
     : "—";
 
   return (
     <aside className="node-details" aria-live="polite">
       <header>
-        <h2>Node {active.node_id}</h2>
-        {node && hoveredNode && node.node_id !== hoveredNode.node_id && (
-          <small>Previewing node {hoveredNode.node_id}</small>
-        )}
+        <h2>Node {node.node_id}</h2>
       </header>
       <dl>
         <div>
           <dt>Span</dt>
           <dd>
-            [{active.span_start}, {active.span_end})
+            [{node.span_start}, {node.span_end})
           </dd>
         </div>
         <div>
           <dt>Height</dt>
-          <dd>{active.height}</dd>
+          <dd>{node.height}</dd>
         </div>
         <div>
           <dt>Tokens</dt>
-          <dd>{active.token_count}</dd>
+          <dd>{node.token_count}</dd>
         </div>
         <div>
           <dt>Level</dt>
-          <dd>{active.level_index}</dd>
+          <dd>{node.level_index}</dd>
         </div>
         <div>
           <dt>Pinned</dt>
-          <dd>{active.is_pinned ? "Yes" : "No"}</dd>
+          <dd>{node.is_pinned ? "Yes" : "No"}</dd>
         </div>
         <div>
           <dt>Created</dt>
@@ -60,20 +51,20 @@ export default function NodeDetailsPanel({
         </div>
         <div>
           <dt>Parent</dt>
-          <dd>{active.parent_id ?? "—"}</dd>
+          <dd>{node.parent_id ?? "—"}</dd>
         </div>
         <div>
           <dt>Left Child</dt>
-          <dd>{active.left_child_id ?? "—"}</dd>
+          <dd>{node.left_child_id ?? "—"}</dd>
         </div>
         <div>
           <dt>Right Child</dt>
-          <dd>{active.right_child_id ?? "—"}</dd>
+          <dd>{node.right_child_id ?? "—"}</dd>
         </div>
       </dl>
       <section className="node-details__text">
         <h3>Text</h3>
-        <p>{active.text || "(empty)"}</p>
+        <p>{node.text || "(empty)"}</p>
       </section>
     </aside>
   );

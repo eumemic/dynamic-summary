@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { NodeResponse } from "../types";
 import { useResizeObserver } from "../hooks/useResizeObserver";
 
@@ -10,7 +10,7 @@ interface TreeCanvasProps {
   selectedNodeId: string | null;
   hoveredNodeId: string | null;
   onHover: (nodeId: string | null) => void;
-  onSelect: (nodeId: string) => void;
+  onSelect: (node: NodeResponse) => void;
   onZoom?: (centerRatio: number, deltaY: number) => void;
   onPanStart?: (anchorRatio: number) => void;
   onPanMove?: (currentRatio: number) => void;
@@ -149,6 +149,11 @@ export default function TreeCanvas({
 
   const [isPanning, setIsPanning] = useState(false);
   const [activePointerId, setActivePointerId] = useState<number | null>(null);
+  const clickCandidateRef = useRef<NodeResponse | null>(null);
+  const clickPointerIdRef = useRef<number | null>(null);
+  const panStartRatioRef = useRef<number | null>(null);
+  const panStartClientXRef = useRef<number | null>(null);
+  const hasDraggedRef = useRef(false);
 
   const handleWheel = useCallback(
     (event: React.WheelEvent<HTMLDivElement>) => {
@@ -198,6 +203,14 @@ export default function TreeCanvas({
       setActivePointerId(event.pointerId);
       setIsPanning(true);
       onPanStart?.(ratio);
+      panStartRatioRef.current = ratio;
+      panStartClientXRef.current = event.clientX;
+      hasDraggedRef.current = false;
+      const target = event.target as Element | null;
+      if (!target || !target.hasAttribute("data-node-id")) {
+        clickCandidateRef.current = null;
+        clickPointerIdRef.current = null;
+      }
     },
     [computeRatio, onPanStart, innerWidth]
   );
@@ -209,6 +222,14 @@ export default function TreeCanvas({
       }
       const rect = event.currentTarget.getBoundingClientRect();
       const ratio = computeRatio(event.clientX, rect);
+      if (!hasDraggedRef.current && panStartClientXRef.current !== null) {
+        const pixelDelta = Math.abs(event.clientX - panStartClientXRef.current);
+        if (pixelDelta > 3) {
+          hasDraggedRef.current = true;
+          clickCandidateRef.current = null;
+          clickPointerIdRef.current = null;
+        }
+      }
       onPanMove?.(ratio);
       if (event.cancelable) {
         event.preventDefault();
@@ -223,12 +244,24 @@ export default function TreeCanvas({
         setIsPanning(false);
         setActivePointerId(null);
         onPanEnd?.();
+        if (
+          !hasDraggedRef.current &&
+          clickCandidateRef.current &&
+          clickPointerIdRef.current === event.pointerId
+        ) {
+          onSelect(clickCandidateRef.current);
+        }
+        clickCandidateRef.current = null;
+        clickPointerIdRef.current = null;
+        panStartRatioRef.current = null;
+        panStartClientXRef.current = null;
+        hasDraggedRef.current = false;
       }
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
     },
-    [isPanning, activePointerId, onPanEnd]
+    [isPanning, activePointerId, onPanEnd, onSelect]
   );
 
   const handlePointerLeave = useCallback(
@@ -238,6 +271,11 @@ export default function TreeCanvas({
         setActivePointerId(null);
         onPanEnd?.();
       }
+      clickCandidateRef.current = null;
+      clickPointerIdRef.current = null;
+      panStartRatioRef.current = null;
+      panStartClientXRef.current = null;
+      hasDraggedRef.current = false;
     },
     [isPanning, activePointerId, onPanEnd]
   );
@@ -252,6 +290,11 @@ export default function TreeCanvas({
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
+      clickCandidateRef.current = null;
+      clickPointerIdRef.current = null;
+      panStartRatioRef.current = null;
+      panStartClientXRef.current = null;
+      hasDraggedRef.current = false;
     },
     [isPanning, activePointerId, onPanEnd]
   );
@@ -340,6 +383,7 @@ export default function TreeCanvas({
                 height={height}
                 rx={6}
                 ry={6}
+                data-node-id={node.node_id}
                 fill={color}
                 opacity={opacity}
                 stroke={isSelected ? "#fffffe" : isHovered ? "#eef4ff" : "none"}
@@ -349,7 +393,19 @@ export default function TreeCanvas({
                 onMouseLeave={() => onHover(null)}
                 onFocus={() => onHover(node.node_id)}
                 onBlur={() => onHover(null)}
-                onClick={() => onSelect(node.node_id)}
+                onPointerDown={(event) => {
+                  if (event.button !== 0) {
+                    return;
+                  }
+                  clickCandidateRef.current = node;
+                  clickPointerIdRef.current = event.pointerId;
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onSelect(node);
+                  }
+                }}
               >
                 <title>{`${label}\nHeight: ${node.height}\nSpan: [${node.span_start}, ${node.span_end})\nTokens: ${node.token_count}`}</title>
               </rect>

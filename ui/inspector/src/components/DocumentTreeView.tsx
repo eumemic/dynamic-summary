@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDocumentNodes } from "../hooks/useDocumentNodes";
 import TreeCanvas from "./TreeCanvas";
 import NodeDetailsPanel from "./NodeDetailsPanel";
+import { NodeResponse } from "../types";
 
 interface DocumentTreeViewProps {
   documentId: string;
@@ -38,6 +39,7 @@ export default function DocumentTreeView({
     start: 0,
     end: DEFAULT_WINDOW,
   });
+  const nodeCacheRef = useRef<Map<string, NodeResponse>>(new Map());
 
   useEffect(() => {
     setSpanStart(0);
@@ -49,6 +51,7 @@ export default function DocumentTreeView({
     setQuerySpanStart(0);
     setQuerySpanEnd(DEFAULT_WINDOW);
     querySpanRef.current = { start: 0, end: DEFAULT_WINDOW };
+    nodeCacheRef.current = new Map();
   }, [documentId]);
 
   const span = useMemo(
@@ -146,28 +149,22 @@ export default function DocumentTreeView({
 
   useEffect(() => {
     if (
-      selectedNodeId &&
-      !nodes.some((node) => node.node_id === selectedNodeId)
-    ) {
-      setSelectedNodeId(null);
-    }
-    if (
       hoveredNodeId &&
       !nodes.some((node) => node.node_id === hoveredNodeId)
     ) {
       setHoveredNodeId(null);
     }
-  }, [nodes, selectedNodeId, hoveredNodeId]);
+  }, [nodes, hoveredNodeId]);
 
-  const selectedNode = useMemo(
-    () => nodes.find((node) => node.node_id === selectedNodeId) ?? null,
-    [nodes, selectedNodeId]
-  );
-
-  const hoveredNode = useMemo(
-    () => nodes.find((node) => node.node_id === hoveredNodeId) ?? null,
-    [nodes, hoveredNodeId]
-  );
+  useEffect(() => {
+    if (nodes.length === 0) {
+      return;
+    }
+    const cache = nodeCacheRef.current;
+    for (const node of nodes) {
+      cache.set(node.node_id, node);
+    }
+  }, [nodes]);
 
   const sliderMax =
     documentSpanEnd > 0 ? documentSpanEnd : Math.max(spanEnd, spanStart + 1);
@@ -331,9 +328,15 @@ export default function DocumentTreeView({
     setHoveredNodeId(nodeId);
   };
 
-  const handleSelect = (nodeId: string) => {
-    setSelectedNodeId(nodeId);
+  const handleSelect = (node: NodeResponse) => {
+    setSelectedNodeId(node.node_id);
+    nodeCacheRef.current.set(node.node_id, node);
   };
+
+  const selectedNode =
+    selectedNodeId !== null
+      ? nodeCacheRef.current.get(selectedNodeId) ?? null
+      : null;
 
   return (
     <section className="document-view">
@@ -439,7 +442,7 @@ export default function DocumentTreeView({
           onPanMove={handlePanMove}
           onPanEnd={handlePanEnd}
         />
-        <NodeDetailsPanel node={selectedNode} hoveredNode={hoveredNode} />
+        <NodeDetailsPanel node={selectedNode} />
       </div>
     </section>
   );
