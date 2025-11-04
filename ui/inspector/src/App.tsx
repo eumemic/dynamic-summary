@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DocumentTreeView from "./components/DocumentTreeView";
 import { fetchDocuments } from "./api/client";
 import { DocumentInfo } from "./types";
@@ -71,57 +71,87 @@ export default function App() {
   );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const initialSelectionAppliedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    let pending = false;
+    const firstFetchRef = { current: true };
 
-    fetchDocuments()
-      .then((payload) => {
+    const resolveSelection = (available: DocumentInfo[]) => {
+      setSelectedId((current) => {
+        if (available.length === 0) {
+          initialSelectionAppliedRef.current = false;
+          return null;
+        }
+        if (
+          current &&
+          available.some((doc) => doc.document_id === current)
+        ) {
+          initialSelectionAppliedRef.current = true;
+          return current;
+        }
+        if (!initialSelectionAppliedRef.current) {
+          if (
+            initialQueryState.documentId &&
+            available.some(
+              (doc) => doc.document_id === initialQueryState.documentId
+            )
+          ) {
+            initialSelectionAppliedRef.current = true;
+            return initialQueryState.documentId;
+          }
+        }
+        initialSelectionAppliedRef.current = true;
+        return available[0].document_id;
+      });
+    };
+
+    const loadDocuments = async () => {
+      if (pending) {
+        return;
+      }
+      pending = true;
+      if (firstFetchRef.current) {
+        setLoading(true);
+      }
+      try {
+        const payload = await fetchDocuments();
         if (cancelled) {
           return;
         }
         setDocuments(payload.documents);
-        if (payload.documents.length > 0) {
-          setSelectedId((previous) => {
-            if (
-              previous &&
-              payload.documents.some(
-                (candidate) => candidate.document_id === previous
-              )
-            ) {
-              return previous;
-            }
-            if (
-              initialQueryState.documentId &&
-              payload.documents.some(
-                (candidate) =>
-                  candidate.document_id === initialQueryState.documentId
-              )
-            ) {
-              return initialQueryState.documentId;
-            }
-            return payload.documents[0].document_id;
-          });
-        }
-      })
-      .catch((err: unknown) => {
+        setError(null);
+        resolveSelection(payload.documents);
+      } catch (err) {
         if (cancelled) {
           return;
         }
         const message = err instanceof Error ? err.message : String(err);
         setError(message);
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) {
           setLoading(false);
         }
-      });
+        firstFetchRef.current = false;
+        pending = false;
+      }
+    };
+
+    const intervalId = window.setInterval(loadDocuments, 5000);
+    const handleFocus = () => {
+      void loadDocuments();
+    };
+
+    void loadDocuments();
+    window.addEventListener("focus", handleFocus);
 
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleFocus);
     };
-  }, []);
+  }, [initialQueryState]);
 
   const handleViewStateChange = useCallback(
     ({
