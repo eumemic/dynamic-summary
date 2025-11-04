@@ -47,6 +47,9 @@ export function useDocumentNodes(
   const nodeIdSetRef = useRef<Set<string>>(new Set());
   const previousRequestKeyRef = useRef<string | null>(null);
   const lastSseRefreshRef = useRef<number>(0);
+  const lastQuerySignatureRef = useRef<{ key: string; timestamp: number } | null>(
+    null
+  );
 
   // Fetch span data whenever dependencies change or refresh is triggered.
   useEffect(() => {
@@ -63,9 +66,19 @@ export function useDocumentNodes(
     }
 
     const requestKey = `${documentId}|${spanStart}|${spanEnd}|${limit}|${minHeight ?? ""}|${refreshToken}`;
+    const dedupeKey = `${documentId}|${spanStart}|${spanEnd}|${limit}|${minHeight ?? ""}`;
+    const now = Date.now();
+    if (
+      lastQuerySignatureRef.current &&
+      lastQuerySignatureRef.current.key === dedupeKey &&
+      now - lastQuerySignatureRef.current.timestamp < 120
+    ) {
+      return;
+    }
     if (previousRequestKeyRef.current === requestKey) {
       return;
     }
+    lastQuerySignatureRef.current = { key: dedupeKey, timestamp: now };
     previousRequestKeyRef.current = requestKey;
 
     const controller = new AbortController();
