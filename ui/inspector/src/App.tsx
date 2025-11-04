@@ -5,6 +5,9 @@ import { DocumentInfo, DocumentsStreamEvent } from "./types";
 
 const MIN_NODE_LIMIT = 1;
 const MAX_NODE_LIMIT = 2000;
+const API_BASE =
+  (import.meta.env.VITE_RAGZOOM_API_URL as string | undefined)?.replace(/\/$/, "") ??
+  "";
 
 interface QueryState {
   documentId: string | null;
@@ -146,7 +149,9 @@ export default function App() {
         return;
       }
       cleanupSource();
-      const nextSource = new EventSource("/documents/events");
+      const endpoint =
+        API_BASE === "" ? "/documents/events" : `${API_BASE}/documents/events`;
+      const nextSource = new EventSource(endpoint);
       source = nextSource;
 
       nextSource.onmessage = (event) => {
