@@ -244,6 +244,11 @@ class DocumentNodeRepository:
             raise NotImplementedError(
                 "Underlying repository does not support span queries"
             )
+        if self.document_id is None:
+            raise ValueError(
+                "Span queries require a document scope. "
+                "Ensure DocumentStore.for_document(<document_id>) is used."
+            )
         nodes, total = getter(
             self.document_id,
             int(span_start),
@@ -251,9 +256,6 @@ class DocumentNodeRepository:
             limit=int(limit),
             min_height=None if min_height is None else int(min_height),
         )
-        if self.document_id is None:
-            # Repository already returns scoped records when document_id is None.
-            return nodes, total
         scoped = [node for node in nodes if node.document_id == self.document_id]
         return scoped, total
 

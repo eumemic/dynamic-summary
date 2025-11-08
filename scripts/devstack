@@ -9,7 +9,9 @@ DOCKER_CONFIG_DIR="${ROOT_DIR}/.docker-config"
 export DOCKER_BUILDKIT=0
 export COMPOSE_DOCKER_CLI_BUILD=0
 export DOCKER_CONFIG="${DOCKER_CONFIG_DIR}"
-export DOCKER_HOST="unix:///Users/tom/.docker/run/docker.sock"
+if [ -n "${DEVSTACK_DOCKER_HOST:-}" ]; then
+  export DOCKER_HOST="${DEVSTACK_DOCKER_HOST}"
+fi
 
 if [ -f "${ROOT_DIR}/.env" ]; then
   set -a

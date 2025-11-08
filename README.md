@@ -274,6 +274,9 @@ export RAGZOOM_UI_PORT=56300
 ./scripts/devstack start
 ```
 
+If Docker listens on a non-default socket, set `DEVSTACK_DOCKER_HOST` (or
+`DOCKER_HOST`) before running the script.
+
 Each worktree mounting its own `data/` directory keeps the SQLite database and
 telemetry files isolated, so parallel stacks never collide. The inspector UI served
 from the container already points at the REST API port you expose on the host. When
