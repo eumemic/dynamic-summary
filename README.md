@@ -213,7 +213,8 @@ npm run build
 
 The Vite dev server proxies API calls to `http://localhost:8000`. Override by setting
 `RAGZOOM_API_URL` before running `npm run dev` if your FastAPI instance listens on a
-different origin.
+different origin. When you run the Docker dev stack (below) the dev server is already
+started for you inside the `ui` container.
 
 ### Docker Dev Stack
 
@@ -239,6 +240,17 @@ export OPENAI_API_KEY="sk-..."
 
 # Tear everything down
 ./scripts/devstack stop
+```
+
+Helpful commands:
+
+```
+./scripts/devstack start            # build & start gRPC, API, UI
+./scripts/devstack status           # show container status
+./scripts/devstack logs             # tail all services
+./scripts/devstack exec-cli -- --help    # run ragzoom CLI inside the grpc container
+./scripts/devstack restart api ui   # rebuild/restart specific services
+./scripts/devstack stop             # tear everything down
 ```
 
 For hot reload during development, run the stack in foreground watching mode:
