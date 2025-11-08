@@ -226,3 +226,11 @@ class TestDocumentStoreMethods:
 
         node2 = cross_store.nodes.get_node("doc2_node")
         assert node2 is not None
+
+    def test_get_nodes_in_span_requires_document_scope(
+        self, storage_backend: StorageBackend
+    ) -> None:
+        """Span queries should fail when the store is not scoped to a document."""
+        cross_store = storage_backend.for_document(None)
+        with pytest.raises(ValueError, match="document scope"):
+            cross_store.get_nodes_in_span(0, 100, limit=10)

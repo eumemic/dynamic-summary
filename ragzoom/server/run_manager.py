@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -283,6 +284,32 @@ class TelemetryRunManager:
             "height": height,
             "span_start": span_start,
             "span_end": span_end,
+        }
+
+        await telemetry_log.append_event(context.document_id, event)
+
+    async def record_nodes_deleted(
+        self,
+        context: IndexRunContext,
+        *,
+        node_ids: Sequence[str],
+    ) -> None:
+        if not node_ids or not self._should_log(context):
+            return
+
+        telemetry_log = self._telemetry_log
+        if telemetry_log is None:
+            return
+
+        unique_ids = [node_id for node_id in dict.fromkeys(node_ids) if node_id]
+        if not unique_ids:
+            return
+
+        event: dict[str, object] = {
+            "event": "nodes_deleted",
+            "run_id": context.run_id,
+            "append_id": context.append_id,
+            "node_ids": unique_ids,
         }
 
         await telemetry_log.append_event(context.document_id, event)

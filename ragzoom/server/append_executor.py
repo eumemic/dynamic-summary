@@ -342,6 +342,21 @@ class AppendExecutor:
 
         total_leaves = store.nodes.leaf_count()
         appended_span_end = leaf_specs[-1].span_end
+
+        if (
+            telemetry_manager is not None
+            and run_context is not None
+            and run_context.collect_telemetry
+        ):
+            for leaf in leaf_specs:
+                await telemetry_manager.record_node_committed(
+                    run_context,
+                    node_id=leaf.node_id,
+                    height=0,
+                    span_start=leaf.span_start,
+                    span_end=leaf.span_end,
+                )
+
         logger.debug(
             "append[%s]: completed append (new_total_leaves=%d, span_end=%d)",
             document_id,

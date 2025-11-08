@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+COMPOSE="docker compose -f ${ROOT_DIR}/docker-compose.yml"
+DATA_DIR="${ROOT_DIR}/data"
+HELPER_DIR="${ROOT_DIR}/.docker-bin"
+DOCKER_CONFIG_DIR="${ROOT_DIR}/.docker-config"
+export DOCKER_BUILDKIT=0
+export COMPOSE_DOCKER_CLI_BUILD=0
+export DOCKER_CONFIG="${DOCKER_CONFIG_DIR}"
+if [ -n "${DEVSTACK_DOCKER_HOST:-}" ]; then
+  export DOCKER_HOST="${DEVSTACK_DOCKER_HOST}"
+elif [ -z "${DOCKER_HOST:-}" ]; then
+  if [ -S "/var/run/docker.sock" ]; then
+    export DOCKER_HOST="unix:///var/run/docker.sock"
+  elif [ -S "${HOME}/.docker/run/docker.sock" ]; then
+    export DOCKER_HOST="unix://${HOME}/.docker/run/docker.sock"
+  fi
+fi
+
+if [ -f "${ROOT_DIR}/.env" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "${ROOT_DIR}/.env"
+  set +a
+fi
+
+mkdir -p "${HELPER_DIR}"
+SOURCE_HELPER="/Applications/Docker.app/Contents/Resources/bin/docker-credential-desktop"
+if [ -x "${SOURCE_HELPER}" ]; then
+  ln -sf "${SOURCE_HELPER}" "${HELPER_DIR}/docker-credential-desktop"
+fi
+export PATH="${HELPER_DIR}:$PATH"
+
+mkdir -p "${DOCKER_CONFIG_DIR}"
+if [ ! -f "${DOCKER_CONFIG_DIR}/config.json" ]; then
+  cat <<'JSON' > "${DOCKER_CONFIG_DIR}/config.json"
+{
+  "auths": {}
+}
+JSON
+fi
+
+usage() {
+  cat <<USAGE
+Usage: $(basename "$0") <command> [args]
+
+Commands:
+  start               Build and start the local Docker stack
+  restart             Rebuild and restart services (same args as start)
+  stop                Stop containers and remove volumes
+  logs                Tail logs from all services (Ctrl+C to exit)
+  exec-cli [args...]  Run ragzoom CLI inside the gRPC container
+  status              Show container status
+  watch               Start stack in the foreground with file watching
+USAGE
+}
+
+ensure_data_dir() {
+  mkdir -p "${DATA_DIR}"
+}
+
+check_openai_key() {
+  if [ -z "${OPENAI_API_KEY:-}" ]; then
+    cat <<'WARN' >&2
+[devstack] WARNING: OPENAI_API_KEY is not set.
+The gRPC server requires an API key to generate summaries. Set it before running:
+  export OPENAI_API_KEY="sk-..."
+WARN
+  fi
+}
+
+cmd=${1:-}
+case "$cmd" in
+  start)
+    ensure_data_dir
+    check_openai_key
+    shift
+    ${COMPOSE} build "$@"
+    ${COMPOSE} up -d "$@"
+    echo "Stack started. UI: http://localhost:${RAGZOOM_UI_PORT:-55300}"
+    ;;
+  restart)
+    ensure_data_dir
+    check_openai_key
+    shift
+    ${COMPOSE} stop "$@"
+    ${COMPOSE} build "$@"
+    ${COMPOSE} up -d "$@"
+    echo "Stack restarted. UI: http://localhost:${RAGZOOM_UI_PORT:-55300}"
+    ;;
+  stop)
+    shift
+    ${COMPOSE} down "$@"
+    ;;
+  logs)
+    shift
+    ${COMPOSE} logs -f "$@"
+    ;;
+  exec-cli)
+    shift || true
+    if [ $# -eq 0 ]; then
+      echo "Pass ragzoom CLI arguments after exec-cli" >&2
+      exit 1
+    fi
+    ${COMPOSE} exec grpc python -m ragzoom.cli "$@"
+    ;;
+  status)
+    ${COMPOSE} ps
+    ;;
+  watch)
+    ensure_data_dir
+    check_openai_key
+    shift
+    ${COMPOSE} up --watch --build "$@"
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+ esac

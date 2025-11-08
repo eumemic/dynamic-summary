@@ -1,12 +1,14 @@
 """Document management service for RagZoom."""
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
 from ragzoom.contracts.node_repository import NodeRepository as NodeRepositoryProtocol
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.tree_node import TreeNode
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,35 @@ class SystemStatus:
     leaf_nodes: int
     tree_depth: int
     pinned_nodes: int
+
+
+@dataclass
+class NodeSnapshot:
+    """Serialized view of a tree node for API responses."""
+
+    node_id: str
+    document_id: str | None
+    parent_id: str | None
+    left_child_id: str | None
+    right_child_id: str | None
+    span_start: int
+    span_end: int
+    text: str
+    token_count: int
+    height: int
+    level_index: int
+    preceding_neighbor_id: str | None
+    following_neighbor_id: str | None
+    is_pinned: bool
+    created_at: datetime | None
+
+
+@dataclass
+class NodesPage:
+    """Paginated result for span queries."""
+
+    nodes: list[NodeSnapshot]
+    total_matching: int
 
 
 class DocumentService:
@@ -117,6 +148,64 @@ class DocumentService:
                 ds._node_repo.pin_node(node_id)
                 return
         raise ValueError(f"Node {node_id} not found")
+
+    def get_nodes_in_span(
+        self,
+        document_id: str,
+        span_start: int,
+        span_end: int,
+        *,
+        limit: int,
+        min_height: int | None = None,
+    ) -> NodesPage:
+        """Return ordered nodes overlapping the requested span."""
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        if span_end <= span_start:
+            raise ValueError("span_end must be greater than span_start")
+
+        store = self.store.for_document(document_id)
+        nodes, total = store.get_nodes_in_span(
+            span_start,
+            span_end,
+            limit=limit,
+            min_height=min_height,
+        )
+        snapshots = [self._to_snapshot(node) for node in nodes]
+        return NodesPage(nodes=snapshots, total_matching=total)
+
+    def get_nodes_by_ids(
+        self,
+        document_id: str,
+        node_ids: Sequence[str],
+    ) -> list[NodeSnapshot]:
+        """Return details for a specific set of node IDs."""
+        if not node_ids:
+            return []
+        store = self.store.for_document(document_id)
+        nodes = store.nodes.get_many(list(node_ids))
+        return [self._to_snapshot(node) for node in nodes]
+
+    @staticmethod
+    def _to_snapshot(node: TreeNode) -> NodeSnapshot:
+        """Convert a backend node into an API dataclass."""
+        return NodeSnapshot(
+            node_id=str(getattr(node, "id")),
+            document_id=getattr(node, "document_id", None),
+            parent_id=getattr(node, "parent_id", None),
+            left_child_id=getattr(node, "left_child_id", None),
+            right_child_id=getattr(node, "right_child_id", None),
+            span_start=int(getattr(node, "span_start", 0)),
+            span_end=int(getattr(node, "span_end", 0)),
+            text=str(getattr(node, "text", "")),
+            token_count=int(getattr(node, "token_count", 0)),
+            height=int(getattr(node, "height", 0)),
+            level_index=int(getattr(node, "level_index", 0)),
+            preceding_neighbor_id=getattr(node, "preceding_neighbor_id", None),
+            following_neighbor_id=getattr(node, "following_neighbor_id", None),
+            is_pinned=bool(getattr(node, "is_pinned", 0)),
+            created_at=getattr(node, "created_at", None),
+        )
 
 
 class HasNodeRepo(Protocol):
