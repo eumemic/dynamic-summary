@@ -31,7 +31,18 @@ export function useResizeObserver<T extends HTMLElement>(): [
       if (Array.isArray(box) && box.length > 0) {
         const { inlineSize, blockSize } = box[0];
         setSize({ width: inlineSize, height: blockSize });
-      } else if ("inlineSize" in entry.contentRect) {
+      } else if (
+        box &&
+        typeof box === "object" &&
+        "inlineSize" in box &&
+        "blockSize" in box
+      ) {
+        const { inlineSize, blockSize } = box as {
+          inlineSize: number;
+          blockSize: number;
+        };
+        setSize({ width: inlineSize, height: blockSize });
+      } else {
         setSize({
           width: entry.contentRect.width,
           height: entry.contentRect.height,
