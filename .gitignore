@@ -59,6 +59,10 @@ chroma_db/
 logs/
 agent_logs/
 
+# Docker helper state
+.docker-bin/
+.docker-config/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -1,0 +1,17 @@
+.git
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.tmp
+node_modules
+ui/inspector/node_modules
+ui/inspector/dist
+data
+telemetry
+.tmp
+.venv
+venv
+.dockerignore
+.env
