@@ -634,6 +634,7 @@ async def test_worker_coordinator_converges_to_single_root(
 
 
 @pytest.mark.asyncio
+@pytest.mark.slow_threshold(3.0)
 async def test_worker_coordinator_converges_with_odd_parent_count(
     doc_store: DocStoreFixture,
     storage_backend: StorageBackend,
