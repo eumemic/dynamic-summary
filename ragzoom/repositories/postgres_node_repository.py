@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, TypedDict, cast
 import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import func, or_, text, tuple_, update
+from sqlalchemy import func, literal_column, or_, text, tuple_, update
 
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.models import PostgresTreeNode
@@ -462,6 +462,55 @@ class PostgresNodeRepository(BaseRepository):
                 extracted.append(node)
 
             return extracted
+
+    def get_nodes_overlapping_span(
+        self,
+        document_id: str | None,
+        span_start: int,
+        span_end: int,
+        *,
+        limit: int,
+        min_height: int | None = None,
+    ) -> tuple[list[TreeNode], int]:
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        if span_end <= span_start:
+            raise ValueError("span_end must be greater than span_start")
+
+        with self.SessionLocal() as session:
+            filters = [
+                PostgresTreeNode.span_start < span_end,
+                PostgresTreeNode.span_end > span_start,
+            ]
+            if document_id is not None:
+                filters.append(PostgresTreeNode.document_id == document_id)
+            if min_height is not None:
+                filters.append(PostgresTreeNode.height >= int(min_height))
+
+            query = session.query(PostgresTreeNode).filter(*filters)
+
+            total = int(
+                query.with_entities(func.count(literal_column("1"))).scalar() or 0
+            )
+
+            ordered = (
+                query.order_by(
+                    PostgresTreeNode.height.desc(),
+                    PostgresTreeNode.span_start.asc(),
+                    PostgresTreeNode.level_index.asc(),
+                    PostgresTreeNode.id.asc(),
+                )
+                .limit(limit)
+                .all()
+            )
+
+            nodes: list[TreeNode] = []
+            for node in ordered:
+                self._force_load_and_detach(session, node)
+                self.cache_manager.put(node.id, node)
+                nodes.append(node)
+
+        return nodes, total
 
     def get_rightmost_leaf_for_document(
         self, document_id: str | None

@@ -101,6 +101,121 @@ class TestDocumentService:
         assert deleted_count == 15
         mock_store.clear_document.assert_called_once_with("test-doc")
 
+    def test_get_nodes_in_span_orders_by_height(
+        self, storage_backend: StorageBackend
+    ) -> None:
+        doc_id = "span-doc"
+        doc_store = storage_backend.for_document(doc_id)
+        doc_store.set_metadata(
+            file_path=None,
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        nodes_payload = [
+            {
+                "node_id": "root",
+                "text": "root summary",
+                "span_start": 0,
+                "span_end": 120,
+                "document_id": doc_id,
+                "token_count": 12,
+                "height": 2,
+                "level_index": 0,
+            },
+            {
+                "node_id": "parent-left",
+                "text": "left summary",
+                "span_start": 0,
+                "span_end": 60,
+                "document_id": doc_id,
+                "token_count": 6,
+                "height": 1,
+                "level_index": 0,
+            },
+            {
+                "node_id": "parent-right",
+                "text": "right summary",
+                "span_start": 60,
+                "span_end": 120,
+                "document_id": doc_id,
+                "token_count": 6,
+                "height": 1,
+                "level_index": 1,
+            },
+            {
+                "node_id": "leaf-a",
+                "text": "leaf a",
+                "span_start": 0,
+                "span_end": 30,
+                "document_id": doc_id,
+                "token_count": 3,
+                "height": 0,
+                "level_index": 0,
+            },
+            {
+                "node_id": "leaf-b",
+                "text": "leaf b",
+                "span_start": 30,
+                "span_end": 60,
+                "document_id": doc_id,
+                "token_count": 3,
+                "height": 0,
+                "level_index": 1,
+            },
+        ]
+        doc_store.nodes.add_batch(nodes_payload)  # type: ignore[arg-type]
+
+        service = DocumentService(storage_backend)
+        result = service.get_nodes_in_span(
+            doc_id,
+            span_start=0,
+            span_end=120,
+            limit=3,
+        )
+
+        assert result.total_matching == 5
+        assert [node.node_id for node in result.nodes] == [
+            "root",
+            "parent-left",
+            "parent-right",
+        ]
+
+    def test_get_nodes_by_ids_filters_document(
+        self, storage_backend: StorageBackend
+    ) -> None:
+        doc_id = "batch-doc"
+        other_doc_id = "other-doc"
+        for target in (doc_id, other_doc_id):
+            ds = storage_backend.for_document(target)
+            ds.set_metadata(
+                file_path=None,
+                embedding_model="text-embedding-3-small",
+                summary_model="gpt-4o-mini",
+            )
+            payload = [
+                {
+                    "node_id": f"{target}-n{i}",
+                    "text": f"text {target} {i}",
+                    "span_start": i * 10,
+                    "span_end": i * 10 + 5,
+                    "document_id": target,
+                    "token_count": 1,
+                    "height": 0,
+                    "level_index": i,
+                }
+                for i in range(3)
+            ]
+            ds.nodes.add_batch(payload)  # type: ignore[arg-type]
+
+        service = DocumentService(storage_backend)
+        nodes = service.get_nodes_by_ids(
+            doc_id,
+            [f"{doc_id}-n0", f"{other_doc_id}-n1", f"{doc_id}-n2"],
+        )
+
+        node_ids = {node.node_id for node in nodes}
+        assert node_ids == {f"{doc_id}-n0", f"{doc_id}-n2"}
+
 
 class _StubSession:
     def __init__(self, result: IndexingResult) -> None:

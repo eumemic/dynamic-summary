@@ -359,6 +359,16 @@ class DocumentIndexSession:
                     telemetry_manager=telemetry_manager,
                 )
 
+                if (
+                    telemetry_manager is not None
+                    and run_context is not None
+                    and outcome.deleted_node_ids
+                ):
+                    await telemetry_manager.record_nodes_deleted(
+                        run_context,
+                        node_ids=outcome.deleted_node_ids,
+                    )
+
                 root = document_store.tree.get_root()
                 tree_depth = int(getattr(root, "height", 0) or 0) if root else 0
                 mutated_nodes = len(outcome.new_leaf_ids) + len(
