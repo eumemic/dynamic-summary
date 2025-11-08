@@ -11,6 +11,12 @@ export COMPOSE_DOCKER_CLI_BUILD=0
 export DOCKER_CONFIG="${DOCKER_CONFIG_DIR}"
 if [ -n "${DEVSTACK_DOCKER_HOST:-}" ]; then
   export DOCKER_HOST="${DEVSTACK_DOCKER_HOST}"
+elif [ -z "${DOCKER_HOST:-}" ]; then
+  if [ -S "/var/run/docker.sock" ]; then
+    export DOCKER_HOST="unix:///var/run/docker.sock"
+  elif [ -S "${HOME}/.docker/run/docker.sock" ]; then
+    export DOCKER_HOST="unix://${HOME}/.docker/run/docker.sock"
+  fi
 fi
 
 if [ -f "${ROOT_DIR}/.env" ]; then
