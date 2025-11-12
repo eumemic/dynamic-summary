@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import re
+from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import cast
@@ -15,6 +16,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.model_info import ModelInfo
 from ragzoom.retrieval.embedding_service import EmbeddingService
@@ -33,6 +35,41 @@ EMBEDDING_CONTEXT_LIMITS: dict[str, int] = {
 DEFAULT_EMBED_LIMIT = 8000
 
 WORD_PATTERN = re.compile(r"[A-Za-z][A-Za-z'\-]*")
+HIGH_VALENCE_TERMS = {
+    "necromancer",
+    "dol guldur",
+    "sauron",
+    "smaug",
+    "arkenstone",
+    "thrain",
+    "mirkwood",
+    "lake-town",
+    "durin",
+}
+STOPWORDS = {
+    "the",
+    "and",
+    "to",
+    "of",
+    "in",
+    "for",
+    "on",
+    "a",
+    "with",
+    "said",
+    "as",
+    "at",
+    "be",
+    "by",
+    "that",
+    "had",
+    "it",
+    "but",
+    "or",
+    "while",
+    "from",
+    "into",
+}
 
 
 @dataclass
@@ -42,9 +79,12 @@ class DriftAnalyzerSettings:
     top_k_terms: int = 5
     max_frontier_report: int = 10
     max_vocab_terms: int = 512
-    center_embeddings: bool = False
+    center_embeddings: bool = True
     max_vocab_ngram: int = 3
     min_term_length: int = 3
+    max_batch_items: int = 16
+    max_batch_tokens: int = 6000
+    leaf_baseline_report: int = 0
 
 
 @dataclass
@@ -91,7 +131,13 @@ class DriftAnalysisResult:
     node_metrics: list[NodeDriftMetric] = field(default_factory=list)
     root_direct_cosine: float | None = None
     root_direct_angle_degrees: float | None = None
+    root_direct_angle_uncentered: float | None = None
+    fidelity_uncentered: float | None = None
+    fidelity_uncentered_angle_degrees: float | None = None
     center_embeddings: bool = False
+    alignment_coefficient: float | None = None
+    high_valence_nodes: list[NodeDriftMetric] = field(default_factory=list)
+    leaf_baseline: list[dict[str, object]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
         """JSON-friendly view."""
@@ -108,6 +154,9 @@ class DriftAnalysisResult:
             "compression_ratio": self.compression_ratio,
             "root_direct_cosine": self.root_direct_cosine,
             "root_direct_angle_degrees": self.root_direct_angle_degrees,
+            "root_direct_angle_uncentered": self.root_direct_angle_uncentered,
+            "fidelity_uncentered": self.fidelity_uncentered,
+            "fidelity_uncentered_angle_degrees": self.fidelity_uncentered_angle_degrees,
             "root_frontier_ids": self.root_frontier_ids,
             "drift_vector": self.drift_vector,
             "drift_vector_norm": self.drift_vector_norm,
@@ -120,6 +169,11 @@ class DriftAnalysisResult:
             ],
             "worst_nodes": [metric.__dict__ for metric in self.worst_nodes],
             "node_metrics": [metric.__dict__ for metric in self.node_metrics],
+            "alignment_coefficient": self.alignment_coefficient,
+            "high_valence_nodes": [
+                metric.__dict__ for metric in self.high_valence_nodes
+            ],
+            "leaf_baseline": self.leaf_baseline,
         }
 
 
@@ -145,6 +199,20 @@ class _VocabularyTerm:
     idf: float
 
 
+@dataclass
+class NodePlan:
+    """Precomputed summary/frontier metadata for each node."""
+
+    node_id: str
+    span_chars: int
+    summary_text: str
+    frontier_text: str
+    frontier_ids: list[str]
+    frontier_span_chars: int
+    expanded: bool
+    contains_high_valence: bool
+
+
 class DriftAnalyzer:
     """Scope-aligned frontier drift analyzer."""
 
@@ -157,6 +225,7 @@ class DriftAnalyzer:
         settings: DriftAnalyzerSettings | None = None,
         max_frontier_tokens: int | None = None,
         vector_dim: int | None = None,
+        vector_index: VectorIndex | None = None,
     ) -> None:
         self.document_store = document_store
         self.embedding_service = embedding_service
@@ -175,6 +244,7 @@ class DriftAnalyzer:
         self._vector_bank: list[Vector] = []
         self._vocabulary: list[_VocabularyTerm] = []
         self._doc_id = self.document_store.document_id or ""
+        self.vector_index = vector_index
 
     def analyze(self) -> DriftAnalysisResult:
         """Run analysis for the document attached to this store."""
@@ -195,7 +265,14 @@ class DriftAnalyzer:
         if root.id not in node_map:
             node_map[root.id] = root
 
-        root_delta, _ = self._compute_drift(root, node_map)
+        plan, summary_texts, frontier_texts = self._build_plan(root, node_map)
+        vocab_candidates = self._collect_vocab_candidates(list(node_map.values()))
+        vocab_texts = [text for text, _ in vocab_candidates]
+
+        self._ensure_embeddings(summary_texts, frontier_texts, vocab_texts)
+        self._materialize_records(plan)
+
+        root_delta, _ = self._compute_plan_drift(root.id, plan)
 
         root_record = self._node_records.get(root.id)
         if not root_record:
@@ -220,16 +297,25 @@ class DriftAnalyzer:
         fidelity, fidelity_angle = self._cosine_pair(
             root_vec, estimated_full, center_mean
         )
+        fidelity_uncentered, fidelity_uncentered_angle = self._cosine_pair(
+            root_vec, estimated_full, None
+        )
         compression_ratio = self._compression_ratio(root_vec, estimated_full)
         root_direct_cos, root_direct_angle = self._cosine_pair(
             root_vec, frontiers_vec, center_mean
+        )
+        _, root_direct_angle_uncentered = self._cosine_pair(
+            root_vec, frontiers_vec, None
         )
 
         node_metrics = self._build_node_metrics(center_mean)
         worst_nodes = node_metrics[: self.settings.max_frontier_report]
 
-        vocab_terms = self._build_vocabulary(list(node_map.values()))
+        vocab_terms = self._build_vocabulary(vocab_candidates)
         amplified, deprived = self._project_terms(drift_vector, vocab_terms)
+        alignment = self._compute_alignment_coefficient()
+        high_valence_metrics = self._collect_high_valence_metrics(plan, node_metrics)
+        leaf_baseline = self._build_leaf_baseline_report(node_metrics, plan, node_map)
 
         config_hash = self._compute_config_hash()
 
@@ -252,62 +338,34 @@ class DriftAnalyzer:
             node_metrics=node_metrics,
             root_direct_cosine=root_direct_cos,
             root_direct_angle_degrees=root_direct_angle,
+            root_direct_angle_uncentered=root_direct_angle_uncentered,
+            fidelity_uncentered=fidelity_uncentered,
+            fidelity_uncentered_angle_degrees=fidelity_uncentered_angle,
             center_embeddings=self.settings.center_embeddings,
+            alignment_coefficient=alignment,
+            high_valence_nodes=high_valence_metrics,
+            leaf_baseline=leaf_baseline,
         )
 
-    def _compute_drift(
-        self, node: TreeNode, node_map: dict[str, TreeNode]
+    def _compute_plan_drift(
+        self, node_id: str, plan: dict[str, NodePlan]
     ) -> tuple[Vector, float]:
-        span_chars = self._span_chars(node)
-        summary_text = self._clean_text(node.text)
-        if span_chars <= 0 or not summary_text:
-            logger.debug("Skipping node %s due to empty span/text", node.id)
+        plan_entry = plan.get(node_id)
+        record = self._node_records.get(node_id)
+        if plan_entry is None or record is None:
             return cast(Vector, self._zero.copy()), 0.0
 
-        frontier, expanded = self._frontier_for(node, node_map)
-        frontier_ids = [child.id for child in frontier]
-        frontier_texts = [self._clean_text(child.text) for child in frontier]
-        frontier_texts = [txt for txt in frontier_texts if txt]
-        if not frontier_texts:
-            logger.debug(
-                "Frontier for node %s has no embeddable text; skipping", node.id
-            )
-            return cast(Vector, self._zero.copy()), 0.0
+        local_delta = record.local_delta
+        frontier_span = float(plan_entry.frontier_span_chars)
 
-        baseline_text = "\n".join(frontier_texts)
+        if not plan_entry.expanded:
+            return local_delta, frontier_span
 
-        summary_vec = self._embed(summary_text)
-        frontier_vec = self._embed(baseline_text)
-
-        local_delta = summary_vec - frontier_vec
-        frontier_span = sum(self._span_chars(child) for child in frontier)
-        if frontier_span <= 0:
-            frontier_span = span_chars
-
-        summary_tokens = tokenizer.count_tokens(summary_text)
-        frontier_tokens = tokenizer.count_tokens(baseline_text)
-
-        record = _NodeComputation(
-            node_id=node.id,
-            span_chars=span_chars,
-            frontier_ids=frontier_ids,
-            summary_tokens=summary_tokens,
-            frontier_tokens=frontier_tokens,
-            summary_vec=summary_vec,
-            frontier_vec=frontier_vec,
-            local_delta=local_delta,
-            expanded=expanded,
-        )
-        self._node_records[node.id] = record
-
-        if not expanded:
-            return local_delta, float(frontier_span)
-
-        total_weight = float(frontier_span)
+        total_weight = frontier_span
         weighted_delta = local_delta * total_weight
 
-        for child in frontier:
-            child_delta, child_weight = self._compute_drift(child, node_map)
+        for child_id in plan_entry.frontier_ids:
+            child_delta, child_weight = self._compute_plan_drift(child_id, plan)
             if child_weight <= 0:
                 continue
             weighted_delta = weighted_delta + child_delta * child_weight
@@ -317,6 +375,253 @@ class DriftAnalyzer:
             return cast(Vector, self._zero.copy()), 0.0
 
         return weighted_delta / total_weight, total_weight
+
+    @staticmethod
+    def _contains_high_valence(text: str) -> bool:
+        lower = text.lower()
+        return any(term in lower for term in HIGH_VALENCE_TERMS)
+
+    def _build_plan(
+        self, node: TreeNode, node_map: dict[str, TreeNode]
+    ) -> tuple[dict[str, NodePlan], dict[str, str], list[str]]:
+        plan: dict[str, NodePlan] = {}
+        summary_texts: dict[str, str] = {}
+        frontier_strings: OrderedDict[str, None] = OrderedDict()
+        visited: set[str] = set()
+
+        def visit(current: TreeNode) -> None:
+            if current.id in visited:
+                return
+            visited.add(current.id)
+
+            span_chars = self._span_chars(current)
+            summary_text = self._clean_text(current.text)
+            if span_chars <= 0 or not summary_text:
+                logger.debug(
+                    "Skipping node %s due to missing span/text during planning",
+                    current.id,
+                )
+                return
+
+            frontier, expanded = self._frontier_for(current, node_map)
+            frontier_texts = [
+                self._clean_text(child.text)
+                for child in frontier
+                if self._clean_text(child.text)
+            ]
+            if not frontier_texts:
+                logger.debug(
+                    "Frontier for node %s yielded no embeddable text during planning",
+                    current.id,
+                )
+                return
+
+            baseline_text = "\n".join(frontier_texts)
+            frontier_span = sum(self._span_chars(child) for child in frontier)
+            if frontier_span <= 0:
+                frontier_span = span_chars
+
+            contains_valence = self._contains_high_valence(
+                summary_text
+            ) or self._contains_high_valence(baseline_text)
+
+            plan[current.id] = NodePlan(
+                node_id=current.id,
+                span_chars=span_chars,
+                summary_text=summary_text,
+                frontier_text=baseline_text,
+                frontier_ids=[child.id for child in frontier],
+                frontier_span_chars=frontier_span,
+                expanded=expanded,
+                contains_high_valence=contains_valence,
+            )
+            summary_texts[current.id] = summary_text
+            frontier_strings.setdefault(baseline_text, None)
+
+            if expanded:
+                for child in frontier:
+                    visit(child)
+
+        visit(node)
+
+        if node.id not in plan:
+            raise ValueError("Root node has no analyzable frontier; aborting analysis")
+
+        return plan, summary_texts, list(frontier_strings.keys())
+
+    def _collect_vocab_candidates(
+        self, nodes: Sequence[TreeNode]
+    ) -> list[tuple[str, int]]:
+        candidates: dict[str, tuple[str, int]] = {}
+
+        def register(term: str) -> None:
+            key = term.lower()
+            if len(key) < self.settings.min_term_length:
+                return
+            if key in STOPWORDS:
+                return
+            display, count = candidates.get(key, (term, 0))
+            candidates[key] = (display, count + 1)
+
+        for node in nodes:
+            text = self._clean_text(node.text)
+            if not text:
+                continue
+            tokens = WORD_PATTERN.findall(text)
+            if not tokens:
+                continue
+            for idx in range(len(tokens)):
+                register(tokens[idx])
+                if self.settings.max_vocab_ngram >= 2 and idx + 1 < len(tokens):
+                    register(f"{tokens[idx]} {tokens[idx + 1]}")
+                if self.settings.max_vocab_ngram >= 3 and idx + 2 < len(tokens):
+                    register(f"{tokens[idx]} {tokens[idx + 1]} {tokens[idx + 2]}")
+
+        if not candidates:
+            return []
+
+        sorted_terms = sorted(
+            candidates.items(),
+            key=lambda item: (item[1][1], len(item[1][0])),
+            reverse=True,
+        )
+        limited = sorted_terms[: self.settings.max_vocab_terms]
+        return [(display, count) for _, (display, count) in limited]
+
+    def _ensure_embeddings(
+        self,
+        summary_texts: dict[str, str],
+        frontier_texts: list[str],
+        vocab_texts: list[str],
+    ) -> None:
+        texts_to_embed: OrderedDict[str, None] = OrderedDict()
+
+        stored_vectors = self._fetch_vectors_from_index(list(summary_texts.keys()))
+        for node_id, vector in stored_vectors.items():
+            summary_text = summary_texts.get(node_id)
+            if not summary_text:
+                continue
+            self._cache_embedding(summary_text, vector)
+
+        for node_id, summary_text in summary_texts.items():
+            if summary_text and summary_text not in self._embedding_cache:
+                texts_to_embed.setdefault(summary_text, None)
+
+        for text in frontier_texts:
+            if text and text not in self._embedding_cache:
+                texts_to_embed.setdefault(text, None)
+
+        for text in vocab_texts:
+            if text and text not in self._embedding_cache:
+                texts_to_embed.setdefault(text, None)
+
+        if texts_to_embed:
+            self._embed_text_batches(list(texts_to_embed.keys()))
+
+    def _materialize_records(self, plan: dict[str, NodePlan]) -> None:
+        self._node_records = {}
+        for entry in plan.values():
+            summary_vec = self._embed(entry.summary_text)
+            frontier_vec = self._embed(entry.frontier_text)
+            summary_tokens = tokenizer.count_tokens(entry.summary_text)
+            frontier_tokens = tokenizer.count_tokens(entry.frontier_text)
+            record = _NodeComputation(
+                node_id=entry.node_id,
+                span_chars=entry.span_chars,
+                frontier_ids=entry.frontier_ids,
+                summary_tokens=summary_tokens,
+                frontier_tokens=frontier_tokens,
+                summary_vec=summary_vec,
+                frontier_vec=frontier_vec,
+                local_delta=summary_vec - frontier_vec,
+                expanded=entry.expanded,
+            )
+            self._node_records[entry.node_id] = record
+
+    def _fetch_vectors_from_index(self, node_ids: Sequence[str]) -> dict[str, Vector]:
+        if not self.vector_index:
+            return {}
+        if not node_ids:
+            return {}
+        try:
+            vectors = self.vector_index.get_vectors(list(node_ids))
+        except Exception as exc:  # pragma: no cover - backend failures logged
+            logger.warning("Failed to fetch stored embeddings: %s", exc)
+            return {}
+
+        result: dict[str, Vector] = {}
+        for vector in vectors:
+            if vector.id not in node_ids:
+                continue
+            if vector.model_id and vector.model_id != self.embedding_model:
+                logger.debug(
+                    "Skipping vector %s due to model mismatch (%s != %s)",
+                    vector.id,
+                    vector.model_id,
+                    self.embedding_model,
+                )
+                continue
+            vec_array = np.asarray(vector.vec, dtype=np.float64)
+            if vec_array.shape[0] != self.vector_dim:
+                logger.debug(
+                    "Skipping vector %s due to dimension mismatch (%s != %s)",
+                    vector.id,
+                    vec_array.shape[0],
+                    self.vector_dim,
+                )
+                continue
+            result[vector.id] = vec_array
+        return result
+
+    def _cache_embedding(self, text: str, vector: Vector) -> None:
+        if text in self._embedding_cache:
+            return
+        self._embedding_cache[text] = vector
+        if self.settings.center_embeddings:
+            self._vector_bank.append(vector)
+
+    def _embed_text_batches(self, texts: Sequence[str]) -> None:
+        if not texts:
+            return
+        for batch in self._batch_texts(texts):
+            if not batch:
+                continue
+            embedded = self.embedding_service.embed_texts(
+                batch, document_id=self._doc_id
+            )
+            if len(embedded) != len(batch):
+                raise RuntimeError(
+                    f"Embedding batch returned {len(embedded)} results for {len(batch)} inputs"
+                )
+            for text, values in zip(batch, embedded):
+                vector = np.asarray(values, dtype=np.float64)
+                self._cache_embedding(text, vector)
+
+    def _batch_texts(self, texts: Sequence[str]) -> list[list[str]]:
+        batches: list[list[str]] = []
+        current_batch: list[str] = []
+        current_tokens = 0
+
+        for text in texts:
+            token_count = tokenizer.count_tokens(text)
+            would_exceed_items = len(current_batch) >= self.settings.max_batch_items
+            would_exceed_tokens = (
+                current_batch
+                and current_tokens + token_count > self.settings.max_batch_tokens
+            )
+
+            if current_batch and (would_exceed_items or would_exceed_tokens):
+                batches.append(current_batch)
+                current_batch = []
+                current_tokens = 0
+
+            current_batch.append(text)
+            current_tokens += token_count
+
+        if current_batch:
+            batches.append(current_batch)
+
+        return batches
 
     def _frontier_for(
         self, node: TreeNode, node_map: dict[str, TreeNode]
@@ -414,6 +719,19 @@ class DriftAnalyzer:
         )
         return metrics
 
+    def _compute_alignment_coefficient(self) -> float | None:
+        accum: list[Vector] = []
+        for record in self._node_records.values():
+            norm = float(np.linalg.norm(record.local_delta))
+            if norm == 0.0:
+                continue
+            accum.append(record.local_delta / norm)
+        if not accum:
+            return None
+        stacked = np.vstack(accum)
+        total = stacked.sum(axis=0)
+        return float(np.linalg.norm(total) / len(accum))
+
     def _cosine_pair(
         self,
         vec_a: Vector,
@@ -440,44 +758,17 @@ class DriftAnalyzer:
             return None
         return norm_a / norm_b if norm_b else None
 
-    def _build_vocabulary(self, nodes: Sequence[TreeNode]) -> list[_VocabularyTerm]:
-        candidates: dict[str, tuple[str, int]] = {}
-
-        def register(term: str) -> None:
-            key = term.lower()
-            if len(key) < self.settings.min_term_length:
-                return
-            display, count = candidates.get(key, (term, 0))
-            candidates[key] = (display, count + 1)
-
-        for node in nodes:
-            text = self._clean_text(node.text)
-            if not text:
-                continue
-            tokens = WORD_PATTERN.findall(text)
-            if not tokens:
-                continue
-            for idx in range(len(tokens)):
-                register(tokens[idx])
-                if self.settings.max_vocab_ngram >= 2 and idx + 1 < len(tokens):
-                    register(f"{tokens[idx]} {tokens[idx + 1]}")
-                if self.settings.max_vocab_ngram >= 3 and idx + 2 < len(tokens):
-                    register(f"{tokens[idx]} {tokens[idx + 1]} {tokens[idx + 2]}")
-
+    def _build_vocabulary(
+        self, candidates: Sequence[tuple[str, int]]
+    ) -> list[_VocabularyTerm]:
         if not candidates:
             self._vocabulary = []
             return []
 
-        sorted_terms = sorted(
-            candidates.items(),
-            key=lambda item: (item[1][1], len(item[1][0])),
-            reverse=True,
-        )
-        limited = sorted_terms[: self.settings.max_vocab_terms]
-        total_terms = sum(count for _, (_, count) in limited) or 1
+        total_terms = sum(count for _, count in candidates) or 1
 
         vocab: list[_VocabularyTerm] = []
-        for _, (display, count) in limited:
+        for display, count in candidates:
             embedding = self._embed(display)
             norm = float(np.linalg.norm(embedding))
             if norm == 0.0:
@@ -495,6 +786,16 @@ class DriftAnalyzer:
 
         self._vocabulary = vocab
         return vocab
+
+    def _collect_high_valence_metrics(
+        self, plan: dict[str, NodePlan], metrics: Sequence[NodeDriftMetric]
+    ) -> list[NodeDriftMetric]:
+        flagged: list[NodeDriftMetric] = []
+        for metric in metrics:
+            entry = plan.get(metric.node_id)
+            if entry and entry.contains_high_valence:
+                flagged.append(metric)
+        return flagged[: self.settings.max_frontier_report]
 
     def _project_terms(
         self, delta: Vector, vocab_terms: Sequence[_VocabularyTerm]
@@ -518,6 +819,62 @@ class DriftAnalyzer:
         amplified.sort(key=lambda term: term.score, reverse=True)
         diminished.sort(key=lambda term: term.score, reverse=True)
         return amplified, diminished
+
+    def _build_leaf_baseline_report(
+        self,
+        metrics: Sequence[NodeDriftMetric],
+        plan: dict[str, NodePlan],
+        node_map: dict[str, TreeNode],
+    ) -> list[dict[str, object]]:
+        count = min(self.settings.leaf_baseline_report, len(metrics))
+        if count <= 0:
+            return []
+
+        report: list[dict[str, object]] = []
+        for metric in metrics[:count]:
+            plan_entry = plan.get(metric.node_id)
+            record = self._node_records.get(metric.node_id)
+            if not plan_entry or not record:
+                continue
+            leaf_text = self._gather_leaf_text(metric.node_id, node_map)
+            if not leaf_text:
+                continue
+            leaf_vec = self._embed(leaf_text)
+            cosine, angle = self._cosine_pair(record.summary_vec, leaf_vec, None)
+            compression = self._compression_ratio(record.summary_vec, leaf_vec)
+            report.append(
+                {
+                    "node_id": metric.node_id,
+                    "span_chars": metric.span_chars,
+                    "leaf_angle_degrees": angle,
+                    "leaf_cosine": cosine,
+                    "leaf_compression": compression,
+                }
+            )
+        return report
+
+    def _gather_leaf_text(self, node_id: str, node_map: dict[str, TreeNode]) -> str:
+        node = node_map.get(node_id)
+        if node is None:
+            return ""
+
+        left_id = getattr(node, "left_child_id", None)
+        right_id = getattr(node, "right_child_id", None)
+        if not left_id and not right_id:
+            return self._clean_text(node.text)
+
+        parts: list[str] = []
+        if left_id:
+            text = self._gather_leaf_text(left_id, node_map)
+            if text:
+                parts.append(text)
+        if right_id:
+            text = self._gather_leaf_text(right_id, node_map)
+            if text:
+                parts.append(text)
+        if parts:
+            return "\n".join(parts)
+        return self._clean_text(node.text)
 
     def _compute_config_hash(self) -> str:
         payload = {

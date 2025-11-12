@@ -31,6 +31,11 @@ class FakeEmbeddingService:
     ) -> list[float]:
         return _fake_embed(text, self.dim)
 
+    def embed_texts(
+        self, texts: list[str], document_id: str | None = None
+    ) -> list[list[float]]:
+        return [_fake_embed(text, self.dim) for text in texts]
+
 
 @dataclass
 class FakeNode:

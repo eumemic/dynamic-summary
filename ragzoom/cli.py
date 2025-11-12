@@ -210,14 +210,26 @@ def _print_analysis_report(result: DriftAnalysisResult, top_k: int) -> None:
         f"Compression: {fmt(result.compression_ratio)}  "
         f"Drift norm: {result.drift_vector_norm:.4f}"
     )
+    if result.fidelity_uncentered is not None:
+        click.echo(
+            f"Uncentered fidelity: {fmt(result.fidelity_uncentered)} "
+            f"(angle {fmt(result.fidelity_uncentered_angle_degrees, 2)}°)"
+        )
     click.echo(
         f"Root frontier angle: {fmt(result.root_direct_angle_degrees, 2)}° "
         f"| Frontier nodes: {', '.join(result.root_frontier_ids) or 'None'}"
     )
+    if result.root_direct_angle_uncentered is not None:
+        click.echo(
+            f"Uncentered root frontier angle: "
+            f"{fmt(result.root_direct_angle_uncentered, 2)}°"
+        )
     click.echo(
         f"Frontier budget: {result.max_frontier_tokens} tokens "
         f"| Centered: {'yes' if result.center_embeddings else 'no'}"
     )
+    if result.alignment_coefficient is not None:
+        click.echo(f"Alignment coefficient: {fmt(result.alignment_coefficient, 3)}")
 
     def format_terms(label: str, terms: Sequence[DriftTerm]) -> None:
         if not terms:
@@ -229,6 +241,15 @@ def _print_analysis_report(result: DriftAnalysisResult, top_k: int) -> None:
 
     format_terms("Amplified themes", result.amplified_terms)
     format_terms("De-emphasized themes", result.deemphasized_terms)
+
+    if result.high_valence_nodes:
+        click.echo("\nHigh-valence spans:")
+        header = f"{'Node':<12}{'Span':>10}{'Angle°':>10}"
+        click.echo(header)
+        click.echo("-" * len(header))
+        for metric in result.high_valence_nodes:
+            angle = fmt(metric.local_angle_degrees, 2)
+            click.echo(f"{metric.node_id:<12}{metric.span_chars:>10}{angle:>10}")
 
     if result.worst_nodes:
         click.echo("\nTop frontier drift:")
@@ -248,6 +269,18 @@ def _print_analysis_report(result: DriftAnalysisResult, top_k: int) -> None:
             )
     else:
         click.echo("\nTop frontier drift: no comparable merges found.")
+
+    if result.leaf_baseline:
+        click.echo("\nLeaf baselines:")
+        header = f"{'Node':<12}{'Span':>10}{'Leaf Angle°':>14}"
+        click.echo(header)
+        click.echo("-" * len(header))
+        for entry in result.leaf_baseline:
+            angle_value = cast(float | None, entry.get("leaf_angle_degrees"))
+            angle = fmt(angle_value, 2)
+            span_val = cast(int, entry.get("span_chars", 0))
+            node_val = cast(str, entry.get("node_id", ""))
+            click.echo(f"{node_val:<12}{span_val:>10}{angle:>14}")
 
 
 def configure_logging_level(debug: bool) -> None:
@@ -833,9 +866,16 @@ def validate(
 )
 @click.option(
     "--center-embeddings/--no-center-embeddings",
-    default=False,
+    default=True,
     show_default=True,
     help="Mean-center embeddings before cosine comparisons",
+)
+@click.option(
+    "--leaf-baseline",
+    type=click.IntRange(0, 20),
+    default=0,
+    show_default=True,
+    help="Report leaf-level baselines for the top N frontier nodes",
 )
 @click.option(
     "--json",
@@ -849,6 +889,7 @@ def analyze(
     max_frontier_report: int,
     max_ngrams_vocab: int,
     center_embeddings: bool,
+    leaf_baseline: int,
     json_output: bool,
 ) -> None:
     """Run semantic drift analysis over a document tree."""
@@ -880,6 +921,11 @@ def analyze(
         handle_cli_error(exc, "initializing OpenAI client")
         return
 
+    vector_index = create_vector_index(
+        operational_config.vector_backend,
+        operational_config.database_url,
+        embedding_model,
+    )
     embedding_service = EmbeddingService(client, document_store, embedding_model)
     analyzer = DriftAnalyzer(
         document_store,
@@ -890,7 +936,9 @@ def analyze(
             max_frontier_report=max_frontier_report,
             max_vocab_terms=max_ngrams_vocab,
             center_embeddings=center_embeddings,
+            leaf_baseline_report=leaf_baseline,
         ),
+        vector_index=vector_index,
     )
 
     try:
