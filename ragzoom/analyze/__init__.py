@@ -5,6 +5,7 @@ from ragzoom.analyze.drift import (
     DriftAnalyzer,
     DriftAnalyzerSettings,
     DriftTerm,
+    NodeDriftMetric,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "DriftAnalyzerSettings",
     "DriftAnalysisResult",
     "DriftTerm",
+    "NodeDriftMetric",
 ]

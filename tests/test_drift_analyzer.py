@@ -147,6 +147,7 @@ def test_drift_analyzer_recovers_weighted_delta() -> None:
         max_frontier_report=5,
         max_vocab_terms=100,
         center_embeddings=False,
+        frequency_correction=False,
     )
     analyzer = DriftAnalyzer(
         document_store,
@@ -169,3 +170,78 @@ def test_drift_analyzer_recovers_weighted_delta() -> None:
     np.testing.assert_allclose(result.drift_vector[:dim], expected, atol=1e-9)
     assert result.document_id == store.document_id
     assert result.root_frontier_ids == [mid1.id, mid2.id]
+
+
+def test_frequency_correction_reduces_name_bias() -> None:
+    """Frequency correction should down-weight name inflation in summaries."""
+
+    leaf1 = FakeNode(
+        id="leaf-1",
+        text="Bilbo journeys with friends",
+        span_start=0,
+        span_end=10,
+        height=0,
+    )
+    leaf2 = FakeNode(
+        id="leaf-2",
+        text="Necromancer whispers afar",
+        span_start=10,
+        span_end=20,
+        height=0,
+    )
+    leaf1.parent_id = "root"
+    leaf2.parent_id = "root"
+
+    root = FakeNode(
+        id="root",
+        text="Bilbo Bilbo Bilbo Bilbo",
+        span_start=0,
+        span_end=20,
+        left_child_id=leaf1.id,
+        right_child_id=leaf2.id,
+        height=1,
+    )
+
+    nodes = [root, leaf1, leaf2]
+    store = FakeDocumentStore(nodes, root, embedding_model="text-embedding-3-small")
+    document_store = cast(DocumentStore, store)
+
+    dim = 4
+    embedding_service = cast(EmbeddingService, FakeEmbeddingService(dim=dim))
+    settings = DriftAnalyzerSettings(
+        top_k_terms=3,
+        max_frontier_report=5,
+        max_vocab_terms=100,
+        center_embeddings=False,
+        frequency_correction=True,
+        freq_calibration_pairs=2,
+    )
+    analyzer = DriftAnalyzer(
+        document_store,
+        embedding_service,
+        embedding_model="text-embedding-3-small",
+        settings=settings,
+        max_frontier_tokens=50,
+        vector_dim=dim,
+    )
+
+    result = analyzer.analyze()
+
+    root_metric = next(
+        metric for metric in result.node_metrics if metric.node_id == root.id
+    )
+    assert root_metric.explained_ratio is not None and root_metric.explained_ratio > 0
+    assert root_metric.residual_angle_degrees is not None
+    assert root_metric.local_angle_degrees is not None
+    assert root_metric.residual_angle_degrees < root_metric.local_angle_degrees
+    assert result.frequency_correction is True
+    assert result.frequency_lambda == 1.0
+    assert result.root_frontier_leaf_ratio == 1.0
+    assert result.root_leaf_angle_degrees is not None
+    assert result.lambda_sweep and len(result.lambda_sweep) >= 1
+    assert result.vocab_sweep and len(result.vocab_sweep) == 3
+    assert result.root_js_divergence is not None
+    assert result.root_lift_terms
+    assert result.root_node_id == root.id
+    assert root_metric.term_outlier_score is not None
+    assert root_metric.entity_added >= 0

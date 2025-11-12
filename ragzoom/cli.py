@@ -21,6 +21,7 @@ from ragzoom.analyze import (
     DriftAnalyzer,
     DriftAnalyzerSettings,
     DriftTerm,
+    NodeDriftMetric,
 )
 from ragzoom.client import (
     DocumentStatusView,
@@ -199,37 +200,75 @@ def _print_analysis_report(result: DriftAnalysisResult, top_k: int) -> None:
             return "N/A"
         return f"{value:.{precision}f}"
 
+    def pct(value: float | None) -> str:
+        if value is None:
+            return "N/A"
+        return f"{value * 100:.1f}%"
+
     click.echo(f"Document: {result.document_id}")
     click.echo(
         f"Embedding model: {result.embedding_model} "
         f"(dim={result.embedding_dim}, config={result.config_hash})"
     )
     click.echo(
-        f"Fidelity: {fmt(result.fidelity)} "
+        f"Residual fidelity: {fmt(result.fidelity)} "
         f"(angle {fmt(result.fidelity_angle_degrees, 2)}°)  "
         f"Compression: {fmt(result.compression_ratio)}  "
         f"Drift norm: {result.drift_vector_norm:.4f}"
+    )
+    click.echo(
+        f"Raw fidelity: {fmt(result.fidelity_raw)} "
+        f"(angle {fmt(result.fidelity_raw_angle_degrees, 2)}°)  "
+        f"Raw compression: {fmt(result.compression_ratio_raw)}"
     )
     if result.fidelity_uncentered is not None:
         click.echo(
             f"Uncentered fidelity: {fmt(result.fidelity_uncentered)} "
             f"(angle {fmt(result.fidelity_uncentered_angle_degrees, 2)}°)"
         )
+    root_frontiers = ", ".join(result.root_frontier_ids) or "None"
+    coverage = pct(result.root_frontier_leaf_ratio)
     click.echo(
-        f"Root frontier angle: {fmt(result.root_direct_angle_degrees, 2)}° "
-        f"| Frontier nodes: {', '.join(result.root_frontier_ids) or 'None'}"
+        f"Root frontier angle (raw): {fmt(result.root_direct_angle_degrees, 2)}° "
+        f"| Residual: {fmt(result.root_adjusted_angle_degrees, 2)}° "
+        f"| Raw coverage: {coverage} | Nodes: {root_frontiers}"
     )
     if result.root_direct_angle_uncentered is not None:
         click.echo(
             f"Uncentered root frontier angle: "
             f"{fmt(result.root_direct_angle_uncentered, 2)}°"
         )
+    if result.root_leaf_angle_degrees is not None:
+        click.echo(
+            f"Root trio: θ_frontier={fmt(result.root_direct_angle_degrees, 2)}° "
+            f"| θ_leaf={fmt(result.root_leaf_angle_degrees, 2)}° "
+            f"| Residual fidelity={fmt(result.fidelity)}"
+        )
     click.echo(
         f"Frontier budget: {result.max_frontier_tokens} tokens "
         f"| Centered: {'yes' if result.center_embeddings else 'no'}"
     )
+    freq_line = "Frequency correction: off"
+    if result.frequency_correction:
+        freq_line = f"Frequency correction: on (λ={fmt(result.frequency_lambda, 3)})"
+    click.echo(freq_line)
     if result.alignment_coefficient is not None:
-        click.echo(f"Alignment coefficient: {fmt(result.alignment_coefficient, 3)}")
+        click.echo(
+            f"Residual alignment coefficient: {fmt(result.alignment_coefficient, 3)}"
+        )
+    if result.lambda_sweep:
+        sweep = ", ".join(
+            f"λ={entry['lambda']:.2f}→{entry['fidelity']:.3f}"
+            f" ({entry['angle_degrees']:.1f}°)"
+            for entry in result.lambda_sweep
+        )
+        click.echo(f"λ sweep: {sweep}")
+    if result.vocab_sweep:
+        vocab_line = ", ".join(
+            f"{int(entry['size'])}→{entry['explained_ratio'] * 100:.1f}%"
+            for entry in result.vocab_sweep
+        )
+        click.echo(f"Vocab explained: {vocab_line}")
 
     def format_terms(label: str, terms: Sequence[DriftTerm]) -> None:
         if not terms:
@@ -241,32 +280,46 @@ def _print_analysis_report(result: DriftAnalysisResult, top_k: int) -> None:
 
     format_terms("Amplified themes", result.amplified_terms)
     format_terms("De-emphasized themes", result.deemphasized_terms)
+    if result.root_lift_terms:
+        lift_render = ", ".join(result.root_lift_terms[:top_k])
+        click.echo(f"Lift outliers: {lift_render}")
 
-    if result.high_valence_nodes:
-        click.echo("\nHigh-valence spans:")
-        header = f"{'Node':<12}{'Span':>10}{'Angle°':>10}"
+    def explained(metric: NodeDriftMetric) -> str:
+        if metric.explained_ratio is None:
+            return "N/A"
+        return f"{metric.explained_ratio * 100:.1f}%"
+
+    def render_metric_table(title: str, metrics: Sequence[NodeDriftMetric]) -> None:
+        if not metrics:
+            click.echo(f"\n{title}: none.")
+            return
+        click.echo(f"\n{title}:")
+        header = (
+            f"{'Node':<12}{'Span':>9}{'θ_raw°':>9}"
+            f"{'θ_res°':>9}{'Expl%':>9}{'JSD':>8}{'Outlier':>10}{'Entities':>14}{'Frontier':>18}"
+        )
         click.echo(header)
         click.echo("-" * len(header))
-        for metric in result.high_valence_nodes:
-            angle = fmt(metric.local_angle_degrees, 2)
-            click.echo(f"{metric.node_id:<12}{metric.span_chars:>10}{angle:>10}")
-
-    if result.worst_nodes:
-        click.echo("\nTop frontier drift:")
-        header = f"{'Node':<12}{'Span':>10}{'Angle°':>10}{'Frontier':>18}"
-        click.echo(header)
-        click.echo("-" * len(header))
-        for metric in result.worst_nodes:
+        for metric in metrics:
             frontier_display = (
                 metric.frontier_node_ids[0]
                 if len(metric.frontier_node_ids) <= 1
                 else f"{metric.frontier_node_ids[0]} (+{len(metric.frontier_node_ids) - 1})"
             )
-            angle = fmt(metric.local_angle_degrees, 2)
+            raw_angle = fmt(metric.local_angle_degrees, 2)
+            res_angle = fmt(metric.residual_angle_degrees, 2)
+            explained_val = explained(metric)
+            jsd_val = fmt(metric.js_divergence, 3)
+            outlier = fmt(metric.term_outlier_score, 3)
+            entities = f"+{metric.entity_added}/-{metric.entity_dropped}/↕{metric.entity_moved}"
             click.echo(
-                f"{metric.node_id:<12}{metric.span_chars:>10}"
-                f"{angle:>10}{frontier_display:>18}"
+                f"{metric.node_id:<12}{metric.span_chars:>9}"
+                f"{raw_angle:>9}{res_angle:>9}{explained_val:>9}{jsd_val:>8}"
+                f"{outlier:>10}{entities:>14}{frontier_display:>18}"
             )
+
+    if result.worst_nodes:
+        render_metric_table("Top frontier drift", result.worst_nodes)
     else:
         click.echo("\nTop frontier drift: no comparable merges found.")
 
@@ -860,7 +913,7 @@ def validate(
 @click.option(
     "--max-ngrams-vocab",
     type=click.IntRange(50, 2000),
-    default=512,
+    default=1024,
     show_default=True,
     help="Maximum corpus n-grams to embed for drift interpretation",
 )
@@ -878,6 +931,12 @@ def validate(
     help="Report leaf-level baselines for the top N frontier nodes",
 )
 @click.option(
+    "--freq-correct/--no-freq-correct",
+    default=True,
+    show_default=True,
+    help="Adjust drift vectors using frequency-based residuals",
+)
+@click.option(
     "--json",
     "json_output",
     is_flag=True,
@@ -890,6 +949,7 @@ def analyze(
     max_ngrams_vocab: int,
     center_embeddings: bool,
     leaf_baseline: int,
+    freq_correct: bool,
     json_output: bool,
 ) -> None:
     """Run semantic drift analysis over a document tree."""
@@ -937,6 +997,7 @@ def analyze(
             max_vocab_terms=max_ngrams_vocab,
             center_embeddings=center_embeddings,
             leaf_baseline_report=leaf_baseline,
+            frequency_correction=freq_correct,
         ),
         vector_index=vector_index,
     )
