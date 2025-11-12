@@ -8,13 +8,20 @@ import logging
 import os
 import shutil
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Protocol, cast
 
 import click
 from dotenv import load_dotenv
+from openai import OpenAI
 
+from ragzoom.analyze import (
+    DriftAnalysisResult,
+    DriftAnalyzer,
+    DriftAnalyzerSettings,
+    DriftTerm,
+)
 from ragzoom.client import (
     DocumentStatusView,
     GrpcRagzoomClient,
@@ -24,6 +31,7 @@ from ragzoom.config import (
     IndexConfig,
     OperationalConfig,
     QueryConfig,
+    ensure_secret_str,
 )
 from ragzoom.constants import (
     DEFAULT_GRPC_ADDRESS,
@@ -40,6 +48,7 @@ from ragzoom.exceptions import (
     ValidationError,
 )
 from ragzoom.progress_display import DocumentProgressTotals, WorkerProgressDisplay
+from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.server.app import ServerOptions, run_server
 from ragzoom.services.document_service import DocumentService
 from ragzoom.services.indexing_service import IndexingResult
@@ -180,6 +189,65 @@ def handle_cli_error(e: Exception, operation: str) -> None:
     else:
         click.echo(f"❌ Error during {operation}: {e}", err=True)
     sys.exit(1)
+
+
+def _print_analysis_report(result: DriftAnalysisResult, top_k: int) -> None:
+    """Render a concise, human-readable drift report."""
+
+    def fmt(value: float | None, precision: int = 4) -> str:
+        if value is None:
+            return "N/A"
+        return f"{value:.{precision}f}"
+
+    click.echo(f"Document: {result.document_id}")
+    click.echo(
+        f"Embedding model: {result.embedding_model} "
+        f"(dim={result.embedding_dim}, config={result.config_hash})"
+    )
+    click.echo(
+        f"Fidelity: {fmt(result.fidelity)} "
+        f"(angle {fmt(result.fidelity_angle_degrees, 2)}°)  "
+        f"Compression: {fmt(result.compression_ratio)}  "
+        f"Drift norm: {result.drift_vector_norm:.4f}"
+    )
+    click.echo(
+        f"Root frontier angle: {fmt(result.root_direct_angle_degrees, 2)}° "
+        f"| Frontier nodes: {', '.join(result.root_frontier_ids) or 'None'}"
+    )
+    click.echo(
+        f"Frontier budget: {result.max_frontier_tokens} tokens "
+        f"| Centered: {'yes' if result.center_embeddings else 'no'}"
+    )
+
+    def format_terms(label: str, terms: Sequence[DriftTerm]) -> None:
+        if not terms:
+            click.echo(f"{label}: (none)")
+            return
+        limited = terms[:top_k]
+        rendered = ", ".join(f"{term.text} ({term.score:.3f})" for term in limited)
+        click.echo(f"{label}: {rendered}")
+
+    format_terms("Amplified themes", result.amplified_terms)
+    format_terms("De-emphasized themes", result.deemphasized_terms)
+
+    if result.worst_nodes:
+        click.echo("\nTop frontier drift:")
+        header = f"{'Node':<12}{'Span':>10}{'Angle°':>10}{'Frontier':>18}"
+        click.echo(header)
+        click.echo("-" * len(header))
+        for metric in result.worst_nodes:
+            frontier_display = (
+                metric.frontier_node_ids[0]
+                if len(metric.frontier_node_ids) <= 1
+                else f"{metric.frontier_node_ids[0]} (+{len(metric.frontier_node_ids) - 1})"
+            )
+            angle = fmt(metric.local_angle_degrees, 2)
+            click.echo(
+                f"{metric.node_id:<12}{metric.span_chars:>10}"
+                f"{angle:>10}{frontier_display:>18}"
+            )
+    else:
+        click.echo("\nTop frontier drift: no comparable merges found.")
 
 
 def configure_logging_level(debug: bool) -> None:
@@ -738,6 +806,104 @@ def validate(
 
     if report.status == "failed":
         raise SystemExit(1)
+
+
+@cli.command()
+@click.option("--document-id", "-d", required=True, help="Document ID to analyze")
+@click.option(
+    "--top-k",
+    type=click.IntRange(1, 20),
+    default=5,
+    show_default=True,
+    help="Number of amplified/de-emphasized terms to display",
+)
+@click.option(
+    "--max-frontier-report",
+    type=click.IntRange(1, 50),
+    default=10,
+    show_default=True,
+    help="Number of worst frontier merges to include in the report",
+)
+@click.option(
+    "--max-ngrams-vocab",
+    type=click.IntRange(50, 2000),
+    default=512,
+    show_default=True,
+    help="Maximum corpus n-grams to embed for drift interpretation",
+)
+@click.option(
+    "--center-embeddings/--no-center-embeddings",
+    default=False,
+    show_default=True,
+    help="Mean-center embeddings before cosine comparisons",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Emit JSON instead of a human-readable report",
+)
+def analyze(
+    document_id: str,
+    top_k: int,
+    max_frontier_report: int,
+    max_ngrams_vocab: int,
+    center_embeddings: bool,
+    json_output: bool,
+) -> None:
+    """Run semantic drift analysis over a document tree."""
+
+    index_config = IndexConfig.load()
+    operational_config = OperationalConfig()
+
+    store = create_store_with_docker(
+        operational_config, embedding_model=index_config.embedding_model
+    )
+    document_store = store.for_document(document_id)
+
+    embedding_model = (
+        document_store.get_embedding_model() or index_config.embedding_model
+    )
+    if not embedding_model:
+        raise click.ClickException(
+            "Cannot determine embedding model for this document. "
+            "Re-run indexing with a tracked model to proceed."
+        )
+
+    try:
+        client = OpenAI(
+            api_key=ensure_secret_str(
+                operational_config.openai_api_key, service_name="OpenAI embeddings"
+            )
+        )
+    except Exception as exc:  # pragma: no cover - network/api key errors
+        handle_cli_error(exc, "initializing OpenAI client")
+        return
+
+    embedding_service = EmbeddingService(client, document_store, embedding_model)
+    analyzer = DriftAnalyzer(
+        document_store,
+        embedding_service,
+        embedding_model=embedding_model,
+        settings=DriftAnalyzerSettings(
+            top_k_terms=top_k,
+            max_frontier_report=max_frontier_report,
+            max_vocab_terms=max_ngrams_vocab,
+            center_embeddings=center_embeddings,
+        ),
+    )
+
+    try:
+        result = analyzer.analyze()
+    except Exception as exc:  # pragma: no cover - surfaced via CLI
+        handle_cli_error(exc, "analyzing document semantics")
+        return
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), indent=2))
+        return
+
+    _print_analysis_report(result, top_k)
 
 
 @cli.command()
