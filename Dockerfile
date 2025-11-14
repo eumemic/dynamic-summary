@@ -29,7 +29,7 @@ RUN pip install -e .
 
 # Default environment vars
 ENV RAGZOOM_DATABASE_URL=sqlite:////data/sqlite.db \
-    RAGZOOM_VECTOR_BACKEND=python \
+    RAGZOOM_VECTOR_BACKEND=chroma \
     PYTHONUNBUFFERED=1
 
 # Create data dir (will be mounted as volume at runtime)

@@ -277,10 +277,13 @@ export RAGZOOM_UI_PORT=56300
 If Docker listens on a non-default socket, set `DEVSTACK_DOCKER_HOST` (or
 `DOCKER_HOST`) before running the script.
 
-Each worktree mounting its own `data/` directory keeps the SQLite database and
-telemetry files isolated, so parallel stacks never collide. The inspector UI served
-from the container already points at the REST API port you expose on the host. When
-the stack is running the regular `python -m ragzoom.cli ...` commands will hit the
+Each worktree mounting its own `data/` directory keeps the SQLite database,
+Chroma vector store (`data/chroma/`), and telemetry files isolated, so parallel
+stacks never collide. Because the containers now use the same SQLite + Chroma
+configuration as local CLI runs, embeddings written by devstack are immediately
+visible to host-side tools like `ragzoom analyze`. The inspector UI served from the
+container already points at the REST API port you expose on the host. When the stack
+is running the regular `python -m ragzoom.cli ...` commands will hit the
 containerised gRPC server automatically.
 
 ### gRPC API code generation
