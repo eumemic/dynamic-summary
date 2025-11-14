@@ -88,15 +88,16 @@ class FileDocumentLock(AbstractContextManager[None]):
         try:
             if self._fd is not None and self._locked:
                 try:
+                    if os.name != "nt":
+                        try:
+                            os.unlink(self.path)
+                        except FileNotFoundError:
+                            pass
                     _release_os_lock(self._fd)
                 finally:
                     self._locked = False
         finally:
             self._cleanup_fd()
-            try:
-                os.unlink(self.path)
-            except FileNotFoundError:
-                pass
 
     def _cleanup_fd(self) -> None:
         if self._fd is not None:

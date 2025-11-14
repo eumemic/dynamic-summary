@@ -51,6 +51,7 @@ def _spawn_lock_holder(
 
 
 @pytest.mark.slow_threshold(5.0)
+@pytest.mark.xdist_group("doc-lock")
 def test_cross_process_document_lock(tmp_path: Path) -> None:
     """Process 1 holds the lock; process 2 must fail until release."""
 
@@ -72,7 +73,7 @@ def test_cross_process_document_lock(tmp_path: Path) -> None:
 
     holder = _spawn_lock_holder(env)
     try:
-        deadline = time.time() + 2.0
+        deadline = time.time() + 5.0
         while not acquired_path.exists() and time.time() < deadline:
             time.sleep(0.005)
         assert acquired_path.exists(), "Lock holder did not signal acquisition"
@@ -88,6 +89,7 @@ def test_cross_process_document_lock(tmp_path: Path) -> None:
 
 
 @pytest.mark.slow_threshold(5.0)
+@pytest.mark.xdist_group("doc-lock")
 def test_lock_released_after_abrupt_exit(tmp_path: Path) -> None:
     """Lock must be released when the owning process is terminated."""
 
@@ -109,7 +111,7 @@ def test_lock_released_after_abrupt_exit(tmp_path: Path) -> None:
 
     holder = _spawn_lock_holder(env)
     try:
-        deadline = time.time() + 2.0
+        deadline = time.time() + 5.0
         while not acquired_path.exists() and time.time() < deadline:
             time.sleep(0.005)
         assert acquired_path.exists(), "Lock holder did not signal acquisition"
