@@ -279,12 +279,13 @@ If Docker listens on a non-default socket, set `DEVSTACK_DOCKER_HOST` (or
 
 Each worktree mounting its own `data/` directory keeps the SQLite database,
 Chroma vector store (`data/chroma/`), and telemetry files isolated, so parallel
-stacks never collide. Because the containers now use the same SQLite + Chroma
-configuration as local CLI runs, embeddings written by devstack are immediately
-visible to host-side tools like `ragzoom analyze`. The inspector UI served from the
-container already points at the REST API port you expose on the host. When the stack
-is running the regular `python -m ragzoom.cli ...` commands will hit the
-containerised gRPC server automatically.
+stacks never collide. Because the stack loads your `.env` before starting,
+the containers inherit the same configuration (and defaults) as a local
+`ragzoom server` run: embeddings go to `data/chroma/` by default and are
+immediately visible to host-side tools like `ragzoom analyze`. The inspector
+UI served from the container already points at the REST API port you expose on
+the host. When the stack is running the regular `python -m ragzoom.cli ...`
+commands will hit the containerised gRPC server automatically.
 
 ### gRPC API code generation
 
