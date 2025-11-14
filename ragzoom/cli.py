@@ -40,6 +40,7 @@ from ragzoom.exceptions import (
     ValidationError,
 )
 from ragzoom.progress_display import DocumentProgressTotals, WorkerProgressDisplay
+from ragzoom.runtime_metadata import apply_runtime_metadata
 from ragzoom.server.app import ServerOptions, run_server
 from ragzoom.services.document_service import DocumentService
 from ragzoom.services.indexing_service import IndexingResult
@@ -226,7 +227,9 @@ def cli(ctx: click.Context) -> None:
     ctx.obj["index_config"] = IndexConfig.load()  # Load defaults
     ctx.obj["query_config"] = QueryConfig()
     # CLI defaults to Chroma for vector index; fail if not installed
-    ctx.obj["operational_config"] = OperationalConfig(vector_backend="chroma")
+    ctx.obj["operational_config"] = apply_runtime_metadata(
+        OperationalConfig(vector_backend="chroma")
+    )
 
 
 @cli.command()
@@ -661,7 +664,7 @@ def validate(
     """Validate invariants for a document tree."""
 
     index_config: IndexConfig = ctx.obj["index_config"]
-    operational_config = OperationalConfig()
+    operational_config = apply_runtime_metadata(OperationalConfig())
 
     store = create_store_with_docker(
         operational_config, embedding_model=index_config.embedding_model
@@ -1456,7 +1459,7 @@ def doctor() -> None:
             click.echo("\n🔗 Testing database connection...")
 
             # Create operational config
-            operational_config = OperationalConfig()
+            operational_config = apply_runtime_metadata(OperationalConfig())
 
             # Try to create a store (auto-start only if postgres)
             store = create_store_with_docker(operational_config)

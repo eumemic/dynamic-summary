@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,7 @@ from urllib.parse import urlparse
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.indexing import IndexerRuntime
+from ragzoom.runtime_metadata import write_runtime_metadata
 from ragzoom.server.append_executor import AppendExecutor
 from ragzoom.server.run_manager import TelemetryRunManager
 from ragzoom.server.worker_coordinator import WorkerCoordinator
@@ -93,6 +95,11 @@ class ServerState:
             telemetry_manager=telemetry_run_manager,
             vector_index_factory=vector_factory,
         )
+
+        with contextlib.suppress(
+            Exception
+        ):  # pragma: no cover - best-effort persistence
+            write_runtime_metadata(operational_cfg)
 
         return cls(
             index_config=index_cfg,

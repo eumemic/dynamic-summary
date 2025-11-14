@@ -49,6 +49,7 @@ Usage: $(basename "$0") <command> [args]
 Commands:
   start               Build and start the local Docker stack
   restart             Rebuild and restart services (same args as start)
+  build               Build container images without starting the stack
   stop                Stop containers and remove volumes
   logs                Tail logs from all services (Ctrl+C to exit)
   exec-cli [args...]  Run ragzoom CLI inside the gRPC container
@@ -89,6 +90,11 @@ case "$cmd" in
     ${COMPOSE} build "$@"
     ${COMPOSE} up -d "$@"
     echo "Stack restarted. UI: http://localhost:${RAGZOOM_UI_PORT:-55300}"
+    ;;
+  build)
+    ensure_data_dir
+    shift || true
+    ${COMPOSE} build --pull --no-cache "$@"
     ;;
   stop)
     shift

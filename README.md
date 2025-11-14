@@ -229,6 +229,9 @@ export OPENAI_API_KEY="sk-..."
 # UI available at http://localhost:${RAGZOOM_UI_PORT:-55300}
 # CLI now talks to the stack automatically (gRPC is exposed on 127.0.0.1:50051)
 
+# Rebuild images without starting containers
+./scripts/devstack build
+
 # Tail logs
 ./scripts/devstack logs
 
@@ -246,6 +249,7 @@ Helpful commands:
 
 ```
 ./scripts/devstack start            # build & start gRPC, API, UI
+./scripts/devstack build            # rebuild images from scratch (pull + no cache)
 ./scripts/devstack status           # show container status
 ./scripts/devstack logs             # tail all services
 ./scripts/devstack exec-cli -- --help    # run ragzoom CLI inside the grpc container

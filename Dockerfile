@@ -25,11 +25,11 @@ RUN pip install protobuf
 COPY . .
 
 # Install project in editable mode (ensures entry points available)
-RUN pip install -e .
+RUN pip install -e .[chroma]
 
 # Default environment vars
 ENV RAGZOOM_DATABASE_URL=sqlite:////data/sqlite.db \
-    RAGZOOM_VECTOR_BACKEND=python \
+    RAGZOOM_VECTOR_BACKEND=chroma \
     PYTHONUNBUFFERED=1
 
 # Create data dir (will be mounted as volume at runtime)
