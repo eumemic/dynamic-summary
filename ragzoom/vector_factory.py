@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
+from ragzoom.chroma_compat import chroma_panic_guard
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.worktree_utils import (
     DEFAULT_VECTOR_DIR_NAME,
@@ -43,14 +44,29 @@ def create_vector_index(
         return PythonVectorIndexAdapter(persist_dir, embedding_model)
     elif b == "chroma":
         try:
-            from ragzoom.backends.vector_index_chroma import ChromaVectorIndexAdapter
+            from ragzoom.backends.vector_index_chroma import (
+                ChromaVectorIndexAdapter,
+            )
+
+            chroma_context = chroma_panic_guard
         except Exception as e:  # pragma: no cover - optional dependency
             raise ImportError(
                 "chromadb is not installed but vector backend 'chroma' was selected. "
                 "Install with `pip install chromadb` or set RAGZOOM_VECTOR_BACKEND=python."
             ) from e
         # Chroma requires directory path
-        return ChromaVectorIndexAdapter(persist_dir, embedding_model)
+        with chroma_context():
+            try:
+                return ChromaVectorIndexAdapter(persist_dir, embedding_model)
+            except BaseException as exc:
+                if isinstance(exc, KeyboardInterrupt):
+                    raise
+                raise RuntimeError(
+                    "Failed to open Chroma vector index from the host environment. "
+                    "Run this command inside the devstack container via "
+                    "`./scripts/devstack exec-cli ...` so it can access the server's "
+                    "Chroma data directory."
+                ) from exc
     else:
         # Use Postgres database URL to create pgvector-backed index
         from ragzoom.backends.vector_index_pgvector import PgVectorIndexAdapter

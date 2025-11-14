@@ -733,6 +733,7 @@ async def serve(state: ServerState, *, host: str, port: int) -> None:
 
 async def _render_worker_progress(coordinator: WorkerCoordinator) -> None:
     display = WorkerProgressDisplay(focus_documents=None)
+    idle_logged = False
     try:
         while True:
             status = await coordinator.status()
@@ -750,9 +751,13 @@ async def _render_worker_progress(coordinator: WorkerCoordinator) -> None:
             )
 
             if not active_doc_ids and status.queue_depth == 0 and status.in_flight == 0:
+                if not idle_logged:
+                    logger.info("Worker queue idle (pending=0, inflight=0)")
+                    idle_logged = True
                 display.finish()
                 await asyncio.sleep(0.5)
                 continue
+            idle_logged = False
 
             documents = {
                 doc_id: DocumentProgressTotals(
