@@ -21,7 +21,10 @@ from ragzoom.analyze import (
     DriftAnalyzer,
     DriftAnalyzerSettings,
     DriftTerm,
+    FidelityAnalyzerSettings,
     NodeDriftMetric,
+    SummarizationFidelityAnalyzer,
+    SummarizationFidelityResult,
 )
 from ragzoom.client import (
     DocumentStatusView,
@@ -897,6 +900,13 @@ def validate(
 @cli.command()
 @click.option("--document-id", "-d", required=True, help="Document ID to analyze")
 @click.option(
+    "--mode",
+    type=click.Choice(["drift", "fidelity"]),
+    default="drift",
+    show_default=True,
+    help="Select analyzer mode",
+)
+@click.option(
     "--top-k",
     type=click.IntRange(1, 20),
     default=5,
@@ -909,6 +919,27 @@ def validate(
     default=10,
     show_default=True,
     help="Number of worst frontier merges to include in the report",
+)
+@click.option(
+    "--fidelity-histogram-start",
+    type=click.FloatRange(0.0, 1.0),
+    default=0.6,
+    show_default=True,
+    help="Histogram start (summarization fidelity mode only)",
+)
+@click.option(
+    "--fidelity-histogram-step",
+    type=click.FloatRange(0.01, 1.0),
+    default=0.05,
+    show_default=True,
+    help="Histogram bucket size (fidelity mode only)",
+)
+@click.option(
+    "--fidelity-histogram-count",
+    type=click.IntRange(1, 20),
+    default=5,
+    show_default=True,
+    help="Histogram buckets counted from start (fidelity mode only)",
 )
 @click.option(
     "--max-ngrams-vocab",
@@ -944,15 +975,19 @@ def validate(
 )
 def analyze(
     document_id: str,
+    mode: str,
     top_k: int,
     max_frontier_report: int,
+    fidelity_histogram_start: float,
+    fidelity_histogram_step: float,
+    fidelity_histogram_count: int,
     max_ngrams_vocab: int,
     center_embeddings: bool,
     leaf_baseline: int,
     freq_correct: bool,
     json_output: bool,
 ) -> None:
-    """Run semantic drift analysis over a document tree."""
+    """Run semantic analysis over a document tree."""
 
     index_config = IndexConfig.load()
     operational_config = OperationalConfig()
@@ -981,12 +1016,37 @@ def analyze(
         handle_cli_error(exc, "initializing OpenAI client")
         return
 
+    embedding_service = EmbeddingService(client, document_store, embedding_model)
+
+    if mode == "fidelity":
+        fidelity_analyzer = SummarizationFidelityAnalyzer(
+            document_store,
+            embedding_service,
+            embedding_model=embedding_model,
+            settings=FidelityAnalyzerSettings(
+                top_k_worst=max_frontier_report,
+                histogram_start=fidelity_histogram_start,
+                histogram_bucket_size=fidelity_histogram_step,
+                histogram_buckets=fidelity_histogram_count,
+            ),
+        )
+        try:
+            fidelity_result = fidelity_analyzer.analyze()
+        except Exception as exc:  # pragma: no cover - surfaced via CLI
+            handle_cli_error(exc, "analyzing summarization fidelity")
+            return
+
+        if json_output:
+            click.echo(json.dumps(fidelity_result.to_dict(), indent=2))
+        else:
+            _print_fidelity_report(fidelity_result)
+        return
+
     vector_index = create_vector_index(
         operational_config.vector_backend,
         operational_config.database_url,
         embedding_model,
     )
-    embedding_service = EmbeddingService(client, document_store, embedding_model)
     analyzer = DriftAnalyzer(
         document_store,
         embedding_service,
@@ -1013,6 +1073,55 @@ def analyze(
         return
 
     _print_analysis_report(result, top_k)
+
+
+def _print_fidelity_report(result: SummarizationFidelityResult) -> None:
+    """Render local summarization fidelity metrics."""
+
+    def fmt(value: float | None, precision: int = 4) -> str:
+        if value is None:
+            return "N/A"
+        return f"{value:.{precision}f}"
+
+    click.echo(f"Document: {result.document_id}")
+    click.echo(
+        f"Embedding model: {result.embedding_model} " f"(dim={result.embedding_dim})"
+    )
+    click.echo(
+        f"Merges evaluated: {result.stats.count} | "
+        f"mean fidelity: {fmt(result.stats.mean)} | "
+        f"median: {fmt(result.stats.median)} | "
+        f"stddev: {fmt(result.stats.stddev)}"
+    )
+    click.echo(
+        f"Min fidelity: {fmt(result.stats.minimum)} | "
+        f"max fidelity: {fmt(result.stats.maximum)}"
+    )
+
+    if result.histogram:
+        click.echo("\nHistogram buckets:")
+        for bucket in result.histogram:
+            click.echo(
+                f"  {bucket.start:.2f} – {bucket.end:.2f}: {bucket.count} merges"
+            )
+        if result.histogram_underflow or result.histogram_overflow:
+            click.echo(
+                f"  < start: {result.histogram_underflow} | "
+                f"> end: {result.histogram_overflow}"
+            )
+
+    if result.worst_nodes:
+        click.echo("\nLowest-fidelity merges:")
+        for metric in result.worst_nodes:
+            children = ", ".join(metric.child_ids) or "∅"
+            click.echo(
+                f"  {metric.node_id} ← {children}: "
+                f"fidelity={fmt(metric.fidelity, 3)} "
+                f"(angle {fmt(metric.angle_degrees, 2)}°) "
+                f"tokens={metric.children_tokens}→{metric.parent_tokens}"
+            )
+            click.echo(f"    parent: {metric.parent_preview}")
+            click.echo(f"    children: {metric.children_preview}")
 
 
 @cli.command()

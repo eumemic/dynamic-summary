@@ -626,6 +626,17 @@ ragzoom-telemetry analyze telemetry.json
 ragzoom-telemetry compare baseline.json current.json
 ragzoom-telemetry visualize baseline.json current.json -o comparison.png
 
+# Summarization diagnostics
+ragzoom analyze --document-id DOC_ID --mode fidelity
+ragzoom analyze --document-id DOC_ID --mode drift
+
+Use the new `fidelity` mode to compute straightforward per-merge cosine scores
+between each parent summary and the concatenated text of its children. This
+reports the mean/median/min/max fidelity, standard deviation, histogram
+buckets, and the lowest-scoring merges so you can spot where summarization
+quality degrades. The legacy `drift` mode remains available when you need the
+full frontier-aware analysis.
+
 # Git hooks (automatically installed by setup script)
 # - pre-commit: Runs all quality checks in parallel
 # - Claude hooks: Runs Python checks on every edit

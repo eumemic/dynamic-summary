@@ -7,6 +7,12 @@ from ragzoom.analyze.drift import (
     DriftTerm,
     NodeDriftMetric,
 )
+from ragzoom.analyze.fidelity import (
+    FidelityAnalyzerSettings,
+    NodeFidelityMetric,
+    SummarizationFidelityAnalyzer,
+    SummarizationFidelityResult,
+)
 
 __all__ = [
     "DriftAnalyzer",
@@ -14,4 +20,8 @@ __all__ = [
     "DriftAnalysisResult",
     "DriftTerm",
     "NodeDriftMetric",
+    "SummarizationFidelityAnalyzer",
+    "FidelityAnalyzerSettings",
+    "SummarizationFidelityResult",
+    "NodeFidelityMetric",
 ]
