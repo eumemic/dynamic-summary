@@ -148,7 +148,7 @@ def test_run_incremental_indexing_runs_validation(
         output_dir=tmp_path / "chunks",
         echo=lambda *_: None,
         validate=True,
-        telemetry_output=telemetry_path,
+        telemetry=telemetry_path,
     )
 
     assert wait_calls == [("127.0.0.1:5555", "doc")]
@@ -170,6 +170,59 @@ def test_run_incremental_indexing_runs_validation(
     assert telemetry_cmd in recorded
     assert validate_cmd in recorded
     assert "--collect-telemetry" in index_cmd
+    assert result.telemetry_path == telemetry_path
+
+
+def test_run_incremental_indexing_exports_without_validation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    recorded: list[tuple[str, ...]] = []
+
+    def fake_run_cli(_python: str, args: Sequence[str]) -> None:
+        recorded.append(tuple(str(arg) for arg in args))
+
+    def fake_chunk_document(
+        source: Path, _count: int, output_dir: Path
+    ) -> tuple[Path, ...]:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        chunk = output_dir / "chunk_1.txt"
+        chunk.write_text("chunk", encoding="utf-8")
+        return (chunk,)
+
+    wait_calls: list[tuple[str, str]] = []
+
+    def fake_wait(address: str, document_id: str, _echo: Callable[[str], None]) -> None:
+        wait_calls.append((address, document_id))
+
+    doc = tmp_path / "doc.txt"
+    doc.write_text("hello world", encoding="utf-8")
+    monkeypatch.setattr(incremental, "_run_cli", fake_run_cli)
+    monkeypatch.setattr(incremental, "chunk_document", fake_chunk_document)
+    monkeypatch.setattr(incremental, "_wait_for_workers", fake_wait)
+    monkeypatch.setattr(incremental, "ensure_server_running", lambda *_: None)
+
+    telemetry_path = tmp_path / "telemetry.json"
+    result = incremental.run_incremental_indexing(
+        source=doc,
+        chunk_count=1,
+        python_exec=sys.executable,
+        forward_args=["--server-address", "127.0.0.1:5555"],
+        output_dir=tmp_path / "chunks",
+        echo=lambda *_: None,
+        validate=False,
+        telemetry=telemetry_path,
+    )
+
+    assert wait_calls == [("127.0.0.1:5555", "doc")]
+    telemetry_cmd = (
+        "telemetry-export",
+        "--document-id",
+        "doc",
+        "--output",
+        str(telemetry_path),
+    )
+    assert telemetry_cmd in recorded
+    assert all(cmd[0] != "validate" for cmd in recorded)
     assert result.telemetry_path == telemetry_path
 
 
@@ -196,6 +249,37 @@ def test_cli_main_reports_missing_server(
     assert excinfo.value.code == 1
     err = capsys.readouterr().err
     assert "No RagZoom gRPC server detected" in err
+
+
+def test_cli_main_defaults_telemetry_filename(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    doc = tmp_path / "doc.txt"
+    doc.write_text("hello", encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    def fake_run_incremental_indexing(
+        **kwargs: object,
+    ) -> incremental.IncrementalIndexResult:
+        captured.update(kwargs)
+        return incremental.IncrementalIndexResult(
+            document_id="doc",
+            chunk_directory=tmp_path,
+            chunk_paths=tuple(),
+            sanitized_args=tuple(),
+            applied_no_await=False,
+        )
+
+    monkeypatch.setattr(
+        incremental,
+        "run_incremental_indexing",
+        fake_run_incremental_indexing,
+    )
+
+    incremental.cli_main([str(doc), "--telemetry"])
+
+    assert Path("telemetry.json") == captured.get("telemetry")
 
 
 @pytest.mark.asyncio
@@ -231,7 +315,7 @@ async def test_incremental_index_cli_validates_document(
         output_dir=chunk_root,
         echo=lambda *_: None,
         validate=True,
-        telemetry_output=telemetry_path,
+        telemetry=telemetry_path,
     )
 
     assert telemetry_path.exists()
