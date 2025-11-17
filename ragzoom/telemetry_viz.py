@@ -64,9 +64,10 @@ ATTEMPT_COLORS = [
     "#991b1b",  # Red for retry 4+
 ]
 
-# Legend layout constants
+# Legend/layout constants
 LEGEND_COLUMN_SPACING = 0.5  # Horizontal spacing between legend columns
 LEGEND_HANDLE_TEXT_PAD = 0.3  # Spacing between legend marker and text
+ROW_SPACING = 0.027  # Figure-relative spacing for constrained layout
 
 
 class PlotBoundsDict(TypedDict, total=False):
@@ -417,18 +418,22 @@ class TelemetryVisualizer:
 
         # Create figure with subplots (3 rows only)
         fig = plt.figure(
-            figsize=(FIGURE_WIDTH * 0.33, FIGURE_HEIGHT * 0.7)
+            figsize=(FIGURE_WIDTH * 0.33, FIGURE_HEIGHT * 0.7),
+            constrained_layout=True,
         )  # Slightly taller to accommodate fidelity plot
-        # Use GridSpecFromSubplotSpec for different gaps between rows
+        set_pads = getattr(fig, "set_constrained_layout_pads", None)
+        if callable(set_pads):
+            set_pads(w_pad=0.2, h_pad=0.25, hspace=ROW_SPACING, wspace=0.12)
 
         # Create main grid with 2 sections for different spacing
-        main_gs = GridSpec(
-            2, 1, figure=fig, hspace=0.25, top=0.92, height_ratios=[3, 2]
-        )
+        main_gs = GridSpec(2, 1, figure=fig, height_ratios=[3, 2])
 
         # Top section: Cost Breakdown, Summary Compression, Fidelity
         top_gs = GridSpecFromSubplotSpec(
-            3, 1, subplot_spec=main_gs[0], hspace=0.35, height_ratios=[0.5, 1.2, 1.0]
+            3,
+            1,
+            subplot_spec=main_gs[0],
+            height_ratios=[0.5, 1.2, 1.0],
         )
 
         # Bottom section: Tree Construction Timeline
@@ -473,7 +478,6 @@ class TelemetryVisualizer:
         # Save figure
         self._ensure_output_dir()
         with self._suppress_matplotlib_warnings():
-            plt.tight_layout()
             plt.savefig(self.output_path, bbox_inches="tight")
         plt.close()
 
@@ -592,25 +596,24 @@ class TelemetryVisualizer:
             figsize = (10, 16)
 
         # Create figure with GridSpec for flexible subplot arrangement
-        fig = plt.figure(figsize=figsize)
+        fig = plt.figure(figsize=figsize, constrained_layout=True)
+        set_pads = getattr(fig, "set_constrained_layout_pads", None)
+        if callable(set_pads):
+            set_pads(w_pad=0.25, h_pad=0.3, hspace=ROW_SPACING, wspace=0.18)
 
         # Create main grid with 2 sections for different spacing
-        main_gs = GridSpec(
-            2, 1, figure=fig, hspace=0.25, top=0.92, height_ratios=[3, 2]
-        )
+        main_gs = GridSpec(2, 1, figure=fig, height_ratios=[3, 2])
 
         # Top section: Cost Breakdown, Summary Compression, Fidelity
         top_gs = GridSpecFromSubplotSpec(
             3,
             2,
             subplot_spec=main_gs[0],
-            hspace=0.3,
-            wspace=0.15,
             height_ratios=[0.5, 1.2, 1.0],
         )
 
         # Bottom section: Tree Construction Timeline
-        bottom_gs = GridSpecFromSubplotSpec(1, 2, subplot_spec=main_gs[1], wspace=0.15)
+        bottom_gs = GridSpecFromSubplotSpec(1, 2, subplot_spec=main_gs[1])
 
         # Add super title
         fig.suptitle(
@@ -666,18 +669,15 @@ class TelemetryVisualizer:
         self._plot_tree_construction_timeline(
             telemetry1, ax3_left, max_y_limit=global_max_time, bounds=timeline_bounds
         )
-        ax3_left.set_title("Tree Construction Timeline", fontsize=12, pad=25)
 
         self._plot_tree_construction_timeline(
             telemetry2, ax3_right, max_y_limit=global_max_time, bounds=timeline_bounds
         )
-        ax3_right.set_title("Tree Construction Timeline", fontsize=12, pad=25)
         ax3_right.set_ylabel("")  # Remove y-axis label
 
         # Save figure
         self._ensure_output_dir()
         with self._suppress_matplotlib_warnings():
-            plt.tight_layout()
             plt.savefig(self.output_path, bbox_inches="tight", dpi=SAVE_DPI)
         plt.close()
 
@@ -1950,10 +1950,7 @@ class TelemetryVisualizer:
             ax.set_xlabel("Document Position (characters)")
             ax.set_ylabel("Time Since Start (seconds)")
             # Add extra padding at the top for the legend
-            ax.set_title(
-                "Tree Construction Timeline",
-                pad=25,  # Add padding to make room for legend
-            )
+            ax.set_title("Tree Construction Timeline")
             ax.grid(True, alpha=0.3)
 
             # Add legend for embeddings and attempt colors
@@ -1985,17 +1982,20 @@ class TelemetryVisualizer:
                 legend_elements.extend(attempt_legend_elements[:max_attempts])
 
             if legend_elements:
-                # Place legend horizontally between title and chart
-                ax.legend(
+                legend_columns = 1 if len(legend_elements) <= 3 else 2
+                legend = ax.legend(
                     handles=legend_elements,
-                    loc="upper center",
-                    bbox_to_anchor=(0.5, 1.05),  # Position above chart, below title
-                    ncol=min(len(legend_elements), 6),  # Horizontal layout
+                    loc="upper left",
+                    bbox_to_anchor=(0.01, 0.99),
+                    borderaxespad=0.0,
+                    ncol=legend_columns,
                     fontsize=8,
-                    frameon=False,  # Remove frame for cleaner look
-                    columnspacing=LEGEND_COLUMN_SPACING,  # Reduce horizontal spacing between columns
-                    handletextpad=LEGEND_HANDLE_TEXT_PAD,  # Reduce spacing between legend marker and text
+                    frameon=True,
+                    columnspacing=LEGEND_COLUMN_SPACING,
+                    handletextpad=LEGEND_HANDLE_TEXT_PAD,
                 )
+                legend.get_frame().set_alpha(0.85)
+                legend.get_frame().set_facecolor("white")
         else:
             # No valid data to plot
             ax.text(
