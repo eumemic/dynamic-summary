@@ -237,6 +237,7 @@ class ChunkMetrics:
     cost: CostMetrics
     dispersion: DispersionMetrics
     pipeline_efficiency: float
+    fidelity: "FidelityMetrics | None"
 
 
 @dataclass
@@ -244,6 +245,28 @@ class SimplifiedMetrics:
     """Simplified metrics structure organized by chunk size."""
 
     metrics_by_chunk_size: dict[int, ChunkMetrics]
+
+
+class FidelityWorstNode(TypedDict):
+    """Details about a low-fidelity merge."""
+
+    node_id: str | None
+    height: int | None
+    span: tuple[int, int] | None
+    fidelity: float
+
+
+@dataclass
+class FidelityMetrics:
+    """Summarization fidelity metrics."""
+
+    count: int
+    mean: float
+    median: float
+    minimum: float
+    maximum: float
+    stddev: float
+    worst_nodes: list[FidelityWorstNode]
 
 
 def compute_simplified_metrics(telemetry_data: TelemetryDataDict) -> SimplifiedMetrics:
@@ -323,6 +346,7 @@ def compute_simplified_metrics(telemetry_data: TelemetryDataDict) -> SimplifiedM
                 ),
                 dispersion=compute_dispersion_metrics(chunk_nodes),
                 pipeline_efficiency=calculate_pipeline_efficiency(telemetry_data),
+                fidelity=compute_fidelity_metrics(chunk_nodes),
             )
 
     return SimplifiedMetrics(metrics_by_chunk_size=metrics_by_chunk_size)
@@ -832,6 +856,60 @@ def compute_dispersion_metrics(nodes: list[NodeTelemetryDict]) -> DispersionMetr
         p75=p75,
         cv=cv,
         std=std,
+    )
+
+
+def compute_fidelity_metrics(
+    nodes: Sequence[NodeTelemetryDict],
+) -> FidelityMetrics:
+    """Compute summarization fidelity metrics using stored scalar values."""
+
+    values: list[tuple[NodeTelemetryDict, float]] = []
+    for node in nodes:
+        fidelity_value = node.get("fidelity")
+        if fidelity_value is None:
+            continue
+        values.append((node, float(fidelity_value)))
+
+    count = len(values)
+    if count == 0:
+        return FidelityMetrics(
+            count=0,
+            mean=0.0,
+            median=0.0,
+            minimum=0.0,
+            maximum=0.0,
+            stddev=0.0,
+            worst_nodes=[],
+        )
+
+    fidelity_values = [value for _, value in values]
+    mean_val = statistics.fmean(fidelity_values)
+    median_val = median(fidelity_values)
+    min_val = min(fidelity_values)
+    max_val = max(fidelity_values)
+    std_val = statistics.pstdev(fidelity_values) if count > 1 else 0.0
+
+    values.sort(key=lambda item: item[1])
+    worst_nodes = []
+    for node, value in values[:5]:
+        worst_nodes.append(
+            FidelityWorstNode(
+                node_id=node.get("node_id"),
+                height=node.get("height"),
+                span=node.get("span"),
+                fidelity=value,
+            )
+        )
+
+    return FidelityMetrics(
+        count=count,
+        mean=mean_val,
+        median=median_val,
+        minimum=min_val,
+        maximum=max_val,
+        stddev=std_val,
+        worst_nodes=worst_nodes,
     )
 
 

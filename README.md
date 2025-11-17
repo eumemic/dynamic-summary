@@ -637,6 +637,11 @@ buckets, and the lowest-scoring merges so you can spot where summarization
 quality degrades. The legacy `drift` mode remains available when you need the
 full frontier-aware analysis.
 
+When telemetry is enabled, RagZoom now stores the parent and child-baseline
+embeddings for every summarized node. That data powers the new fidelity metrics
+in `ragzoom-telemetry analyze` and the visualization command, so benchmark runs
+can be compared offline without re-embedding the corpus.
+
 # Git hooks (automatically installed by setup script)
 # - pre-commit: Runs all quality checks in parallel
 # - Claude hooks: Runs Python checks on every edit

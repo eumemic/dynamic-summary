@@ -167,6 +167,12 @@ def test_indexing_performance(
             else:
                 print("  ⚠️  Low parallelism utilization")
 
+        fidelity = getattr(chunk_metrics, "fidelity", None)
+        if fidelity and fidelity.count > 0:
+            print("\nFidelity:")
+            print(f"  mean: {fidelity.mean * 100:.2f}%")
+            print(f"  median: {fidelity.median * 100:.2f}%")
+
     # Summary accuracy (simplified - using only available properties)
     if hasattr(basic_metrics, "summary_stats") and basic_metrics.summary_stats:
         for target, stats in basic_metrics.summary_stats.items():

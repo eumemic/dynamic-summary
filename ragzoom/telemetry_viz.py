@@ -9,6 +9,7 @@ import json
 import logging
 import numbers
 import os
+import statistics
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Literal
@@ -335,6 +336,16 @@ class TelemetryVisualizer:
 
         return input_tokens, output_tokens
 
+    def _extract_fidelity_values(self, telemetry: TelemetryDataDict) -> list[float]:
+        """Extract stored fidelity scalars for visualization."""
+
+        nodes = self._extract_nodes_from_telemetry(telemetry)
+        return [
+            float(node["fidelity"])
+            for node in nodes
+            if isinstance(node.get("fidelity"), int | float)
+        ]
+
     def _extract_span_range(self, telemetry: TelemetryDataDict) -> tuple[float, float]:
         """Extract document span range from telemetry.
 
@@ -406,18 +417,18 @@ class TelemetryVisualizer:
 
         # Create figure with subplots (3 rows only)
         fig = plt.figure(
-            figsize=(FIGURE_WIDTH * 0.33, FIGURE_HEIGHT * 0.6)
-        )  # Reduce width by 2/3 and height
+            figsize=(FIGURE_WIDTH * 0.33, FIGURE_HEIGHT * 0.7)
+        )  # Slightly taller to accommodate fidelity plot
         # Use GridSpecFromSubplotSpec for different gaps between rows
 
         # Create main grid with 2 sections for different spacing
         main_gs = GridSpec(
-            2, 1, figure=fig, hspace=0.25, top=0.92, height_ratios=[2, 2]
+            2, 1, figure=fig, hspace=0.25, top=0.92, height_ratios=[3, 2]
         )
 
-        # Top section: Cost Breakdown and Summary Compression (closer together)
+        # Top section: Cost Breakdown, Summary Compression, Fidelity
         top_gs = GridSpecFromSubplotSpec(
-            2, 1, subplot_spec=main_gs[0], hspace=0.3, height_ratios=[0.6, 1.4]
+            3, 1, subplot_spec=main_gs[0], hspace=0.35, height_ratios=[0.5, 1.2, 1.0]
         )
 
         # Bottom section: Tree Construction Timeline
@@ -436,9 +447,15 @@ class TelemetryVisualizer:
         ax2 = fig.add_subplot(top_gs[1])
         self._plot_summary_scatter(telemetry, ax2, bounds=summary_bounds)
 
-        # 3. Tree Construction Timeline
-        ax3 = fig.add_subplot(bottom_gs[0])
-        self._plot_tree_construction_timeline(telemetry, ax3, bounds=timeline_bounds)
+        # 3. Fidelity distribution
+        ax3 = fig.add_subplot(top_gs[2])
+        self._plot_fidelity_histogram(
+            telemetry, ax3, color="#2563eb", title="Summarization Fidelity"
+        )
+
+        # 4. Tree Construction Timeline
+        ax4 = fig.add_subplot(bottom_gs[0])
+        self._plot_tree_construction_timeline(telemetry, ax4, bounds=timeline_bounds)
 
         # Add title and metadata
         if "config" in data:
@@ -572,31 +589,24 @@ class TelemetryVisualizer:
 
         # Create figure with side-by-side subplots using built-in axis sharing
         if figsize is None:
-            figsize = (
-                10,
-                14,
-            )  # Half the width, slightly taller for double Summary Accuracy
+            figsize = (10, 16)
 
         # Create figure with GridSpec for flexible subplot arrangement
-        # Note: We can't use simple sharex='row' because each row has different x-axis semantics
-        # Row 1: Cost breakdown (categorical x-axis) - no x-sharing
-        # Row 2: Summary scatter (numeric x-axis) - needs x-sharing
-        # Row 3: Timeline (numeric x-axis) - needs x-sharing
         fig = plt.figure(figsize=figsize)
 
         # Create main grid with 2 sections for different spacing
         main_gs = GridSpec(
-            2, 1, figure=fig, hspace=0.25, top=0.92, height_ratios=[2, 2]
+            2, 1, figure=fig, hspace=0.25, top=0.92, height_ratios=[3, 2]
         )
 
-        # Top section: Cost Breakdown and Summary Compression (closer together)
+        # Top section: Cost Breakdown, Summary Compression, Fidelity
         top_gs = GridSpecFromSubplotSpec(
-            2,
+            3,
             2,
             subplot_spec=main_gs[0],
             hspace=0.3,
             wspace=0.15,
-            height_ratios=[0.6, 1.4],
+            height_ratios=[0.5, 1.2, 1.0],
         )
 
         # Bottom section: Tree Construction Timeline
@@ -631,7 +641,25 @@ class TelemetryVisualizer:
         ax2_right.set_title("Summary Compression Patterns", fontsize=12)
         ax2_right.set_ylabel("")  # Remove y-axis label
 
-        # 3. Tree Construction Timeline (share both axes)
+        # 3. Fidelity distributions
+        ax_fidelity_left = fig.add_subplot(top_gs[2, 0])
+        ax_fidelity_right = fig.add_subplot(top_gs[2, 1], sharey=ax_fidelity_left)
+
+        self._plot_fidelity_histogram(
+            telemetry1,
+            ax_fidelity_left,
+            color="#2563eb",
+            title="Fidelity (Baseline)",
+        )
+        self._plot_fidelity_histogram(
+            telemetry2,
+            ax_fidelity_right,
+            color="#ef4444",
+            title="Fidelity (Current)",
+        )
+        ax_fidelity_right.set_ylabel("")
+
+        # 4. Tree Construction Timeline (share both axes)
         ax3_left = fig.add_subplot(bottom_gs[0, 0])
         ax3_right = fig.add_subplot(bottom_gs[0, 1], sharex=ax3_left, sharey=ax3_left)
 
@@ -855,6 +883,58 @@ class TelemetryVisualizer:
         ax.set_xticks([])  # Hide x-axis ticks
         ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, alpha=0.3, axis="y")
+
+    def _plot_fidelity_histogram(
+        self,
+        telemetry: TelemetryDataDict,
+        ax: Axes,
+        *,
+        color: str,
+        title: str,
+    ) -> None:
+        """Plot the distribution of summarization fidelities."""
+
+        values = self._extract_fidelity_values(telemetry)
+        if not values:
+            ax.text(
+                0.5,
+                0.5,
+                "No fidelity data available",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+                fontsize=10,
+                color="#6b7280",
+            )
+            ax.set_axis_off()
+            return
+
+        percents = [value * 100 for value in values]
+        sns.histplot(
+            percents,
+            bins=20,
+            ax=ax,
+            color=color,
+            edgecolor="black",
+            alpha=0.6,
+        )
+        mean_val = statistics.fmean(percents)
+        ax.axvline(mean_val, color=color, linestyle="--", linewidth=1.5)
+        ax.text(
+            mean_val,
+            ax.get_ylim()[1] * 0.85,
+            f"Mean: {mean_val:.1f}%",
+            color=color,
+            ha="center",
+            va="center",
+            fontsize=9,
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.6),
+        )
+        ax.set_xlim(0, 100)
+        ax.set_xlabel("Fidelity (%)")
+        ax.set_ylabel("Node count")
+        ax.set_title(title, fontsize=12)
+        ax.grid(True, alpha=0.2, axis="y")
 
     def _plot_batch_efficiency(self, telemetry: TelemetryDataDict, ax: Axes) -> None:
         """Plot embedding batch efficiency with clear explanations."""

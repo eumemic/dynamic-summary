@@ -22,11 +22,13 @@ FIXED_THRESHOLDS = {
     "Median node processing time": 3.0,  # Maximum 3 seconds
     "Cost per 1M source tokens": 1.0,  # Maximum $1
     "Pipeline efficiency": 94.0,  # Minimum 94% parallelism utilization
+    "Mean summarization fidelity": 90.0,  # Minimum acceptable cosine (%)
 }
 
 # Metrics where higher values are better (minimum thresholds)
 HIGHER_IS_BETTER_METRICS = {
     "Pipeline efficiency",
+    "Mean summarization fidelity",
 }
 
 
@@ -248,6 +250,29 @@ def analyze(telemetry_file: Path) -> None:
             click.echo("  ✅ Moderate parallelism utilization")
         else:
             click.echo("  ⚠️  Low parallelism utilization")
+
+        fidelity = chunk_metrics.fidelity
+        if fidelity and fidelity.count > 0:
+            mean_val = fidelity.mean
+            median_val = fidelity.median
+            min_val = fidelity.minimum
+            max_val = fidelity.maximum
+            click.echo("\n🧪 Summarization Fidelity")
+            click.echo(f"  Mean fidelity:       {mean_val * 100:.2f}%")
+            click.echo(f"  Median fidelity:     {median_val * 100:.2f}%")
+            click.echo(
+                f"  Min → max:           "
+                f"{min_val * 100:.2f}% → {max_val * 100:.2f}%"
+            )
+            if fidelity.worst_nodes:
+                click.echo("  Lowest merges:")
+                for entry in fidelity.worst_nodes[:5]:
+                    fidelity_value = float(entry.get("fidelity", 0.0))
+                    click.echo(
+                        f"    {entry.get('node_id')}: "
+                        f"{fidelity_value * 100:.2f}% "
+                        f"(height {entry.get('height')})"
+                    )
 
         # Outlier detection message
         click.echo("\n💡 To analyze problematic summaries:")
@@ -1256,6 +1281,21 @@ def _format_metrics_for_chunk_with_thresholds(
         higher_is_better=True,
     )
 
+    base_fidelity = base_metrics.fidelity
+    curr_fidelity = curr_metrics.fidelity
+    if (
+        base_fidelity
+        and curr_fidelity
+        and base_fidelity.count > 0
+        and curr_fidelity.count > 0
+    ):
+        _format_comparison_row_with_threshold(
+            "Mean summarization fidelity",
+            base_fidelity.mean * 100,
+            curr_fidelity.mean * 100,
+            higher_is_better=True,
+        )
+
 
 def _prepare_row_data(
     baseline: float,
@@ -1311,6 +1351,7 @@ def _format_comparison_row_with_threshold(
         "Median node processing time": "median_seconds",
         "Cost per 1M source tokens": "cost",
         "Pipeline efficiency": "pipeline_efficiency",
+        "Mean summarization fidelity": "fidelity",
     }
 
     format_metric_name = metric_name_mapping.get(
@@ -1545,6 +1586,7 @@ def _get_unit_for_metric(metric_name: str) -> str:
         # Percentage-based metrics
         "mean_percent_deviation": "%",
         "pipeline_efficiency": "%",
+        "fidelity": "%",
     }
     return units.get(metric_name, "")
 
