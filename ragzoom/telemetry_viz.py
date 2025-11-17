@@ -339,14 +339,15 @@ class TelemetryVisualizer:
 
     def _extract_fidelity_points(
         self, telemetry: TelemetryDataDict
-    ) -> list[tuple[float, float]]:
-        """Extract (document position, fidelity) tuples for scatter plots."""
+    ) -> list[tuple[float, float, int]]:
+        """Extract (document position, fidelity, height) tuples for scatter plots."""
 
         nodes = self._extract_nodes_from_telemetry(telemetry)
-        points: list[tuple[float, float]] = []
+        points: list[tuple[float, float, int]] = []
         for node in nodes:
             fidelity = node.get("fidelity")
             span = node.get("span")
+            height = int(node.get("height", -1))
             if (
                 span
                 and isinstance(fidelity, (int | float))
@@ -355,7 +356,7 @@ class TelemetryVisualizer:
             ):
                 start, end = span
                 midpoint = (float(start) + float(end)) / 2.0
-                points.append((midpoint, float(fidelity)))
+                points.append((midpoint, float(fidelity), height))
         return points
 
     def _extract_span_range(self, telemetry: TelemetryDataDict) -> tuple[float, float]:
@@ -920,12 +921,13 @@ class TelemetryVisualizer:
             ax.set_axis_off()
             return
 
-        positions, fidelities = zip(*points)
+        positions, fidelities, heights = zip(*points)
         drifts = [max(0.0, (1.0 - value) * 100.0) for value in fidelities]
+        colors = ["#1d4ed8" if height == 1 else "#dc2626" for height in heights]
         ax.scatter(
             positions,
             drifts,
-            color=color,
+            c=colors,
             alpha=0.6,
             s=22,
             edgecolors="none",
@@ -951,7 +953,16 @@ class TelemetryVisualizer:
         ax.set_ylabel("Semantic Drift (%)")
         ax.set_title(title, fontsize=12)
         ax.grid(True, alpha=0.2, axis="both")
-        ax.legend(loc="lower right", fontsize=8)
+        legend_elements = [
+            Patch(facecolor="#1d4ed8", label="Leaf merges (height 1)", alpha=0.6),
+            Patch(facecolor="#dc2626", label="Higher-level merges", alpha=0.6),
+        ]
+        ax.legend(
+            handles=legend_elements,
+            loc="lower right",
+            fontsize=8,
+            frameon=True,
+        )
 
     def _plot_batch_efficiency(self, telemetry: TelemetryDataDict, ax: Axes) -> None:
         """Plot embedding batch efficiency with clear explanations."""
