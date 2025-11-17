@@ -337,15 +337,26 @@ class TelemetryVisualizer:
 
         return input_tokens, output_tokens
 
-    def _extract_fidelity_values(self, telemetry: TelemetryDataDict) -> list[float]:
-        """Extract stored fidelity scalars for visualization."""
+    def _extract_fidelity_points(
+        self, telemetry: TelemetryDataDict
+    ) -> list[tuple[float, float]]:
+        """Extract (document position, fidelity) tuples for scatter plots."""
 
         nodes = self._extract_nodes_from_telemetry(telemetry)
-        return [
-            float(node["fidelity"])
-            for node in nodes
-            if isinstance(node.get("fidelity"), int | float)
-        ]
+        points: list[tuple[float, float]] = []
+        for node in nodes:
+            fidelity = node.get("fidelity")
+            span = node.get("span")
+            if (
+                span
+                and isinstance(fidelity, (int | float))
+                and isinstance(span, (list | tuple))
+                and len(span) == 2
+            ):
+                start, end = span
+                midpoint = (float(start) + float(end)) / 2.0
+                points.append((midpoint, float(fidelity)))
+        return points
 
     def _extract_span_range(self, telemetry: TelemetryDataDict) -> tuple[float, float]:
         """Extract document span range from telemetry.
@@ -454,7 +465,7 @@ class TelemetryVisualizer:
 
         # 3. Fidelity distribution
         ax3 = fig.add_subplot(top_gs[2])
-        self._plot_fidelity_histogram(
+        self._plot_fidelity_scatter(
             telemetry, ax3, color="#2563eb", title="Summarization Fidelity"
         )
 
@@ -648,13 +659,13 @@ class TelemetryVisualizer:
         ax_fidelity_left = fig.add_subplot(top_gs[2, 0])
         ax_fidelity_right = fig.add_subplot(top_gs[2, 1], sharey=ax_fidelity_left)
 
-        self._plot_fidelity_histogram(
+        self._plot_fidelity_scatter(
             telemetry1,
             ax_fidelity_left,
             color="#2563eb",
             title="Fidelity (Baseline)",
         )
-        self._plot_fidelity_histogram(
+        self._plot_fidelity_scatter(
             telemetry2,
             ax_fidelity_right,
             color="#ef4444",
@@ -884,7 +895,7 @@ class TelemetryVisualizer:
         ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, alpha=0.3, axis="y")
 
-    def _plot_fidelity_histogram(
+    def _plot_fidelity_scatter(
         self,
         telemetry: TelemetryDataDict,
         ax: Axes,
@@ -892,10 +903,10 @@ class TelemetryVisualizer:
         color: str,
         title: str,
     ) -> None:
-        """Plot the distribution of summarization fidelities."""
+        """Plot summarization fidelity per node over document position."""
 
-        values = self._extract_fidelity_values(telemetry)
-        if not values:
+        points = self._extract_fidelity_points(telemetry)
+        if not points:
             ax.text(
                 0.5,
                 0.5,
@@ -909,32 +920,38 @@ class TelemetryVisualizer:
             ax.set_axis_off()
             return
 
-        percents = [value * 100 for value in values]
-        sns.histplot(
-            percents,
-            bins=20,
-            ax=ax,
+        positions, fidelities = zip(*points)
+        drifts = [max(0.0, (1.0 - value) * 100.0) for value in fidelities]
+        ax.scatter(
+            positions,
+            drifts,
             color=color,
-            edgecolor="black",
             alpha=0.6,
+            s=22,
+            edgecolors="none",
         )
-        mean_val = statistics.fmean(percents)
-        ax.axvline(mean_val, color=color, linestyle="--", linewidth=1.5)
-        ax.text(
-            mean_val,
-            ax.get_ylim()[1] * 0.85,
-            f"Mean: {mean_val:.1f}%",
+
+        # Highlight overall fidelity trend
+        mean_drift = statistics.fmean(drifts)
+        ax.axhline(
+            mean_drift,
             color=color,
-            ha="center",
-            va="center",
-            fontsize=9,
-            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.6),
+            linestyle="--",
+            linewidth=1.5,
+            label=f"Mean semantic drift: {mean_drift:.1f}%",
         )
-        ax.set_xlim(0, 100)
-        ax.set_xlabel("Fidelity (%)")
-        ax.set_ylabel("Node count")
+
+        # Align x-axis with document span for consistency
+        span_min, span_max = self._extract_span_range(telemetry)
+        ax.set_xlim(span_min, span_max)
+        max_drift = max(drifts) if drifts else 0.0
+        upper = max(1.0, max_drift * 1.1)
+        ax.set_ylim(0.0, upper)
+        ax.set_xlabel("Document Position (characters)")
+        ax.set_ylabel("Semantic Drift (%)")
         ax.set_title(title, fontsize=12)
-        ax.grid(True, alpha=0.2, axis="y")
+        ax.grid(True, alpha=0.2, axis="both")
+        ax.legend(loc="lower right", fontsize=8)
 
     def _plot_batch_efficiency(self, telemetry: TelemetryDataDict, ax: Axes) -> None:
         """Plot embedding batch efficiency with clear explanations."""
