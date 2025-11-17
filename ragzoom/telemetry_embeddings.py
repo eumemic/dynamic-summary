@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, MutableMapping, Sequence
 from typing import Protocol
 
 import numpy as np
@@ -45,7 +45,73 @@ async def compute_fidelity_for_telemetry(
     if not parent_ids:
         return
 
-    node_map = {node.id: node for node in document_store.nodes.get_many(parent_ids)}
+    await _compute_fidelity(
+        document_store=document_store,
+        parent_ids=parent_ids,
+        vector_index=vector_index,
+        embedder=embedder,
+        token_limit=token_limit,
+        max_batch_items=max_batch_items,
+        record_callback=collector.record_node_fidelity,
+    )
+
+
+async def annotate_telemetry_fidelity(
+    *,
+    document_store: DocumentStore,
+    telemetry_nodes: Sequence[object],
+    vector_index: VectorIndex,
+    embedder: EmbeddingProvider,
+    token_limit: int,
+    max_batch_items: int,
+) -> None:
+    """Compute semantic drift for exported telemetry payload."""
+
+    node_lookup: dict[str, MutableMapping[str, object]] = {}
+    parent_ids: list[str] = []
+    for entry in telemetry_nodes:
+        if not isinstance(entry, MutableMapping):
+            continue
+        node_id = entry.get("node_id")
+        if not isinstance(node_id, str):
+            continue
+        height = entry.get("height", 0)
+        node_lookup[node_id] = entry
+        if isinstance(height, int) and height > 0:
+            parent_ids.append(node_id)
+
+    if not parent_ids:
+        return
+
+    def record(node_id: str, fidelity: float) -> None:
+        node = node_lookup.get(node_id)
+        if node is not None:
+            node["fidelity"] = fidelity
+
+    await _compute_fidelity(
+        document_store=document_store,
+        parent_ids=parent_ids,
+        vector_index=vector_index,
+        embedder=embedder,
+        token_limit=token_limit,
+        max_batch_items=max_batch_items,
+        record_callback=record,
+    )
+
+
+async def _compute_fidelity(
+    *,
+    document_store: DocumentStore,
+    parent_ids: Sequence[str],
+    vector_index: VectorIndex,
+    embedder: EmbeddingProvider,
+    token_limit: int,
+    max_batch_items: int,
+    record_callback: Callable[[str, float], None],
+) -> None:
+    node_map = {
+        node.id: node for node in document_store.nodes.get_many(list(parent_ids))
+    }
     for node_id in parent_ids:
         if node_id not in node_map:
             node = document_store.nodes.get(node_id)
@@ -98,7 +164,7 @@ async def compute_fidelity_for_telemetry(
                 parent_vec, np.asarray(child_vec, dtype=np.float64)
             )
             if fidelity is not None:
-                collector.record_node_fidelity(node_id, fidelity)
+                record_callback(node_id, fidelity)
 
 
 async def _resolve_parent_vectors(
@@ -179,7 +245,7 @@ def _safe_get_vectors(vector_index: VectorIndex, ids: list[str]) -> list[Vector]
     try:
         return vector_index.get_vectors(ids)
     except Exception as exc:
-        logger.warning("Failed to fetch %d vectors: %s", len(ids), exc)
+        logger.debug("Failed to fetch %d vectors: %s", len(ids), exc)
         return []
 
 

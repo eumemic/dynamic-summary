@@ -13,7 +13,10 @@ from ragzoom.telemetry_collection import (
     SummaryAttempt,
     TelemetryCollector,
 )
-from ragzoom.telemetry_embeddings import compute_fidelity_for_telemetry
+from ragzoom.telemetry_embeddings import (
+    annotate_telemetry_fidelity,
+    compute_fidelity_for_telemetry,
+)
 from tests.conftest import IndexerRuntimeHarness
 from tests.utils import create_telemetry_summary_mock
 from tests.vector_index_stubs import RecordingVectorIndex
@@ -325,6 +328,104 @@ class TestTelemetryCollection:
         )
 
         fidelity = reporter.node_telemetry[parent.id].fidelity
+        assert fidelity is not None
+        assert fidelity == pytest.approx(0.6, rel=1e-6)
+
+    @pytest.mark.asyncio
+    async def test_annotate_telemetry_fidelity_updates_nodes(self) -> None:
+        """Exported telemetry payloads should be annotated with fidelity values."""
+
+        @dataclass
+        class _Node:
+            id: str
+            text: str
+            height: int
+            span_start: int
+            span_end: int
+            document_id: str = "doc"
+            parent_id: str | None = None
+            left_child_id: str | None = None
+            right_child_id: str | None = None
+
+        class _Nodes:
+            def __init__(self, nodes: list[_Node]) -> None:
+                self._nodes = {node.id: node for node in nodes}
+
+            def get_many(self, ids: list[str]) -> list[_Node]:
+                return [
+                    self._nodes[node_id] for node_id in ids if node_id in self._nodes
+                ]
+
+            def get(self, node_id: str) -> _Node | None:
+                return self._nodes.get(node_id)
+
+        class _Store:
+            def __init__(self, nodes: list[_Node]) -> None:
+                self.nodes = _Nodes(nodes)
+
+            def get_embedding_model(self) -> str:
+                return "text-embedding-3-small"
+
+        class _MappingEmbedder:
+            def __init__(self, mapping: dict[str, list[float]]) -> None:
+                self.mapping = mapping
+
+            async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+                return [self.mapping[text] for text in texts]
+
+        class _MissingVectorIndex:
+            def get_vectors(self, ids: list[str]) -> list[object]:
+                raise KeyError(f"Vector not found for id {ids[0]}")
+
+        parent = _Node(
+            id="parent",
+            text="Summary",
+            height=1,
+            span_start=0,
+            span_end=64,
+        )
+        child_a = _Node(
+            id="child-a",
+            text="Chunk A",
+            height=0,
+            span_start=0,
+            span_end=32,
+            parent_id=parent.id,
+        )
+        child_b = _Node(
+            id="child-b",
+            text="Chunk B",
+            height=0,
+            span_start=32,
+            span_end=64,
+            parent_id=parent.id,
+        )
+        parent.left_child_id = child_a.id
+        parent.right_child_id = child_b.id
+
+        store = _Store([parent, child_a, child_b])
+        combined_children = f"{child_a.text}\n{child_b.text}"
+        embedder = _MappingEmbedder(
+            {parent.text: [1.0, 0.0], combined_children: [0.6, 0.8]}
+        )
+
+        telemetry_nodes = [
+            {"node_id": parent.id, "height": 1},
+            {"node_id": child_a.id, "height": 0},
+            {"node_id": child_b.id, "height": 0},
+        ]
+
+        await annotate_telemetry_fidelity(
+            document_store=store,  # type: ignore[arg-type]
+            telemetry_nodes=telemetry_nodes,
+            vector_index=_MissingVectorIndex(),  # type: ignore[arg-type]
+            embedder=embedder,
+            token_limit=2048,
+            max_batch_items=16,
+        )
+
+        parent_entry = telemetry_nodes[0]
+        fidelity = parent_entry.get("fidelity")
         assert fidelity is not None
         assert fidelity == pytest.approx(0.6, rel=1e-6)
 

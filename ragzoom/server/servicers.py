@@ -24,6 +24,7 @@ from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
 from ragzoom.server.state import ServerState
 from ragzoom.server.worker_coordinator import WorkerCoordinator, WorkerStatus
 from ragzoom.services.indexing_service import IndexingResult
+from ragzoom.telemetry_embeddings import annotate_telemetry_fidelity
 from ragzoom.telemetry_export import (
     TelemetryExportError,
     export_document_telemetry,
@@ -609,6 +610,32 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
                 error=str(exc),
             )
             return cast("ExportTelemetryResponseProto", response)
+
+        nodes = telemetry.get("nodes")
+        if isinstance(nodes, list) and nodes:
+            embedding_model = (
+                doc_store.get_embedding_model()
+                or self._state.index_config.embedding_model
+            )
+            vector_index = create_vector_index(
+                self._state.operational_config.vector_backend,
+                self._state.operational_config.database_url,
+                embedding_model,
+            )
+            token_limit = getattr(
+                self._state.llm_service, "_embedding_batch_token_limit", 8000
+            )
+            max_items = getattr(
+                self._state.llm_service, "_provider_max_embedding_batch_size", 1000
+            )
+            await annotate_telemetry_fidelity(
+                document_store=doc_store,
+                telemetry_nodes=nodes,
+                vector_index=vector_index,
+                embedder=self._state.llm_service,
+                token_limit=token_limit,
+                max_batch_items=max_items,
+            )
 
         response_cls = getattr(pb2, "ExportTelemetryResponse")
         response = response_cls(

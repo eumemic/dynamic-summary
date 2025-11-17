@@ -22,7 +22,6 @@ from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.server.run_manager import IndexRunContext, TelemetryRunManager
-from ragzoom.telemetry_embeddings import compute_fidelity_for_telemetry
 from ragzoom.vector_factory import create_vector_index
 
 if TYPE_CHECKING:  # pragma: no cover - import only for typing
@@ -1007,25 +1006,6 @@ class WorkerCoordinator:
                 else:
                     break
         for run_id in ready:
-            context = await self._run_manager.get_run(run_id)
-            collector = context.telemetry_collector if context else None
-            if collector:
-                doc_store = self._store.for_document(document_id)
-                vector_index = self._vector_index_factory(document_id)
-                token_limit = getattr(
-                    self._llm_service, "_embedding_batch_token_limit", 8000
-                )
-                max_items = getattr(
-                    self._llm_service, "_provider_max_embedding_batch_size", 1000
-                )
-                await compute_fidelity_for_telemetry(
-                    document_store=doc_store,
-                    collector=collector,
-                    vector_index=vector_index,
-                    embedder=self._llm_service,
-                    token_limit=token_limit,
-                    max_batch_items=max_items,
-                )
             await self._run_manager.complete_run(run_id, error=None)
             await self.detach_run(document_id, run_id)
 
