@@ -14,13 +14,7 @@ from typing import Protocol, cast
 
 import click
 from dotenv import load_dotenv
-from openai import OpenAI
 
-from ragzoom.analyze import (
-    FidelityAnalyzerSettings,
-    SummarizationFidelityAnalyzer,
-    SummarizationFidelityResult,
-)
 from ragzoom.client import (
     DocumentStatusView,
     GrpcRagzoomClient,
@@ -30,7 +24,6 @@ from ragzoom.config import (
     IndexConfig,
     OperationalConfig,
     QueryConfig,
-    ensure_secret_str,
 )
 from ragzoom.constants import (
     DEFAULT_GRPC_ADDRESS,
@@ -47,7 +40,6 @@ from ragzoom.exceptions import (
     ValidationError,
 )
 from ragzoom.progress_display import DocumentProgressTotals, WorkerProgressDisplay
-from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.server.app import ServerOptions, run_server
 from ragzoom.services.document_service import DocumentService
 from ragzoom.services.indexing_service import IndexingResult
@@ -768,155 +760,6 @@ def validate(
 
     if report.status == "failed":
         raise SystemExit(1)
-
-
-@cli.command()
-@click.option("--document-id", "-d", required=True, help="Document ID to analyze")
-@click.option(
-    "--worst-merges",
-    "--max-frontier-report",
-    "worst_merges",
-    type=click.IntRange(1, 50),
-    default=10,
-    show_default=True,
-    help="Number of lowest-fidelity merges to display",
-)
-@click.option(
-    "--fidelity-histogram-start",
-    type=click.FloatRange(0.0, 1.0),
-    default=0.6,
-    show_default=True,
-    help="Histogram start percentage",
-)
-@click.option(
-    "--fidelity-histogram-step",
-    type=click.FloatRange(0.01, 1.0),
-    default=0.05,
-    show_default=True,
-    help="Histogram bucket size",
-)
-@click.option(
-    "--fidelity-histogram-count",
-    type=click.IntRange(1, 20),
-    default=5,
-    show_default=True,
-    help="Number of histogram buckets to display",
-)
-@click.option(
-    "--json",
-    "json_output",
-    is_flag=True,
-    help="Emit JSON instead of a human-readable report",
-)
-def analyze(
-    document_id: str,
-    worst_merges: int,
-    fidelity_histogram_start: float,
-    fidelity_histogram_step: float,
-    fidelity_histogram_count: int,
-    json_output: bool,
-) -> None:
-    """Run semantic analysis over a document tree."""
-
-    index_config = IndexConfig.load()
-    operational_config = OperationalConfig()
-
-    store = create_store_with_docker(
-        operational_config, embedding_model=index_config.embedding_model
-    )
-    document_store = store.for_document(document_id)
-
-    embedding_model = (
-        document_store.get_embedding_model() or index_config.embedding_model
-    )
-    if not embedding_model:
-        raise click.ClickException(
-            "Cannot determine embedding model for this document. "
-            "Re-run indexing with a tracked model to proceed."
-        )
-
-    try:
-        client = OpenAI(
-            api_key=ensure_secret_str(
-                operational_config.openai_api_key, service_name="OpenAI embeddings"
-            )
-        )
-    except Exception as exc:  # pragma: no cover - network/api key errors
-        handle_cli_error(exc, "initializing OpenAI client")
-        return
-
-    embedding_service = EmbeddingService(client, document_store, embedding_model)
-
-    fidelity_analyzer = SummarizationFidelityAnalyzer(
-        document_store,
-        embedding_service,
-        embedding_model=embedding_model,
-        settings=FidelityAnalyzerSettings(
-            top_k_worst=worst_merges,
-            histogram_start=fidelity_histogram_start,
-            histogram_bucket_size=fidelity_histogram_step,
-            histogram_buckets=fidelity_histogram_count,
-        ),
-    )
-    try:
-        fidelity_result = fidelity_analyzer.analyze()
-    except Exception as exc:  # pragma: no cover - surfaced via CLI
-        handle_cli_error(exc, "analyzing summarization fidelity")
-        return
-
-    if json_output:
-        click.echo(json.dumps(fidelity_result.to_dict(), indent=2))
-    else:
-        _print_fidelity_report(fidelity_result)
-
-
-def _print_fidelity_report(result: SummarizationFidelityResult) -> None:
-    """Render local summarization fidelity metrics."""
-
-    def fmt(value: float | None, precision: int = 4) -> str:
-        if value is None:
-            return "N/A"
-        return f"{value:.{precision}f}"
-
-    click.echo(f"Document: {result.document_id}")
-    click.echo(
-        f"Embedding model: {result.embedding_model} " f"(dim={result.embedding_dim})"
-    )
-    click.echo(
-        f"Merges evaluated: {result.stats.count} | "
-        f"mean fidelity: {fmt(result.stats.mean)} | "
-        f"median: {fmt(result.stats.median)} | "
-        f"stddev: {fmt(result.stats.stddev)}"
-    )
-    click.echo(
-        f"Min fidelity: {fmt(result.stats.minimum)} | "
-        f"max fidelity: {fmt(result.stats.maximum)}"
-    )
-
-    if result.histogram:
-        click.echo("\nHistogram buckets:")
-        for bucket in result.histogram:
-            click.echo(
-                f"  {bucket.start:.2f} – {bucket.end:.2f}: {bucket.count} merges"
-            )
-        if result.histogram_underflow or result.histogram_overflow:
-            click.echo(
-                f"  < start: {result.histogram_underflow} | "
-                f"> end: {result.histogram_overflow}"
-            )
-
-    if result.worst_nodes:
-        click.echo("\nLowest-fidelity merges:")
-        for metric in result.worst_nodes:
-            children = ", ".join(metric.child_ids) or "∅"
-            click.echo(
-                f"  {metric.node_id} ← {children}: "
-                f"fidelity={fmt(metric.fidelity, 3)} "
-                f"(angle {fmt(metric.angle_degrees, 2)}°) "
-                f"tokens={metric.children_tokens}→{metric.parent_tokens}"
-            )
-            click.echo(f"    parent: {metric.parent_preview}")
-            click.echo(f"    children: {metric.children_preview}")
 
 
 @cli.command()

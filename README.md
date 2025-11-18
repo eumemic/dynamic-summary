@@ -282,7 +282,7 @@ Chroma vector store (`data/chroma/`), and telemetry files isolated, so parallel
 stacks never collide. Because the stack loads your `.env` before starting,
 the containers inherit the same configuration (and defaults) as a local
 `ragzoom server` run: embeddings go to `data/chroma/` by default and are
-immediately visible to host-side tools like `ragzoom analyze`. The inspector
+immediately visible to host-side tools like `ragzoom-telemetry`. The inspector
 UI served from the container already points at the REST API port you expose on
 the host. When the stack is running the regular `python -m ragzoom.cli ...`
 commands will hit the containerised gRPC server automatically.
@@ -627,17 +627,13 @@ ragzoom-telemetry compare baseline.json current.json
 ragzoom-telemetry visualize baseline.json current.json -o comparison.png
 
 # Summarization diagnostics
-ragzoom analyze --document-id DOC_ID
+ragzoom-telemetry analyze telemetry.json
+ragzoom-telemetry visualize telemetry.json
 
-`ragzoom analyze` now focuses on telemetry-backed summarization fidelity. It
-computes straightforward per-merge cosine scores between each parent summary
-and the concatenated text of its children, reporting aggregate stats plus the
-lowest-fidelity merges so you can see where compression quality degrades.
-
-When telemetry is enabled, RagZoom now stores the parent and child-baseline
-embeddings for every summarized node. That data powers the new fidelity metrics
-in `ragzoom-telemetry analyze` and the visualization command, so benchmark runs
-can be compared offline without re-embedding the corpus.
+When telemetry is enabled, RagZoom stores scalar fidelity metrics for every
+merge. The telemetry analysis and visualization commands report aggregate
+statistics plus low-fidelity merges, and the fidelity scatter plot shows drift
+hotspots over the document without re-embedding anything.
 
 # Git hooks (automatically installed by setup script)
 # - pre-commit: Runs all quality checks in parallel
