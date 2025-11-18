@@ -41,6 +41,8 @@ def collect_tests(include_integration: bool) -> list[str]:
         "-m",
         marker,
     ]
+    if include_integration:
+        cmd.append("--use-real-store")
     try:
         res = subprocess.run(
             cmd,
@@ -75,7 +77,7 @@ def run_chunk(
         marker += " and not integration"
 
     # Build command; run with xdist to keep runtime short
-    cmd = [
+    base_cmd = [
         sys.executable,
         "-m",
         "pytest",
@@ -87,7 +89,10 @@ def run_chunk(
         marker,
         "--max-test-duration",
         str(per_test_seconds),
-    ] + nodeids
+    ]
+    if include_integration:
+        base_cmd.append("--use-real-store")
+    cmd = base_cmd + nodeids
 
     print(f"[Runner] pytest {' '.join(shlex.quote(p) for p in cmd[3:])}")
     res = subprocess.run(cmd, text=True)
@@ -132,8 +137,10 @@ def run_per_node(
             marker,
             "--max-test-duration",
             str(per_test_seconds),
-            nid,
         ]
+        if include_integration:
+            cmd.append("--use-real-store")
+        cmd.append(nid)
         print(f"[Runner] pytest {' '.join(shlex.quote(p) for p in cmd[3:])}")
 
         # Start in its own process group so we can kill the whole tree

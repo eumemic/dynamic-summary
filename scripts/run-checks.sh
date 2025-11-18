@@ -477,10 +477,18 @@ fi
 if [ "$RUN_TESTS" = true ]; then
     if command -v pytest &> /dev/null; then
         # Marker expression: always exclude benchmarks; include integration only when requested
+        include_integration_tests=false
         if [ "$INCLUDE_INTEGRATION" = true ] || [ "$TEST_SCOPE" = "all" ]; then
             marker_expr="not benchmark"
+            include_integration_tests=true
         else
             marker_expr="not benchmark and not integration"
+        fi
+
+        if [ "$include_integration_tests" = true ]; then
+            export RZ_PYTEST_EXTRA_ARGS="--use-real-store"
+        else
+            export RZ_PYTEST_EXTRA_ARGS=""
         fi
 
         # Paths that always require integration tests when impacted-only is used
@@ -533,13 +541,13 @@ if [ "$RUN_TESTS" = true ]; then
                         fi
                     done
                 fi
-                run_check_background "Tests" "pytest $impacted -q --tb=short -m '$impacted_marker' -n \${PYTEST_XDIST_WORKERS:-8} --dist=worksteal --no-header --max-test-duration \${RZ_MAX_TEST_DURATION} \${dur_flag}"
+                run_check_background "Tests" "pytest $impacted -q --tb=short -m '$impacted_marker' -n \${PYTEST_XDIST_WORKERS:-8} --dist=worksteal --no-header --max-test-duration \${RZ_MAX_TEST_DURATION} \${dur_flag} \${RZ_PYTEST_EXTRA_ARGS}"
             else
                 echo "[Tests] Skipped (no impacted tests)" > "$tmpdir/Tests.output"
                 echo 0 > "$tmpdir/Tests.result"
             fi
         else
-            run_check_background "Tests" "pytest tests/ -q --tb=short -m '$marker_expr' -n \${PYTEST_XDIST_WORKERS:-8} --dist=worksteal --no-header --max-test-duration \${RZ_MAX_TEST_DURATION} \${dur_flag}"
+            run_check_background "Tests" "pytest tests/ -q --tb=short -m '$marker_expr' -n \${PYTEST_XDIST_WORKERS:-8} --dist=worksteal --no-header --max-test-duration \${RZ_MAX_TEST_DURATION} \${dur_flag} \${RZ_PYTEST_EXTRA_ARGS}"
         fi
     else
         echo "[Tests] Skipped (pytest not installed)" > "$tmpdir/Tests.output"
