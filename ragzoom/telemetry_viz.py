@@ -484,7 +484,7 @@ class TelemetryVisualizer:
         else:
             chunk_size = "Unknown"
         fig.suptitle(
-            f"Telemetry Analysis - {chunk_size} Token Chunks", fontsize=16, y=0.98
+            f"Telemetry Analysis - {chunk_size} Token Chunks", fontsize=16, y=1.02
         )
 
         # Save figure
@@ -631,7 +631,7 @@ class TelemetryVisualizer:
         fig.suptitle(
             "Side-by-Side Comparison: Baseline vs Current",
             fontsize=16,
-            y=0.97,
+            y=1.02,
         )
 
         # 1. Cost Breakdown (no axis sharing needed)
