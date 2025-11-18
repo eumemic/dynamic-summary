@@ -63,6 +63,7 @@ ATTEMPT_COLORS = [
     "#ef4444",  # Orange for retry 3
     "#991b1b",  # Red for retry 4+
 ]
+MEAN_DRIFT_COLOR = "#16a34a"  # Consistent color for mean semantic drift
 
 # Legend/layout constants
 LEGEND_COLUMN_SPACING = 0.5  # Horizontal spacing between legend columns
@@ -932,15 +933,34 @@ class TelemetryVisualizer:
         mean_drift = statistics.fmean(drifts)
         ax.axhline(
             mean_drift,
-            color="#f97316",
+            color=MEAN_DRIFT_COLOR,
             linestyle="--",
             linewidth=1.5,
             label=f"Mean semantic drift: {mean_drift:.1f}%",
         )
-
-        # Align x-axis with document span for consistency
         span_min, span_max = self._extract_span_range(telemetry)
         ax.set_xlim(span_min, span_max)
+        text_x = (
+            span_max - (span_max - span_min) * 0.01 if span_max > span_min else span_max
+        )
+        ax.text(
+            text_x,
+            mean_drift,
+            f"{mean_drift:.1f}%",
+            color=MEAN_DRIFT_COLOR,
+            fontsize=9,
+            fontweight="bold",
+            ha="right",
+            va="bottom",
+            bbox=dict(
+                boxstyle="round,pad=0.15",
+                facecolor="white",
+                edgecolor="none",
+                alpha=0.7,
+            ),
+        )
+
+        # Align x-axis with document span for consistency
         max_drift = max(drifts) if drifts else 0.0
         upper = max(1.0, max_drift * 1.1)
         ax.set_ylim(0.0, upper)
@@ -951,6 +971,14 @@ class TelemetryVisualizer:
         legend_elements = [
             Patch(facecolor="#1d4ed8", label="Leaf merges (height 1)", alpha=0.6),
             Patch(facecolor="#dc2626", label="Higher-level merges", alpha=0.6),
+            Line2D(
+                [0],
+                [0],
+                color=MEAN_DRIFT_COLOR,
+                linestyle="--",
+                linewidth=1.5,
+                label="Mean semantic drift",
+            ),
         ]
         ax.legend(
             handles=legend_elements,
