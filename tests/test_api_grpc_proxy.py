@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from ragzoom.api import app, get_service_container
@@ -30,6 +31,7 @@ def _with_container(container: _StubContainer) -> Callable[[], _StubContainer]:
     return _factory
 
 
+@pytest.mark.slow_threshold(2.5)
 def test_index_endpoint_appends_via_grpc() -> None:
     container = _StubContainer("grpc-address:9000")
     app.dependency_overrides[get_service_container] = _with_container(container)
