@@ -466,9 +466,7 @@ class TelemetryVisualizer:
 
         # 3. Fidelity distribution
         ax3 = fig.add_subplot(top_gs[2])
-        self._plot_fidelity_scatter(
-            telemetry, ax3, color="#2563eb", title="Summarization Fidelity"
-        )
+        self._plot_fidelity_scatter(telemetry, ax3, title="Summarization Fidelity")
 
         # 4. Tree Construction Timeline
         ax4 = fig.add_subplot(bottom_gs[0])
@@ -663,13 +661,11 @@ class TelemetryVisualizer:
         self._plot_fidelity_scatter(
             telemetry1,
             ax_fidelity_left,
-            color="#2563eb",
             title="Fidelity (Baseline)",
         )
         self._plot_fidelity_scatter(
             telemetry2,
             ax_fidelity_right,
-            color="#ef4444",
             title="Fidelity (Current)",
         )
         ax_fidelity_right.set_ylabel("")
@@ -901,7 +897,6 @@ class TelemetryVisualizer:
         telemetry: TelemetryDataDict,
         ax: Axes,
         *,
-        color: str,
         title: str,
     ) -> None:
         """Plot summarization fidelity per node over document position."""
@@ -937,7 +932,7 @@ class TelemetryVisualizer:
         mean_drift = statistics.fmean(drifts)
         ax.axhline(
             mean_drift,
-            color=color,
+            color="#f97316",
             linestyle="--",
             linewidth=1.5,
             label=f"Mean semantic drift: {mean_drift:.1f}%",
