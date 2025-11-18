@@ -132,6 +132,7 @@ class TestDPIntegration:
             await indexer_runtime_harness.clear(document_id)
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(2.5)
     async def test_parent_child_deduplication(
         self,
         config: BackwardCompatibilityConfig,
