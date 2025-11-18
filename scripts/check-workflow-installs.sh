@@ -16,14 +16,14 @@ fi
 
 # Filter out allowed patterns
 # Allowed:
-# - pip install --upgrade pip
+# - pip install --upgrade pip (with optional "<..." constraint)
 # - pip install pip-tools
 # - pip-sync requirements/*.lock
 # - pip install pytest-cov
 # - pip install awscli
 # - pip install -e .[...]
 filtered=$(echo "$hits" | grep -Ev \
-  -e "pip install --upgrade pip" \
+  -e "pip install --upgrade [\"']?pip" \
   -e "pip install pip-tools" \
   -e "pip-sync( |$)" \
   -e "pip install (.+/)?requirements/.+\.lock" \
@@ -41,4 +41,3 @@ fi
 echo "[WorkflowPins] ❌ Disallowed pip install lines detected in workflows:" >&2
 echo "$filtered" >&2
 exit 1
-
