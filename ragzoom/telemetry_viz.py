@@ -982,7 +982,7 @@ class TelemetryVisualizer:
         ]
         ax.legend(
             handles=legend_elements,
-            loc="lower right",
+            loc="upper right",
             fontsize=8,
             frameon=True,
         )
