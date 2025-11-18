@@ -12,7 +12,6 @@ from typing import cast
 import numpy as np
 from numpy.typing import NDArray
 
-from ragzoom.analyze.drift import DEFAULT_EMBED_LIMIT, EMBEDDING_CONTEXT_LIMITS
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
 from ragzoom.model_info import ModelInfo
@@ -20,6 +19,14 @@ from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.utils.tokenization import tokenizer
 
 Vector = NDArray[np.float64]
+
+# Conservative per-model embedding limits (tokens). Default falls back to 8000.
+EMBEDDING_CONTEXT_LIMITS: dict[str, int] = {
+    "text-embedding-3-small": 8192,
+    "text-embedding-3-large": 8192,
+    "text-embedding-ada-002": 8191,
+}
+DEFAULT_EMBED_LIMIT = 8000
 
 
 @dataclass

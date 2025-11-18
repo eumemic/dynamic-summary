@@ -627,15 +627,12 @@ ragzoom-telemetry compare baseline.json current.json
 ragzoom-telemetry visualize baseline.json current.json -o comparison.png
 
 # Summarization diagnostics
-ragzoom analyze --document-id DOC_ID --mode fidelity
-ragzoom analyze --document-id DOC_ID --mode drift
+ragzoom analyze --document-id DOC_ID
 
-Use the new `fidelity` mode to compute straightforward per-merge cosine scores
-between each parent summary and the concatenated text of its children. This
-reports the mean/median/min/max fidelity, standard deviation, histogram
-buckets, and the lowest-scoring merges so you can spot where summarization
-quality degrades. The legacy `drift` mode remains available when you need the
-full frontier-aware analysis.
+`ragzoom analyze` now focuses on telemetry-backed summarization fidelity. It
+computes straightforward per-merge cosine scores between each parent summary
+and the concatenated text of its children, reporting aggregate stats plus the
+lowest-fidelity merges so you can see where compression quality degrades.
 
 When telemetry is enabled, RagZoom now stores the parent and child-baseline
 embeddings for every summarized node. That data powers the new fidelity metrics

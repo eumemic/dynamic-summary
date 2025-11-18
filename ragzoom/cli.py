@@ -8,7 +8,7 @@ import logging
 import os
 import shutil
 import sys
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -17,12 +17,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from ragzoom.analyze import (
-    DriftAnalysisResult,
-    DriftAnalyzer,
-    DriftAnalyzerSettings,
-    DriftTerm,
     FidelityAnalyzerSettings,
-    NodeDriftMetric,
     SummarizationFidelityAnalyzer,
     SummarizationFidelityResult,
 )
@@ -193,150 +188,6 @@ def handle_cli_error(e: Exception, operation: str) -> None:
     else:
         click.echo(f"❌ Error during {operation}: {e}", err=True)
     sys.exit(1)
-
-
-def _print_analysis_report(result: DriftAnalysisResult, top_k: int) -> None:
-    """Render a concise, human-readable drift report."""
-
-    def fmt(value: float | None, precision: int = 4) -> str:
-        if value is None:
-            return "N/A"
-        return f"{value:.{precision}f}"
-
-    def pct(value: float | None) -> str:
-        if value is None:
-            return "N/A"
-        return f"{value * 100:.1f}%"
-
-    click.echo(f"Document: {result.document_id}")
-    click.echo(
-        f"Embedding model: {result.embedding_model} "
-        f"(dim={result.embedding_dim}, config={result.config_hash})"
-    )
-    click.echo(
-        f"Residual fidelity: {fmt(result.fidelity)} "
-        f"(angle {fmt(result.fidelity_angle_degrees, 2)}°)  "
-        f"Compression: {fmt(result.compression_ratio)}  "
-        f"Drift norm: {result.drift_vector_norm:.4f}"
-    )
-    click.echo(
-        f"Raw fidelity: {fmt(result.fidelity_raw)} "
-        f"(angle {fmt(result.fidelity_raw_angle_degrees, 2)}°)  "
-        f"Raw compression: {fmt(result.compression_ratio_raw)}"
-    )
-    if result.fidelity_uncentered is not None:
-        click.echo(
-            f"Uncentered fidelity: {fmt(result.fidelity_uncentered)} "
-            f"(angle {fmt(result.fidelity_uncentered_angle_degrees, 2)}°)"
-        )
-    root_frontiers = ", ".join(result.root_frontier_ids) or "None"
-    coverage = pct(result.root_frontier_leaf_ratio)
-    click.echo(
-        f"Root frontier angle (raw): {fmt(result.root_direct_angle_degrees, 2)}° "
-        f"| Residual: {fmt(result.root_adjusted_angle_degrees, 2)}° "
-        f"| Raw coverage: {coverage} | Nodes: {root_frontiers}"
-    )
-    if result.root_direct_angle_uncentered is not None:
-        click.echo(
-            f"Uncentered root frontier angle: "
-            f"{fmt(result.root_direct_angle_uncentered, 2)}°"
-        )
-    if result.root_leaf_angle_degrees is not None:
-        click.echo(
-            f"Root trio: θ_frontier={fmt(result.root_direct_angle_degrees, 2)}° "
-            f"| θ_leaf={fmt(result.root_leaf_angle_degrees, 2)}° "
-            f"| Residual fidelity={fmt(result.fidelity)}"
-        )
-    click.echo(
-        f"Frontier budget: {result.max_frontier_tokens} tokens "
-        f"| Centered: {'yes' if result.center_embeddings else 'no'}"
-    )
-    freq_line = "Frequency correction: off"
-    if result.frequency_correction:
-        freq_line = f"Frequency correction: on (λ={fmt(result.frequency_lambda, 3)})"
-    click.echo(freq_line)
-    if result.alignment_coefficient is not None:
-        click.echo(
-            f"Residual alignment coefficient: {fmt(result.alignment_coefficient, 3)}"
-        )
-    if result.lambda_sweep:
-        sweep = ", ".join(
-            f"λ={entry['lambda']:.2f}→{entry['fidelity']:.3f}"
-            f" ({entry['angle_degrees']:.1f}°)"
-            for entry in result.lambda_sweep
-        )
-        click.echo(f"λ sweep: {sweep}")
-    if result.vocab_sweep:
-        vocab_line = ", ".join(
-            f"{int(entry['size'])}→{entry['explained_ratio'] * 100:.1f}%"
-            for entry in result.vocab_sweep
-        )
-        click.echo(f"Vocab explained: {vocab_line}")
-
-    def format_terms(label: str, terms: Sequence[DriftTerm]) -> None:
-        if not terms:
-            click.echo(f"{label}: (none)")
-            return
-        limited = terms[:top_k]
-        rendered = ", ".join(f"{term.text} ({term.score:.3f})" for term in limited)
-        click.echo(f"{label}: {rendered}")
-
-    format_terms("Amplified themes", result.amplified_terms)
-    format_terms("De-emphasized themes", result.deemphasized_terms)
-    if result.root_lift_terms:
-        lift_render = ", ".join(result.root_lift_terms[:top_k])
-        click.echo(f"Lift outliers: {lift_render}")
-
-    def explained(metric: NodeDriftMetric) -> str:
-        if metric.explained_ratio is None:
-            return "N/A"
-        return f"{metric.explained_ratio * 100:.1f}%"
-
-    def render_metric_table(title: str, metrics: Sequence[NodeDriftMetric]) -> None:
-        if not metrics:
-            click.echo(f"\n{title}: none.")
-            return
-        click.echo(f"\n{title}:")
-        header = (
-            f"{'Node':<12}{'Span':>9}{'θ_raw°':>9}"
-            f"{'θ_res°':>9}{'Expl%':>9}{'JSD':>8}{'Outlier':>10}{'Entities':>14}{'Frontier':>18}"
-        )
-        click.echo(header)
-        click.echo("-" * len(header))
-        for metric in metrics:
-            frontier_display = (
-                metric.frontier_node_ids[0]
-                if len(metric.frontier_node_ids) <= 1
-                else f"{metric.frontier_node_ids[0]} (+{len(metric.frontier_node_ids) - 1})"
-            )
-            raw_angle = fmt(metric.local_angle_degrees, 2)
-            res_angle = fmt(metric.residual_angle_degrees, 2)
-            explained_val = explained(metric)
-            jsd_val = fmt(metric.js_divergence, 3)
-            outlier = fmt(metric.term_outlier_score, 3)
-            entities = f"+{metric.entity_added}/-{metric.entity_dropped}/↕{metric.entity_moved}"
-            click.echo(
-                f"{metric.node_id:<12}{metric.span_chars:>9}"
-                f"{raw_angle:>9}{res_angle:>9}{explained_val:>9}{jsd_val:>8}"
-                f"{outlier:>10}{entities:>14}{frontier_display:>18}"
-            )
-
-    if result.worst_nodes:
-        render_metric_table("Top frontier drift", result.worst_nodes)
-    else:
-        click.echo("\nTop frontier drift: no comparable merges found.")
-
-    if result.leaf_baseline:
-        click.echo("\nLeaf baselines:")
-        header = f"{'Node':<12}{'Span':>10}{'Leaf Angle°':>14}"
-        click.echo(header)
-        click.echo("-" * len(header))
-        for entry in result.leaf_baseline:
-            angle_value = cast(float | None, entry.get("leaf_angle_degrees"))
-            angle = fmt(angle_value, 2)
-            span_val = cast(int, entry.get("span_chars", 0))
-            node_val = cast(str, entry.get("node_id", ""))
-            click.echo(f"{node_val:<12}{span_val:>10}{angle:>14}")
 
 
 def configure_logging_level(debug: bool) -> None:
@@ -922,72 +773,34 @@ def validate(
 @cli.command()
 @click.option("--document-id", "-d", required=True, help="Document ID to analyze")
 @click.option(
-    "--mode",
-    type=click.Choice(["drift", "fidelity"]),
-    default="drift",
-    show_default=True,
-    help="Select analyzer mode",
-)
-@click.option(
-    "--top-k",
-    type=click.IntRange(1, 20),
-    default=5,
-    show_default=True,
-    help="Number of amplified/de-emphasized terms to display",
-)
-@click.option(
+    "--worst-merges",
     "--max-frontier-report",
+    "worst_merges",
     type=click.IntRange(1, 50),
     default=10,
     show_default=True,
-    help="Number of worst frontier merges to include in the report",
+    help="Number of lowest-fidelity merges to display",
 )
 @click.option(
     "--fidelity-histogram-start",
     type=click.FloatRange(0.0, 1.0),
     default=0.6,
     show_default=True,
-    help="Histogram start (summarization fidelity mode only)",
+    help="Histogram start percentage",
 )
 @click.option(
     "--fidelity-histogram-step",
     type=click.FloatRange(0.01, 1.0),
     default=0.05,
     show_default=True,
-    help="Histogram bucket size (fidelity mode only)",
+    help="Histogram bucket size",
 )
 @click.option(
     "--fidelity-histogram-count",
     type=click.IntRange(1, 20),
     default=5,
     show_default=True,
-    help="Histogram buckets counted from start (fidelity mode only)",
-)
-@click.option(
-    "--max-ngrams-vocab",
-    type=click.IntRange(50, 2000),
-    default=1024,
-    show_default=True,
-    help="Maximum corpus n-grams to embed for drift interpretation",
-)
-@click.option(
-    "--center-embeddings/--no-center-embeddings",
-    default=True,
-    show_default=True,
-    help="Mean-center embeddings before cosine comparisons",
-)
-@click.option(
-    "--leaf-baseline",
-    type=click.IntRange(0, 20),
-    default=0,
-    show_default=True,
-    help="Report leaf-level baselines for the top N frontier nodes",
-)
-@click.option(
-    "--freq-correct/--no-freq-correct",
-    default=True,
-    show_default=True,
-    help="Adjust drift vectors using frequency-based residuals",
+    help="Number of histogram buckets to display",
 )
 @click.option(
     "--json",
@@ -997,16 +810,10 @@ def validate(
 )
 def analyze(
     document_id: str,
-    mode: str,
-    top_k: int,
-    max_frontier_report: int,
+    worst_merges: int,
     fidelity_histogram_start: float,
     fidelity_histogram_step: float,
     fidelity_histogram_count: int,
-    max_ngrams_vocab: int,
-    center_embeddings: bool,
-    leaf_baseline: int,
-    freq_correct: bool,
     json_output: bool,
 ) -> None:
     """Run semantic analysis over a document tree."""
@@ -1040,61 +847,27 @@ def analyze(
 
     embedding_service = EmbeddingService(client, document_store, embedding_model)
 
-    if mode == "fidelity":
-        fidelity_analyzer = SummarizationFidelityAnalyzer(
-            document_store,
-            embedding_service,
-            embedding_model=embedding_model,
-            settings=FidelityAnalyzerSettings(
-                top_k_worst=max_frontier_report,
-                histogram_start=fidelity_histogram_start,
-                histogram_bucket_size=fidelity_histogram_step,
-                histogram_buckets=fidelity_histogram_count,
-            ),
-        )
-        try:
-            fidelity_result = fidelity_analyzer.analyze()
-        except Exception as exc:  # pragma: no cover - surfaced via CLI
-            handle_cli_error(exc, "analyzing summarization fidelity")
-            return
-
-        if json_output:
-            click.echo(json.dumps(fidelity_result.to_dict(), indent=2))
-        else:
-            _print_fidelity_report(fidelity_result)
-        return
-
-    vector_index = create_vector_index(
-        operational_config.vector_backend,
-        operational_config.database_url,
-        embedding_model,
-    )
-    analyzer = DriftAnalyzer(
+    fidelity_analyzer = SummarizationFidelityAnalyzer(
         document_store,
         embedding_service,
         embedding_model=embedding_model,
-        settings=DriftAnalyzerSettings(
-            top_k_terms=top_k,
-            max_frontier_report=max_frontier_report,
-            max_vocab_terms=max_ngrams_vocab,
-            center_embeddings=center_embeddings,
-            leaf_baseline_report=leaf_baseline,
-            frequency_correction=freq_correct,
+        settings=FidelityAnalyzerSettings(
+            top_k_worst=worst_merges,
+            histogram_start=fidelity_histogram_start,
+            histogram_bucket_size=fidelity_histogram_step,
+            histogram_buckets=fidelity_histogram_count,
         ),
-        vector_index=vector_index,
     )
-
     try:
-        result = analyzer.analyze()
+        fidelity_result = fidelity_analyzer.analyze()
     except Exception as exc:  # pragma: no cover - surfaced via CLI
-        handle_cli_error(exc, "analyzing document semantics")
+        handle_cli_error(exc, "analyzing summarization fidelity")
         return
 
     if json_output:
-        click.echo(json.dumps(result.to_dict(), indent=2))
-        return
-
-    _print_analysis_report(result, top_k)
+        click.echo(json.dumps(fidelity_result.to_dict(), indent=2))
+    else:
+        _print_fidelity_report(fidelity_result)
 
 
 def _print_fidelity_report(result: SummarizationFidelityResult) -> None:
