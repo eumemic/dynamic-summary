@@ -304,7 +304,7 @@ async def test_incremental_index_cli_validates_document(
     result = await asyncio.to_thread(
         incremental.run_incremental_indexing,
         source=doc_path,
-        chunk_count=3,
+        chunk_count=2,
         python_exec=sys.executable,
         forward_args=[
             "--server-address",
