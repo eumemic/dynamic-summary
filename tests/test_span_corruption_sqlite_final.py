@@ -95,10 +95,7 @@ class TestSpanCorruptionSQLite:
             "This is a longer chunk of text that should be approximately one hundred tokens. "
             * 12
         )
-        # Keep an odd chunk count to exercise wraparound pairing without
-        # blowing past the global 3s test timeout. Nine chunks still build a
-        # multi-level tree while staying comfortably within the budget.
-        chunks = [f"Chunk {i}: {chunk_text}" for i in range(9)]
+        chunks = [f"Chunk {i}: {chunk_text}" for i in range(15)]
         text = " ".join(chunks)
 
         document_id = "span-corruption"
