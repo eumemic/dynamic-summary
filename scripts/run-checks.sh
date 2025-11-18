@@ -483,6 +483,12 @@ if [ "$RUN_TESTS" = true ]; then
             marker_expr="not benchmark and not integration"
         fi
 
+        # Paths that always require integration tests when impacted-only is used
+        integration_test_paths=(
+            "$GIT_ROOT/tests/test_integration.py"
+            "$GIT_ROOT/tests/test_concurrency.py"
+        )
+
         # Ensure PostgreSQL only if integration tests are requested and backend is postgres
         if [ "$INCLUDE_INTEGRATION" = true ] || [ "$TEST_SCOPE" = "all" ]; then
             BACKEND="${RAGZOOM_BACKEND:-sqlite}"
@@ -518,7 +524,16 @@ if [ "$RUN_TESTS" = true ]; then
         elif [ "$IMPACTED_ONLY" = true ]; then
             impacted="$(python "$GIT_ROOT/scripts/find-impacted-tests.py" ${IMPACTED_FILES[@]} || true)"
             if [ -n "$impacted" ]; then
-                run_check_background "Tests" "pytest $impacted -q --tb=short -m '$marker_expr' -n \${PYTEST_XDIST_WORKERS:-8} --dist=worksteal --no-header --max-test-duration \${RZ_MAX_TEST_DURATION} \${dur_flag}"
+                impacted_marker="$marker_expr"
+                if [ "$INCLUDE_INTEGRATION" != true ]; then
+                    for path in "${integration_test_paths[@]}"; do
+                        if [[ "$impacted" == *"$path"* ]]; then
+                            impacted_marker="not benchmark"
+                            break
+                        fi
+                    done
+                fi
+                run_check_background "Tests" "pytest $impacted -q --tb=short -m '$impacted_marker' -n \${PYTEST_XDIST_WORKERS:-8} --dist=worksteal --no-header --max-test-duration \${RZ_MAX_TEST_DURATION} \${dur_flag}"
             else
                 echo "[Tests] Skipped (no impacted tests)" > "$tmpdir/Tests.output"
                 echo 0 > "$tmpdir/Tests.result"
