@@ -611,7 +611,7 @@ class TelemetryVisualizer:
         fig = plt.figure(figsize=figsize, constrained_layout=True)
         set_pads = getattr(fig, "set_constrained_layout_pads", None)
         if callable(set_pads):
-            set_pads(w_pad=0.25, h_pad=0.3, hspace=ROW_SPACING, wspace=0.18)
+            set_pads(w_pad=0.125, h_pad=0.3, hspace=ROW_SPACING, wspace=0.09)
 
         # Create main grid with 2 sections for different spacing
         main_gs = GridSpec(2, 1, figure=fig, height_ratios=[3, 2])
