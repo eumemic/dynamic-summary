@@ -662,12 +662,12 @@ class TelemetryVisualizer:
         self._plot_fidelity_scatter(
             telemetry1,
             ax_fidelity_left,
-            title="Fidelity (Baseline)",
+            title="Summary Fidelity",
         )
         self._plot_fidelity_scatter(
             telemetry2,
             ax_fidelity_right,
-            title="Fidelity (Current)",
+            title="Summary Fidelity",
         )
         ax_fidelity_right.set_ylabel("")
 
