@@ -181,16 +181,21 @@ We use pip-tools to provide npm-style lockfiles for reproducible installs.
 
 Install (locked):
 ```
-pip install pip-tools
+python -m pip install --upgrade "pip<24.1"
+python -m pip install pip-tools
 pip-sync requirements/dev.lock
 ```
 
 Update locks to latest (including chromadb):
 ```
-pip install pip-tools
+python -m pip install --upgrade "pip<24.1"
+python -m pip install pip-tools
 pip-compile -o requirements/app.lock requirements/app.in
 pip-compile -o requirements/dev.lock requirements/dev.in
 ```
+> pip-tools still relies on the legacy `InstallRequirement.use_pep517` attribute that was
+> removed in pip 24.1. Pinning pip to `<24.1` keeps `pip-sync` functional until upstream
+> releases a compatible version.
 Commit the updated lock files. CI installs from locks via `pip-sync` to guarantee parity with local.
 
 Workflow guard: `scripts/run-checks.sh` contains a check that fails if workflows include unpinned `pip install` lines. Only pip-tools/pip-sync or specific tooling installs (e.g. pytest-cov, awscli) are allowed.

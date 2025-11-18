@@ -541,6 +541,7 @@ async def test_append_after_parent_reference_cleared_removes_ancestor(
 
 
 @pytest.mark.asyncio
+@pytest.mark.slow_threshold(3.0)
 async def test_worker_coordinator_converges_to_single_root(
     doc_store: DocStoreFixture,
     storage_backend: StorageBackend,
