@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY pyproject.toml poetry.lock* requirements-dev.txt requirements/app.lock requirements/dev.lock ./
 
-# Install pip-tools to sync from lockfiles
-RUN pip install --upgrade pip setuptools wheel && pip install pip-tools
+# Install pip-tools to sync from lockfiles (keep pip <24.1 for compatibility)
+RUN pip install --upgrade 'pip<24.1' setuptools wheel && pip install pip-tools
 
 # Install project dependencies using lock file
 RUN if [ -f requirements/dev.lock ]; then pip-sync requirements/dev.lock; \
