@@ -222,8 +222,9 @@ class AppendExecutor:
                 )
 
             if reporter is not None:
+                payload = [(leaf.node_id, leaf.token_count) for leaf in chunk_specs]
                 reporter.record_embedding_call_v2(
-                    [(leaf.node_id, leaf.token_count) for leaf in chunk_specs],
+                    payload,
                     batch_size=len(chunk_specs),
                     model=self._config.embedding_model,
                     start_time=chunk_start_time,

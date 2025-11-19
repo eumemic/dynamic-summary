@@ -584,7 +584,7 @@ env "${RUN_ENV[@]}" "$PYTHON_EXEC" -m "$INCREMENTAL_MODULE" \
     --document-id "$EFFECTIVE_DOCUMENT_ID" \
     --python "$PYTHON_EXEC" \
     --validate \
-    --telemetry-output "$TELEMETRY_FILE" \
+    --telemetry "$TELEMETRY_FILE" \
     -- "${FORWARDED_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
 
 if [ ${PIPESTATUS[0]} -ne 0 ]; then

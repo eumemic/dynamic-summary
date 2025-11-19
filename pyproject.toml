@@ -51,9 +51,9 @@ dev = [
     "tomli>=1.0.0; python_version < '3.11'",
     "grpcio-tools>=1.75.0",
 ]
- chroma = [
+chroma = [
     "chromadb>=1.0.15",
- ]
+]
 postgres = [
     "psycopg[binary]==3.2.9",
     "pgvector==0.4.1",

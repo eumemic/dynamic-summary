@@ -25,6 +25,7 @@ from ragzoom.progress import AsyncProgressWrapper, GlobalProgressTracker
 from ragzoom.services.llm_service import LLMService
 from ragzoom.splitter import TextSplitter
 from ragzoom.telemetry_collection import TelemetryCollector
+from ragzoom.telemetry_embeddings import compute_fidelity_for_telemetry
 from ragzoom.telemetry_types import TelemetryDataDict
 from ragzoom.utils.tokenization import tokenizer
 
@@ -779,7 +780,24 @@ class TreeBuilder:
             leaf_count = len(doc_store.nodes.get_leaves())
             total_nodes = doc_store.nodes.count()
             resummarized_nodes = max(total_nodes - leaf_count, 0)
-            telemetry_payload = reporter.finalize() if reporter else None
+            if reporter:
+                token_limit = getattr(
+                    self.llm_service, "_embedding_batch_token_limit", 8000
+                )
+                max_items = getattr(
+                    self.llm_service, "_provider_max_embedding_batch_size", 1000
+                )
+                await compute_fidelity_for_telemetry(
+                    document_store=self.document_store,
+                    collector=reporter,
+                    vector_index=self.vector_index,
+                    embedder=self.llm_service,
+                    token_limit=token_limit,
+                    max_batch_items=max_items,
+                )
+                telemetry_payload = reporter.finalize()
+            else:
+                telemetry_payload = None
 
             return AppendStats(
                 document_id=document_id,
@@ -1068,6 +1086,20 @@ class TreeBuilder:
                 mutated_nodes=len(tracking.mutable_node_ids),
                 summary_nodes=len(tracking.summary_node_ids),
                 leaf_delta=tracking.leaf_delta,
+            )
+            token_limit = getattr(
+                self.llm_service, "_embedding_batch_token_limit", 8000
+            )
+            max_items = getattr(
+                self.llm_service, "_provider_max_embedding_batch_size", 1000
+            )
+            await compute_fidelity_for_telemetry(
+                document_store=self.document_store,
+                collector=reporter,
+                vector_index=self.vector_index,
+                embedder=self.llm_service,
+                token_limit=token_limit,
+                max_batch_items=max_items,
             )
             telemetry_payload = reporter.finalize()
 

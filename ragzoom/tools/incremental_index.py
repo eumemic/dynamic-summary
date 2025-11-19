@@ -126,13 +126,15 @@ def run_incremental_indexing(
     output_dir: Path | None = None,
     echo: Callable[[str], None] = print,
     validate: bool = False,
-    telemetry_output: Path | None = None,
+    telemetry: Path | None = None,
 ) -> IncrementalIndexResult:
     """Drive `ragzoom index --append` for an entire document.
 
     When ``validate`` is ``True`` the helper waits for worker idle, exports
-    telemetry (to ``telemetry_output`` if provided), and runs
-    ``ragzoom validate --complete`` before returning.
+    telemetry (to ``telemetry`` if provided), and runs
+    ``ragzoom validate --complete`` before returning. When ``telemetry`` is
+    provided without validation the helper still waits for completion and
+    exports telemetry but skips the validation step.
     """
 
     python_exec = python_exec or sys.executable
@@ -159,15 +161,18 @@ def run_incremental_indexing(
     sanitized_args = sanitize_forward_args(forward_args)
     add_no_await = should_append_no_await(forward_args)
 
+    telemetry_requested = telemetry is not None
+    needs_completion = validate or telemetry_requested
+
     def _has_flag(flag: str, args: Sequence[str]) -> bool:
         return any(arg == flag or arg.startswith(f"{flag}=") for arg in args)
 
-    if validate and not (
+    if needs_completion and not (
         _has_flag("--collect-telemetry", forward_args)
         or _has_flag("--collect-telemetry", sanitized_args)
         or _has_flag("--no-collect-telemetry", forward_args)
     ):
-        echo("[info] Enabling telemetry collection for validation")
+        echo("[info] Enabling telemetry collection for completion tracking")
         sanitized_args.append("--collect-telemetry")
 
     if add_no_await:
@@ -197,27 +202,34 @@ def run_incremental_indexing(
 
     telemetry_path: Path | None = None
 
-    if validate:
+    if needs_completion:
         _wait_for_workers(server_address, doc_id, echo)
-        if telemetry_output is None:
-            telemetry_path = (chunk_root / f"{doc_id}_telemetry.json").resolve()
+        export_path: Path | None
+        if telemetry_requested:
+            assert telemetry is not None
+            export_path = telemetry.resolve()
+        elif validate:
+            export_path = (chunk_root / f"{doc_id}_telemetry.json").resolve()
         else:
-            telemetry_path = telemetry_output.resolve()
+            export_path = None
 
-        telemetry_path.parent.mkdir(parents=True, exist_ok=True)
+        if export_path is not None:
+            telemetry_path = export_path
+            telemetry_path.parent.mkdir(parents=True, exist_ok=True)
 
-        echo(f"[info] Exporting telemetry to {telemetry_path}")
-        _run_cli(
-            python_exec,
-            [
-                "telemetry-export",
-                "--document-id",
-                doc_id,
-                "--output",
-                str(telemetry_path),
-            ],
-        )
+            echo(f"[info] Exporting telemetry to {telemetry_path}")
+            _run_cli(
+                python_exec,
+                [
+                    "telemetry-export",
+                    "--document-id",
+                    doc_id,
+                    "--output",
+                    str(telemetry_path),
+                ],
+            )
 
+    if validate:
         validate_cmd: list[str] = ["validate", "--complete"]
         if telemetry_path is not None:
             validate_cmd.extend(["--telemetry-file", str(telemetry_path)])
@@ -305,9 +317,14 @@ def cli_main(argv: Sequence[str] | None = None) -> None:
         help="Wait for workers, export telemetry, and run document validation after indexing.",
     )
     parser.add_argument(
-        "--telemetry-output",
+        "--telemetry",
+        nargs="?",
+        const=Path("telemetry.json"),
         type=Path,
-        help="Optional path for telemetry export when --validate is set.",
+        help=(
+            "Export merged telemetry to FILE (default: telemetry.json) and "
+            "wait for completion even without --validate."
+        ),
     )
 
     args, forward_args = parser.parse_known_args(argv)
@@ -320,7 +337,7 @@ def cli_main(argv: Sequence[str] | None = None) -> None:
             forward_args=forward_args,
             output_dir=args.output_dir,
             validate=args.validate,
-            telemetry_output=args.telemetry_output,
+            telemetry=args.telemetry,
         )
     except RuntimeError as exc:
         message = str(exc)

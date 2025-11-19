@@ -9,6 +9,7 @@ import json
 import logging
 import numbers
 import os
+import statistics
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Literal
@@ -62,10 +63,12 @@ ATTEMPT_COLORS = [
     "#ef4444",  # Orange for retry 3
     "#991b1b",  # Red for retry 4+
 ]
+MEAN_DRIFT_COLOR = "#16a34a"  # Consistent color for mean semantic drift
 
-# Legend layout constants
+# Legend/layout constants
 LEGEND_COLUMN_SPACING = 0.5  # Horizontal spacing between legend columns
 LEGEND_HANDLE_TEXT_PAD = 0.3  # Spacing between legend marker and text
+ROW_SPACING = 0.027  # Figure-relative spacing for constrained layout
 
 
 class PlotBoundsDict(TypedDict, total=False):
@@ -335,6 +338,28 @@ class TelemetryVisualizer:
 
         return input_tokens, output_tokens
 
+    def _extract_fidelity_points(
+        self, telemetry: TelemetryDataDict
+    ) -> list[tuple[float, float, int]]:
+        """Extract (document position, fidelity, height) tuples for scatter plots."""
+
+        nodes = self._extract_nodes_from_telemetry(telemetry)
+        points: list[tuple[float, float, int]] = []
+        for node in nodes:
+            fidelity = node.get("fidelity")
+            span = node.get("span")
+            height = int(node.get("height", -1))
+            if (
+                span
+                and isinstance(fidelity, (int | float))
+                and isinstance(span, (list | tuple))
+                and len(span) == 2
+            ):
+                start, end = span
+                midpoint = (float(start) + float(end)) / 2.0
+                points.append((midpoint, float(fidelity), height))
+        return points
+
     def _extract_span_range(self, telemetry: TelemetryDataDict) -> tuple[float, float]:
         """Extract document span range from telemetry.
 
@@ -406,18 +431,22 @@ class TelemetryVisualizer:
 
         # Create figure with subplots (3 rows only)
         fig = plt.figure(
-            figsize=(FIGURE_WIDTH * 0.33, FIGURE_HEIGHT * 0.6)
-        )  # Reduce width by 2/3 and height
-        # Use GridSpecFromSubplotSpec for different gaps between rows
+            figsize=(FIGURE_WIDTH * 0.33, FIGURE_HEIGHT * 0.7),
+            constrained_layout=True,
+        )  # Slightly taller to accommodate fidelity plot
+        set_pads = getattr(fig, "set_constrained_layout_pads", None)
+        if callable(set_pads):
+            set_pads(w_pad=0.2, h_pad=0.25, hspace=ROW_SPACING, wspace=0.12)
 
         # Create main grid with 2 sections for different spacing
-        main_gs = GridSpec(
-            2, 1, figure=fig, hspace=0.25, top=0.92, height_ratios=[2, 2]
-        )
+        main_gs = GridSpec(2, 1, figure=fig, height_ratios=[3, 2])
 
-        # Top section: Cost Breakdown and Summary Compression (closer together)
+        # Top section: Cost Breakdown, Summary Compression, Fidelity
         top_gs = GridSpecFromSubplotSpec(
-            2, 1, subplot_spec=main_gs[0], hspace=0.3, height_ratios=[0.6, 1.4]
+            3,
+            1,
+            subplot_spec=main_gs[0],
+            height_ratios=[0.5, 1.2, 1.0],
         )
 
         # Bottom section: Tree Construction Timeline
@@ -436,9 +465,13 @@ class TelemetryVisualizer:
         ax2 = fig.add_subplot(top_gs[1])
         self._plot_summary_scatter(telemetry, ax2, bounds=summary_bounds)
 
-        # 3. Tree Construction Timeline
-        ax3 = fig.add_subplot(bottom_gs[0])
-        self._plot_tree_construction_timeline(telemetry, ax3, bounds=timeline_bounds)
+        # 3. Fidelity distribution
+        ax3 = fig.add_subplot(top_gs[2])
+        self._plot_fidelity_scatter(telemetry, ax3, title="Summarization Fidelity")
+
+        # 4. Tree Construction Timeline
+        ax4 = fig.add_subplot(bottom_gs[0])
+        self._plot_tree_construction_timeline(telemetry, ax4, bounds=timeline_bounds)
 
         # Add title and metadata
         if "config" in data:
@@ -450,13 +483,12 @@ class TelemetryVisualizer:
         else:
             chunk_size = "Unknown"
         fig.suptitle(
-            f"Telemetry Analysis - {chunk_size} Token Chunks", fontsize=16, y=0.98
+            f"Telemetry Analysis - {chunk_size} Token Chunks", fontsize=16, y=1.02
         )
 
         # Save figure
         self._ensure_output_dir()
         with self._suppress_matplotlib_warnings():
-            plt.tight_layout()
             plt.savefig(self.output_path, bbox_inches="tight")
         plt.close()
 
@@ -572,41 +604,33 @@ class TelemetryVisualizer:
 
         # Create figure with side-by-side subplots using built-in axis sharing
         if figsize is None:
-            figsize = (
-                10,
-                14,
-            )  # Half the width, slightly taller for double Summary Accuracy
+            figsize = (10, 16)
 
         # Create figure with GridSpec for flexible subplot arrangement
-        # Note: We can't use simple sharex='row' because each row has different x-axis semantics
-        # Row 1: Cost breakdown (categorical x-axis) - no x-sharing
-        # Row 2: Summary scatter (numeric x-axis) - needs x-sharing
-        # Row 3: Timeline (numeric x-axis) - needs x-sharing
-        fig = plt.figure(figsize=figsize)
+        fig = plt.figure(figsize=figsize, constrained_layout=True)
+        set_pads = getattr(fig, "set_constrained_layout_pads", None)
+        if callable(set_pads):
+            set_pads(w_pad=0.125, h_pad=0.3, hspace=ROW_SPACING, wspace=0.09)
 
         # Create main grid with 2 sections for different spacing
-        main_gs = GridSpec(
-            2, 1, figure=fig, hspace=0.25, top=0.92, height_ratios=[2, 2]
-        )
+        main_gs = GridSpec(2, 1, figure=fig, height_ratios=[3, 2])
 
-        # Top section: Cost Breakdown and Summary Compression (closer together)
+        # Top section: Cost Breakdown, Summary Compression, Fidelity
         top_gs = GridSpecFromSubplotSpec(
-            2,
+            3,
             2,
             subplot_spec=main_gs[0],
-            hspace=0.3,
-            wspace=0.15,
-            height_ratios=[0.6, 1.4],
+            height_ratios=[0.5, 1.2, 1.0],
         )
 
         # Bottom section: Tree Construction Timeline
-        bottom_gs = GridSpecFromSubplotSpec(1, 2, subplot_spec=main_gs[1], wspace=0.15)
+        bottom_gs = GridSpecFromSubplotSpec(1, 2, subplot_spec=main_gs[1])
 
         # Add super title
         fig.suptitle(
             "Side-by-Side Comparison: Baseline vs Current",
             fontsize=16,
-            y=0.97,
+            y=1.02,
         )
 
         # 1. Cost Breakdown (no axis sharing needed)
@@ -631,25 +655,38 @@ class TelemetryVisualizer:
         ax2_right.set_title("Summary Compression Patterns", fontsize=12)
         ax2_right.set_ylabel("")  # Remove y-axis label
 
-        # 3. Tree Construction Timeline (share both axes)
+        # 3. Fidelity distributions
+        ax_fidelity_left = fig.add_subplot(top_gs[2, 0])
+        ax_fidelity_right = fig.add_subplot(top_gs[2, 1], sharey=ax_fidelity_left)
+
+        self._plot_fidelity_scatter(
+            telemetry1,
+            ax_fidelity_left,
+            title="Summary Fidelity",
+        )
+        self._plot_fidelity_scatter(
+            telemetry2,
+            ax_fidelity_right,
+            title="Summary Fidelity",
+        )
+        ax_fidelity_right.set_ylabel("")
+
+        # 4. Tree Construction Timeline (share both axes)
         ax3_left = fig.add_subplot(bottom_gs[0, 0])
         ax3_right = fig.add_subplot(bottom_gs[0, 1], sharex=ax3_left, sharey=ax3_left)
 
         self._plot_tree_construction_timeline(
             telemetry1, ax3_left, max_y_limit=global_max_time, bounds=timeline_bounds
         )
-        ax3_left.set_title("Tree Construction Timeline", fontsize=12, pad=25)
 
         self._plot_tree_construction_timeline(
             telemetry2, ax3_right, max_y_limit=global_max_time, bounds=timeline_bounds
         )
-        ax3_right.set_title("Tree Construction Timeline", fontsize=12, pad=25)
         ax3_right.set_ylabel("")  # Remove y-axis label
 
         # Save figure
         self._ensure_output_dir()
         with self._suppress_matplotlib_warnings():
-            plt.tight_layout()
             plt.savefig(self.output_path, bbox_inches="tight", dpi=SAVE_DPI)
         plt.close()
 
@@ -855,6 +892,100 @@ class TelemetryVisualizer:
         ax.set_xticks([])  # Hide x-axis ticks
         ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, alpha=0.3, axis="y")
+
+    def _plot_fidelity_scatter(
+        self,
+        telemetry: TelemetryDataDict,
+        ax: Axes,
+        *,
+        title: str,
+    ) -> None:
+        """Plot summarization fidelity per node over document position."""
+
+        points = self._extract_fidelity_points(telemetry)
+        if not points:
+            ax.text(
+                0.5,
+                0.5,
+                "No fidelity data available",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+                fontsize=10,
+                color="#6b7280",
+            )
+            ax.set_axis_off()
+            return
+
+        positions, fidelities, heights = zip(*points)
+        drifts = [max(0.0, (1.0 - value) * 100.0) for value in fidelities]
+        colors = ["#1d4ed8" if height == 1 else "#dc2626" for height in heights]
+        ax.scatter(
+            positions,
+            drifts,
+            c=colors,
+            alpha=0.6,
+            s=22,
+            edgecolors="none",
+        )
+
+        # Highlight overall fidelity trend
+        mean_drift = statistics.fmean(drifts)
+        ax.axhline(
+            mean_drift,
+            color=MEAN_DRIFT_COLOR,
+            linestyle="--",
+            linewidth=1.5,
+            label=f"Mean semantic drift: {mean_drift:.1f}%",
+        )
+        span_min, span_max = self._extract_span_range(telemetry)
+        ax.set_xlim(span_min, span_max)
+        text_x = (
+            span_max - (span_max - span_min) * 0.01 if span_max > span_min else span_max
+        )
+        ax.text(
+            text_x,
+            mean_drift,
+            f"{mean_drift:.1f}%",
+            color=MEAN_DRIFT_COLOR,
+            fontsize=9,
+            fontweight="bold",
+            ha="right",
+            va="bottom",
+            bbox=dict(
+                boxstyle="round,pad=0.15",
+                facecolor="white",
+                edgecolor="none",
+                alpha=0.7,
+            ),
+        )
+
+        # Align x-axis with document span for consistency
+        max_drift = max(drifts) if drifts else 0.0
+        upper = max(1.0, max_drift * 1.1)
+        ax.set_ylim(0.0, upper)
+        ax.set_xlabel("Document Position (characters)")
+        ax.set_ylabel("Semantic Drift (%)")
+        ax.set_title(title, fontsize=12)
+        ax.grid(True, alpha=0.2, axis="both")
+        legend_elements = [
+            Patch(facecolor="#1d4ed8", label="Leaf merges (height 1)", alpha=0.6),
+            Patch(facecolor="#dc2626", label="Higher-level merges", alpha=0.6),
+            Line2D(
+                [0],
+                [0],
+                color=MEAN_DRIFT_COLOR,
+                linestyle="--",
+                linewidth=1.5,
+                label="Mean semantic drift",
+            ),
+        ]
+        ax.legend(
+            handles=legend_elements,
+            loc="upper right",
+            fontsize=8,
+            frameon=True,
+        )
 
     def _plot_batch_efficiency(self, telemetry: TelemetryDataDict, ax: Axes) -> None:
         """Plot embedding batch efficiency with clear explanations."""
@@ -1870,10 +2001,7 @@ class TelemetryVisualizer:
             ax.set_xlabel("Document Position (characters)")
             ax.set_ylabel("Time Since Start (seconds)")
             # Add extra padding at the top for the legend
-            ax.set_title(
-                "Tree Construction Timeline",
-                pad=25,  # Add padding to make room for legend
-            )
+            ax.set_title("Tree Construction Timeline")
             ax.grid(True, alpha=0.3)
 
             # Add legend for embeddings and attempt colors
@@ -1905,17 +2033,20 @@ class TelemetryVisualizer:
                 legend_elements.extend(attempt_legend_elements[:max_attempts])
 
             if legend_elements:
-                # Place legend horizontally between title and chart
-                ax.legend(
+                legend_columns = 1 if len(legend_elements) <= 3 else 2
+                legend = ax.legend(
                     handles=legend_elements,
-                    loc="upper center",
-                    bbox_to_anchor=(0.5, 1.05),  # Position above chart, below title
-                    ncol=min(len(legend_elements), 6),  # Horizontal layout
+                    loc="upper left",
+                    bbox_to_anchor=(0.01, 0.99),
+                    borderaxespad=0.0,
+                    ncol=legend_columns,
                     fontsize=8,
-                    frameon=False,  # Remove frame for cleaner look
-                    columnspacing=LEGEND_COLUMN_SPACING,  # Reduce horizontal spacing between columns
-                    handletextpad=LEGEND_HANDLE_TEXT_PAD,  # Reduce spacing between legend marker and text
+                    frameon=True,
+                    columnspacing=LEGEND_COLUMN_SPACING,
+                    handletextpad=LEGEND_HANDLE_TEXT_PAD,
                 )
+                legend.get_frame().set_alpha(0.85)
+                legend.get_frame().set_facecolor("white")
         else:
             # No valid data to plot
             ax.text(
