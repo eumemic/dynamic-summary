@@ -63,6 +63,7 @@ class NodeTelemetryDict(TypedDict):
     input_text_tokens: NotRequired[
         int
     ]  # Combined tokens from children (for non-leaf nodes)
+    fidelity: NotRequired[float]
 
 
 # Document metadata types

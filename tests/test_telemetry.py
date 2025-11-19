@@ -1,6 +1,7 @@
 """Test node-level telemetry collection."""
 
 import time
+from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,6 +12,10 @@ from ragzoom.telemetry_collection import (
     NodeTelemetry,
     SummaryAttempt,
     TelemetryCollector,
+)
+from ragzoom.telemetry_embeddings import (
+    annotate_telemetry_fidelity,
+    compute_fidelity_for_telemetry,
 )
 from tests.conftest import IndexerRuntimeHarness
 from tests.utils import create_telemetry_summary_mock
@@ -117,7 +122,10 @@ class TestTelemetryCollection:
         # Record embedding batch
         start_time = time.time()
         reporter.record_embedding_call_v2(
-            node_embeddings=[("node-1", 45), ("node-2", 48)],
+            node_embeddings=[
+                ("node-1", 45),
+                ("node-2", 48),
+            ],
             batch_size=2,
             model="text-embedding-3-small",
             start_time=start_time,
@@ -134,10 +142,19 @@ class TestTelemetryCollection:
         assert node1.embedding.batch_size == 2
         assert node1.embedding.batch_position == 0
         assert node1.embedding.model == "text-embedding-3-small"
-
         node2 = reporter.node_telemetry["node-2"]
         assert node2.embedding is not None
         assert node2.embedding.batch_position == 1
+        assert node2.embedding.model == "text-embedding-3-small"
+
+    def test_record_node_fidelity(self, reporter: TelemetryCollector) -> None:
+        """Verify node fidelity is recorded."""
+
+        reporter.track_node_created("node-1", 1)
+        reporter.record_node_fidelity("node-1", 0.85)
+
+        node = reporter.node_telemetry["node-1"]
+        assert node.fidelity == 0.85
 
     def test_record_summary_attempt_v2(self, reporter: TelemetryCollector) -> None:
         """Test v2 summary recording with telemetry."""
@@ -232,6 +249,185 @@ class TestTelemetryCollection:
 
         # No telemetry should be created
         assert len(reporter.node_telemetry) == 0
+
+    @pytest.mark.asyncio
+    async def test_compute_fidelity_reembeds_missing_parent_vectors(
+        self, reporter: TelemetryCollector
+    ) -> None:
+        """Telemetry fidelity computation should re-embed when vectors are absent."""
+
+        @dataclass
+        class _Node:
+            id: str
+            text: str
+            height: int
+            document_id: str = "test-doc"
+            left_child_id: str | None = None
+            right_child_id: str | None = None
+            span_start: int = 0
+            span_end: int = 0
+
+        class _Nodes:
+            def __init__(self, nodes: list[_Node]) -> None:
+                self._nodes = {node.id: node for node in nodes}
+
+            def get_many(self, ids: list[str]) -> list[_Node]:
+                return [
+                    self._nodes[node_id] for node_id in ids if node_id in self._nodes
+                ]
+
+            def get(self, node_id: str) -> _Node | None:
+                return self._nodes.get(node_id)
+
+        class _Store:
+            def __init__(self, nodes: list[_Node]) -> None:
+                self.nodes = _Nodes(nodes)
+
+        class _MissingVectorIndex:
+            def get_vectors(self, ids: list[str]) -> list[object]:
+                raise KeyError(f"Vector not found for id {ids[0]}")
+
+        class _MappingEmbedder:
+            def __init__(self, mapping: dict[str, list[float]]) -> None:
+                self.mapping = mapping
+
+            async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+                return [self.mapping[text] for text in texts]
+
+        child_a = _Node(id="child-a", text="Bilbo meets Gandalf", height=0)
+        child_b = _Node(id="child-b", text="They plan an adventure", height=0)
+        parent = _Node(
+            id="parent",
+            text="Bilbo and Gandalf plan a grand adventure",
+            height=1,
+            left_child_id=child_a.id,
+            right_child_id=child_b.id,
+        )
+        store = _Store([parent, child_a, child_b])
+
+        combined_children = f"{child_a.text}\n{child_b.text}"
+        embedder = _MappingEmbedder(
+            {
+                parent.text: [1.0, 0.0],
+                combined_children: [0.6, 0.8],
+            }
+        )
+
+        vector_index = _MissingVectorIndex()
+        reporter.track_node_created(parent.id, parent.height)
+        reporter.track_node_created(child_a.id, child_a.height)
+        reporter.track_node_created(child_b.id, child_b.height)
+
+        await compute_fidelity_for_telemetry(
+            document_store=store,  # type: ignore[arg-type]
+            collector=reporter,
+            vector_index=vector_index,  # type: ignore[arg-type]
+            embedder=embedder,
+            token_limit=2048,
+            max_batch_items=16,
+        )
+
+        fidelity = reporter.node_telemetry[parent.id].fidelity
+        assert fidelity is not None
+        assert fidelity == pytest.approx(0.6, rel=1e-6)
+
+    @pytest.mark.asyncio
+    async def test_annotate_telemetry_fidelity_updates_nodes(self) -> None:
+        """Exported telemetry payloads should be annotated with fidelity values."""
+
+        @dataclass
+        class _Node:
+            id: str
+            text: str
+            height: int
+            span_start: int
+            span_end: int
+            document_id: str = "doc"
+            parent_id: str | None = None
+            left_child_id: str | None = None
+            right_child_id: str | None = None
+
+        class _Nodes:
+            def __init__(self, nodes: list[_Node]) -> None:
+                self._nodes = {node.id: node for node in nodes}
+
+            def get_many(self, ids: list[str]) -> list[_Node]:
+                return [
+                    self._nodes[node_id] for node_id in ids if node_id in self._nodes
+                ]
+
+            def get(self, node_id: str) -> _Node | None:
+                return self._nodes.get(node_id)
+
+        class _Store:
+            def __init__(self, nodes: list[_Node]) -> None:
+                self.nodes = _Nodes(nodes)
+
+            def get_embedding_model(self) -> str:
+                return "text-embedding-3-small"
+
+        class _MappingEmbedder:
+            def __init__(self, mapping: dict[str, list[float]]) -> None:
+                self.mapping = mapping
+
+            async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+                return [self.mapping[text] for text in texts]
+
+        class _MissingVectorIndex:
+            def get_vectors(self, ids: list[str]) -> list[object]:
+                raise KeyError(f"Vector not found for id {ids[0]}")
+
+        parent = _Node(
+            id="parent",
+            text="Summary",
+            height=1,
+            span_start=0,
+            span_end=64,
+        )
+        child_a = _Node(
+            id="child-a",
+            text="Chunk A",
+            height=0,
+            span_start=0,
+            span_end=32,
+            parent_id=parent.id,
+        )
+        child_b = _Node(
+            id="child-b",
+            text="Chunk B",
+            height=0,
+            span_start=32,
+            span_end=64,
+            parent_id=parent.id,
+        )
+        parent.left_child_id = child_a.id
+        parent.right_child_id = child_b.id
+
+        store = _Store([parent, child_a, child_b])
+        combined_children = f"{child_a.text}\n{child_b.text}"
+        embedder = _MappingEmbedder(
+            {parent.text: [1.0, 0.0], combined_children: [0.6, 0.8]}
+        )
+
+        telemetry_nodes = [
+            {"node_id": parent.id, "height": 1},
+            {"node_id": child_a.id, "height": 0},
+            {"node_id": child_b.id, "height": 0},
+        ]
+
+        await annotate_telemetry_fidelity(
+            document_store=store,  # type: ignore[arg-type]
+            telemetry_nodes=telemetry_nodes,
+            vector_index=_MissingVectorIndex(),  # type: ignore[arg-type]
+            embedder=embedder,
+            token_limit=2048,
+            max_batch_items=16,
+        )
+
+        parent_entry = telemetry_nodes[0]
+        fidelity = parent_entry.get("fidelity")
+        assert fidelity is not None
+        assert fidelity == pytest.approx(0.6, rel=1e-6)
 
 
 class TestTelemetryIntegration:
@@ -401,6 +597,7 @@ class TestTelemetryIntegration:
         reporter.record_embedding_call_v2(
             [("node-1", 50)], 1, "text-embedding-3-small", start_time
         )
+        reporter.record_node_fidelity("node-1", 0.77)
 
         # Convert to dict format (like benchmark output)
         telemetry_dict = {}
@@ -422,3 +619,4 @@ class TestTelemetryIntegration:
             loaded["node-1"]["embedding"]["end_time"]
             > loaded["node-1"]["embedding"]["start_time"]
         )
+        assert loaded["node-1"]["fidelity"] == 0.77

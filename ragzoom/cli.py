@@ -436,29 +436,51 @@ def index(
 
         if telemetry_requested and await_workers:
             telemetry_path = cast(str, telemetry_file)
-            export_result = None
-            export_error: str | None = None
-            try:
-                with GrpcRagzoomClient(resolved_address) as export_client:
-                    export_result = export_client.export_document_telemetry(
-                        document_id=target_document_id
-                    )
-            except Exception as exc:  # pragma: no cover - network failures
-                export_error = str(exc)
-            if export_result is not None:
-                if export_result.error:
-                    export_error = export_result.error
-                elif export_result.telemetry:
-                    try:
-                        with open(telemetry_path, "w", encoding="utf-8") as f:
-                            json.dump(export_result.telemetry, f, indent=2)
-                        click.echo(f"✅ Saved telemetry: {telemetry_path}")
-                    except OSError as exc:
-                        export_error = str(exc)
+            telemetry_payload: TelemetryDataDict | None = None
+            telemetry_error: str | None = None
+
+            if collect_requested and telemetry_run_id:
+                try:
+                    with GrpcRagzoomClient(resolved_address) as telemetry_client:
+                        poll_result = telemetry_client.get_telemetry(
+                            document_id=target_document_id,
+                            run_id=telemetry_run_id,
+                            wait=True,
+                        )
+                except Exception as exc:  # pragma: no cover - network failures
+                    telemetry_error = str(exc)
                 else:
-                    export_error = "Telemetry data was empty for this document."
-            if export_error:
-                click.echo(f"❌ Telemetry export failed: {export_error}", err=True)
+                    if poll_result.error:
+                        telemetry_error = poll_result.error
+                    elif poll_result.telemetry:
+                        telemetry_payload = poll_result.telemetry
+
+            if telemetry_payload is None and telemetry_error is None:
+                try:
+                    with GrpcRagzoomClient(resolved_address) as export_client:
+                        export_result = export_client.export_document_telemetry(
+                            document_id=target_document_id
+                        )
+                except Exception as exc:  # pragma: no cover - network failures
+                    telemetry_error = str(exc)
+                else:
+                    if export_result.error:
+                        telemetry_error = export_result.error
+                    elif export_result.telemetry:
+                        telemetry_payload = export_result.telemetry
+                    else:
+                        telemetry_error = "Telemetry data was empty for this document."
+
+            if telemetry_payload:
+                try:
+                    with open(telemetry_path, "w", encoding="utf-8") as f:
+                        json.dump(telemetry_payload, f, indent=2)
+                    click.echo(f"✅ Saved telemetry: {telemetry_path}")
+                except OSError as exc:
+                    telemetry_error = str(exc)
+
+            if telemetry_error:
+                click.echo(f"❌ Telemetry export failed: {telemetry_error}", err=True)
 
         # Show debug hint if enabled
         if debug:
