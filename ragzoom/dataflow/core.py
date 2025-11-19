@@ -693,11 +693,12 @@ async def _process_embedding_batch(
         embeddings = await llm_service._get_embeddings_batch(texts)
 
         # Store embeddings on domain nodes for later VectorIndex upsert
-        for node, embedding in zip(batch, embeddings):
-            try:
-                node.embedding = list(embedding)  # ensure JSON-serializable list
-            except Exception:
-                node.embedding = [float(x) for x in embedding]
+        for node, token_count, embedding in zip(batch, token_counts, embeddings):
+            serialized = [float(x) for x in embedding]
+            node.embedding = serialized
+        node_embeddings = [
+            (node.id, token_count) for node, token_count in zip(batch, token_counts)
+        ]
 
         # Log embedding batch processing
         heights = [node.height for node in batch]
@@ -719,12 +720,6 @@ async def _process_embedding_batch(
 
         # Track telemetry
         if reporter:
-            # Prepare node embeddings data
-            node_embeddings = [
-                (node.id, token_count) for node, token_count in zip(batch, token_counts)
-            ]
-
-            # Record v2 telemetry with per-node tracking
             model = (
                 llm_service.config.embedding_model
                 if hasattr(llm_service, "config")

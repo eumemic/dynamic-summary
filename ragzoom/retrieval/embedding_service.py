@@ -1,6 +1,7 @@
 """Service for generating query embeddings with auto-detection support."""
 
 import logging
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from openai import OpenAI
@@ -64,6 +65,51 @@ class EmbeddingService:
                 f"Error getting query embedding with model {embedding_model}: {e}"
             )
             raise
+
+    def embed_texts(
+        self, texts: Sequence[str], document_id: str | None = None
+    ) -> list[list[float]]:
+        """Embed multiple texts using the detected model with caching."""
+
+        if not texts:
+            return []
+
+        embedding_model = self._detect_embedding_model(document_id)
+
+        missing: list[str] = []
+        for text in texts:
+            cache_key = (embedding_model, text)
+            if cache_key not in self._cache:
+                missing.append(text)
+
+        if missing:
+            try:
+                response = self.client.embeddings.create(
+                    model=embedding_model,
+                    input=list(missing),
+                )
+            except Exception as e:  # pragma: no cover - network failures
+                logger.error(
+                    "Error getting batch embeddings with model %s: %s",
+                    embedding_model,
+                    e,
+                )
+                raise
+
+            if len(response.data) != len(missing):
+                raise RuntimeError(
+                    "Embedding batch response size mismatch "
+                    f"({len(response.data)} vs {len(missing)})"
+                )
+
+            for text, item in zip(missing, response.data):
+                cache_key = (embedding_model, text)
+                self._cache[cache_key] = list(item.embedding)
+
+        return [
+            list(self._cache[(embedding_model, text)])  # guaranteed after fill
+            for text in texts
+        ]
 
     def _detect_embedding_model(self, document_id: str | None) -> str:
         """Auto-detect embedding model from document if provided."""

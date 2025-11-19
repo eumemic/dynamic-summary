@@ -282,11 +282,15 @@ export RAGZOOM_UI_PORT=56300
 If Docker listens on a non-default socket, set `DEVSTACK_DOCKER_HOST` (or
 `DOCKER_HOST`) before running the script.
 
-Each worktree mounting its own `data/` directory keeps the SQLite database and
-telemetry files isolated, so parallel stacks never collide. The inspector UI served
-from the container already points at the REST API port you expose on the host. When
-the stack is running the regular `python -m ragzoom.cli ...` commands will hit the
-containerised gRPC server automatically.
+Each worktree mounting its own `data/` directory keeps the SQLite database,
+Chroma vector store (`data/chroma/`), and telemetry files isolated, so parallel
+stacks never collide. Because the stack loads your `.env` before starting,
+the containers inherit the same configuration (and defaults) as a local
+`ragzoom server` run: embeddings go to `data/chroma/` by default and are
+immediately visible to host-side tools like `ragzoom-telemetry`. The inspector
+UI served from the container already points at the REST API port you expose on
+the host. When the stack is running the regular `python -m ragzoom.cli ...`
+commands will hit the containerised gRPC server automatically.
 
 ### gRPC API code generation
 
@@ -626,6 +630,15 @@ pytest -m integration                      # Integration tests only
 ragzoom-telemetry analyze telemetry.json
 ragzoom-telemetry compare baseline.json current.json
 ragzoom-telemetry visualize baseline.json current.json -o comparison.png
+
+# Summarization diagnostics
+ragzoom-telemetry analyze telemetry.json
+ragzoom-telemetry visualize telemetry.json
+
+When telemetry is enabled, RagZoom stores scalar fidelity metrics for every
+merge. The telemetry analysis and visualization commands report aggregate
+statistics plus low-fidelity merges, and the fidelity scatter plot shows drift
+hotspots over the document without re-embedding anything.
 
 # Git hooks (automatically installed by setup script)
 # - pre-commit: Runs all quality checks in parallel

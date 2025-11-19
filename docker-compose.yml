@@ -5,8 +5,7 @@ services:
       dockerfile: Dockerfile
     command: ["python", "-m", "ragzoom.cli", "server", "start", "--host", "0.0.0.0", "--port", "50051", "--collect-telemetry"]
     environment:
-      - RAGZOOM_DATABASE_URL=sqlite:////data/sqlite.db
-      - RAGZOOM_VECTOR_BACKEND=python
+      - RAGZOOM_DATABASE_URL=${RAGZOOM_DATABASE_URL:-sqlite:////data/sqlite.db}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
     volumes:
       - ./data:/data
@@ -47,7 +46,7 @@ services:
       - grpc
     environment:
       - RAGZOOM_SERVER_ADDRESS=grpc:50051
-      - RAGZOOM_DATABASE_URL=sqlite:////data/sqlite.db
+      - RAGZOOM_DATABASE_URL=${RAGZOOM_DATABASE_URL:-sqlite:////data/sqlite.db}
       - RAGZOOM_CORS_ORIGINS=http://localhost:${RAGZOOM_UI_PORT:-55300},http://127.0.0.1:${RAGZOOM_UI_PORT:-55300}
     volumes:
       - ./data:/data

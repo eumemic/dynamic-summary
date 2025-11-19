@@ -9,6 +9,7 @@ and analysis.
 import logging
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, cast
 
@@ -155,6 +156,8 @@ class NodeTelemetry:
     # Combined tokens from children being summarized (for non-leaf nodes)
     input_text_tokens: int | None = None
 
+    fidelity: float | None = None
+
     # Timing
     created_at: float = field(default_factory=time.time)
 
@@ -187,6 +190,9 @@ class NodeTelemetry:
                 "start_time": self.embedding.start_time,
                 "end_time": self.embedding.end_time,
             }
+
+        if self.fidelity is not None:
+            result["fidelity"] = self.fidelity
 
         # Add summary attempts if present
         if self.summary_attempts:
@@ -423,7 +429,7 @@ class TelemetryCollector:
 
     def record_embedding_call_v2(
         self,
-        node_embeddings: list[tuple[str, int]],
+        node_embeddings: Sequence[tuple[str, int]],
         batch_size: int,
         model: str,
         start_time: float,
@@ -431,7 +437,7 @@ class TelemetryCollector:
         """Enhanced embedding tracking with node-level detail.
 
         Args:
-            node_embeddings: List of (node_id, token_count) tuples
+            node_embeddings: List of (node_id, token_count, vector) tuples
             batch_size: Total batch size
             model: Model used for embeddings
             start_time: When the API call started
@@ -464,6 +470,12 @@ class TelemetryCollector:
                 start_time=start_time,
                 end_time=end_time,
             )
+
+    def record_node_fidelity(self, node_id: str, fidelity: float) -> None:
+        telemetry = self.node_telemetry.get(node_id)
+        if telemetry is None:
+            return
+        telemetry.fidelity = fidelity
 
     def record_summary_result(
         self,
