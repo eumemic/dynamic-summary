@@ -383,7 +383,7 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
         if not retrieval_result.tiling:
             raise ValueError("ExecuteQuery returned no tiling; cannot log query")
 
-        self._state.query_log.record_query(
+        query_id = self._state.query_log.record_query(
             document_id=request.document_id,
             query_text=request.query,
             budget_tokens=budget,
@@ -434,6 +434,7 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
             retrieval=retrieval_proto,
             visualization=visualization,
             validation_warning=validation_warning,
+            query_id=query_id,
         )
 
 

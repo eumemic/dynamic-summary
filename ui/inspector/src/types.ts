@@ -64,6 +64,14 @@ export interface QueryDetailResponse {
   nodes: QueryNodeEntry[];
 }
 
+export interface ExecuteQueryResponse {
+  summary: string;
+  token_count: number;
+  nodes_retrieved: number;
+  tiling_size: number;
+  query_id: string;
+}
+
 export type TelemetryEvent =
   | {
       event: "node_committed";

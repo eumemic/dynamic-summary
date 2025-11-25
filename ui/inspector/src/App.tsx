@@ -204,7 +204,7 @@ export default function App() {
       cancelled = true;
       cleanupSource();
     };
-  }, [initialQueryState]);
+  }, [initialQueryState, selectedQueryId, selectedId]);
 
   const handleViewStateChange = useCallback(
     ({
