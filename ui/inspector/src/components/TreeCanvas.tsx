@@ -382,6 +382,7 @@ export default function TreeCanvas({
               transform={`translate(${x}, ${y})`}
               role="listitem"
               aria-label={`Node ${node.node_id} spanning ${node.span_start} to ${node.span_end}`}
+              style={{ cursor: "pointer" }}
             >
               <rect
                 width={width}
