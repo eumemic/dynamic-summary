@@ -23,7 +23,8 @@ from ragzoom.api_middleware import create_error_handling_middleware
 from ragzoom.client.grpc_client import GrpcRagzoomClient
 from ragzoom.config import IndexConfig, IndexConfigDict, OperationalConfig, QueryConfig
 from ragzoom.constants import DEFAULT_GRPC_ADDRESS
-from ragzoom.server.state import _resolve_telemetry_dir
+from ragzoom.query_log import QueryLog
+from ragzoom.server.state import _resolve_query_log_path, _resolve_telemetry_dir
 from ragzoom.services.document_service import DocumentInfo, DocumentService
 from ragzoom.services.query_service import QueryService
 from ragzoom.store import create_store_with_docker
@@ -211,6 +212,7 @@ class ServiceContainer:
         )
 
         self.grpc_address = _resolve_grpc_address()
+        self.query_log = QueryLog(_resolve_query_log_path(self.operational_config))
 
         # Initialize services with the multi-document store
         # Each service handles document isolation internally:
@@ -219,7 +221,7 @@ class ServiceContainer:
         # Indexing operations are proxied to the gRPC server via GrpcRagzoomClient
         self.document_service = DocumentService(self.store)
         self.query_service = QueryService(
-            self.store, self.query_config, self.operational_config
+            self.store, self.query_config, self.operational_config, self.query_log
         )
 
     def close(self) -> None:
@@ -316,6 +318,48 @@ class QueryResponse(BaseModel):  # type: ignore[explicit-any]
     token_count: int
     nodes_retrieved: int
     tiling_size: int
+    query_id: str
+
+
+class QueryListItem(BaseModel):  # type: ignore[explicit-any]
+    """Summary information for a logged query."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    document_id: str
+    query_text: str
+    budget_tokens: int | None
+    num_seeds: int | None
+    created_at: str
+
+
+class DocumentQueriesResponse(BaseModel):  # type: ignore[explicit-any]
+    """List of queries for a document."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    queries: list[QueryListItem]
+
+
+class QueryNodeEntry(BaseModel):  # type: ignore[explicit-any]
+    """Logged node entry for a query tiling."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str
+    score: float
+    is_seed: bool
+    position: int
+
+
+class QueryDetailResponse(BaseModel):  # type: ignore[explicit-any]
+    """Detailed logged query payload."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: QueryListItem
+    nodes: list[QueryNodeEntry]
 
 
 # Pydantic BaseModel inherits from type containing Any, required for serialization
@@ -611,6 +655,130 @@ async def get_nodes_batch(
     return NodeBatchResponse(nodes=serialized)
 
 
+@app.get(
+    "/documents/{document_id}/queries",
+    response_model=DocumentQueriesResponse,
+)
+async def list_document_queries(
+    document_id: str,
+    limit: int = Query(50, gt=0, le=500),
+    services: ServiceContainer = Depends(get_service_container),
+) -> DocumentQueriesResponse:
+    """List recent queries for a document (most recent first)."""
+    summaries = services.query_log.list_queries(document_id, limit)
+    items = [
+        QueryListItem(
+            id=summary.id,
+            document_id=summary.document_id,
+            query_text=summary.query_text,
+            budget_tokens=summary.budget_tokens,
+            num_seeds=summary.num_seeds,
+            created_at=summary.created_at,
+        )
+        for summary in summaries
+    ]
+    return DocumentQueriesResponse(queries=items)
+
+
+@app.get(
+    "/queries/{query_id}",
+    response_model=QueryDetailResponse,
+)
+async def get_query_detail(
+    query_id: str,
+    services: ServiceContainer = Depends(get_service_container),
+) -> QueryDetailResponse:
+    """Return a logged query with tiling nodes."""
+    detail = services.query_log.get_query(query_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Query not found")
+
+    query_item = QueryListItem(
+        id=detail.id,
+        document_id=detail.document_id,
+        query_text=detail.query_text,
+        budget_tokens=detail.budget_tokens,
+        num_seeds=detail.num_seeds,
+        created_at=detail.created_at,
+    )
+    nodes = [
+        QueryNodeEntry(
+            node_id=row.node_id,
+            score=row.score,
+            is_seed=row.is_seed,
+            position=row.position,
+        )
+        for row in detail.nodes
+    ]
+    return QueryDetailResponse(query=query_item, nodes=nodes)
+
+
+async def _query_event_stream(
+    services: ServiceContainer,
+    document_id: str,
+    limit: int,
+) -> AsyncGenerator[str, None]:
+    """Async generator emitting SSE payloads for query list updates."""
+
+    known_ids: list[str] = []
+    last_emit = time.monotonic()
+    try:
+        while True:
+            summaries = services.query_log.list_queries(document_id, limit)
+            current_ids = [summary.id for summary in summaries]
+            if current_ids != known_ids:
+                items = [
+                    QueryListItem(
+                        id=summary.id,
+                        document_id=summary.document_id,
+                        query_text=summary.query_text,
+                        budget_tokens=summary.budget_tokens,
+                        num_seeds=summary.num_seeds,
+                        created_at=summary.created_at,
+                    ).model_dump()
+                    for summary in summaries
+                ]
+                payload = {
+                    "event": "queries_changed",
+                    "queries": items,
+                }
+                data = json.dumps(payload, separators=(",", ":"))
+                yield f"data: {data}\n\n"
+                known_ids = current_ids
+                last_emit = time.monotonic()
+            else:
+                now = time.monotonic()
+                if now - last_emit >= _TELEMETRY_HEARTBEAT_SECONDS:
+                    yield ": keep-alive\n\n"
+                    last_emit = now
+            await asyncio.sleep(1.0)
+    except asyncio.CancelledError:
+        return
+    finally:
+        services.close()
+
+
+@app.get("/documents/{document_id}/queries/events")
+async def stream_document_query_events(
+    document_id: str,
+    limit: int = Query(50, gt=0, le=500),
+    services: ServiceContainer = Depends(get_service_container),
+) -> StreamingResponse:
+    """Server-Sent Events stream for query history updates."""
+
+    headers = {"Cache-Control": "no-cache"}
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        async for chunk in _query_event_stream(services, document_id, limit):
+            yield chunk
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers=headers,
+    )
+
+
 @app.get("/documents/{document_id}/events")
 async def stream_document_events(document_id: str) -> StreamingResponse:
     """Server-Sent Events stream for document telemetry."""
@@ -668,6 +836,7 @@ async def query(
         token_count=result.token_count,
         nodes_retrieved=result.nodes_retrieved,
         tiling_size=result.tiling_size,
+        query_id=result.query_id,
     )
     # Error handling is now done by middleware
 

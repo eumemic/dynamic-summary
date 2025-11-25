@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.indexing import IndexerRuntime
+from ragzoom.query_log import QueryLog
 from ragzoom.server.append_executor import AppendExecutor
 from ragzoom.server.run_manager import TelemetryRunManager
 from ragzoom.server.worker_coordinator import WorkerCoordinator
@@ -29,6 +30,7 @@ class ServerState:
     query_config: QueryConfig
     operational_config: OperationalConfig
     store: StorageBackend
+    query_log: QueryLog
     query_service: QueryService
     llm_service: LLMService
     telemetry_run_manager: TelemetryRunManager
@@ -56,7 +58,8 @@ class ServerState:
         store = create_store_with_docker(
             operational_cfg, embedding_model=index_cfg.embedding_model
         )
-        query_service = QueryService(store, query_cfg, operational_cfg)
+        query_log = QueryLog(_resolve_query_log_path(operational_cfg))
+        query_service = QueryService(store, query_cfg, operational_cfg, query_log)
         llm_service = LLMService(
             index_cfg,
             api_key=operational_cfg.openai_api_key,
@@ -99,6 +102,7 @@ class ServerState:
             query_config=query_cfg,
             operational_config=operational_cfg,
             store=store,
+            query_log=query_log,
             query_service=query_service,
             llm_service=llm_service,
             telemetry_run_manager=telemetry_run_manager,
@@ -135,3 +139,29 @@ def _resolve_telemetry_dir(
         return Path(data_root) / DEFAULT_DATA_DIR_NAME / "telemetry"
 
     return Path.cwd() / DEFAULT_DATA_DIR_NAME / "telemetry"
+
+
+def _resolve_query_log_path(operational_config: OperationalConfig) -> Path:
+    override = os.environ.get("RAGZOOM_QUERY_LOG_PATH")
+    if override:
+        return Path(override)
+
+    url = (operational_config.database_url or "").strip()
+    if url.startswith("sqlite") and ":memory:" not in url:
+        parsed = urlparse(url)
+        raw_path = parsed.path or ""
+        if url.startswith("sqlite:////"):
+            sqlite_path = Path(raw_path)
+        else:
+            sqlite_path = Path(raw_path.lstrip("/"))
+            if not sqlite_path.is_absolute():
+                sqlite_path = Path.cwd() / sqlite_path
+        if sqlite_path.suffix:
+            return sqlite_path.parent / "query-log.db"
+        return sqlite_path / "query-log.db"
+
+    data_root = os.environ.get("RAGZOOM_DATA_DIR")
+    if data_root:
+        return QueryLog.default_path(Path(data_root))
+
+    return QueryLog.default_path()

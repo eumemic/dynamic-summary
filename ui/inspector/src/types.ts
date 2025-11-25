@@ -39,6 +39,39 @@ export interface NodesPageResponse {
   total_matching: number;
 }
 
+export interface QueryListItem {
+  id: string;
+  document_id: string;
+  query_text: string;
+  budget_tokens: number | null;
+  num_seeds: number | null;
+  created_at: string;
+}
+
+export interface DocumentQueriesResponse {
+  queries: QueryListItem[];
+}
+
+export interface QueryNodeEntry {
+  node_id: string;
+  score: number;
+  is_seed: boolean;
+  position: number;
+}
+
+export interface QueryDetailResponse {
+  query: QueryListItem;
+  nodes: QueryNodeEntry[];
+}
+
+export interface ExecuteQueryResponse {
+  summary: string;
+  token_count: number;
+  nodes_retrieved: number;
+  tiling_size: number;
+  query_id: string;
+}
+
 export type TelemetryEvent =
   | {
       event: "node_committed";

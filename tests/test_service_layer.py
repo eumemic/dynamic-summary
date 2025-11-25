@@ -1,6 +1,8 @@
 """Tests for the service layer implementation."""
 
 import asyncio
+import tempfile
+from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock, Mock, patch
 
@@ -8,6 +10,7 @@ import pytest
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.query_log import QueryLog
 from ragzoom.services.document_service import (
     DocumentInfo,
     DocumentService,
@@ -452,6 +455,7 @@ class TestQueryService:
         mock_retrieval_result = Mock()
         mock_retrieval_result.node_ids = ["node1", "node2"]
         mock_retrieval_result.tiling = ["node1", "node3", "node2"]
+        mock_retrieval_result.scores = {"node1": 0.7, "node2": 0.5, "node3": 0.1}
         mock_retriever.retrieve.return_value = mock_retrieval_result
         cast(MagicMock, mock_retriever_class).return_value = mock_retriever
 
@@ -465,20 +469,23 @@ class TestQueryService:
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
-        # Create service and test
-        service = QueryService(mock_store, query_config, operational_config)
-        result = service.execute_query("test query", "doc-123")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            query_log = QueryLog(QueryLog.default_path(Path(tmp_dir)))
+            service = QueryService(
+                mock_store, query_config, operational_config, query_log
+            )
+            result = service.execute_query("test query", "doc-123")
 
-        assert isinstance(result, QueryResult)
-        assert result.summary == "This is the summary"
-        assert result.token_count == 50
-        assert result.nodes_retrieved == 2
-        assert result.tiling_size == 3
+            assert isinstance(result, QueryResult)
+            assert result.summary == "This is the summary"
+            assert result.token_count == 50
+            assert result.nodes_retrieved == 2
+            assert result.tiling_size == 3
 
-        mock_retriever.retrieve.assert_called_once_with(
-            "test query", budget_tokens=1000, document_id="doc-123", num_seeds=None
-        )
-        mock_assembler.assemble.assert_called_once_with(mock_retrieval_result)
+            mock_retriever.retrieve.assert_called_once_with(
+                "test query", budget_tokens=1000, document_id="doc-123", num_seeds=None
+            )
+            mock_assembler.assemble.assert_called_once_with(mock_retrieval_result)
 
     @patch("ragzoom.services.query_service.Retriever")
     def test_update_config(self, mock_retriever_class: object) -> None:
@@ -494,7 +501,11 @@ class TestQueryService:
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
         # Create service
-        service = QueryService(mock_store, query_config, operational_config)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            query_log = QueryLog(QueryLog.default_path(Path(tmp_dir)))
+            service = QueryService(
+                mock_store, query_config, operational_config, query_log
+            )
 
         # Mock new retriever for updated config
         mock_new_retriever = Mock()

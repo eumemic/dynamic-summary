@@ -1,4 +1,10 @@
-import { DocumentsResponse, NodeResponse, NodesPageResponse } from "../types";
+import {
+  DocumentQueriesResponse,
+  DocumentsResponse,
+  NodeResponse,
+  NodesPageResponse,
+  QueryDetailResponse,
+} from "../types";
 
 const API_BASE =
   import.meta.env.VITE_RAGZOOM_API_URL?.replace(/\/$/, "") ?? "";
@@ -78,4 +84,22 @@ export async function fetchNodesBatch(
   );
 
   return response.nodes;
+}
+
+export async function fetchDocumentQueries(
+  documentId: string,
+  limit = 50
+): Promise<DocumentQueriesResponse> {
+  const params = new URLSearchParams({ limit: limit.toString() });
+  return requestJson<DocumentQueriesResponse>(
+    `${API_BASE}/documents/${encodeURIComponent(documentId)}/queries?${params.toString()}`
+  );
+}
+
+export async function fetchQueryDetail(
+  queryId: string
+): Promise<QueryDetailResponse> {
+  return requestJson<QueryDetailResponse>(
+    `${API_BASE}/queries/${encodeURIComponent(queryId)}`
+  );
 }
