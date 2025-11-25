@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from ragzoom.assemble import Assembler
 from ragzoom.config import OperationalConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
-from ragzoom.retrieve import Retriever
+from ragzoom.query_log import QueryLog
+from ragzoom.retrieve import RetrievalResult, Retriever
 from ragzoom.vector_factory import create_vector_index
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ class QueryResult:
     token_count: int
     nodes_retrieved: int
     tiling_size: int
+    query_id: str
 
 
 class QueryService:
@@ -30,6 +32,7 @@ class QueryService:
         store: StorageBackend,
         query_config: QueryConfig,
         operational_config: OperationalConfig,
+        query_logger: QueryLog,
     ):
         """Initialize query service.
 
@@ -41,6 +44,7 @@ class QueryService:
         self.store = store
         self.query_config = query_config
         self.operational_config = operational_config
+        self.query_logger = query_logger
         # Note: Retriever and Assembler are now created per-request with DocumentStore
 
     # jscpd:ignore-start - Legitimate sync/async pattern duplication
@@ -107,11 +111,20 @@ class QueryService:
         summary = assembler.assemble(retrieval_result)
         token_count = assembler.get_token_count(summary)
 
+        query_id = self._record_query(
+            query_text,
+            document_id,
+            budget,
+            num_seeds,
+            retrieval_result,
+        )
+
         return QueryResult(
             summary=summary,
             token_count=token_count,
             nodes_retrieved=len(retrieval_result.node_ids),
             tiling_size=len(retrieval_result.tiling) if retrieval_result.tiling else 0,
+            query_id=query_id,
         )
 
     # jscpd:ignore-end
@@ -180,11 +193,20 @@ class QueryService:
         summary = assembler.assemble(retrieval_result)
         token_count = assembler.get_token_count(summary)
 
+        query_id = self._record_query(
+            query_text,
+            document_id,
+            budget,
+            num_seeds,
+            retrieval_result,
+        )
+
         return QueryResult(
             summary=summary,
             token_count=token_count,
             nodes_retrieved=len(retrieval_result.node_ids),
             tiling_size=len(retrieval_result.tiling) if retrieval_result.tiling else 0,
+            query_id=query_id,
         )
 
     # jscpd:ignore-end
@@ -207,3 +229,28 @@ class QueryService:
                 mmr_lambda=mmr_lambda,
             )
             # Note: Retriever is now created per-request with latest config
+
+    def _record_query(
+        self,
+        query_text: str,
+        document_id: str,
+        budget_tokens: int,
+        num_seeds: int | None,
+        retrieval_result: RetrievalResult,
+    ) -> str:
+        """Persist the query for later inspection."""
+
+        tiling = retrieval_result.tiling
+        if tiling is None:
+            raise ValueError("Retrieval result missing tiling; cannot log query")
+
+        seeds = set(retrieval_result.node_ids)
+        return self.query_logger.record_query(
+            document_id=document_id,
+            query_text=query_text,
+            budget_tokens=budget_tokens,
+            num_seeds=num_seeds,
+            tiling_ids=tiling,
+            scores=retrieval_result.scores,
+            seed_ids=seeds,
+        )
