@@ -73,10 +73,15 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const initialSelectionAppliedRef = useRef(false);
+  const selectedQueryIdRef = useRef<string | null>(initialQueryState.queryId);
   const handleDocumentResolved = useCallback(
     (docId: string) => setSelectedId(docId),
     []
   );
+
+  useEffect(() => {
+    selectedQueryIdRef.current = selectedQueryId;
+  }, [selectedQueryId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,7 +90,7 @@ export default function App() {
 
     const resolveSelection = (available: DocumentInfo[]) => {
       setSelectedId((current) => {
-        if (selectedQueryId) {
+        if (selectedQueryIdRef.current) {
           // In query mode, avoid overriding selection; document will be set from query detail.
           return current;
         }
@@ -204,7 +209,7 @@ export default function App() {
       cancelled = true;
       cleanupSource();
     };
-  }, [initialQueryState, selectedQueryId, selectedId]);
+  }, [initialQueryState]);
 
   const handleViewStateChange = useCallback(
     ({
@@ -255,10 +260,6 @@ export default function App() {
     [selectedId]
   );
 
-  const initialSpanStart =
-    selectedId && selectedId === initialQueryState.documentId ? null : null;
-  const initialSpanEnd =
-    selectedId && selectedId === initialQueryState.documentId ? null : null;
   const initialNodeId =
     selectedId && selectedId === initialQueryState.documentId
       ? initialQueryState.selectedNodeId
@@ -327,35 +328,6 @@ export default function App() {
     );
   }
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (selectedQueryId) {
-      params.set("query_id", selectedQueryId);
-      if (selectedId) {
-        params.set("document_id", selectedId);
-      } else {
-        params.delete("document_id");
-      }
-      if (querySelectedNodeId) {
-        params.set("node_id", querySelectedNodeId);
-      } else {
-        params.delete("node_id");
-      }
-      params.delete("limit");
-    } else if (selectedId) {
-      params.set("document_id", selectedId);
-      params.delete("node_id");
-    } else {
-      params.delete("document_id");
-      params.delete("node_id");
-    }
-    const search = params.toString();
-    const nextUrl = `${window.location.pathname}${
-      search ? `?${search}` : ""
-    }${window.location.hash}`;
-    window.history.replaceState(null, "", nextUrl);
-  }, [selectedQueryId, selectedId, querySelectedNodeId]);
-
   return (
     <div className="app">
       <aside className="sidebar">
@@ -397,8 +369,6 @@ export default function App() {
           <>
             <DocumentTreeView
               documentId={selectedId}
-              initialSpanStart={initialSpanStart}
-              initialSpanEnd={initialSpanEnd}
               initialLimit={initialLimit}
               initialSelectedNodeId={initialNodeId}
               onStateChange={handleViewStateChange}
