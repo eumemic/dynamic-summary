@@ -150,6 +150,7 @@ class ExecuteQueryResponse:
     retrieval: RetrieveResponse
     visualization: str
     validation_warning: str
+    query_id: str
 
     def __init__(
         self,
@@ -161,6 +162,7 @@ class ExecuteQueryResponse:
         retrieval: RetrieveResponse,
         visualization: str,
         validation_warning: str,
+        query_id: str,
     ) -> None: ...
 
 class RunWorkersRequest:

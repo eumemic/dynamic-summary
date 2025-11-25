@@ -123,6 +123,7 @@ def cli_mocks() -> Iterator[CliMocks]:
                 token_count=50,
                 nodes_retrieved=1,
                 tiling_size=1,
+                query_id="",
             ),
             retrieval=retrieval_view,
             visualization="<viz>",

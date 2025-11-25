@@ -86,6 +86,7 @@ message ExecuteQueryResponse {
   RetrieveResponse retrieval = 5;
   string visualization = 6;
   string validation_warning = 7;
+  string query_id = 8;
 }
 
 enum WorkerRunMode {

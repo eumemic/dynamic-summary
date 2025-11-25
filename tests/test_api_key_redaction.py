@@ -2,6 +2,8 @@
 
 import json
 import logging
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -315,9 +317,15 @@ class TestEndToEndScenarios:
 
         # This should not expose the API key even if construction fails
         try:
-            service = QueryService(doc_store, query_config, operational_config)
-            # The service should be created successfully
-            assert service is not None
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                from ragzoom.query_log import QueryLog
+
+                query_log = QueryLog(QueryLog.default_path(Path(tmp_dir)))
+                service = QueryService(
+                    doc_store, query_config, operational_config, query_log
+                )
+                # The service should be created successfully
+                assert service is not None
         except Exception as e:
             # If there's an error, the API key should not be exposed
             error_str = str(e)
