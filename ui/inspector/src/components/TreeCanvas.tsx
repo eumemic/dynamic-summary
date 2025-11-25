@@ -11,6 +11,7 @@ interface TreeCanvasProps {
   hoveredNodeId: string | null;
   onHover: (nodeId: string | null) => void;
   onSelect: (node: NodeResponse) => void;
+  seedNodeIds?: Set<string>;
   onZoom?: (centerRatio: number, deltaY: number) => void;
   onPanStart?: (anchorRatio: number) => void;
   onPanMove?: (currentRatio: number) => void;
@@ -59,6 +60,7 @@ export default function TreeCanvas({
   hoveredNodeId,
   onHover,
   onSelect,
+  seedNodeIds,
   onZoom,
   onPanStart,
   onPanMove,
@@ -133,11 +135,12 @@ export default function TreeCanvas({
   ]);
 
   const ticks = useMemo(() => {
-    const values: number[] = [];
+    const values: Array<{ value: number; idx: number }> = [];
     const tickCount = 5;
     for (let i = 0; i <= tickCount; i += 1) {
       const ratio = i / tickCount;
-      values.push(Math.round(spanStart + ratio * (spanEnd - spanStart)));
+      const value = Math.round(spanStart + ratio * (spanEnd - spanStart));
+      values.push({ value, idx: i });
     }
     return values;
   }, [spanStart, spanEnd]);
@@ -357,10 +360,17 @@ export default function TreeCanvas({
         {renderNodes.map(({ node, x, y, width, height, label }) => {
           const isSelected = node.node_id === selectedNodeId;
           const isHovered = node.node_id === hoveredNodeId;
+          const isSeed = seedNodeIds?.has(node.node_id) ?? false;
           const color = node.is_pinned
             ? "#f9c74f"
             : COLORS[node.height % COLORS.length];
-          const opacity = isHovered || isSelected ? 1 : 0.75;
+          const opacity = isSelected ? 1 : isHovered ? 1 : 0.78;
+          const strokeColor = isSelected
+            ? "#fffffe"
+            : isSeed
+            ? "#f4d35e"
+            : "none";
+          const strokeWidth = isSelected ? 2 : isSeed ? 1.5 : 1;
 
           const showLabel = width > 72 && height > MIN_ROW_HEIGHT - 2;
           const textBoxWidth = Math.max(1, width - LABEL_HORIZONTAL_PADDING);
@@ -381,8 +391,8 @@ export default function TreeCanvas({
                 data-node-id={node.node_id}
                 fill={color}
                 opacity={opacity}
-                stroke={isSelected ? "#fffffe" : isHovered ? "#eef4ff" : "none"}
-                strokeWidth={isSelected ? 2 : 1}
+                stroke={strokeColor}
+                strokeWidth={strokeWidth}
                 tabIndex={0}
                 onMouseEnter={() => onHover(node.node_id)}
                 onMouseLeave={() => onHover(null)}
@@ -413,9 +423,7 @@ export default function TreeCanvas({
                   pointerEvents="none"
                   xmlns="http://www.w3.org/1999/xhtml"
                 >
-                  <div className="tree-node__label">
-                    {textContent}
-                  </div>
+                  <div className="tree-node__label">{textContent}</div>
                 </foreignObject>
               )}
             </g>
@@ -431,12 +439,12 @@ export default function TreeCanvas({
           strokeWidth={1}
         />
 
-        {ticks.map((tick) => {
+        {ticks.map(({ value, idx }) => {
           const x =
             PADDING.left +
-            ((tick - spanStart) / (spanEnd - spanStart || 1)) * innerWidth;
+            ((value - spanStart) / (spanEnd - spanStart || 1)) * innerWidth;
           return (
-            <g key={tick}>
+            <g key={`tick-${idx}-${value}`}>
               <line
                 x1={x}
                 x2={x}
@@ -451,7 +459,7 @@ export default function TreeCanvas({
                 fontSize={12}
                 fill="rgba(255,255,255,0.6)"
               >
-                {formatter.format(tick)}
+                {formatter.format(value)}
               </text>
             </g>
           );

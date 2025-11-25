@@ -380,6 +380,19 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
         nodes_retrieved = len(retrieval_result.node_ids)
         tiling_size = len(retrieval_result.tiling or [])
 
+        if not retrieval_result.tiling:
+            raise ValueError("ExecuteQuery returned no tiling; cannot log query")
+
+        self._state.query_log.record_query(
+            document_id=request.document_id,
+            query_text=request.query,
+            budget_tokens=budget,
+            num_seeds=num_seeds,
+            tiling_ids=retrieval_result.tiling,
+            scores=retrieval_result.scores,
+            seed_ids=set(retrieval_result.node_ids),
+        )
+
         visualization = ""
         validation_warning = ""
         if request.debug and retrieval_result.tiling:

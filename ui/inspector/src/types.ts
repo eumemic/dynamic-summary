@@ -39,6 +39,31 @@ export interface NodesPageResponse {
   total_matching: number;
 }
 
+export interface QueryListItem {
+  id: string;
+  document_id: string;
+  query_text: string;
+  budget_tokens: number | null;
+  num_seeds: number | null;
+  created_at: string;
+}
+
+export interface DocumentQueriesResponse {
+  queries: QueryListItem[];
+}
+
+export interface QueryNodeEntry {
+  node_id: string;
+  score: number;
+  is_seed: boolean;
+  position: number;
+}
+
+export interface QueryDetailResponse {
+  query: QueryListItem;
+  nodes: QueryNodeEntry[];
+}
+
 export type TelemetryEvent =
   | {
       event: "node_committed";

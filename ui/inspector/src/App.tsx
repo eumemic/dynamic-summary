@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DocumentTreeView from "./components/DocumentTreeView";
+import QueryList from "./components/QueryList";
+import QueryDetailView from "./components/QueryDetailView";
 import { fetchDocuments } from "./api/client";
 import { DocumentInfo, DocumentsStreamEvent } from "./types";
 
@@ -11,10 +13,9 @@ const API_BASE =
 
 interface QueryState {
   documentId: string | null;
-  spanStart: number | null;
-  spanEnd: number | null;
   limit: number | null;
   selectedNodeId: string | null;
+  queryId: string | null;
 }
 
 function parseNonNegativeInt(value: string | null): number | null {
@@ -31,17 +32,9 @@ function parseNonNegativeInt(value: string | null): number | null {
 function readInitialQueryState(): QueryState {
   const params = new URLSearchParams(window.location.search);
   const documentId = params.get("document_id");
-  const spanStart = parseNonNegativeInt(params.get("span_start"));
-  const spanEndValue = parseNonNegativeInt(params.get("span_end"));
   const limitValue = parseNonNegativeInt(params.get("limit"));
   const selectedNodeId = params.get("node_id");
-
-  const spanEnd =
-    spanStart !== null &&
-    spanEndValue !== null &&
-    spanEndValue > spanStart
-      ? spanEndValue
-      : null;
+  const queryId = params.get("query_id");
 
   const limit =
     limitValue === null
@@ -50,11 +43,10 @@ function readInitialQueryState(): QueryState {
 
   return {
     documentId: documentId && documentId.length > 0 ? documentId : null,
-    spanStart,
-    spanEnd,
     limit,
     selectedNodeId:
       selectedNodeId && selectedNodeId.length > 0 ? selectedNodeId : null,
+    queryId: queryId && queryId.length > 0 ? queryId : null,
   };
 }
 
@@ -72,6 +64,12 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(
     initialQueryState.documentId
   );
+  const [selectedQueryId, setSelectedQueryId] = useState<string | null>(
+    initialQueryState.queryId
+  );
+  const [querySelectedNodeId, setQuerySelectedNodeId] = useState<string | null>(
+    initialQueryState.selectedNodeId
+  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const initialSelectionAppliedRef = useRef(false);
@@ -83,7 +81,12 @@ export default function App() {
 
     const resolveSelection = (available: DocumentInfo[]) => {
       setSelectedId((current) => {
+        if (selectedQueryId) {
+          // In query mode, avoid overriding selection; document will be set from query detail.
+          return current;
+        }
         if (available.length === 0) {
+          // Do not clear query selection when no documents are present.
           initialSelectionAppliedRef.current = false;
           return null;
         }
@@ -202,15 +205,11 @@ export default function App() {
   const handleViewStateChange = useCallback(
     ({
       documentId,
-      spanStart,
-      spanEnd,
       limit,
       selectedNodeId,
     }: ViewStatePayload) => {
       const params = new URLSearchParams(window.location.search);
       params.set("document_id", documentId);
-      params.set("span_start", Math.floor(spanStart).toString());
-      params.set("span_end", Math.floor(spanEnd).toString());
       params.set("limit", Math.floor(limit).toString());
       if (selectedNodeId) {
         params.set("node_id", selectedNodeId);
@@ -226,19 +225,90 @@ export default function App() {
     []
   );
 
+  const handleQuerySelect = useCallback(
+    (queryId: string | null) => {
+      setSelectedQueryId(queryId);
+      setQuerySelectedNodeId(null);
+      const params = new URLSearchParams(window.location.search);
+      if (queryId) {
+        params.set("query_id", queryId);
+        params.delete("document_id");
+        params.delete("node_id");
+        params.delete("limit");
+      } else {
+        params.delete("query_id");
+        if (selectedId) {
+          params.set("document_id", selectedId);
+        }
+        params.delete("node_id");
+      }
+      const search = params.toString();
+      const nextUrl = `${window.location.pathname}${search ? `?${search}` : ""}${
+        window.location.hash
+      }`;
+      window.history.replaceState(null, "", nextUrl);
+    },
+    [selectedId]
+  );
+
   const initialSpanStart =
-    selectedId && selectedId === initialQueryState.documentId
-      ? initialQueryState.spanStart
-      : null;
+    selectedId && selectedId === initialQueryState.documentId ? null : null;
   const initialSpanEnd =
-    selectedId && selectedId === initialQueryState.documentId
-      ? initialQueryState.spanEnd
-      : null;
+    selectedId && selectedId === initialQueryState.documentId ? null : null;
   const initialNodeId =
     selectedId && selectedId === initialQueryState.documentId
       ? initialQueryState.selectedNodeId
       : null;
   const initialLimit = initialQueryState.limit;
+  const initialQueryId =
+    selectedId && selectedId === initialQueryState.documentId
+      ? initialQueryState.queryId
+      : null;
+  const inQueryMode = Boolean(selectedQueryId);
+
+  if (inQueryMode && selectedQueryId) {
+    return (
+      <div className="app">
+        <aside className="sidebar">
+          <h1>Queries</h1>
+          <p className="muted">
+            Document: {selectedId ?? "resolving…"}
+          </p>
+          {selectedId ? (
+            <QueryList
+              documentId={selectedId}
+              activeQueryId={selectedQueryId}
+              onSelect={(id) => handleQuerySelect(id)}
+            />
+          ) : null}
+        </aside>
+        <main className="content">
+          <QueryDetailView
+            queryId={selectedQueryId}
+            onBack={() => handleQuerySelect(null)}
+            onDocumentResolved={(docId) => setSelectedId(docId)}
+            selectedNodeId={querySelectedNodeId}
+            onSelectNode={(nodeId) => {
+              setQuerySelectedNodeId(nodeId);
+              const params = new URLSearchParams(window.location.search);
+              params.set("query_id", selectedQueryId);
+              params.delete("document_id");
+              if (nodeId) {
+                params.set("node_id", nodeId);
+              } else {
+                params.delete("node_id");
+              }
+              const search = params.toString();
+              const nextUrl = `${window.location.pathname}${
+                search ? `?${search}` : ""
+              }${window.location.hash}`;
+              window.history.replaceState(null, "", nextUrl);
+            }}
+          />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="app">
@@ -253,7 +323,19 @@ export default function App() {
               className={`document-item${
                 selectedId === doc.document_id ? " document-item--active" : ""
               }`}
-              onClick={() => setSelectedId(doc.document_id)}
+              onClick={() => {
+                setSelectedId(doc.document_id);
+                setSelectedQueryId(null);
+                const params = new URLSearchParams(window.location.search);
+                params.set("document_id", doc.document_id);
+                params.delete("query_id");
+                params.delete("node_id");
+                const search = params.toString();
+                const nextUrl = `${window.location.pathname}${
+                  search ? `?${search}` : ""
+                }${window.location.hash}`;
+                window.history.replaceState(null, "", nextUrl);
+              }}
             >
               <strong>{doc.document_id}</strong>
               <div style={{ fontSize: "0.8rem", opacity: 0.75 }}>
@@ -264,17 +346,33 @@ export default function App() {
         </ul>
       </aside>
       <main className="content">
-        {selectedId ? (
-          <DocumentTreeView
-            documentId={selectedId}
-            initialSpanStart={initialSpanStart}
-            initialSpanEnd={initialSpanEnd}
-            initialLimit={initialLimit}
-            initialSelectedNodeId={initialNodeId}
-            onStateChange={handleViewStateChange}
-          />
-        ) : (
-          <p>Select a document to inspect the tree.</p>
+        {!selectedId && <p>Select a document to inspect the tree.</p>}
+        {selectedId && (
+          <>
+            <DocumentTreeView
+              documentId={selectedId}
+              initialSpanStart={initialSpanStart}
+              initialSpanEnd={initialSpanEnd}
+              initialLimit={initialLimit}
+              initialSelectedNodeId={initialNodeId}
+              onStateChange={handleViewStateChange}
+            />
+            <section className="query-inspector" style={{ marginTop: "1.25rem" }}>
+              <div className="query-inspector__header">
+                <div>
+                  <h2>Recent queries</h2>
+                  <p className="muted">
+                    Click a query to view its tiling and stitched summary.
+                  </p>
+                </div>
+              </div>
+              <QueryList
+                documentId={selectedId}
+                activeQueryId={null}
+                onSelect={(id) => handleQuerySelect(id)}
+              />
+            </section>
+          </>
         )}
       </main>
     </div>
