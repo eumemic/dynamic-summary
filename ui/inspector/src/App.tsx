@@ -73,6 +73,10 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const initialSelectionAppliedRef = useRef(false);
+  const handleDocumentResolved = useCallback(
+    (docId: string) => setSelectedId(docId),
+    []
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -312,7 +316,7 @@ export default function App() {
           <QueryDetailView
             queryId={selectedQueryId}
             onBack={() => handleQuerySelect(null)}
-            onDocumentResolved={(docId) => setSelectedId(docId)}
+            onDocumentResolved={handleDocumentResolved}
             selectedNodeId={querySelectedNodeId}
             onSelectNode={(nodeId) => {
               setQuerySelectedNodeId(nodeId);
