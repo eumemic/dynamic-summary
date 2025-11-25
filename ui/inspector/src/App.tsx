@@ -243,9 +243,9 @@ export default function App() {
         params.delete("node_id");
       }
       const search = params.toString();
-      const nextUrl = `${window.location.pathname}${search ? `?${search}` : ""}${
-        window.location.hash
-      }`;
+      const nextUrl = `${window.location.pathname}${
+        search ? `?${search}` : ""
+      }${window.location.hash}`;
       window.history.replaceState(null, "", nextUrl);
     },
     [selectedId]
@@ -265,6 +265,32 @@ export default function App() {
       ? initialQueryState.queryId
       : null;
   const inQueryMode = Boolean(selectedQueryId);
+
+  // Keep URL in sync with current selection/state without triggering navigation.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (selectedQueryId) {
+      params.set("query_id", selectedQueryId);
+      params.delete("document_id"); // implicit from query_id
+      if (querySelectedNodeId) {
+        params.set("node_id", querySelectedNodeId);
+      } else {
+        params.delete("node_id");
+      }
+      params.delete("limit");
+    } else if (selectedId) {
+      params.set("document_id", selectedId);
+      params.delete("node_id");
+    } else {
+      params.delete("document_id");
+      params.delete("node_id");
+    }
+    const search = params.toString();
+    const nextUrl = `${window.location.pathname}${
+      search ? `?${search}` : ""
+    }${window.location.hash}`;
+    window.history.replaceState(null, "", nextUrl);
+  }, [selectedQueryId, selectedId, querySelectedNodeId]);
 
   if (inQueryMode && selectedQueryId) {
     return (
@@ -290,25 +316,41 @@ export default function App() {
             selectedNodeId={querySelectedNodeId}
             onSelectNode={(nodeId) => {
               setQuerySelectedNodeId(nodeId);
-              const params = new URLSearchParams(window.location.search);
-              params.set("query_id", selectedQueryId);
-              params.delete("document_id");
-              if (nodeId) {
-                params.set("node_id", nodeId);
-              } else {
-                params.delete("node_id");
-              }
-              const search = params.toString();
-              const nextUrl = `${window.location.pathname}${
-                search ? `?${search}` : ""
-              }${window.location.hash}`;
-              window.history.replaceState(null, "", nextUrl);
             }}
           />
         </main>
       </div>
     );
   }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (selectedQueryId) {
+      params.set("query_id", selectedQueryId);
+      if (selectedId) {
+        params.set("document_id", selectedId);
+      } else {
+        params.delete("document_id");
+      }
+      if (querySelectedNodeId) {
+        params.set("node_id", querySelectedNodeId);
+      } else {
+        params.delete("node_id");
+      }
+      params.delete("limit");
+    } else if (selectedId) {
+      params.set("document_id", selectedId);
+      params.delete("node_id");
+    } else {
+      params.delete("document_id");
+      params.delete("node_id");
+    }
+    const search = params.toString();
+    const nextUrl = `${window.location.pathname}${
+      search ? `?${search}` : ""
+    }${window.location.hash}`;
+    window.history.replaceState(null, "", nextUrl);
+  }, [selectedQueryId, selectedId, querySelectedNodeId]);
 
   return (
     <div className="app">

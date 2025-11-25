@@ -164,6 +164,9 @@ export default function QueryDetailView({
     : null;
 
   useEffect(() => {
+    if (nodes.size === 0) {
+      return;
+    }
     if (!activeSelectedNodeId) {
       return;
     }

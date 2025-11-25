@@ -398,17 +398,20 @@ export default function TreeCanvas({
                 onMouseLeave={() => onHover(null)}
                 onFocus={() => onHover(node.node_id)}
                 onBlur={() => onHover(null)}
-                onPointerDown={(event) => {
-                  if (event.button !== 0) {
-                    return;
-                  }
-                  clickCandidateRef.current = node;
-                  clickPointerIdRef.current = event.pointerId;
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onSelect(node);
+              onPointerDown={(event) => {
+                if (event.button !== 0) {
+                  return;
+                }
+                clickCandidateRef.current = node;
+                clickPointerIdRef.current = event.pointerId;
+                if (event.cancelable) {
+                  event.preventDefault(); // avoid default focus/drag scroll that can cause reload in some browsers
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelect(node);
                   }
                 }}
               >
