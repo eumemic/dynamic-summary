@@ -31,7 +31,7 @@ class TestRetrieverBugSQLite:
         index_config = IndexConfig.load(
             target_chunk_tokens=100, preceding_context_tokens=50
         )
-        query_config = QueryConfig(budget_tokens=1000)
+        query_config = QueryConfig(budget_tokens=1000, tiling_strategy="dp")
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
         # Create document store

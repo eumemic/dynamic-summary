@@ -76,7 +76,8 @@ message ExecuteQueryRequest {
   bool debug = 6;
   int32 viz_width = 7;
   bool use_token_coords = 8;
-  int32 recent_verbatim_token_budget = 9;
+  string tiling_strategy = 9;
+  int32 recent_verbatim_token_budget = 10;
 }
 
 message ExecuteQueryResponse {

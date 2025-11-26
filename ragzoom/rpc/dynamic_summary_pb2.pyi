@@ -128,6 +128,7 @@ class ExecuteQueryRequest:
     debug: bool
     viz_width: int
     use_token_coords: bool
+    tiling_strategy: str
     recent_verbatim_token_budget: int
 
     def __init__(
@@ -141,6 +142,7 @@ class ExecuteQueryRequest:
         debug: bool,
         viz_width: int,
         use_token_coords: bool,
+        tiling_strategy: str = ...,
         recent_verbatim_token_budget: int = ...,
     ) -> None: ...
 

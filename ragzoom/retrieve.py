@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional
 from ragzoom.config import QueryConfig
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
+from ragzoom.greedy_tiling import GreedyTilingGenerator
 from ragzoom.retrieval import (
     BudgetPlanner,
     CoverageBuilder,
@@ -75,6 +76,7 @@ class Retriever:
         self.async_dp_generator: AsyncDynamicTilingGenerator | None
 
         self.dp_generator = DynamicTilingGenerator(query_config)
+        self.greedy_generator = GreedyTilingGenerator(query_config)
 
         # Initialize async generator if requested
         if use_async_dp:
@@ -306,8 +308,13 @@ class Retriever:
         )
         final_budget = base_budget + (recent_verbatim_budget or 0)
 
-        # Use async DP generator if available, otherwise use sync version
-        if self.async_dp_generator is not None:
+        # Choose tiling strategy
+        tiling_strategy = getattr(self.query_config, "tiling_strategy", "dp")
+        if tiling_strategy == "greedy":
+            dp_result = self.greedy_generator.find_optimal_tiling_over_roots(
+                root_ids, final_budget, scores, nodes
+            )
+        elif self.async_dp_generator is not None:
             dp_result = await self.async_dp_generator.find_optimal_tiling_over_roots(
                 root_ids, final_budget, scores, nodes, pinned_ids=pinned_ids
             )

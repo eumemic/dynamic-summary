@@ -228,10 +228,10 @@ class TestVerbatimBudgetAddition:
         mock_root_node.span_start = 0
         mock_root_node.is_root = lambda: True
 
-        # Patch at multiple levels to ensure we reach the DP call
+        # Patch at multiple levels to ensure we reach the tiling call
         with (
             patch.object(
-                retriever.dp_generator,
+                retriever.greedy_generator,
                 "find_optimal_tiling_over_roots",
                 side_effect=capture_dp_call,
             ),
@@ -263,8 +263,8 @@ class TestVerbatimBudgetAddition:
                 recent_verbatim_budget=verbatim_budget,
             )
 
-        # The DP should receive base_budget + verbatim_budget
-        assert len(captured_budgets) == 1, "DP was not called"
+        # The tiling generator should receive base_budget + verbatim_budget
+        assert len(captured_budgets) == 1, "Tiling generator was not called"
         assert captured_budgets[0] == base_budget + verbatim_budget, (
             f"Expected budget {base_budget + verbatim_budget}, "
             f"got {captured_budgets[0]}. "

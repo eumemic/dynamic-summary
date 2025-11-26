@@ -219,6 +219,7 @@ class GrpcRagzoomClient:
         debug: bool,
         viz_width: int,
         use_token_coords: bool,
+        tiling_strategy: str | None,
         recent_verbatim_token_budget: int | None = None,
     ) -> ExecuteQueryOutput:
         request = pb2.ExecuteQueryRequest(
@@ -230,6 +231,7 @@ class GrpcRagzoomClient:
             debug=debug,
             viz_width=viz_width,
             use_token_coords=use_token_coords,
+            tiling_strategy=tiling_strategy or "",
             recent_verbatim_token_budget=recent_verbatim_token_budget or 0,
         )
         try:

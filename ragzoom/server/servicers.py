@@ -183,6 +183,7 @@ def _build_retriever(
     *,
     document_id: str,
     embedding_model: str | None = None,
+    tiling_strategy: str | None = None,
 ) -> tuple[Retriever, DocumentStore]:
     resolved_embedding = embedding_model or state.query_config.embedding_model
     document_store = state.store.for_document(document_id)
@@ -196,11 +197,11 @@ def _build_retriever(
         state.operational_config.database_url,
         resolved_embedding,
     )
-    query_config = (
-        state.query_config
-        if resolved_embedding == state.query_config.embedding_model
-        else state.query_config.replace(embedding_model=resolved_embedding)
-    )
+    query_config = state.query_config
+    if resolved_embedding != state.query_config.embedding_model:
+        query_config = query_config.replace(embedding_model=resolved_embedding)
+    if tiling_strategy is not None:
+        query_config = query_config.replace(tiling_strategy=tiling_strategy)
     retriever = Retriever(
         query_config,
         document_store,
@@ -360,11 +361,15 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
         embedding_model = (
             request.embedding_model or self._state.query_config.embedding_model
         )
+        tiling_strategy = (
+            request.tiling_strategy or self._state.query_config.tiling_strategy
+        )
 
         retriever, document_store = _build_retriever(
             self._state,
             document_id=request.document_id,
             embedding_model=embedding_model,
+            tiling_strategy=tiling_strategy,
         )
 
         recent_verbatim_budget = (

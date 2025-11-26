@@ -185,6 +185,7 @@ def handle_cli_error(e: Exception, operation: str) -> None:
 def configure_logging_level(debug: bool) -> None:
     """Configure logging level based on debug flag."""
     if debug:
+        logging.getLogger().setLevel(logging.DEBUG)
         logging.getLogger("ragzoom").setLevel(logging.DEBUG)
     else:
         logging.getLogger("ragzoom").setLevel(logging.INFO)
@@ -790,6 +791,12 @@ def validate(
     help="Coordinate system for tree visualization (source-chars=source position, output-tokens=output budget)",
 )
 @click.option(
+    "--tiling-strategy",
+    type=click.Choice(["dp", "greedy"]),
+    default=None,
+    help="Tiling algorithm to use (dp=dynamic programming, greedy=frontier roll-up)",
+)
+@click.option(
     "--server-address",
     envvar="RAGZOOM_SERVER_ADDRESS",
     default=None,
@@ -808,6 +815,7 @@ def query(
     debug: bool,
     viz_width: int | None,
     viz_coords: str,
+    tiling_strategy: str | None,
     server_address: str | None,
 ) -> None:
     """Query the system and get a summary."""
@@ -821,6 +829,8 @@ def query(
             query_config = query_config.replace(budget_tokens=token_budget)
         if embedding_model is not None:
             query_config = query_config.replace(embedding_model=embedding_model)
+        if tiling_strategy is not None:
+            query_config = query_config.replace(tiling_strategy=tiling_strategy)
 
         ctx.obj["query_config"] = query_config
 
@@ -848,6 +858,7 @@ def query(
                 debug=debug,
                 viz_width=actual_viz_width,
                 use_token_coords=use_token_coords,
+                tiling_strategy=query_config.tiling_strategy,
                 recent_verbatim_token_budget=recent_verbatim_token_budget,
             )
 

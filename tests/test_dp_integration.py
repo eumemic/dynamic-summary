@@ -281,7 +281,9 @@ class TestDPIntegration:
 
         document = " ".join([f"Sentence {i}." for i in range(100)])
 
-        small_query_config = config.query_config.replace(budget_tokens=100)
+        small_query_config = config.query_config.replace(
+            budget_tokens=100, tiling_strategy="dp"
+        )
 
         try:
             await indexer_runtime_harness.clear(document_id)
