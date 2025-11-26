@@ -64,7 +64,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
           # Specify model: Using Claude Opus 4.5 for comprehensive code reviews
-          model: "claude-3-opus-4.5"
+          model: "claude-opus-4-5"
 
           # Include the triggering comment as context for the review
           direct_prompt: |
