@@ -94,7 +94,7 @@ def _select_replacement(
     scores: Mapping[str, float],
     nodes: Mapping[str, TreeNode],
 ) -> tuple[str, str, str] | None:
-    """Pick the least-relevant roll-up candidate (sibling pair or single-child)."""
+    """Pick the roll-up with the smallest quality loss per token saved."""
 
     best: tuple[float, float, tuple[str, str, str]] | None = None
     for node_id in list(frontier):
@@ -103,6 +103,7 @@ def _select_replacement(
         if parent_id is None or parent_id not in nodes:
             continue
         parent = nodes[parent_id]
+        parent_mass = scores.get(parent_id, 0.0) * parent.token_count
 
         # Identify sibling (may not exist for single-child parents)
         if parent.left_child_id == node_id:
@@ -110,12 +111,17 @@ def _select_replacement(
         else:
             sib_id = parent.left_child_id
 
-        # Single-child roll-up: allow collapsing lone child into parent if it reduces tokens.
+        # Single-child roll-up: collapse lone child into parent if it reduces tokens.
         if sib_id is None or sib_id not in frontier:
-            reduction = node.token_count - parent.token_count
-            if reduction > 0:
-                cand_score = scores.get(node_id, 0.0) * node.token_count
-                candidate = (cand_score, -reduction, (parent_id, node_id, node_id))
+            tokens_saved = node.token_count - parent.token_count
+            if tokens_saved > 0:
+                child_mass = scores.get(node_id, 0.0) * node.token_count
+                quality_lost = child_mass - parent_mass
+                candidate = (
+                    quality_lost / tokens_saved,
+                    -tokens_saved,
+                    (parent_id, node_id, node_id),
+                )
                 if best is None or candidate < best:
                     best = candidate
             continue
@@ -123,15 +129,20 @@ def _select_replacement(
         # Sibling pair roll-up
         sibling = nodes[sib_id]
         pair_tokens = node.token_count + sibling.token_count
+        tokens_saved = pair_tokens - parent.token_count
         # No benefit if parent is same or larger
-        if parent.token_count >= pair_tokens:
+        if tokens_saved <= 0:
             continue
-        pair_score = (
+        pair_mass = (
             scores.get(node_id, 0.0) * node.token_count
             + scores.get(sib_id, 0.0) * sibling.token_count
         )
-        reduction = pair_tokens - parent.token_count
-        candidate = (pair_score, -reduction, (parent_id, node_id, sib_id))
+        quality_lost = pair_mass - parent_mass
+        candidate = (
+            quality_lost / tokens_saved,
+            -tokens_saved,
+            (parent_id, node_id, sib_id),
+        )
         if best is None or candidate < best:
             best = candidate
 
