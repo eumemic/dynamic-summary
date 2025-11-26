@@ -53,11 +53,15 @@ class GreedyTilingGenerator:
                 break
 
             parent_id, left_id, right_id = replacement
-            pair_tokens = nodes[left_id].token_count + nodes[right_id].token_count
+            pair_tokens = nodes[left_id].token_count
+            if right_id != left_id and right_id in nodes:
+                pair_tokens += nodes[right_id].token_count
             parent_tokens = nodes[parent_id].token_count
 
-            frontier_set.remove(left_id)
-            frontier_set.remove(right_id)
+            if left_id in frontier_set:
+                frontier_set.remove(left_id)
+            if right_id != left_id and right_id in frontier_set:
+                frontier_set.remove(right_id)
             frontier_set.add(parent_id)
             total_tokens = total_tokens - pair_tokens + parent_tokens
 
@@ -90,7 +94,7 @@ def _select_replacement(
     scores: Mapping[str, float],
     nodes: Mapping[str, TreeNode],
 ) -> tuple[str, str, str] | None:
-    """Pick the least-relevant sibling pair to roll up."""
+    """Pick the least-relevant roll-up candidate (sibling pair or single-child)."""
 
     best: tuple[float, float, tuple[str, str, str]] | None = None
     for node_id in list(frontier):
@@ -99,13 +103,24 @@ def _select_replacement(
         if parent_id is None or parent_id not in nodes:
             continue
         parent = nodes[parent_id]
-        # Identify sibling
+
+        # Identify sibling (may not exist for single-child parents)
         if parent.left_child_id == node_id:
             sib_id = parent.right_child_id
         else:
             sib_id = parent.left_child_id
+
+        # Single-child roll-up: allow collapsing lone child into parent if it reduces tokens.
         if sib_id is None or sib_id not in frontier:
+            reduction = node.token_count - parent.token_count
+            if reduction > 0:
+                cand_score = scores.get(node_id, 0.0) * node.token_count
+                candidate = (cand_score, -reduction, (parent_id, node_id, node_id))
+                if best is None or candidate < best:
+                    best = candidate
             continue
+
+        # Sibling pair roll-up
         sibling = nodes[sib_id]
         pair_tokens = node.token_count + sibling.token_count
         # No benefit if parent is same or larger

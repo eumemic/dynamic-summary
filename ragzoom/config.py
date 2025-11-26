@@ -307,7 +307,7 @@ class QueryConfig:
     mmr_lambda: float = 0.7
     mmr_k_multiplier: float = 2.0
     embedding_model: str = "text-embedding-3-small"
-    tiling_strategy: str = "dp"  # "dp" or "greedy"
+    tiling_strategy: str = "greedy"  # "dp" or "greedy"
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
