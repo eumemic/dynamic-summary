@@ -176,8 +176,10 @@ def _compute_candidate(
         pair_mass += scores.get(right_child_id, 0.0) * nodes[right_child_id].token_count
     quality_lost = pair_mass - parent_mass
 
+    priority = quality_lost / tokens_saved if tokens_saved != 0 else float("inf")
+
     return _RollupCandidate(
-        quality_lost / tokens_saved,
+        priority,
         -tokens_saved,
         parent_id,
         left_child_id,

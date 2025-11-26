@@ -140,3 +140,27 @@ def test_greedy_treats_missing_children_as_leaf() -> None:
     result = gen.find_optimal_tiling_over_roots([parent.id], 150, scores, nodes)
 
     assert result.tiling.node_ids == ["P"]
+
+
+def test_greedy_handles_equal_size_rollup_without_crash() -> None:
+    """Equal-size parent/children should not crash and should still roll up."""
+
+    left = FakeNode("L", 50, 0, 50, 0, 0, parent_id="P")
+    right = FakeNode("R", 50, 50, 100, 0, 1, parent_id="P")
+    parent = FakeNode(
+        "P",
+        100,
+        0,
+        100,
+        1,
+        0,
+        left_child_id="L",
+        right_child_id="R",
+    )
+    nodes = {n.id: cast(TreeNode, n) for n in (left, right, parent)}
+    scores = {"L": 1.0, "R": 1.0, "P": 0.5}
+
+    gen = GreedyTilingGenerator(QueryConfig(tiling_strategy="greedy"))
+    result = gen.find_optimal_tiling_over_roots([parent.id], 60, scores, nodes)
+
+    assert result.tiling.node_ids == ["P"]
