@@ -13,6 +13,7 @@ from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
 from ragzoom.dynamic_tiling import DPResult, DynamicTilingGenerator
+from ragzoom.greedy_tiling import GreedyTilingGenerator
 from ragzoom.retrieval.coverage_builder import CoverageBuilder
 
 
@@ -181,3 +182,19 @@ def test_forest_budget_insufficient_returns_empty(forest_store: DocumentStore) -
 
     result = dp.find_optimal_tiling_over_roots(root_ids, 10, scores, nodes)
     assert not result.tiling.node_ids
+
+
+def test_greedy_handles_multiple_roots(forest_store: DocumentStore) -> None:
+    root_ids = _seed_forest(forest_store)
+    nodes = {node.id: node for node in forest_store.nodes.get_all()}
+    scores = {node_id: 1.0 for node_id in nodes}
+
+    greedy = GreedyTilingGenerator(
+        QueryConfig(budget_tokens=64, tiling_strategy="greedy")
+    )
+    result = greedy.find_optimal_tiling_over_roots(root_ids, 64, scores, nodes)
+
+    assert result.tiling.node_ids
+    # Should include at least one node from each root subtree
+    seen_roots = set(result.coverage_map) & set(root_ids)
+    assert seen_roots == set(root_ids)
