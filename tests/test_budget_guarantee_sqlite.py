@@ -344,7 +344,7 @@ class TestBudgetGuarantee:
             ]
         )
 
-        query_config = QueryConfig(budget_tokens=500, tiling_strategy="dp")
+        query_config = QueryConfig(budget_tokens=500)
 
         with mock_openai_context() as (mock_index, mock_retrieve, mock_assemble):
             retriever = create_retriever(
@@ -464,7 +464,7 @@ class TestBudgetGuarantee:
         ] = [(i, list(vec), meta) for (i, vec, meta) in embeddings_data]
         vector_index.upsert(typed_entries)
 
-        query_config = QueryConfig(budget_tokens=1000, tiling_strategy="dp")
+        query_config = QueryConfig(budget_tokens=1000)
 
         with mock_openai_context() as (mock_index, mock_retrieve, mock_assemble):
             retriever = create_retriever(

@@ -90,14 +90,37 @@ class GreedyTilingGenerator:
 def _build_frontier(
     nodes: Mapping[str, TreeNode], root_ids: Sequence[str]
 ) -> list[str]:
-    """Return frontier nodes (those without covered children)."""
+    """Return frontier nodes reachable from the supplied roots."""
+
+    visited: set[str] = set()
+    stack: list[str] = [rid for rid in root_ids if rid in nodes]
+    if not stack:
+        stack = list(nodes.keys())
+
+    while stack:
+        current = stack.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        node = nodes[current]
+        if node.left_child_id:
+            if node.left_child_id not in nodes:
+                raise ValueError(
+                    f"Missing left child {node.left_child_id} for node {current}"
+                )
+            stack.append(node.left_child_id)
+        if node.right_child_id and node.right_child_id != node.left_child_id:
+            if node.right_child_id not in nodes:
+                raise ValueError(
+                    f"Missing right child {node.right_child_id} for node {current}"
+                )
+            stack.append(node.right_child_id)
 
     frontier: list[str] = []
-    node_ids = set(nodes.keys())
-    for node_id in node_ids:
+    for node_id in visited:
         node = nodes[node_id]
-        has_left = node.left_child_id in node_ids
-        has_right = node.right_child_id in node_ids
+        has_left = node.left_child_id in visited
+        has_right = node.right_child_id in visited
         if not has_left and not has_right:
             frontier.append(node_id)
     frontier.sort(key=lambda nid: (int(getattr(nodes[nid], "span_start", 0)), nid))
