@@ -285,9 +285,12 @@ class TestRetrieverBugSQLite:
             budget_tokens: int,
             scores: dict[str, float],
             nodes: Mapping[str, TreeNode],
+            pinned_ids: set[str] | None = None,
         ) -> DPResult:
             captured_nodes.update(nodes)
-            return original_find_optimal(root_ids, budget_tokens, scores, nodes)
+            return original_find_optimal(
+                root_ids, budget_tokens, scores, nodes, pinned_ids
+            )
 
         retriever.dp_generator.find_optimal_tiling_over_roots = (  # type: ignore[method-assign]
             capture_and_pass_through

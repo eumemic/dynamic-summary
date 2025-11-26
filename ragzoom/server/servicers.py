@@ -367,11 +367,17 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
             embedding_model=embedding_model,
         )
 
+        recent_verbatim_budget = (
+            request.recent_verbatim_token_budget
+            if request.recent_verbatim_token_budget > 0
+            else None
+        )
         retrieval_result = await retriever.retrieve_async(
             request.query,
             num_seeds=num_seeds,
             budget_tokens=budget,
             document_id=request.document_id,
+            recent_verbatim_budget=recent_verbatim_budget,
         )
 
         assembler = Assembler(document_store)

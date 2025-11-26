@@ -219,6 +219,7 @@ class GrpcRagzoomClient:
         debug: bool,
         viz_width: int,
         use_token_coords: bool,
+        recent_verbatim_token_budget: int | None = None,
     ) -> ExecuteQueryOutput:
         request = pb2.ExecuteQueryRequest(
             query=query,
@@ -229,6 +230,7 @@ class GrpcRagzoomClient:
             debug=debug,
             viz_width=viz_width,
             use_token_coords=use_token_coords,
+            recent_verbatim_token_budget=recent_verbatim_token_budget or 0,
         )
         try:
             response = self._retrieval.ExecuteQuery(request, timeout=self._timeout)

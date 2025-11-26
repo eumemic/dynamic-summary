@@ -100,6 +100,7 @@ class Retriever:
         num_seeds: int | None = None,
         budget_tokens: int | None = None,
         document_id: str | None = None,
+        recent_verbatim_budget: int | None = None,
         telemetry_collector: TelemetryCollector | None = None,
     ) -> RetrievalResult:
         """Async retrieval method with MMR diversity.
@@ -109,6 +110,7 @@ class Retriever:
             num_seeds: Number of seed nodes to retrieve
             budget_tokens: Token budget for the final summary
             document_id: Optional document ID to filter by
+            recent_verbatim_budget: Token budget for recent leaves to include verbatim
 
         Supports three modes:
         1. Budget only: Calculate conservative num_seeds to guarantee no overflow
@@ -190,6 +192,22 @@ class Retriever:
             num_seeds,
             self.query_config.mmr_lambda,
         )
+
+        # Select verbatim leaves if requested (recent content to include without summarization)
+        pinned_ids: set[str] = set()
+        if recent_verbatim_budget and recent_verbatim_budget > 0:
+            from ragzoom.retrieval.verbatim_selector import select_verbatim_leaves
+
+            all_leaves = self.document_store.nodes.get_leaves()
+            verbatim_leaves, _ = select_verbatim_leaves(
+                all_leaves, recent_verbatim_budget
+            )
+            pinned_ids = {leaf.id for leaf in verbatim_leaves}
+            # Add verbatim leaves to selected_ids so coverage includes them
+            selected_ids_set = set(selected_ids)
+            for leaf_id in pinned_ids:
+                if leaf_id not in selected_ids_set:
+                    selected_ids.append(leaf_id)
 
         # Build legacy-shaped candidates for scoring service compatibility
         rels = sim.relevance_scores(query_embedding, vec_candidates)
@@ -280,20 +298,22 @@ class Retriever:
         selected_ids = [nid for nid in selected_ids if nid in nodes]
 
         # Phase 6: Extract tiling using DP algorithm
-        final_budget = (
+        # Total budget = base summary budget + verbatim budget for recent content
+        base_budget = (
             budget_tokens
             if budget_tokens is not None
             else self.query_config.budget_tokens
         )
+        final_budget = base_budget + (recent_verbatim_budget or 0)
 
         # Use async DP generator if available, otherwise use sync version
         if self.async_dp_generator is not None:
             dp_result = await self.async_dp_generator.find_optimal_tiling_over_roots(
-                root_ids, final_budget, scores, nodes
+                root_ids, final_budget, scores, nodes, pinned_ids=pinned_ids
             )
         else:
             dp_result = self.dp_generator.find_optimal_tiling_over_roots(
-                root_ids, final_budget, scores, nodes
+                root_ids, final_budget, scores, nodes, pinned_ids=pinned_ids
             )
         if telemetry_collector:
             telemetry_collector.end_phase("dp")
@@ -336,6 +356,7 @@ class Retriever:
         num_seeds: int | None = None,
         budget_tokens: int | None = None,
         document_id: str | None = None,
+        recent_verbatim_budget: int | None = None,
     ) -> RetrievalResult:
         """Synchronous wrapper for retrieve_async.
 
@@ -344,13 +365,16 @@ class Retriever:
             num_seeds: Number of seed nodes to retrieve
             budget_tokens: Token budget for the final summary
             document_id: Optional document ID to filter by
+            recent_verbatim_budget: Token budget for recent leaves to include verbatim
 
         Creates a new event loop if needed to run the async version.
         For async contexts, use retrieve_async directly.
         """
         # jscpd:ignore-end
         return asyncio.run(
-            self.retrieve_async(query, num_seeds, budget_tokens, document_id)
+            self.retrieve_async(
+                query, num_seeds, budget_tokens, document_id, recent_verbatim_budget
+            )
         )
 
     async def retrieve_with_telemetry(
@@ -359,6 +383,7 @@ class Retriever:
         num_seeds: int | None = None,
         budget_tokens: int | None = None,
         document_id: str | None = None,
+        recent_verbatim_budget: int | None = None,
     ) -> tuple[RetrievalResult, QueryTelemetry]:
         """Async retrieval with detailed telemetry collection.
 
@@ -367,6 +392,7 @@ class Retriever:
             num_seeds: Number of seed nodes to retrieve
             budget_tokens: Token budget for the final summary
             document_id: Optional document ID to filter by
+            recent_verbatim_budget: Token budget for recent leaves to include verbatim
 
         Returns:
             Tuple of (RetrievalResult, QueryTelemetry) with detailed timing info
@@ -375,7 +401,12 @@ class Retriever:
         collector.start_query(query, num_seeds, budget_tokens, document_id)
 
         result = await self.retrieve_async(
-            query, num_seeds, budget_tokens, document_id, collector
+            query,
+            num_seeds,
+            budget_tokens,
+            document_id,
+            recent_verbatim_budget,
+            telemetry_collector=collector,
         )
         telemetry = collector.finalize()
         if telemetry is None:

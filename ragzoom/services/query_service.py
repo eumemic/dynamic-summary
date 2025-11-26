@@ -54,6 +54,7 @@ class QueryService:
         document_id: str,
         num_seeds: int | None = None,
         token_budget: int | None = None,
+        recent_verbatim_budget: int | None = None,
     ) -> QueryResult:
         """Execute a query and return assembled result.
 
@@ -62,6 +63,7 @@ class QueryService:
             document_id: Document ID to query within
             num_seeds: Optional override for number of seed nodes
             token_budget: Optional override for token budget
+            recent_verbatim_budget: Token budget for recent leaves to include verbatim
 
         Returns:
             QueryResult with summary and statistics
@@ -105,6 +107,7 @@ class QueryService:
             budget_tokens=budget,
             document_id=document_id,
             num_seeds=num_seeds,
+            recent_verbatim_budget=recent_verbatim_budget,
         )
 
         # Assemble summary
@@ -136,6 +139,7 @@ class QueryService:
         document_id: str,
         num_seeds: int | None = None,
         token_budget: int | None = None,
+        recent_verbatim_budget: int | None = None,
     ) -> QueryResult:
         """Execute a query asynchronously.
 
@@ -144,6 +148,7 @@ class QueryService:
             document_id: Document ID to query within
             num_seeds: Optional override for number of seed nodes
             token_budget: Optional override for token budget
+            recent_verbatim_budget: Token budget for recent leaves to include verbatim
 
         Returns:
             QueryResult with summary and statistics
@@ -184,9 +189,10 @@ class QueryService:
         # Retrieve relevant nodes
         retrieval_result = await retriever.retrieve_async(
             query_text,
-            num_seeds,
-            budget,
+            num_seeds=num_seeds,
+            budget_tokens=budget,
             document_id=document_id,
+            recent_verbatim_budget=recent_verbatim_budget,
         )
 
         # Assemble summary
