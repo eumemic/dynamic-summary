@@ -104,17 +104,11 @@ def _build_frontier(
         visited.add(current)
         node = nodes[current]
         if node.left_child_id:
-            if node.left_child_id not in nodes:
-                raise ValueError(
-                    f"Missing left child {node.left_child_id} for node {current}"
-                )
-            stack.append(node.left_child_id)
+            if node.left_child_id in nodes:
+                stack.append(node.left_child_id)
         if node.right_child_id and node.right_child_id != node.left_child_id:
-            if node.right_child_id not in nodes:
-                raise ValueError(
-                    f"Missing right child {node.right_child_id} for node {current}"
-                )
-            stack.append(node.right_child_id)
+            if node.right_child_id in nodes:
+                stack.append(node.right_child_id)
 
     frontier: list[str] = []
     for node_id in visited:
@@ -175,8 +169,6 @@ def _compute_candidate(
         pair_tokens += nodes[right_child_id].token_count
 
     tokens_saved = pair_tokens - parent.token_count
-    if tokens_saved <= 0:
-        return None
 
     parent_mass = scores.get(parent_id, 0.0) * parent.token_count
     pair_mass = scores.get(left_child_id, 0.0) * nodes[left_child_id].token_count

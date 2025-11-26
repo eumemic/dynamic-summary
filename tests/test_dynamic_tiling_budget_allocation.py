@@ -118,3 +118,25 @@ def test_greedy_prunes_by_min_quality_loss_per_token() -> None:
     # Should roll up A/B (smallest quality loss per saved token) not C/D.
     assert result.tiling.node_ids == ["L", "C", "D"]
     assert sum(nodes[nid].token_count for nid in result.tiling.node_ids) == 600
+
+
+def test_greedy_treats_missing_children_as_leaf() -> None:
+    """If a referenced child is missing from the nodes dict, treat parent as a leaf."""
+
+    parent = FakeNode(
+        "P",
+        100,
+        0,
+        200,
+        1,
+        0,
+        left_child_id="missing",
+        right_child_id=None,
+    )
+    nodes = {"P": cast(TreeNode, parent)}
+    scores = {"P": 1.0}
+
+    gen = GreedyTilingGenerator(QueryConfig(tiling_strategy="greedy"))
+    result = gen.find_optimal_tiling_over_roots([parent.id], 150, scores, nodes)
+
+    assert result.tiling.node_ids == ["P"]
