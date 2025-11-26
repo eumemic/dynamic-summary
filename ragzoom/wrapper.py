@@ -186,6 +186,7 @@ class RagZoom:
         debug: bool = False,
         viz_width: int = 120,
         use_token_coords: bool = False,
+        tiling_strategy: str | None = None,
     ) -> QueryResponse:
         if not document_id:
             raise ValueError("document_id is required")
@@ -202,6 +203,7 @@ class RagZoom:
                 debug=debug,
                 viz_width=viz_width,
                 use_token_coords=use_token_coords,
+                tiling_strategy=tiling_strategy,
             )
 
         result = output.query_result

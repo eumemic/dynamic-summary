@@ -338,8 +338,10 @@ def test_query_performance_comparison() -> None:
     for file in output_dir.glob("query_telemetry_*.json"):
         with open(file) as f:
             data = json.load(f)
-            telemetry = data["telemetry"]
-            config = data["config"]
+            telemetry = data.get("telemetry")
+            config = data.get("config")
+            if not telemetry or not config:
+                continue
 
             query_results.append(
                 {
