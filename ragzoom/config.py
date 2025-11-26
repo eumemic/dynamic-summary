@@ -307,6 +307,7 @@ class QueryConfig:
     mmr_lambda: float = 0.7
     mmr_k_multiplier: float = 2.0
     embedding_model: str = "text-embedding-3-small"
+    tiling_strategy: str = "dp"  # "dp" or "greedy"
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -322,6 +323,10 @@ class QueryConfig:
             raise ValueError(
                 f"mmr_k_multiplier must be positive, got {self.mmr_k_multiplier}"
             )
+        if self.tiling_strategy not in ("dp", "greedy"):
+            raise ValueError(
+                f"tiling_strategy must be 'dp' or 'greedy', got {self.tiling_strategy}"
+            )
 
     def replace(
         self,
@@ -329,6 +334,7 @@ class QueryConfig:
         mmr_lambda: float | None = None,
         mmr_k_multiplier: float | None = None,
         embedding_model: str | None = None,
+        tiling_strategy: str | None = None,
     ) -> "QueryConfig":
         """Create a new QueryConfig with some fields changed."""
         from dataclasses import replace
@@ -346,6 +352,9 @@ class QueryConfig:
             ),
             embedding_model=(
                 embedding_model if embedding_model is not None else self.embedding_model
+            ),
+            tiling_strategy=(
+                tiling_strategy if tiling_strategy is not None else self.tiling_strategy
             ),
         )
 

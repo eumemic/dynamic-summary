@@ -128,6 +128,7 @@ class ExecuteQueryRequest:
     debug: bool
     viz_width: int
     use_token_coords: bool
+    tiling_strategy: str
 
     def __init__(
         self,
@@ -140,6 +141,7 @@ class ExecuteQueryRequest:
         debug: bool,
         viz_width: int,
         use_token_coords: bool,
+        tiling_strategy: str,
     ) -> None: ...
 
 class ExecuteQueryResponse:
