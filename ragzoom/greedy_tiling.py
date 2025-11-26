@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import heapq
 import logging
 from collections.abc import Mapping, Sequence
+from typing import NamedTuple
 
 from ragzoom.config import QueryConfig
 from ragzoom.contracts.tree_node import TreeNode
@@ -40,8 +42,11 @@ class GreedyTilingGenerator:
 
         # Iteratively replace the least-relevant sibling pair with its parent.
         frontier_set = set(frontier)
+        queue, enqueued = _initialize_candidate_queue(frontier_set, nodes, scores)
         while total_tokens > budget_tokens:
-            replacement = _select_replacement(frontier_set, scores, nodes)
+            replacement = _pop_next_candidate(
+                queue, enqueued, frontier_set, nodes, scores
+            )
             if replacement is None:
                 logger.debug(
                     "Greedy tiling could not reduce budget further "
@@ -54,16 +59,26 @@ class GreedyTilingGenerator:
 
             parent_id, left_id, right_id = replacement
             pair_tokens = nodes[left_id].token_count
-            if right_id != left_id and right_id in nodes:
+            if right_id != left_id:
                 pair_tokens += nodes[right_id].token_count
             parent_tokens = nodes[parent_id].token_count
 
-            if left_id in frontier_set:
-                frontier_set.remove(left_id)
-            if right_id != left_id and right_id in frontier_set:
+            frontier_set.remove(left_id)
+            if right_id != left_id:
                 frontier_set.remove(right_id)
             frontier_set.add(parent_id)
             total_tokens = total_tokens - pair_tokens + parent_tokens
+
+            grandparent_id = nodes[parent_id].parent_id
+            if grandparent_id is not None:
+                _enqueue_candidate(
+                    grandparent_id,
+                    queue,
+                    enqueued,
+                    frontier_set,
+                    nodes,
+                    scores,
+                )
 
         ordered_frontier = sorted(
             frontier_set,
@@ -89,66 +104,125 @@ def _build_frontier(
     return frontier
 
 
-def _select_replacement(
+class _RollupCandidate(NamedTuple):
+    """Roll-up option ordered by priority for the frontier queue."""
+
+    priority: float  # quality lost per token saved (lower is better)
+    neg_tokens_saved: int  # tie-breaker: save more tokens first
+    parent_id: str
+    left_id: str
+    right_id: str
+
+
+def _compute_candidate(
+    parent_id: str,
     frontier: set[str],
-    scores: Mapping[str, float],
     nodes: Mapping[str, TreeNode],
-) -> tuple[str, str, str] | None:
-    """Pick the roll-up with the smallest quality loss per token saved."""
+    scores: Mapping[str, float],
+) -> _RollupCandidate | None:
+    """Return a roll-up candidate if the parent is eligible."""
 
-    best: tuple[float, float, tuple[str, str, str]] | None = None
-    for node_id in list(frontier):
-        node = nodes[node_id]
-        parent_id = node.parent_id
-        if parent_id is None or parent_id not in nodes:
-            continue
-        parent = nodes[parent_id]
-        parent_mass = scores.get(parent_id, 0.0) * parent.token_count
-
-        # Identify sibling (may not exist for single-child parents)
-        if parent.left_child_id == node_id:
-            sib_id = parent.right_child_id
-        else:
-            sib_id = parent.left_child_id
-
-        # Single-child roll-up: collapse lone child into parent if it reduces tokens.
-        if sib_id is None or sib_id not in frontier:
-            tokens_saved = node.token_count - parent.token_count
-            if tokens_saved > 0:
-                child_mass = scores.get(node_id, 0.0) * node.token_count
-                quality_lost = child_mass - parent_mass
-                candidate = (
-                    quality_lost / tokens_saved,
-                    -tokens_saved,
-                    (parent_id, node_id, node_id),
-                )
-                if best is None or candidate < best:
-                    best = candidate
-            continue
-
-        # Sibling pair roll-up
-        sibling = nodes[sib_id]
-        pair_tokens = node.token_count + sibling.token_count
-        tokens_saved = pair_tokens - parent.token_count
-        # No benefit if parent is same or larger
-        if tokens_saved <= 0:
-            continue
-        pair_mass = (
-            scores.get(node_id, 0.0) * node.token_count
-            + scores.get(sib_id, 0.0) * sibling.token_count
-        )
-        quality_lost = pair_mass - parent_mass
-        candidate = (
-            quality_lost / tokens_saved,
-            -tokens_saved,
-            (parent_id, node_id, sib_id),
-        )
-        if best is None or candidate < best:
-            best = candidate
-
-    if best is None:
+    if parent_id not in nodes:
         return None
-    return best[2]
+    parent = nodes[parent_id]
+    left_id = parent.left_child_id
+    right_id = parent.right_child_id
+
+    has_left = left_id is not None and left_id in nodes
+    has_right = right_id is not None and right_id in nodes
+
+    if has_left and has_right:
+        if left_id not in frontier or right_id not in frontier:
+            return None
+        child_ids = (left_id, right_id)
+    elif has_left:
+        if left_id not in frontier:
+            return None
+        child_ids = (left_id, left_id)
+    elif has_right:
+        if right_id not in frontier:
+            return None
+        child_ids = (right_id, right_id)
+    else:
+        return None
+
+    left_child_id, right_child_id = child_ids
+    pair_tokens = nodes[left_child_id].token_count
+    if right_child_id != left_child_id:
+        pair_tokens += nodes[right_child_id].token_count
+
+    tokens_saved = pair_tokens - parent.token_count
+    if tokens_saved <= 0:
+        return None
+
+    parent_mass = scores.get(parent_id, 0.0) * parent.token_count
+    pair_mass = scores.get(left_child_id, 0.0) * nodes[left_child_id].token_count
+    if right_child_id != left_child_id:
+        pair_mass += scores.get(right_child_id, 0.0) * nodes[right_child_id].token_count
+    quality_lost = pair_mass - parent_mass
+
+    return _RollupCandidate(
+        quality_lost / tokens_saved,
+        -tokens_saved,
+        parent_id,
+        left_child_id,
+        right_child_id,
+    )
+
+
+def _enqueue_candidate(
+    parent_id: str,
+    queue: list[_RollupCandidate],
+    enqueued: set[str],
+    frontier: set[str],
+    nodes: Mapping[str, TreeNode],
+    scores: Mapping[str, float],
+) -> None:
+    """Add a parent to the priority queue if it just became eligible."""
+
+    if parent_id in enqueued:
+        return
+    candidate = _compute_candidate(parent_id, frontier, nodes, scores)
+    if candidate is None:
+        return
+    heapq.heappush(queue, candidate)
+    enqueued.add(parent_id)
+
+
+def _initialize_candidate_queue(
+    frontier: set[str],
+    nodes: Mapping[str, TreeNode],
+    scores: Mapping[str, float],
+) -> tuple[list[_RollupCandidate], set[str]]:
+    """Seed the roll-up queue with all eligible parents from the initial frontier."""
+
+    queue: list[_RollupCandidate] = []
+    enqueued: set[str] = set()
+    for node_id in frontier:
+        parent_id = nodes[node_id].parent_id
+        if parent_id is None:
+            continue
+        _enqueue_candidate(parent_id, queue, enqueued, frontier, nodes, scores)
+    return queue, enqueued
+
+
+def _pop_next_candidate(
+    queue: list[_RollupCandidate],
+    enqueued: set[str],
+    frontier: set[str],
+    nodes: Mapping[str, TreeNode],
+    scores: Mapping[str, float],
+) -> tuple[str, str, str] | None:
+    """Return the best still-valid candidate from the queue."""
+
+    while queue:
+        candidate = heapq.heappop(queue)
+        enqueued.discard(candidate.parent_id)
+        current = _compute_candidate(candidate.parent_id, frontier, nodes, scores)
+        if current is None:
+            continue
+        return current.parent_id, current.left_id, current.right_id
+    return None
 
 
 def _build_result(
