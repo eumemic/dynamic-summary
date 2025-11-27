@@ -308,6 +308,13 @@ class Retriever:
         )
         final_budget = base_budget + (recent_verbatim_budget or 0)
 
+        # Apply transient pinning: boost scores for pinned nodes to 1.0
+        # This ensures they're strongly preferred by any tiling algorithm
+        if pinned_ids:
+            scores = dict(scores)  # Make mutable copy
+            for pinned_id in pinned_ids:
+                scores[pinned_id] = 1.0
+
         # Choose tiling strategy
         tiling_strategy = getattr(self.query_config, "tiling_strategy", "dp")
         if tiling_strategy == "greedy":
