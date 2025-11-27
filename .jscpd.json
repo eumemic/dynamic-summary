@@ -1,4 +1,5 @@
 {
+  "threshold": 0,
   "ignore": [
     "ragzoom/contracts/node_repository.py"
   ]

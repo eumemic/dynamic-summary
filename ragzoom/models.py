@@ -17,7 +17,18 @@ class Base(DeclarativeBase):
     pass
 
 
-class PostgresTreeNode(Base):
+class TreeNodeColumnsMixin:
+    """Shared column definitions for tree node models across backends."""
+
+    left_child_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    right_child_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    span_start: Mapped[int] = mapped_column(Integer, nullable=False)
+    span_end: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class PostgresTreeNode(TreeNodeColumnsMixin, Base):
     """Database model for tree nodes (no embeddings in storage)."""
 
     __tablename__ = "tree_nodes"
@@ -26,14 +37,6 @@ class PostgresTreeNode(Base):
     parent_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("tree_nodes.id"), nullable=True
     )
-    left_child_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    right_child_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    span_start: Mapped[int] = mapped_column(Integer, nullable=False)
-    span_end: Mapped[int] = mapped_column(Integer, nullable=False)
-    text: Mapped[str] = mapped_column(Text, nullable=False)
-    token_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
-    )  # Token count of text content (raw text for leaves, summary for internal nodes)
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
     last_accessed: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     access_count: Mapped[int] = mapped_column(Integer, default=0)

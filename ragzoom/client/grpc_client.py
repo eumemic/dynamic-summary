@@ -29,6 +29,16 @@ def _decode_telemetry(payload: str) -> TelemetryDataDict | None:
     return cast(TelemetryDataDict, data)
 
 
+def _extract_telemetry_and_error(
+    response: object,
+) -> tuple[TelemetryDataDict | None, str | None]:
+    """Extract telemetry data and error message from a gRPC response."""
+    telemetry_json = getattr(response, "telemetry_json", "")
+    telemetry = _decode_telemetry(telemetry_json)
+    error_message = getattr(response, "error", "") or ""
+    return telemetry, error_message or None
+
+
 def _document_stats_to_result(
     stats: pb2.DocumentStats, *, telemetry_run_id: str | None = None
 ) -> IndexingResult:
@@ -389,14 +399,11 @@ class GrpcRagzoomClient:
         except grpc.RpcError as error:  # pragma: no cover
             raise _map_rpc_error(error) from error
 
-        telemetry_json = getattr(response, "telemetry_json", "")
-        telemetry = _decode_telemetry(telemetry_json)
-        error_message = getattr(response, "error", "") or ""
-
+        telemetry, error_msg = _extract_telemetry_and_error(response)
         return TelemetryFetchResult(
             complete=bool(getattr(response, "complete", False)),
             telemetry=telemetry,
-            error=error_message or None,
+            error=error_msg,
         )
 
     def export_document_telemetry(
@@ -411,11 +418,8 @@ class GrpcRagzoomClient:
         except grpc.RpcError as error:  # pragma: no cover
             raise _map_rpc_error(error) from error
 
-        telemetry_json = getattr(response, "telemetry_json", "")
-        telemetry = _decode_telemetry(telemetry_json)
-        error_message = getattr(response, "error", "") or ""
-
+        telemetry, error_msg = _extract_telemetry_and_error(response)
         return TelemetryExportResult(
             telemetry=telemetry,
-            error=error_message or None,
+            error=error_msg,
         )
