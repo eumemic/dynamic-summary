@@ -532,3 +532,114 @@ class TestVerbatimBudgetIntegration:
             f"Tiling should use base_budget + verbatim_budget since pinned leaves "
             f"are in coverage and budget must account for them."
         )
+
+    def test_seeds_filtered_to_exclude_verbatim_region(self) -> None:
+        """Vector search should filter seeds to exclude the verbatim region.
+
+        When verbatim budget is specified, seeds must come from BEFORE the
+        verbatim horizon (span_end < horizon) to prevent overlap between
+        relevance-based seeds and verbatim content.
+        """
+        from collections.abc import Sequence
+        from unittest.mock import patch
+
+        from ragzoom.contracts.vector_filter import (
+            SpanEndLtFilter,
+            VectorFilter,
+        )
+        from ragzoom.retrieve import Retriever
+
+        # Create leaves: l1 [0,50), l2 [50,100), l3 [100,150), l4 [150,200)
+        # With verbatim_budget=100, we select l4+l3, horizon=100
+        leaves = [
+            MockLeaf("l1", 50, 0, 50),
+            MockLeaf("l2", 50, 50, 100),
+            MockLeaf("l3", 50, 100, 150),
+            MockLeaf("l4", 50, 150, 200),
+        ]
+
+        mock_query_config = QueryConfig(budget_tokens=2000)
+        mock_doc_store = MagicMock()
+        mock_doc_store.nodes.get_leaves.return_value = leaves
+        mock_embedding_service = MagicMock()
+        mock_embedding_service.get_query_embedding.return_value = [0.1] * 1536
+        mock_budget_planner = MagicMock()
+        mock_budget_planner.calculate_conservative_num_seeds.return_value = 1
+
+        # Capture what filters are passed to search_similar
+        captured_filters: list[Sequence[VectorFilter] | None] = []
+
+        mock_vector_index = MagicMock()
+
+        def capture_search(
+            query_embedding: object,
+            k: int,
+            filters: Sequence[VectorFilter] | None = None,
+        ) -> list[object]:
+            captured_filters.append(filters)
+            return []  # No candidates for simplicity
+
+        mock_vector_index.search_similar.side_effect = capture_search
+
+        retriever = Retriever(
+            mock_query_config,
+            mock_doc_store,
+            mock_embedding_service,
+            mock_budget_planner,
+            mock_vector_index,
+        )
+
+        # Mock root node for coverage
+        mock_root_node = MagicMock()
+        mock_root_node.id = "root"
+        mock_root_node.parent_id = None
+        mock_root_node.span_start = 0
+        mock_root_node.is_root = lambda: True
+
+        with (
+            patch("ragzoom.retrieve.CoverageBuilder") as mock_coverage_class,
+            patch("ragzoom.retrieve.ScoringService") as mock_scoring_class,
+            patch.object(
+                retriever.greedy_generator,
+                "find_optimal_tiling_over_roots",
+                return_value=DPResult(Tiling.empty(), [], 0.0, {}),
+            ),
+        ):
+            mock_coverage = MagicMock()
+            mock_coverage.coverage_map = {"root": True}
+            mock_coverage.nodes = {"root": mock_root_node}
+            mock_coverage_builder = MagicMock()
+            mock_coverage_builder.build_complete_coverage.return_value = mock_coverage
+            mock_coverage_class.return_value = mock_coverage_builder
+
+            mock_scoring = MagicMock()
+            mock_scoring.compute_scores.return_value = {"root": 0.5}
+            mock_scoring_class.return_value = mock_scoring
+
+            # Retrieve with verbatim budget - should establish horizon at 100
+            retriever.retrieve(
+                "test query",
+                budget_tokens=1000,
+                recent_verbatim_budget=100,  # Selects l4+l3, horizon=100
+            )
+
+        # Verify search_similar was called with SpanEndLtFilter
+        assert len(captured_filters) == 1, "search_similar should be called once"
+        filters = captured_filters[0]
+        assert filters is not None, "Filters should not be None when verbatim is set"
+
+        # Find the SpanEndLtFilter
+        span_filter = None
+        for f in filters:
+            if isinstance(f, SpanEndLtFilter):
+                span_filter = f
+                break
+
+        assert span_filter is not None, (
+            f"Expected SpanEndLtFilter in filters, got: {filters}. "
+            f"Seeds must be filtered to exclude verbatim region."
+        )
+        assert span_filter.threshold == 100, (
+            f"Expected horizon=100 (span_start of leftmost verbatim leaf l3), "
+            f"got {span_filter.threshold}"
+        )
