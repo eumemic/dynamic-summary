@@ -176,14 +176,13 @@ class TestVerbatimLeafSelection:
         assert total_tokens <= 100
 
 
-class TestVerbatimBudgetAddition:
-    """Test that verbatim budget is added to base budget for DP."""
+class TestVerbatimSeparation:
+    """Test that verbatim leaves are appended after tiling, not mixed in."""
 
-    def test_retrieve_adds_verbatim_budget_to_total(self) -> None:
-        """Retriever should add verbatim budget to base budget for DP.
+    def test_tiling_uses_base_budget_only(self) -> None:
+        """Tiling should use base_budget only; verbatim leaves are appended after.
 
-        This test verifies the bug: retrieve.py should pass
-        (base_budget + verbatim_budget) to the DP algorithm, not just base_budget.
+        This ensures verbatim selection doesn't constrain the seed-based tiling.
         """
         from unittest.mock import patch
 
@@ -208,15 +207,14 @@ class TestVerbatimBudgetAddition:
             mock_vector_index,
         )
 
-        # Capture the budget passed to DP by patching the generator method
+        # Capture the budget passed to tiling
         captured_budgets: list[int] = []
 
-        def capture_dp_call(
+        def capture_tiling_call(
             root_ids: object,
             budget_tokens: int,
             scores: object,
             nodes: object,
-            pinned_ids: object = None,
         ) -> DPResult:
             captured_budgets.append(budget_tokens)
             return DPResult(Tiling.empty(), [], 0.0, {})
@@ -233,7 +231,7 @@ class TestVerbatimBudgetAddition:
             patch.object(
                 retriever.greedy_generator,
                 "find_optimal_tiling_over_roots",
-                side_effect=capture_dp_call,
+                side_effect=capture_tiling_call,
             ),
             patch("ragzoom.retrieve.CoverageBuilder") as mock_coverage_builder_class,
             patch("ragzoom.retrieve.ScoringService") as mock_scoring_service_class,
@@ -263,10 +261,9 @@ class TestVerbatimBudgetAddition:
                 recent_verbatim_budget=verbatim_budget,
             )
 
-        # The tiling generator should receive base_budget + verbatim_budget
+        # Tiling should receive only base_budget (verbatim appended after)
         assert len(captured_budgets) == 1, "Tiling generator was not called"
-        assert captured_budgets[0] == base_budget + verbatim_budget, (
-            f"Expected budget {base_budget + verbatim_budget}, "
-            f"got {captured_budgets[0]}. "
-            f"Bug: retrieve.py should add verbatim_budget to base_budget"
+        assert captured_budgets[0] == base_budget, (
+            f"Expected base budget {base_budget}, got {captured_budgets[0]}. "
+            f"Tiling should use base_budget only; verbatim leaves appended after."
         )

@@ -196,7 +196,8 @@ class Retriever:
         )
 
         # Select verbatim leaves if requested (recent content to include without summarization)
-        pinned_ids: set[str] = set()
+        # These are kept separate from the main tiling - they'll be appended after
+        verbatim_leaf_ids: list[str] = []
         if recent_verbatim_budget and recent_verbatim_budget > 0:
             from ragzoom.retrieval.verbatim_selector import select_verbatim_leaves
 
@@ -204,12 +205,7 @@ class Retriever:
             verbatim_leaves, _ = select_verbatim_leaves(
                 all_leaves, recent_verbatim_budget
             )
-            pinned_ids = {leaf.id for leaf in verbatim_leaves}
-            # Add verbatim leaves to selected_ids so coverage includes them
-            selected_ids_set = set(selected_ids)
-            for leaf_id in pinned_ids:
-                if leaf_id not in selected_ids_set:
-                    selected_ids.append(leaf_id)
+            verbatim_leaf_ids = [leaf.id for leaf in verbatim_leaves]
 
         # Build legacy-shaped candidates for scoring service compatibility
         rels = sim.relevance_scores(query_embedding, vec_candidates)
@@ -300,34 +296,26 @@ class Retriever:
         selected_ids = [nid for nid in selected_ids if nid in nodes]
 
         # Phase 6: Extract tiling using DP algorithm
-        # Total budget = base summary budget + verbatim budget for recent content
+        # Use base budget only - verbatim leaves are appended separately after tiling
         base_budget = (
             budget_tokens
             if budget_tokens is not None
             else self.query_config.budget_tokens
         )
-        final_budget = base_budget + (recent_verbatim_budget or 0)
-
-        # Apply transient pinning: boost scores for pinned nodes to 1.0
-        # This ensures they're strongly preferred by any tiling algorithm
-        if pinned_ids:
-            scores = dict(scores)  # Make mutable copy
-            for pinned_id in pinned_ids:
-                scores[pinned_id] = 1.0
 
         # Choose tiling strategy
         tiling_strategy = getattr(self.query_config, "tiling_strategy", "dp")
         if tiling_strategy == "greedy":
             dp_result = self.greedy_generator.find_optimal_tiling_over_roots(
-                root_ids, final_budget, scores, nodes
+                root_ids, base_budget, scores, nodes
             )
         elif self.async_dp_generator is not None:
             dp_result = await self.async_dp_generator.find_optimal_tiling_over_roots(
-                root_ids, final_budget, scores, nodes, pinned_ids=pinned_ids
+                root_ids, base_budget, scores, nodes
             )
         else:
             dp_result = self.dp_generator.find_optimal_tiling_over_roots(
-                root_ids, final_budget, scores, nodes, pinned_ids=pinned_ids
+                root_ids, base_budget, scores, nodes
             )
         if telemetry_collector:
             telemetry_collector.end_phase("dp")
@@ -336,8 +324,15 @@ class Retriever:
                 "tiling_size", len(dp_result.tiling.node_ids)
             )
 
-        # Ensure tiling nodes are present in the preloaded set (robust against edge cases)
+        # Build final tiling: DP result + verbatim leaves (appended, not mixed in optimization)
         tiling_ids = list(dp_result.tiling.node_ids)
+        tiling_set = set(tiling_ids)
+        for verbatim_id in verbatim_leaf_ids:
+            if verbatim_id not in tiling_set:
+                tiling_ids.append(verbatim_id)
+                tiling_set.add(verbatim_id)
+
+        # Ensure all tiling nodes are present in the preloaded set
         missing_in_nodes = [nid for nid in tiling_ids if nid not in nodes]
         if missing_in_nodes:
             try:
@@ -359,7 +354,7 @@ class Retriever:
             node_ids=selected_ids,
             scores=scores,
             coverage_map=coverage_map,
-            tiling=dp_result.tiling.node_ids,
+            tiling=tiling_ids,
             nodes=nodes,
         )
 
