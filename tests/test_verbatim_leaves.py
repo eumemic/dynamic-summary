@@ -6,6 +6,7 @@ selected right-to-left until the verbatim budget is exhausted, then
 pinned via the transient pinning mechanism.
 """
 
+from collections.abc import Mapping
 from unittest.mock import MagicMock
 
 from ragzoom.config import QueryConfig
@@ -327,15 +328,14 @@ class TestVerbatimTilingInvariant:
         def mock_tiling(
             root_ids: object,
             budget_tokens: int,
-            scores: object,
+            scores: Mapping[str, float],
             nodes: object,
-            pinned_ids: set[str] | None = None,
         ) -> DPResult:
-            # With queue exclusion fix, tiling should NOT return root if verbatim_leaf
-            # is pinned, because root's children include the pinned leaf
-            # Instead it should return ["left", "verbatim_leaf"]
-            if pinned_ids and "verbatim_leaf" in pinned_ids:
-                # Correct behavior: cannot roll up verbatim_leaf, so return siblings
+            # With score boosting fix, verbatim_leaf gets score=1.0 which prevents
+            # it from being rolled up in favor of parent. Check if verbatim_leaf
+            # has boosted score to determine correct vs bug behavior.
+            if scores.get("verbatim_leaf", 0.0) >= 1.0:
+                # Correct behavior: verbatim_leaf has max score, won't be rolled up
                 return DPResult(
                     Tiling(node_ids=["left", "verbatim_leaf"], relevance_tokens=50.0),
                     [],
@@ -477,7 +477,6 @@ class TestVerbatimBudgetIntegration:
             budget_tokens: int,
             scores: object,
             nodes: object,
-            pinned_ids: set[str] | None = None,
         ) -> DPResult:
             captured_budgets.append(budget_tokens)
             return DPResult(Tiling.empty(), [], 0.0, {})

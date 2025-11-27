@@ -310,11 +310,18 @@ class Retriever:
         )
         final_budget = base_budget + (recent_verbatim_budget or 0)
 
+        # Apply transient pinning via score boosting: pinned nodes get max relevance
+        # so they're never rolled up in favor of their parents
+        if pinned_ids:
+            for node_id in pinned_ids:
+                if node_id in scores:
+                    scores[node_id] = 1.0
+
         # Choose tiling strategy
         tiling_strategy = getattr(self.query_config, "tiling_strategy", "dp")
         if tiling_strategy == "greedy":
             dp_result = self.greedy_generator.find_optimal_tiling_over_roots(
-                root_ids, final_budget, scores, nodes, pinned_ids=pinned_ids
+                root_ids, final_budget, scores, nodes
             )
         elif self.async_dp_generator is not None:
             dp_result = await self.async_dp_generator.find_optimal_tiling_over_roots(
