@@ -176,13 +176,275 @@ class TestVerbatimLeafSelection:
         assert total_tokens <= 100
 
 
-class TestVerbatimSeparation:
-    """Test that verbatim leaves are appended after tiling, not mixed in."""
+class TestVerbatimTilingInvariant:
+    """Regression tests for tiling invariants with verbatim leaves."""
 
-    def test_tiling_uses_base_budget_only(self) -> None:
-        """Tiling should use base_budget only; verbatim leaves are appended after.
+    def test_verbatim_leaves_must_not_overlap_with_tiling(self) -> None:
+        """Verbatim leaves appended to tiling must not create overlaps.
 
-        This ensures verbatim selection doesn't constrain the seed-based tiling.
+        Regression test: The naive approach of appending verbatim leaves after
+        tiling can create overlaps if the tiling already includes a summary node
+        that covers the verbatim region.
+
+        Example: Tiling includes summary [0, 1000), verbatim leaf is [800, 900).
+        Appending the leaf creates overlap - the summary covers [800, 900) too.
+        """
+        from ragzoom.validate import validate_tiling
+
+        # Create mock nodes representing the bug scenario:
+        # - A summary node covering the whole document [0, 1000)
+        # - A verbatim leaf at the end [800, 1000) which is a descendant
+
+        class MockNode:
+            def __init__(
+                self,
+                node_id: str,
+                span_start: int,
+                span_end: int,
+                token_count: int,
+            ) -> None:
+                self.id = node_id
+                self.span_start = span_start
+                self.span_end = span_end
+                self.token_count = token_count
+                self.parent_id: str | None = None
+                self.left_child_id: str | None = None
+                self.right_child_id: str | None = None
+
+            def is_root(self) -> bool:
+                return self.parent_id is None
+
+        # Build a simple tree:
+        # root [0, 1000) -> left [0, 800), right [800, 1000) (verbatim leaf)
+        root = MockNode("root", 0, 1000, 100)
+        left_child = MockNode("left", 0, 800, 80)
+        verbatim_leaf = MockNode("verbatim", 800, 1000, 20)
+
+        root.left_child_id = "left"
+        root.right_child_id = "verbatim"
+        left_child.parent_id = "root"
+        verbatim_leaf.parent_id = "root"
+
+        nodes = {
+            "root": root,
+            "left": left_child,
+            "verbatim": verbatim_leaf,
+        }
+
+        # Mock document store that returns our nodes
+        mock_doc_store = MagicMock()
+        mock_doc_store.nodes.get_node.side_effect = lambda nid: nodes.get(nid)
+        mock_doc_store.nodes.get_all.return_value = list(nodes.values())
+
+        # Scenario: tiling algorithm chose root (covers whole doc),
+        # then we naively append verbatim leaf -> OVERLAP!
+        tiling_with_overlap = ["root", "verbatim"]
+
+        # This SHOULD fail validation due to overlap
+        error = validate_tiling(
+            tiling_with_overlap,
+            mock_doc_store,
+        )
+
+        assert error is not None, (
+            "Tiling validation should detect overlap between root [0,1000) "
+            "and verbatim [800,1000)"
+        )
+        assert "overlap" in error.lower(), f"Expected overlap error, got: {error}"
+
+    def test_retriever_verbatim_must_not_create_overlaps(self) -> None:
+        """Retriever must not produce overlapping tiling when adding verbatim leaves.
+
+        Regression test for bug: retrieve.py appended verbatim leaves to tiling
+        without checking if they overlap with existing tiling nodes.
+
+        This test mocks a scenario where:
+        1. Greedy tiling returns a summary node covering [0, 1000)
+        2. Verbatim selection picks a leaf at [800, 1000)
+        3. Naive append would create overlap -> validation MUST fail
+        """
+        from unittest.mock import patch
+
+        from ragzoom.retrieve import Retriever
+        from ragzoom.validate import validate_tiling
+
+        class MockNode:
+            def __init__(
+                self,
+                node_id: str,
+                span_start: int,
+                span_end: int,
+                token_count: int,
+                parent_id: str | None = None,
+            ) -> None:
+                self.id = node_id
+                self.span_start = span_start
+                self.span_end = span_end
+                self.token_count = token_count
+                self.parent_id = parent_id
+                self.left_child_id: str | None = None
+                self.right_child_id: str | None = None
+                self.text = f"text for {node_id}"
+
+            def is_root(self) -> bool:
+                return self.parent_id is None
+
+        # Build tree: root [0, 1000) with children
+        root = MockNode("root", 0, 1000, 50)
+        left = MockNode("left", 0, 800, 40, parent_id="root")
+        verbatim_leaf = MockNode("verbatim_leaf", 800, 1000, 10, parent_id="root")
+
+        root.left_child_id = "left"
+        root.right_child_id = "verbatim_leaf"
+
+        all_nodes = {"root": root, "left": left, "verbatim_leaf": verbatim_leaf}
+
+        # Setup retriever with mocks
+        mock_query_config = QueryConfig(budget_tokens=2000)
+        mock_doc_store = MagicMock()
+        mock_doc_store.nodes.get_leaves.return_value = [verbatim_leaf]
+        mock_doc_store.nodes.get_nodes.return_value = list(all_nodes.values())
+        mock_doc_store.nodes.get_node.side_effect = lambda nid: all_nodes.get(nid)
+        mock_doc_store.nodes.get_all.return_value = list(all_nodes.values())
+
+        mock_embedding_service = MagicMock()
+        mock_embedding_service.get_query_embedding.return_value = [0.1] * 1536
+        mock_budget_planner = MagicMock()
+        mock_budget_planner.calculate_conservative_num_seeds.return_value = 1
+        mock_vector_index = MagicMock()
+        mock_vector_index.search_similar.return_value = []
+
+        retriever = Retriever(
+            mock_query_config,
+            mock_doc_store,
+            mock_embedding_service,
+            mock_budget_planner,
+            mock_vector_index,
+        )
+
+        # Mock greedy tiling to return just the root (covers whole doc)
+        # This simulates the bug: tiling returns root which covers verbatim region
+        def mock_tiling(
+            root_ids: object,
+            budget_tokens: int,
+            scores: object,
+            nodes: object,
+            pinned_ids: set[str] | None = None,
+        ) -> DPResult:
+            # With queue exclusion fix, tiling should NOT return root if verbatim_leaf
+            # is pinned, because root's children include the pinned leaf
+            # Instead it should return ["left", "verbatim_leaf"]
+            if pinned_ids and "verbatim_leaf" in pinned_ids:
+                # Correct behavior: cannot roll up verbatim_leaf, so return siblings
+                return DPResult(
+                    Tiling(node_ids=["left", "verbatim_leaf"], relevance_tokens=50.0),
+                    [],
+                    50.0,
+                    {},
+                )
+            # Bug behavior: returns root which overlaps with verbatim_leaf
+            return DPResult(
+                Tiling(node_ids=["root"], relevance_tokens=50.0),
+                [],
+                50.0,
+                {},
+            )
+
+        with (
+            patch.object(
+                retriever.greedy_generator,
+                "find_optimal_tiling_over_roots",
+                side_effect=mock_tiling,
+            ),
+            patch("ragzoom.retrieve.CoverageBuilder") as mock_coverage_class,
+            patch("ragzoom.retrieve.ScoringService") as mock_scoring_class,
+        ):
+            mock_coverage = MagicMock()
+            mock_coverage.coverage_map = {"root": True}
+            mock_coverage.nodes = {"root": root}
+            mock_coverage_builder = MagicMock()
+            mock_coverage_builder.build_complete_coverage.return_value = mock_coverage
+            mock_coverage_class.return_value = mock_coverage_builder
+
+            mock_scoring = MagicMock()
+            mock_scoring.compute_scores.return_value = {"root": 0.5}
+            mock_scoring_class.return_value = mock_scoring
+
+            # Run retrieval with verbatim budget
+            result = retriever.retrieve(
+                "test query",
+                budget_tokens=1000,
+                recent_verbatim_budget=100,  # Should select verbatim_leaf
+            )
+
+        # The tiling should NOT have overlaps
+        # Current buggy implementation appends verbatim_leaf to ["root"],
+        # creating ["root", "verbatim_leaf"] which overlaps!
+        assert result.tiling is not None, "Tiling should not be None"
+        error = validate_tiling(result.tiling, mock_doc_store)
+
+        assert error is None, (
+            f"Tiling produced overlaps! Error: {error}\n"
+            f"Tiling IDs: {result.tiling}\n"
+            f"This is a regression - verbatim leaves must not overlap with "
+            f"summary nodes that already cover their span."
+        )
+
+    def test_valid_tiling_without_overlap(self) -> None:
+        """A properly constructed tiling should pass validation."""
+        from ragzoom.validate import validate_tiling
+
+        class MockNode:
+            def __init__(
+                self,
+                node_id: str,
+                span_start: int,
+                span_end: int,
+                token_count: int,
+            ) -> None:
+                self.id = node_id
+                self.span_start = span_start
+                self.span_end = span_end
+                self.token_count = token_count
+                self.parent_id: str | None = None
+                self.left_child_id: str | None = None
+                self.right_child_id: str | None = None
+
+            def is_root(self) -> bool:
+                return self.parent_id is None
+
+        # Valid tiling: left_child [0, 800) + verbatim [800, 1000) = no overlap
+        left_child = MockNode("left", 0, 800, 80)
+        verbatim_leaf = MockNode("verbatim", 800, 1000, 20)
+
+        nodes = {
+            "left": left_child,
+            "verbatim": verbatim_leaf,
+        }
+
+        mock_doc_store = MagicMock()
+        mock_doc_store.nodes.get_node.side_effect = lambda nid: nodes.get(nid)
+        mock_doc_store.nodes.get_all.return_value = list(nodes.values())
+
+        # This tiling has no overlaps - adjacent spans
+        valid_tiling = ["left", "verbatim"]
+
+        error = validate_tiling(
+            valid_tiling,
+            mock_doc_store,
+        )
+
+        assert error is None, f"Valid tiling should pass, but got error: {error}"
+
+
+class TestVerbatimBudgetIntegration:
+    """Test that verbatim budget is correctly integrated with tiling."""
+
+    def test_tiling_uses_combined_budget(self) -> None:
+        """Tiling should use combined budget (base + verbatim).
+
+        Since pinned verbatim leaves are in coverage and cannot be rolled up,
+        the tiling budget must include both base and verbatim portions.
         """
         from unittest.mock import patch
 
@@ -215,6 +477,7 @@ class TestVerbatimSeparation:
             budget_tokens: int,
             scores: object,
             nodes: object,
+            pinned_ids: set[str] | None = None,
         ) -> DPResult:
             captured_budgets.append(budget_tokens)
             return DPResult(Tiling.empty(), [], 0.0, {})
@@ -261,9 +524,12 @@ class TestVerbatimSeparation:
                 recent_verbatim_budget=verbatim_budget,
             )
 
-        # Tiling should receive only base_budget (verbatim appended after)
+        # Tiling should receive combined budget (base + verbatim) since pinned
+        # leaves are included in coverage and can't be rolled up
         assert len(captured_budgets) == 1, "Tiling generator was not called"
-        assert captured_budgets[0] == base_budget, (
-            f"Expected base budget {base_budget}, got {captured_budgets[0]}. "
-            f"Tiling should use base_budget only; verbatim leaves appended after."
+        expected_budget = base_budget + verbatim_budget
+        assert captured_budgets[0] == expected_budget, (
+            f"Expected combined budget {expected_budget}, got {captured_budgets[0]}. "
+            f"Tiling should use base_budget + verbatim_budget since pinned leaves "
+            f"are in coverage and budget must account for them."
         )

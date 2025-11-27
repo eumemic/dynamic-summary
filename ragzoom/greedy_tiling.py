@@ -27,9 +27,17 @@ class GreedyTilingGenerator:
         budget_tokens: int,
         scores: Mapping[str, float],
         nodes: Mapping[str, TreeNode],
+        pinned_ids: set[str] | None = None,
     ) -> DPResult:
-        """Generate a tiling by pruning the frontier until within budget."""
+        """Generate a tiling by pruning the frontier until within budget.
 
+        Args:
+            root_ids: Root node IDs to start traversal from
+            budget_tokens: Token budget for the tiling
+            scores: Relevance scores for each node
+            nodes: All nodes in the coverage tree
+            pinned_ids: Node IDs that cannot be rolled up (e.g., verbatim leaves)
+        """
         if not nodes:
             return DPResult(Tiling.empty(), [], 0.0, {})
 
@@ -42,10 +50,12 @@ class GreedyTilingGenerator:
 
         # Iteratively replace the least-relevant sibling pair with its parent.
         frontier_set = set(frontier)
-        queue, enqueued = _initialize_candidate_queue(frontier_set, nodes, scores)
+        queue, enqueued = _initialize_candidate_queue(
+            frontier_set, nodes, scores, pinned_ids
+        )
         while total_tokens > budget_tokens:
             replacement = _pop_next_candidate(
-                queue, enqueued, frontier_set, nodes, scores
+                queue, enqueued, frontier_set, nodes, scores, pinned_ids
             )
             if replacement is None:
                 logger.debug(
@@ -78,6 +88,7 @@ class GreedyTilingGenerator:
                     frontier_set,
                     nodes,
                     scores,
+                    pinned_ids,
                 )
 
         ordered_frontier = sorted(
@@ -136,9 +147,13 @@ def _compute_candidate(
     frontier: set[str],
     nodes: Mapping[str, TreeNode],
     scores: Mapping[str, float],
+    pinned_ids: set[str] | None = None,
 ) -> _RollupCandidate | None:
-    """Return a roll-up candidate if the parent is eligible."""
+    """Return a roll-up candidate if the parent is eligible.
 
+    A parent is NOT eligible if any of its children are pinned, because
+    pinned nodes cannot be rolled up into their parent.
+    """
     if parent_id not in nodes:
         return None
     parent = nodes[parent_id]
@@ -164,6 +179,11 @@ def _compute_candidate(
         return None
 
     left_child_id, right_child_id = child_ids
+
+    # If any child is pinned, this parent cannot be a rollup candidate
+    if pinned_ids:
+        if left_child_id in pinned_ids or right_child_id in pinned_ids:
+            return None
     pair_tokens = nodes[left_child_id].token_count
     if right_child_id != left_child_id:
         pair_tokens += nodes[right_child_id].token_count
@@ -194,12 +214,12 @@ def _enqueue_candidate(
     frontier: set[str],
     nodes: Mapping[str, TreeNode],
     scores: Mapping[str, float],
+    pinned_ids: set[str] | None = None,
 ) -> None:
     """Add a parent to the priority queue if it just became eligible."""
-
     if parent_id in enqueued:
         return
-    candidate = _compute_candidate(parent_id, frontier, nodes, scores)
+    candidate = _compute_candidate(parent_id, frontier, nodes, scores, pinned_ids)
     if candidate is None:
         return
     heapq.heappush(queue, candidate)
@@ -210,16 +230,18 @@ def _initialize_candidate_queue(
     frontier: set[str],
     nodes: Mapping[str, TreeNode],
     scores: Mapping[str, float],
+    pinned_ids: set[str] | None = None,
 ) -> tuple[list[_RollupCandidate], set[str]]:
     """Seed the roll-up queue with all eligible parents from the initial frontier."""
-
     queue: list[_RollupCandidate] = []
     enqueued: set[str] = set()
     for node_id in frontier:
         parent_id = nodes[node_id].parent_id
         if parent_id is None:
             continue
-        _enqueue_candidate(parent_id, queue, enqueued, frontier, nodes, scores)
+        _enqueue_candidate(
+            parent_id, queue, enqueued, frontier, nodes, scores, pinned_ids
+        )
     return queue, enqueued
 
 
@@ -229,13 +251,15 @@ def _pop_next_candidate(
     frontier: set[str],
     nodes: Mapping[str, TreeNode],
     scores: Mapping[str, float],
+    pinned_ids: set[str] | None = None,
 ) -> tuple[str, str, str] | None:
     """Return the best still-valid candidate from the queue."""
-
     while queue:
         candidate = heapq.heappop(queue)
         enqueued.discard(candidate.parent_id)
-        current = _compute_candidate(candidate.parent_id, frontier, nodes, scores)
+        current = _compute_candidate(
+            candidate.parent_id, frontier, nodes, scores, pinned_ids
+        )
         if current is None:
             continue
         return current.parent_id, current.left_id, current.right_id
