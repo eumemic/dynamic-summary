@@ -149,6 +149,22 @@ class Retriever:
         if telemetry_collector:
             telemetry_collector.record_metric("seeds_requested", num_seeds)
 
+        # Pre-select verbatim leaves to establish horizon for seed filtering
+        # Seeds should only come from the non-verbatim region (before the horizon)
+        pinned_ids: set[str] = set()
+        verbatim_horizon: int | None = None
+        if recent_verbatim_budget and recent_verbatim_budget > 0:
+            from ragzoom.retrieval.verbatim_selector import select_verbatim_leaves
+
+            all_leaves = self.document_store.nodes.get_leaves()
+            verbatim_leaves, _ = select_verbatim_leaves(
+                all_leaves, recent_verbatim_budget
+            )
+            pinned_ids = {leaf.id for leaf in verbatim_leaves}
+            if verbatim_leaves:
+                # Horizon = start of verbatim region (earliest span_start among verbatim)
+                verbatim_horizon = min(leaf.span_start for leaf in verbatim_leaves)
+
         # Phase 1: Get query embedding
         query_embedding = self.embedding_service.get_query_embedding(
             query, effective_doc_id
@@ -161,11 +177,16 @@ class Retriever:
             )
 
         # Phase 2: Initial retrieval (always via VectorIndex v2)
+        # Filter seeds to only come from before verbatim horizon
         k_candidates = int(num_seeds * self.query_config.mmr_k_multiplier)
         from ragzoom.retrieval import mmr
         from ragzoom.retrieval import similarity as sim
 
         where_clause = self._build_vector_where(effective_doc_id)
+        if verbatim_horizon is not None and where_clause is not None:
+            where_clause["span_end_lt"] = verbatim_horizon
+        elif verbatim_horizon is not None:
+            where_clause = {"span_end_lt": verbatim_horizon}
         raw_candidates = self.vector_index.search_similar(
             query_embedding,
             k_candidates,
@@ -195,19 +216,9 @@ class Retriever:
             self.query_config.mmr_lambda,
         )
 
-        # Select verbatim leaves if requested (recent content to include without summarization)
-        # These are added as seeds so they're included in coverage, then pinned so they
-        # cannot be rolled up by the greedy tiling algorithm
-        pinned_ids: set[str] = set()
-        if recent_verbatim_budget and recent_verbatim_budget > 0:
-            from ragzoom.retrieval.verbatim_selector import select_verbatim_leaves
-
-            all_leaves = self.document_store.nodes.get_leaves()
-            verbatim_leaves, _ = select_verbatim_leaves(
-                all_leaves, recent_verbatim_budget
-            )
-            pinned_ids = {leaf.id for leaf in verbatim_leaves}
-            # Add verbatim leaves to selected_ids so coverage includes them
+        # Add verbatim leaves to selected_ids so coverage includes them
+        # (verbatim leaves were pre-selected earlier to establish the horizon)
+        if pinned_ids:
             selected_ids_set = set(selected_ids)
             for leaf_id in pinned_ids:
                 if leaf_id not in selected_ids_set:

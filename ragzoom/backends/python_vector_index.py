@@ -230,6 +230,13 @@ class PythonVectorIndex:
                 mask &= np.array(
                     [self._meta[i].document_id == doc for i in self._ids], dtype=bool
                 )
+            # Filter by span_end < threshold (for excluding verbatim region)
+            span_end_lt = where.get("span_end_lt")
+            if span_end_lt is not None and isinstance(span_end_lt, int | float):
+                threshold = int(span_end_lt)
+                mask &= np.array(
+                    [self._meta[i].span_end < threshold for i in self._ids], dtype=bool
+                )
             if mask is not None and not mask.any():
                 return []
         if mask is not None:
