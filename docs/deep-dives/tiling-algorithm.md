@@ -1,32 +1,36 @@
 # The Tiling Algorithm: Deep Dive
 
-**Last Verified**: January 2025  
+**Last Verified**: November 2025
 **Implementation Status**: CORE IMPLEMENTED, Some features NOT IMPLEMENTED
 
-This document provides a comprehensive technical explanation of RagZoom's Dynamic Programming (DP) tiling algorithm, which generates optimal summaries by selecting the right level of detail for each part of a document based on relevance.
+This document provides a comprehensive technical explanation of RagZoom's tiling algorithms, which generate summaries by selecting the right level of detail for each part of a document based on relevance.
 
 ## Table of Contents
 
-- [Motivation](#motivation)
+- [Tiling Strategies](#tiling-strategies)
 - [Core Concepts](#core-concepts)
-- [Algorithm Overview](#algorithm-overview)
+- [Dynamic Programming Algorithm](#dynamic-programming-algorithm)
+- [Greedy Algorithm](#greedy-algorithm)
+- [Verbatim Budget](#verbatim-budget)
 - [Implementation Details](#implementation-details)
 - [What's NOT Implemented](#whats-not-implemented)
 - [Algorithm Pseudocode](#algorithm-pseudocode)
 - [Examples](#examples)
 - [Performance Characteristics](#performance-characteristics)
 
-## Motivation
+## Tiling Strategies
 
-The original RagZoom algorithm used a multi-stage corrective pipeline that was brittle and error-prone:
+RagZoom supports two tiling strategies, selectable via the `tiling_strategy` configuration parameter:
 
-1. Extract tiling using greedy top-down walk
-2. Trim to budget (potentially breaking coverage)
-3. Apply slope cap (potentially exceeding budget)
-4. Re-trim if needed
-5. Final de-duplication in assembly
+| Strategy | Default | Description |
+|----------|---------|-------------|
+| `dp` | Yes | Dynamic programming - optimal quality within budget |
+| `greedy` | No | Top-down greedy - faster, good for large trees |
 
-Each stage could introduce bugs, and the interactions between stages made the system difficult to reason about. The DP algorithm replaces this with a single-pass, "correct-by-construction" approach.
+Both strategies produce valid tilings that completely cover the document without gaps or overlaps. The choice depends on your priorities:
+
+- **DP (default)**: Guarantees optimal quality-per-token by exploring all valid combinations. Best for most use cases.
+- **Greedy**: Faster execution with predictable behavior. Useful for very large trees or when you want consistent top-down resolution.
 
 ## Core Concepts
 
@@ -49,9 +53,9 @@ The algorithm maintains a critical invariant: **Complete, non-overlapping covera
 
 This is why patterns like "Summary → Leaf A → Summary → Leaf C → Summary" are impossible. The algorithm decomposes the problem hierarchically, always producing contiguous tilings.
 
-## Algorithm Overview
+## Dynamic Programming Algorithm
 
-The DP algorithm treats tiling generation as an optimization problem:
+The DP algorithm (`tiling_strategy="dp"`) treats tiling generation as an optimization problem:
 
 > Given a tree node and token budget, find the tiling that maximizes total quality (relevance score) while staying within the budget.
 
@@ -96,6 +100,87 @@ find_optimal_tiling(node, budget):
 ### Memoization
 
 Results are cached by `(node_id, budget)` to avoid recomputing subproblems, making the algorithm efficient even for large trees.
+
+## Greedy Algorithm
+
+The greedy algorithm (`tiling_strategy="greedy"`) provides a simpler, faster alternative to DP. It walks the tree top-down, making locally optimal decisions at each node.
+
+### Algorithm
+
+```python
+def find_greedy_tiling(node, budget, scores):
+    # If node fits in budget, consider using it
+    node_cost = get_token_cost(node)
+
+    if node.is_leaf():
+        if node_cost <= budget:
+            return [node], node_cost
+        return [], 0
+
+    # Try children first (prefer detail when budget allows)
+    left_result = find_greedy_tiling(node.left, budget * left_ratio, scores)
+    right_result = find_greedy_tiling(node.right, budget * right_ratio, scores)
+
+    child_cost = left_result[1] + right_result[1]
+
+    # Use children if they fit, otherwise fall back to parent
+    if child_cost <= budget:
+        return left_result[0] + right_result[0], child_cost
+    elif node_cost <= budget:
+        return [node], node_cost
+    else:
+        return [], 0
+```
+
+### When to Use Greedy
+
+- **Large documents**: Greedy has lower constant factors than DP
+- **Predictable behavior**: Always prefers detail when budget allows
+- **Debugging**: Easier to reason about the tiling choices
+
+### Trade-offs
+
+| Aspect | DP | Greedy |
+|--------|-----|--------|
+| Optimality | Globally optimal | Locally optimal |
+| Speed | O(n × b) with memoization | O(n) single pass |
+| Memory | Cache scales with budget values | Minimal |
+
+## Verbatim Budget
+
+The `recent_verbatim_token_budget` feature allows including recent content (rightmost leaves) without summarization. This is useful for conversation logs where the most recent messages should appear verbatim.
+
+### How It Works
+
+1. **Leaf Selection**: Starting from the rightmost leaf, select leaves moving left until the verbatim budget is exhausted
+2. **Horizon Calculation**: The `span_start` of the leftmost selected leaf becomes the "verbatim horizon"
+3. **Seed Filtering**: Vector search for seeds is restricted to `span_end < horizon` to prevent overlap
+4. **Transient Pinning**: Selected verbatim leaves get `relevance=1.0`, making them strongly preferred by the tiling algorithm
+
+### Example
+
+```
+Document: [Leaf1] [Leaf2] [Leaf3] [Leaf4] [Leaf5]
+                                    ^-- verbatim budget selects Leaf4+Leaf5
+
+Horizon = Leaf4.span_start
+Seeds searched in: Leaf1, Leaf2, Leaf3 only
+Tiling combines: relevance-based seeds + verbatim Leaf4+Leaf5
+```
+
+### Efficient Implementation
+
+Verbatim leaf selection uses an efficient SQL window function query:
+
+```sql
+SELECT * FROM (
+    SELECT *, SUM(token_count) OVER (ORDER BY span_end DESC) as cumsum
+    FROM tree_nodes WHERE height = 0 AND document_id = ?
+) WHERE cumsum - token_count < ?
+ORDER BY span_start ASC
+```
+
+This avoids loading all leaves for large documents - only the leaves needed to fill the budget are fetched.
 
 ## Implementation Details
 
