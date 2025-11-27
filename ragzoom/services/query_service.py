@@ -2,6 +2,7 @@
 
 import logging
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import OperationalConfig, QueryConfig
@@ -11,6 +12,14 @@ from ragzoom.retrieve import RetrievalResult, Retriever
 from ragzoom.vector_factory import create_vector_index
 
 logger = logging.getLogger(__name__)
+
+
+class _QueryComponents(NamedTuple):
+    """Components needed for query execution."""
+
+    retriever: Retriever
+    assembler: Assembler
+    budget: int
 
 
 @dataclass
@@ -47,9 +56,75 @@ class QueryService:
         self.query_config = query_config
         self.operational_config = operational_config
         self.query_logger = query_logger
-        # Note: Retriever and Assembler are now created per-request with DocumentStore
 
-    # jscpd:ignore-start - Legitimate sync/async pattern duplication
+    def _create_query_components(
+        self,
+        document_id: str,
+        token_budget: int | None,
+    ) -> _QueryComponents:
+        """Create fresh retrieval components for a query.
+
+        Components are created per-query to ensure thread safety and
+        document isolation.
+        """
+        budget = token_budget or self.query_config.budget_tokens
+
+        from openai import OpenAI
+
+        from ragzoom.config import IndexConfig
+        from ragzoom.retrieval.budget_planner import BudgetPlanner
+        from ragzoom.retrieval.embedding_service import EmbeddingService
+
+        client = OpenAI(
+            api_key=self.operational_config.openai_api_key.get_secret_value()
+        )
+        document_store = self.store.for_document(document_id)
+        embedding_service = EmbeddingService(
+            client, document_store, self.query_config.embedding_model
+        )
+        index_cfg = IndexConfig.load()
+        budget_planner = BudgetPlanner(document_store, index_cfg.target_chunk_tokens)
+        vector_index = create_vector_index(
+            self.operational_config.vector_backend,
+            self.operational_config.database_url,
+            self.query_config.embedding_model,
+        )
+        retriever = Retriever(
+            self.query_config,
+            document_store,
+            embedding_service,
+            budget_planner,
+            vector_index,
+        )
+        assembler = Assembler(document_store)
+
+        return _QueryComponents(retriever=retriever, assembler=assembler, budget=budget)
+
+    def _build_query_result(
+        self,
+        query_text: str,
+        document_id: str,
+        retrieval_result: RetrievalResult,
+        assembler: Assembler,
+        budget: int,
+        num_seeds: int | None,
+    ) -> QueryResult:
+        """Build QueryResult from retrieval result."""
+        summary = assembler.assemble(retrieval_result)
+        token_count = assembler.get_token_count(summary)
+        query_id = self._record_query(
+            query_text, document_id, budget, num_seeds, retrieval_result
+        )
+        return QueryResult(
+            summary=summary,
+            token_count=token_count,
+            nodes_retrieved=len(retrieval_result.node_ids),
+            tiling_size=len(retrieval_result.tiling) if retrieval_result.tiling else 0,
+            query_id=query_id,
+            seed_count=retrieval_result.seed_count,
+            verbatim_count=retrieval_result.verbatim_count,
+        )
+
     def execute_query(
         self,
         query_text: str,
@@ -70,73 +145,25 @@ class QueryService:
         Returns:
             QueryResult with summary and statistics
         """
-        # Use provided budget or config default
-        budget = token_budget or self.query_config.budget_tokens
+        components = self._create_query_components(document_id, token_budget)
 
-        # Create document-scoped store and components
-        from openai import OpenAI
-
-        from ragzoom.config import IndexConfig
-        from ragzoom.retrieval.budget_planner import BudgetPlanner
-        from ragzoom.retrieval.embedding_service import EmbeddingService
-
-        client = OpenAI(
-            api_key=self.operational_config.openai_api_key.get_secret_value()
-        )
-        document_store = self.store.for_document(document_id)
-        embedding_service = EmbeddingService(
-            client, document_store, self.query_config.embedding_model
-        )
-        index_cfg = IndexConfig.load()
-        budget_planner = BudgetPlanner(document_store, index_cfg.target_chunk_tokens)
-        vector_index = create_vector_index(
-            self.operational_config.vector_backend,
-            self.operational_config.database_url,
-            self.query_config.embedding_model,
-        )
-        retriever = Retriever(
-            self.query_config,
-            document_store,
-            embedding_service,
-            budget_planner,
-            vector_index,
-        )
-        assembler = Assembler(document_store)
-
-        # Retrieve relevant nodes
-        retrieval_result = retriever.retrieve(
+        retrieval_result = components.retriever.retrieve(
             query_text,
-            budget_tokens=budget,
+            budget_tokens=components.budget,
             document_id=document_id,
             num_seeds=num_seeds,
             recent_verbatim_budget=recent_verbatim_budget,
         )
 
-        # Assemble summary
-        summary = assembler.assemble(retrieval_result)
-        token_count = assembler.get_token_count(summary)
-
-        query_id = self._record_query(
+        return self._build_query_result(
             query_text,
             document_id,
-            budget,
-            num_seeds,
             retrieval_result,
+            components.assembler,
+            components.budget,
+            num_seeds,
         )
 
-        return QueryResult(
-            summary=summary,
-            token_count=token_count,
-            nodes_retrieved=len(retrieval_result.node_ids),
-            tiling_size=len(retrieval_result.tiling) if retrieval_result.tiling else 0,
-            query_id=query_id,
-            seed_count=retrieval_result.seed_count,
-            verbatim_count=retrieval_result.verbatim_count,
-        )
-
-    # jscpd:ignore-end
-
-    # jscpd:ignore-start - Legitimate sync/async pattern duplication
     async def execute_query_async(
         self,
         query_text: str,
@@ -157,71 +184,24 @@ class QueryService:
         Returns:
             QueryResult with summary and statistics
         """
-        # Use provided budget or config default
-        budget = token_budget or self.query_config.budget_tokens
+        components = self._create_query_components(document_id, token_budget)
 
-        # Create document-scoped store and components
-        from openai import OpenAI
-
-        from ragzoom.config import IndexConfig
-        from ragzoom.retrieval.budget_planner import BudgetPlanner
-        from ragzoom.retrieval.embedding_service import EmbeddingService
-
-        client = OpenAI(
-            api_key=self.operational_config.openai_api_key.get_secret_value()
-        )
-        document_store = self.store.for_document(document_id)
-        embedding_service = EmbeddingService(
-            client, document_store, self.query_config.embedding_model
-        )
-        index_cfg = IndexConfig.load()
-        budget_planner = BudgetPlanner(document_store, index_cfg.target_chunk_tokens)
-        vector_index = create_vector_index(
-            self.operational_config.vector_backend,
-            self.operational_config.database_url,
-            self.query_config.embedding_model,
-        )
-        retriever = Retriever(
-            self.query_config,
-            document_store,
-            embedding_service,
-            budget_planner,
-            vector_index,
-        )
-        assembler = Assembler(document_store)
-
-        # Retrieve relevant nodes
-        retrieval_result = await retriever.retrieve_async(
+        retrieval_result = await components.retriever.retrieve_async(
             query_text,
             num_seeds=num_seeds,
-            budget_tokens=budget,
+            budget_tokens=components.budget,
             document_id=document_id,
             recent_verbatim_budget=recent_verbatim_budget,
         )
 
-        # Assemble summary
-        summary = assembler.assemble(retrieval_result)
-        token_count = assembler.get_token_count(summary)
-
-        query_id = self._record_query(
+        return self._build_query_result(
             query_text,
             document_id,
-            budget,
-            num_seeds,
             retrieval_result,
+            components.assembler,
+            components.budget,
+            num_seeds,
         )
-
-        return QueryResult(
-            summary=summary,
-            token_count=token_count,
-            nodes_retrieved=len(retrieval_result.node_ids),
-            tiling_size=len(retrieval_result.tiling) if retrieval_result.tiling else 0,
-            query_id=query_id,
-            seed_count=retrieval_result.seed_count,
-            verbatim_count=retrieval_result.verbatim_count,
-        )
-
-    # jscpd:ignore-end
 
     def update_config(
         self,

@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ragzoom.backends.vector_common import coerce_int
 from ragzoom.tree_coordinate import TreeCoordinate
 
 if TYPE_CHECKING:
@@ -132,8 +133,8 @@ class CoverageBuilder:
                 continue
             coord = TreeCoordinate(
                 document_id=coord_doc,
-                height=_coerce_int(meta.get("height", 0)),
-                level_index=_coerce_int(meta.get("level_index", 0)),
+                height=coerce_int(meta.get("height", 0)),
+                level_index=coerce_int(meta.get("level_index", 0)),
             )
             meta_seed_coords[node_id] = coord
 
@@ -157,8 +158,8 @@ class CoverageBuilder:
                 return None
             return TreeCoordinate(
                 document_id=getattr(node, "document_id", None),
-                height=_coerce_int(getattr(node, "height", 0)),
-                level_index=_coerce_int(raw_index),
+                height=coerce_int(getattr(node, "height", 0)),
+                level_index=coerce_int(raw_index),
             )
 
         for node in existing_nodes:
@@ -205,13 +206,3 @@ class CoverageBuilder:
             self.store.nodes.update_access(node_id)
 
         return coverage_map, nodes
-
-
-def _coerce_int(value: object) -> int:
-    if isinstance(value, bool):
-        return 1 if value else 0
-    if isinstance(value, int | float):
-        return int(value)
-    if isinstance(value, str) and value.strip().isdigit():
-        return int(value)
-    return 0

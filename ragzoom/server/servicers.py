@@ -488,20 +488,23 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
             doc_ids = set(status.pending_by_document)
             doc_ids.update(status.inflight_by_document)
             doc_ids.update(status.completed_by_document)
-            document_progress = (
-                pb2.WorkerDocumentProgress(
-                    document_id=doc_id,
-                    pending=status.pending_by_document.get(doc_id, 0),
-                    inflight=status.inflight_by_document.get(doc_id, 0),
-                    completed=status.completed_by_document.get(doc_id, 0),
-                    total=(
-                        status.completed_by_document.get(doc_id, 0)
-                        + status.pending_by_document.get(doc_id, 0)
-                        + status.inflight_by_document.get(doc_id, 0)
-                    ),
+            document_progress = []
+            for doc_id in sorted(doc_ids):
+                totals = DocumentProgressTotals.from_status_dicts(
+                    doc_id,
+                    status.pending_by_document,
+                    status.inflight_by_document,
+                    status.completed_by_document,
                 )
-                for doc_id in sorted(doc_ids)
-            )
+                document_progress.append(
+                    pb2.WorkerDocumentProgress(
+                        document_id=doc_id,
+                        pending=totals.pending,
+                        inflight=totals.inflight,
+                        completed=totals.completed,
+                        total=totals.total,
+                    )
+                )
             yield pb2.RunWorkersResponse(
                 message=message,
                 idle=idle,
@@ -811,15 +814,11 @@ async def _render_worker_progress(coordinator: WorkerCoordinator) -> None:
                 continue
 
             documents = {
-                doc_id: DocumentProgressTotals(
-                    pending=status.pending_by_document.get(doc_id, 0),
-                    inflight=status.inflight_by_document.get(doc_id, 0),
-                    completed=status.completed_by_document.get(doc_id, 0),
-                    total=(
-                        status.completed_by_document.get(doc_id, 0)
-                        + status.pending_by_document.get(doc_id, 0)
-                        + status.inflight_by_document.get(doc_id, 0)
-                    ),
+                doc_id: DocumentProgressTotals.from_status_dicts(
+                    doc_id,
+                    status.pending_by_document,
+                    status.inflight_by_document,
+                    status.completed_by_document,
                 )
                 for doc_id in sorted(active_doc_ids)
             }

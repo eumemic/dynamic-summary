@@ -113,6 +113,25 @@ class ServerState:
         )
 
 
+def _sqlite_base_dir(database_url: str | None) -> Path | None:
+    """Extract the base directory from a file-based SQLite URL.
+
+    Returns None if the URL is not a file-based SQLite URL (e.g., in-memory or non-SQLite).
+    """
+    url = (database_url or "").strip()
+    if not url.startswith("sqlite") or ":memory:" in url:
+        return None
+    parsed = urlparse(url)
+    raw_path = parsed.path or ""
+    if url.startswith("sqlite:////"):
+        sqlite_path = Path(raw_path)
+    else:
+        sqlite_path = Path(raw_path.lstrip("/"))
+        if not sqlite_path.is_absolute():
+            sqlite_path = Path.cwd() / sqlite_path
+    return sqlite_path.parent if sqlite_path.suffix else sqlite_path
+
+
 def _resolve_telemetry_dir(
     operational_config: OperationalConfig,
     override: Path | None,
@@ -120,19 +139,9 @@ def _resolve_telemetry_dir(
     if override is not None:
         return override
 
-    url = (operational_config.database_url or "").strip()
-    if url.startswith("sqlite") and ":memory:" not in url:
-        parsed = urlparse(url)
-        raw_path = parsed.path or ""
-        if url.startswith("sqlite:////"):
-            sqlite_path = Path(raw_path)
-        else:
-            sqlite_path = Path(raw_path.lstrip("/"))
-            if not sqlite_path.is_absolute():
-                sqlite_path = Path.cwd() / sqlite_path
-        if sqlite_path.suffix:
-            return sqlite_path.parent / "telemetry"
-        return sqlite_path / "telemetry"
+    sqlite_base = _sqlite_base_dir(operational_config.database_url)
+    if sqlite_base is not None:
+        return sqlite_base / "telemetry"
 
     data_root = os.environ.get("RAGZOOM_DATA_DIR")
     if data_root:
@@ -146,19 +155,9 @@ def _resolve_query_log_path(operational_config: OperationalConfig) -> Path:
     if override:
         return Path(override)
 
-    url = (operational_config.database_url or "").strip()
-    if url.startswith("sqlite") and ":memory:" not in url:
-        parsed = urlparse(url)
-        raw_path = parsed.path or ""
-        if url.startswith("sqlite:////"):
-            sqlite_path = Path(raw_path)
-        else:
-            sqlite_path = Path(raw_path.lstrip("/"))
-            if not sqlite_path.is_absolute():
-                sqlite_path = Path.cwd() / sqlite_path
-        if sqlite_path.suffix:
-            return sqlite_path.parent / "query-log.db"
-        return sqlite_path / "query-log.db"
+    sqlite_base = _sqlite_base_dir(operational_config.database_url)
+    if sqlite_base is not None:
+        return sqlite_base / "query-log.db"
 
     data_root = os.environ.get("RAGZOOM_DATA_DIR")
     if data_root:
