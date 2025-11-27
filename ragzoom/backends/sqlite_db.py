@@ -15,7 +15,6 @@ from sqlalchemy import (
     DateTime,
     Integer,
     String,
-    Text,
     create_engine,
     select,
 )
@@ -28,22 +27,18 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.pool import StaticPool
 
+from ragzoom.models import TreeNodeColumnsMixin
+
 
 class SqliteBase(DeclarativeBase):
     pass
 
 
-class SQLiteTreeNode(SqliteBase):
+class SQLiteTreeNode(TreeNodeColumnsMixin, SqliteBase):
     __tablename__ = "tree_nodes"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     parent_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    left_child_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    right_child_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    span_start: Mapped[int] = mapped_column(Integer, nullable=False)
-    span_end: Mapped[int] = mapped_column(Integer, nullable=False)
-    text: Mapped[str] = mapped_column(Text, nullable=False)
-    token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
     last_accessed: Mapped[dt.datetime] = mapped_column(
         DateTime, default=dt.datetime.utcnow

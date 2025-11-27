@@ -11,6 +11,18 @@ from ragzoom.exceptions import NodeNotFoundError
 from ragzoom.tree_coordinate import TreeCoordinate
 
 
+def _node_to_coordinate(node: TreeNode) -> TreeCoordinate | None:
+    """Extract TreeCoordinate from a node, or None if level_index is missing."""
+    raw_index = getattr(node, "level_index", None)
+    if raw_index is None:
+        return None
+    return TreeCoordinate(
+        document_id=getattr(node, "document_id", None),
+        height=int(getattr(node, "height", 0)),
+        level_index=int(raw_index),
+    )
+
+
 class TreeNavigator:
     """Service for tree navigation and traversal operations."""
 
@@ -44,14 +56,7 @@ class TreeNavigator:
             return None
 
     def _coordinate_for(self, node: TreeNode) -> TreeCoordinate | None:
-        raw_index = getattr(node, "level_index", None)
-        if raw_index is None:
-            return None
-        return TreeCoordinate(
-            document_id=getattr(node, "document_id", None),
-            height=int(getattr(node, "height", 0)),
-            level_index=int(raw_index),
-        )
+        return _node_to_coordinate(node)
 
     def get_children(self, node_id: str) -> tuple[TreeNode | None, TreeNode | None]:
         """Get left and right children of a node.
@@ -99,14 +104,9 @@ class TreeNavigator:
         pending_coords: defaultdict[str | None, set[tuple[int, int]]] = defaultdict(set)
 
         for node in initial.values():
-            raw_index = getattr(node, "level_index", None)
-            if raw_index is None:
+            coord = _node_to_coordinate(node)
+            if coord is None:
                 continue
-            coord = TreeCoordinate(
-                document_id=getattr(node, "document_id", None),
-                height=int(getattr(node, "height", 0)),
-                level_index=int(raw_index),
-            )
             parent_coord = coord.parent()
             coords_by_doc[parent_coord.document_id].add(parent_coord)
 
@@ -133,14 +133,9 @@ class TreeNavigator:
                     ancestors.append(node)
                     visited.add(node.id)
 
-                    raw_index = getattr(node, "level_index", None)
-                    if raw_index is None:
+                    coord = _node_to_coordinate(node)
+                    if coord is None:
                         continue
-                    coord = TreeCoordinate(
-                        document_id=getattr(node, "document_id", None),
-                        height=int(getattr(node, "height", 0)),
-                        level_index=int(raw_index),
-                    )
                     next_coords[coord.parent().document_id].add(coord.parent())
 
             coords_by_doc = next_coords
