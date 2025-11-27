@@ -151,16 +151,14 @@ class Retriever:
         pinned_ids: set[str] = set()
         verbatim_horizon: int | None = None
         if recent_verbatim_budget and recent_verbatim_budget > 0:
-            from ragzoom.retrieval.verbatim_selector import select_verbatim_leaves
-
-            all_leaves = self.document_store.nodes.get_leaves()
-            verbatim_leaves, _ = select_verbatim_leaves(
-                all_leaves, recent_verbatim_budget
+            verbatim_leaves = self.document_store.nodes.get_recent_leaves_within_budget(
+                recent_verbatim_budget
             )
             pinned_ids = {leaf.id for leaf in verbatim_leaves}
             if verbatim_leaves:
                 # Horizon = start of verbatim region (earliest span_start among verbatim)
-                verbatim_horizon = min(leaf.span_start for leaf in verbatim_leaves)
+                # Leaves are returned sorted by span_start, so first one is the horizon
+                verbatim_horizon = verbatim_leaves[0].span_start
 
         # Phase 1: Get query embedding
         query_embedding = self.embedding_service.get_query_embedding(

@@ -550,17 +550,18 @@ class TestVerbatimBudgetIntegration:
         from ragzoom.retrieve import Retriever
 
         # Create leaves: l1 [0,50), l2 [50,100), l3 [100,150), l4 [150,200)
-        # With verbatim_budget=100, we select l4+l3, horizon=100
-        leaves = [
-            MockLeaf("l1", 50, 0, 50),
-            MockLeaf("l2", 50, 50, 100),
+        # With verbatim_budget=100, the repo returns l3+l4 (most recent within budget)
+        # in span order, so horizon = l3.span_start = 100
+        verbatim_leaves = [
             MockLeaf("l3", 50, 100, 150),
             MockLeaf("l4", 50, 150, 200),
         ]
 
         mock_query_config = QueryConfig(budget_tokens=2000)
         mock_doc_store = MagicMock()
-        mock_doc_store.nodes.get_leaves.return_value = leaves
+        mock_doc_store.nodes.get_recent_leaves_within_budget.return_value = (
+            verbatim_leaves
+        )
         mock_embedding_service = MagicMock()
         mock_embedding_service.get_query_embedding.return_value = [0.1] * 1536
         mock_budget_planner = MagicMock()
