@@ -17,8 +17,32 @@ from ragzoom.backends.vector_common import (
     VectorUpsertItem,
     normalize_upsert_items,
 )
+from ragzoom.contracts.vector_filter import (
+    DocumentIdFilter,
+    SpanEndLtFilter,
+    VectorFilter,
+)
 from ragzoom.contracts.vector_index import VectorIndex
+from ragzoom.exceptions import UnsupportedFilterError
 from ragzoom.vector_api import MetaDict, Vector
+
+
+def _filters_to_where(
+    filters: Sequence[VectorFilter] | None,
+) -> dict[str, str | int | float | bool | None] | None:
+    """Convert typed filters to legacy dict format for underlying implementation."""
+    if not filters:
+        return None
+    where: dict[str, str | int | float | bool | None] = {}
+    for f in filters:
+        match f:
+            case DocumentIdFilter(value=doc_id):
+                where["document_id"] = doc_id
+            case SpanEndLtFilter(threshold=threshold):
+                where["span_end_lt"] = threshold
+            case _:
+                raise UnsupportedFilterError(type(f).__name__, "PythonVectorIndex")
+    return where if where else None
 
 
 def _coerce_int(value: object) -> int:
@@ -43,8 +67,10 @@ class PythonVectorIndexAdapter(VectorIndex):
         self,
         query_embedding: list[float] | NDArray[np.float64],
         k: int,
-        where: dict[str, str | int | float | bool | None] | None = None,
+        filters: Sequence[VectorFilter] | None = None,
     ) -> list[Vector]:
+        # Convert typed filters to legacy dict format for underlying implementation
+        where = _filters_to_where(filters)
         # Use underlying search for ordering and scores; construct Vectors from internal arrays
         results = self._idx.search_similar(query_embedding, k, where)
         out: list[Vector] = []

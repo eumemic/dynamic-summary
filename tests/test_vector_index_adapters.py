@@ -12,6 +12,7 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.backends.vector_index_python import PythonVectorIndexAdapter
+from ragzoom.contracts.vector_filter import DocumentIdFilter, SpanEndLtFilter
 from ragzoom.vector_api import Vector
 
 chromadb: ModuleType | None
@@ -302,7 +303,7 @@ def test_chroma_adapter_combines_multiple_filters(
     adapter.search_similar(
         [1.0, 0.0],
         1,
-        {"document_id": "doc-1", "is_leaf": 1},
+        [DocumentIdFilter("doc-1"), SpanEndLtFilter(100)],
     )
 
     where = captured.get("where")

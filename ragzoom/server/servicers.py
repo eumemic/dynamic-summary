@@ -372,11 +372,17 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
             tiling_strategy=tiling_strategy,
         )
 
+        recent_verbatim_budget = (
+            request.recent_verbatim_token_budget
+            if request.recent_verbatim_token_budget > 0
+            else None
+        )
         retrieval_result = await retriever.retrieve_async(
             request.query,
             num_seeds=num_seeds,
             budget_tokens=budget,
             document_id=request.document_id,
+            recent_verbatim_budget=recent_verbatim_budget,
         )
 
         assembler = Assembler(document_store)
@@ -417,10 +423,12 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
                 visualization = f"Visualization error: {exc}"
 
             try:
+                # Total budget includes verbatim budget if specified
+                total_budget = budget + (recent_verbatim_budget or 0)
                 validation_error = validate_tiling(
                     retrieval_result.tiling,
                     document_store,
-                    budget_tokens=budget,
+                    budget_tokens=total_budget,
                     preloaded_nodes=retrieval_result.nodes,
                 )
                 if validation_error:
@@ -440,6 +448,8 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
             visualization=visualization,
             validation_warning=validation_warning,
             query_id=query_id,
+            seed_count=retrieval_result.seed_count,
+            verbatim_count=retrieval_result.verbatim_count,
         )
 
 

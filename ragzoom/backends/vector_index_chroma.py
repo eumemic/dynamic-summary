@@ -18,8 +18,36 @@ from ragzoom.backends.vector_common import (
     VectorUpsertItem,
     normalize_upsert_items,
 )
+from ragzoom.contracts.vector_filter import (
+    DocumentIdFilter,
+    SpanEndLtFilter,
+    VectorFilter,
+)
 from ragzoom.contracts.vector_index import VectorIndex
+from ragzoom.exceptions import UnsupportedFilterError
 from ragzoom.vector_api import MetaDict, Vector
+
+
+def _filters_to_chroma_where(
+    filters: Sequence[VectorFilter] | None,
+) -> dict[str, object] | None:
+    """Convert typed filters to Chroma where clause format."""
+    if not filters:
+        return None
+    clauses: list[dict[str, object]] = []
+    for f in filters:
+        match f:
+            case DocumentIdFilter(value=doc_id):
+                clauses.append({"document_id": {"$eq": doc_id}})
+            case SpanEndLtFilter(threshold=threshold):
+                clauses.append({"span_end": {"$lt": threshold}})
+            case _:
+                raise UnsupportedFilterError(type(f).__name__, "ChromaVectorIndex")
+    if not clauses:
+        return None
+    if len(clauses) == 1:
+        return clauses[0]
+    return {"$and": clauses}
 
 
 def _normalize_where(
@@ -51,7 +79,7 @@ class ChromaVectorIndexAdapter(VectorIndex):
         self,
         query_embedding: list[float] | NDArray[np.float64],
         k: int,
-        where: dict[str, str | int | float | bool | None] | None = None,
+        filters: Sequence[VectorFilter] | None = None,
     ) -> list[Vector]:
         include: list[
             Literal["documents", "embeddings", "metadatas", "distances", "uris", "data"]
@@ -59,10 +87,7 @@ class ChromaVectorIndexAdapter(VectorIndex):
             "metadatas",
             "distances",
         ]
-        where_param: Mapping[str, object] | None = None
-        if where:
-            normalized = _normalize_where(where)
-            where_param = normalized or None
+        where_param: Mapping[str, object] | None = _filters_to_chroma_where(filters)
 
         class _QueryResult(TypedDict, total=False):
             ids: Sequence[Sequence[str]]

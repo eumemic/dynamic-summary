@@ -246,11 +246,19 @@ class DynamicTilingGenerator(BaseDynamicTilingGenerator):
         budget_tokens: int,
         scores: dict[str, float],
         nodes: Mapping[str, "TreeNode"],
+        pinned_ids: set[str] | None = None,
     ) -> DPResult:
         logger.info("Using DP tiling generation across %d roots", len(root_ids))
 
         if not nodes:
             return DPResult(Tiling.empty(), [], 0.0, {})
+
+        # Apply transient pinning: override scores for pinned nodes
+        effective_scores = dict(scores)
+        if pinned_ids:
+            for node_id in pinned_ids:
+                if node_id in effective_scores:
+                    effective_scores[node_id] = 1.0
 
         unique_root_ids: list[str] = []
         seen: set[str] = set()
@@ -272,7 +280,9 @@ class DynamicTilingGenerator(BaseDynamicTilingGenerator):
         self._subtree_relevance_cache = {}
         self._min_cover_cost_cache = {}
 
-        budgets = self._allocate_budget_for_nodes(root_nodes, budget_tokens, scores)
+        budgets = self._allocate_budget_for_nodes(
+            root_nodes, budget_tokens, effective_scores
+        )
         if budgets is None:
             logger.debug(
                 "Budget %d cannot cover forest; returning empty tiling",
@@ -285,7 +295,7 @@ class DynamicTilingGenerator(BaseDynamicTilingGenerator):
             if root_budget <= 0:
                 continue
             combined += self._find_optimal_tiling_for_span(
-                root_node, root_budget, scores
+                root_node, root_budget, effective_scores
             )
 
         return self._build_result(combined, nodes)
@@ -408,11 +418,19 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
         budget_tokens: int,
         scores: dict[str, float],
         nodes: Mapping[str, "TreeNode"],
+        pinned_ids: set[str] | None = None,
     ) -> DPResult:
         logger.info("Using async DP tiling generation across %d roots", len(root_ids))
 
         if not nodes:
             return DPResult(Tiling.empty(), [], 0.0, {})
+
+        # Apply transient pinning: override scores for pinned nodes
+        effective_scores = dict(scores)
+        if pinned_ids:
+            for node_id in pinned_ids:
+                if node_id in effective_scores:
+                    effective_scores[node_id] = 1.0
 
         unique_root_ids: list[str] = []
         seen: set[str] = set()
@@ -434,7 +452,9 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
         self._subtree_relevance_cache = {}
         self._min_cover_cost_cache = {}
 
-        budgets = self._allocate_budget_for_nodes(root_nodes, budget_tokens, scores)
+        budgets = self._allocate_budget_for_nodes(
+            root_nodes, budget_tokens, effective_scores
+        )
         if budgets is None:
             logger.debug(
                 "Budget %d cannot cover forest; returning empty tiling",
@@ -447,7 +467,7 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
             if root_budget <= 0:
                 continue
             combined += await self._find_optimal_tiling_for_span(
-                root_node, root_budget, scores
+                root_node, root_budget, effective_scores
             )
 
         return self._build_result(combined, nodes)

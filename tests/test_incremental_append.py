@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from uuid import uuid4
 
 import numpy as np
@@ -6,6 +7,7 @@ from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_filter import VectorFilter
 from ragzoom.document_store import DocumentStore
 from ragzoom.index import AppendStats
 from ragzoom.splitter import TextSplitter
@@ -22,7 +24,7 @@ class InMemoryVectorIndex:
         self,
         query_embedding: list[float] | NDArray[np.float64],
         k: int,
-        where: dict[str, str | int | float | bool | None] | None = None,
+        filters: Sequence[VectorFilter] | None = None,
     ) -> list[Vector]:
         return []
 
