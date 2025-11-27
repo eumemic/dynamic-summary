@@ -15,6 +15,7 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
+from ragzoom.contracts.vector_filter import DocumentIdFilter
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 
@@ -256,7 +257,7 @@ class TestDocumentAPISQLite:
         # Test technical document search
         technical_query = [0.9, 0.1, 0.1] + [0.2] * 1533  # Similar to technical
         technical_results = vector_index.search_similar(
-            technical_query, 3, {"document_id": "technical-docs"}
+            technical_query, 3, [DocumentIdFilter("technical-docs")]
         )
 
         # Should find technical content
@@ -272,7 +273,7 @@ class TestDocumentAPISQLite:
         # Test creative document search
         creative_query = [0.1, 0.9, 0.1] + [0.2] * 1533  # Similar to creative
         creative_results = vector_index.search_similar(
-            creative_query, 3, {"document_id": "creative-writing"}
+            creative_query, 3, [DocumentIdFilter("creative-writing")]
         )
 
         # Should find creative content

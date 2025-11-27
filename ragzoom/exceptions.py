@@ -91,3 +91,16 @@ class ResourceError(Exception):
         self.operation = operation
         self.reason = reason
         self.context = context
+
+
+class UnsupportedFilterError(ValueError):
+    """Raised when a vector backend receives a filter type it doesn't support.
+
+    This indicates a programming error - callers should only use filters
+    that are supported by their configured backend.
+    """
+
+    def __init__(self, filter_type: str, backend: str) -> None:
+        super().__init__(f"{backend} does not support filter type: {filter_type}")
+        self.filter_type = filter_type
+        self.backend = backend

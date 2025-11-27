@@ -15,7 +15,13 @@ from numpy.typing import NDArray
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.event import listens_for
 
+from ragzoom.contracts.vector_filter import (
+    DocumentIdFilter,
+    SpanEndLtFilter,
+    VectorFilter,
+)
 from ragzoom.contracts.vector_index import VectorIndex
+from ragzoom.exceptions import UnsupportedFilterError
 from ragzoom.vector_api import MetaDict, Vector
 
 logger = logging.getLogger(__name__)
@@ -58,24 +64,33 @@ class PgVectorIndexAdapter(VectorIndex):
         self,
         query_embedding: list[float] | NDArray[np.float64],
         k: int,
-        where: dict[str, str | int | float | bool | None] | None = None,
+        filters: Sequence[VectorFilter] | None = None,
     ) -> list[Vector]:
-        doc_filter = None
-        if where and "document_id" in where and where["document_id"] is not None:
-            val = where["document_id"]
-            if isinstance(val, str | int | float | bool):
-                doc_filter = str(val)
+        # Build SQL WHERE clauses from typed filters
+        where_clauses: list[str] = []
+        params: dict[str, object] = {"k": int(k)}
+
+        if filters:
+            for f in filters:
+                match f:
+                    case DocumentIdFilter(value=doc_id):
+                        where_clauses.append("document_id = :doc_id")
+                        params["doc_id"] = doc_id
+                    case SpanEndLtFilter(threshold=threshold):
+                        where_clauses.append("span_end < :span_end_lt")
+                        params["span_end_lt"] = threshold
+                    case _:
+                        raise UnsupportedFilterError(type(f).__name__, "PgVectorIndex")
 
         q: list[float] = [float(x) for x in cast(Sequence[float], query_embedding)]
+        params["q"] = q
 
         sql = (
             "SELECT id, embedding, document_id, span_start, span_end, parent_id, is_leaf, height, level_index, coord_version "
             "FROM node_vectors "
         )
-        params: dict[str, object] = {"q": q, "k": int(k)}
-        if doc_filter is not None:
-            sql += "WHERE document_id = :doc_id "
-            params["doc_id"] = doc_filter
+        if where_clauses:
+            sql += "WHERE " + " AND ".join(where_clauses) + " "
         # Order by cosine distance; convert to similarity in Python
         sql += "ORDER BY embedding <=> :q LIMIT :k"
 

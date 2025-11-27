@@ -7,6 +7,7 @@ Using the real in-memory SQLite backend.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -15,6 +16,7 @@ from numpy.typing import NDArray
 
 from ragzoom.config import OperationalConfig, QueryConfig, SecretStr
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_filter import VectorFilter
 
 
 class TestNumSeedsFixSQLite:
@@ -193,7 +195,7 @@ class TestNumSeedsFixSQLite:
             def _mock_search_similar(
                 query_embedding: list[float] | _NDArray[_np.float64],
                 k: int,
-                where: dict[str, str | int | float | bool | None] | None = None,
+                filters: Sequence[VectorFilter] | None = None,
             ) -> list[_Vector]:
                 import numpy as _np
 

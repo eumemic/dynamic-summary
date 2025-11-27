@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Final
 
 import numpy as np
 from numpy.typing import NDArray
 
+from ragzoom.contracts.vector_filter import (
+    DocumentIdFilter,
+    SpanEndLtFilter,
+    VectorFilter,
+)
 from ragzoom.vector_api import Vector, ensure_normalized
 
 _MetaValue = str | int | float | bool | None
@@ -34,7 +40,7 @@ class RecordingVectorIndex:
         self,
         query_embedding: list[float] | NDArray[np.float64],
         k: int,
-        where: dict[str, _MetaValue] | None = None,
+        filters: Sequence[VectorFilter] | None = None,
     ) -> list[Vector]:
         if k <= 0:
             return []
@@ -42,7 +48,7 @@ class RecordingVectorIndex:
         candidates = [
             vector
             for vector in self._vectors.values()
-            if self._matches_where(vector, where)
+            if self._matches_filters(vector, filters)
         ]
         if not candidates:
             return []
@@ -131,18 +137,22 @@ class RecordingVectorIndex:
         self._vectors.clear()
         return removed
 
-    def _matches_where(
+    def _matches_filters(
         self,
         vector: Vector,
-        where: dict[str, _MetaValue] | None,
+        filters: Sequence[VectorFilter] | None,
     ) -> bool:
-        if not where:
+        if not filters:
             return True
-        for key, value in where.items():
-            if value is None:
-                continue
-            if vector.meta.get(key) != value:
-                return False
+        for f in filters:
+            match f:
+                case DocumentIdFilter(value=doc_id):
+                    if vector.meta.get("document_id") != doc_id:
+                        return False
+                case SpanEndLtFilter(threshold=threshold):
+                    span_end = vector.meta.get("span_end", 0)
+                    if not isinstance(span_end, int | float) or span_end >= threshold:
+                        return False
         return True
 
     def __len__(self) -> int:

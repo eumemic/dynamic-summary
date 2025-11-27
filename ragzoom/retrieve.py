@@ -7,6 +7,11 @@ from typing import TYPE_CHECKING, Optional
 
 from ragzoom.config import QueryConfig
 from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.contracts.vector_filter import (
+    DocumentIdFilter,
+    SpanEndLtFilter,
+    VectorFilter,
+)
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.greedy_tiling import GreedyTilingGenerator
 from ragzoom.retrieval import (
@@ -85,16 +90,6 @@ class Retriever:
             )
         else:
             self.async_dp_generator = None
-
-    def _build_vector_where(
-        self, document_id: str | None
-    ) -> dict[str, str | int | float | bool | None] | None:
-        """Construct metadata filter for vector searches."""
-
-        if not document_id:
-            return None
-
-        return {"document_id": str(document_id)}
 
     async def retrieve_async(
         self,
@@ -182,15 +177,15 @@ class Retriever:
         from ragzoom.retrieval import mmr
         from ragzoom.retrieval import similarity as sim
 
-        where_clause = self._build_vector_where(effective_doc_id)
-        if verbatim_horizon is not None and where_clause is not None:
-            where_clause["span_end_lt"] = verbatim_horizon
-        elif verbatim_horizon is not None:
-            where_clause = {"span_end_lt": verbatim_horizon}
+        filters: list[VectorFilter] = []
+        if effective_doc_id:
+            filters.append(DocumentIdFilter(effective_doc_id))
+        if verbatim_horizon is not None:
+            filters.append(SpanEndLtFilter(verbatim_horizon))
         raw_candidates = self.vector_index.search_similar(
             query_embedding,
             k_candidates,
-            where_clause,
+            filters if filters else None,
         )
         # Filter out stale vectors that don't exist in storage to preserve invariants
         cand_ids = [v.id for v in raw_candidates]
