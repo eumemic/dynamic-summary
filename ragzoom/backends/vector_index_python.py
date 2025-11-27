@@ -15,6 +15,7 @@ from ragzoom.backends.python_vector_index import PythonVectorIndex
 from ragzoom.backends.vector_common import (
     NormalizedUpsertItem,
     VectorUpsertItem,
+    coerce_int,
     normalize_upsert_items,
 )
 from ragzoom.contracts.vector_filter import (
@@ -43,16 +44,6 @@ def _filters_to_where(
             case _:
                 raise UnsupportedFilterError(type(f).__name__, "PythonVectorIndex")
     return where if where else None
-
-
-def _coerce_int(value: object) -> int:
-    if isinstance(value, bool):
-        return 1 if value else 0
-    if isinstance(value, int | float):
-        return int(value)
-    if isinstance(value, str) and value.isdigit():
-        return int(value)
-    return 0
 
 
 class PythonVectorIndexAdapter(VectorIndex):
@@ -163,25 +154,25 @@ class PythonVectorIndexAdapter(VectorIndex):
             return {}
         if hasattr(meta_obj, "span_start"):
             return {
-                "span_start": _coerce_int(getattr(meta_obj, "span_start")),
-                "span_end": _coerce_int(getattr(meta_obj, "span_end")),
+                "span_start": coerce_int(getattr(meta_obj, "span_start")),
+                "span_end": coerce_int(getattr(meta_obj, "span_end")),
                 "parent_id": str(getattr(meta_obj, "parent_id")),
                 "document_id": str(getattr(meta_obj, "document_id")),
-                "is_leaf": _coerce_int(getattr(meta_obj, "is_leaf")),
-                "height": _coerce_int(getattr(meta_obj, "height", 0)),
-                "level_index": _coerce_int(getattr(meta_obj, "level_index", 0)),
-                "coord_version": _coerce_int(getattr(meta_obj, "coord_version", 0)),
+                "is_leaf": coerce_int(getattr(meta_obj, "is_leaf")),
+                "height": coerce_int(getattr(meta_obj, "height", 0)),
+                "level_index": coerce_int(getattr(meta_obj, "level_index", 0)),
+                "coord_version": coerce_int(getattr(meta_obj, "coord_version", 0)),
             }
         if isinstance(meta_obj, dict):
             return {
-                "span_start": _coerce_int(meta_obj.get("span_start", 0)),
-                "span_end": _coerce_int(meta_obj.get("span_end", 0)),
+                "span_start": coerce_int(meta_obj.get("span_start", 0)),
+                "span_end": coerce_int(meta_obj.get("span_end", 0)),
                 "parent_id": str(meta_obj.get("parent_id", "")),
                 "document_id": str(meta_obj.get("document_id", "")),
-                "is_leaf": _coerce_int(meta_obj.get("is_leaf", 0)),
-                "height": _coerce_int(meta_obj.get("height", 0)),
-                "level_index": _coerce_int(meta_obj.get("level_index", 0)),
-                "coord_version": _coerce_int(meta_obj.get("coord_version", 0)),
+                "is_leaf": coerce_int(meta_obj.get("is_leaf", 0)),
+                "height": coerce_int(meta_obj.get("height", 0)),
+                "level_index": coerce_int(meta_obj.get("level_index", 0)),
+                "coord_version": coerce_int(meta_obj.get("coord_version", 0)),
             }
         return {}
 
@@ -198,24 +189,24 @@ class PythonVectorIndexAdapter(VectorIndex):
 def _as_meta(meta: object) -> MetaDict:
     if hasattr(meta, "span_start"):
         return {
-            "span_start": _coerce_int(getattr(meta, "span_start")),
-            "span_end": _coerce_int(getattr(meta, "span_end")),
+            "span_start": coerce_int(getattr(meta, "span_start")),
+            "span_end": coerce_int(getattr(meta, "span_end")),
             "parent_id": str(getattr(meta, "parent_id")),
             "document_id": str(getattr(meta, "document_id")),
-            "is_leaf": _coerce_int(getattr(meta, "is_leaf")),
-            "height": _coerce_int(getattr(meta, "height", 0)),
-            "level_index": _coerce_int(getattr(meta, "level_index", 0)),
-            "coord_version": _coerce_int(getattr(meta, "coord_version", 0)),
+            "is_leaf": coerce_int(getattr(meta, "is_leaf")),
+            "height": coerce_int(getattr(meta, "height", 0)),
+            "level_index": coerce_int(getattr(meta, "level_index", 0)),
+            "coord_version": coerce_int(getattr(meta, "coord_version", 0)),
         }
     if isinstance(meta, dict):
         return {
-            "span_start": _coerce_int(meta.get("span_start", 0)),
-            "span_end": _coerce_int(meta.get("span_end", 0)),
+            "span_start": coerce_int(meta.get("span_start", 0)),
+            "span_end": coerce_int(meta.get("span_end", 0)),
             "parent_id": str(meta.get("parent_id", "")),
             "document_id": str(meta.get("document_id", "")),
-            "is_leaf": _coerce_int(meta.get("is_leaf", 0)),
-            "height": _coerce_int(meta.get("height", 0)),
-            "level_index": _coerce_int(meta.get("level_index", 0)),
-            "coord_version": _coerce_int(meta.get("coord_version", 0)),
+            "is_leaf": coerce_int(meta.get("is_leaf", 0)),
+            "height": coerce_int(meta.get("height", 0)),
+            "level_index": coerce_int(meta.get("level_index", 0)),
+            "coord_version": coerce_int(meta.get("coord_version", 0)),
         }
     return {}

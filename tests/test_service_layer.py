@@ -491,6 +491,57 @@ class TestQueryService:
             )
             mock_assembler.assemble.assert_called_once_with(mock_retrieval_result)
 
+    @pytest.mark.asyncio
+    @patch("ragzoom.services.query_service.Retriever")
+    @patch("ragzoom.services.query_service.Assembler")
+    async def test_execute_query_async(
+        self, mock_assembler_class: object, mock_retriever_class: object
+    ) -> None:
+        """Test executing a query asynchronously."""
+        # Mock dependencies
+        mock_store = Mock()
+
+        # Mock Retriever with async retrieve
+        mock_retriever = Mock()
+        mock_retrieval_result = Mock()
+        mock_retrieval_result.node_ids = ["node1", "node2"]
+        mock_retrieval_result.tiling = ["node1", "node3", "node2"]
+        mock_retrieval_result.scores = {"node1": 0.7, "node2": 0.5, "node3": 0.1}
+        mock_retrieval_result.seed_count = 2
+        mock_retrieval_result.verbatim_count = 0
+
+        # Create async mock for retrieve_async
+        async def mock_retrieve_async(*args: object, **kwargs: object) -> Mock:
+            return mock_retrieval_result
+
+        mock_retriever.retrieve_async = mock_retrieve_async
+        cast(MagicMock, mock_retriever_class).return_value = mock_retriever
+
+        # Mock Assembler
+        mock_assembler = Mock()
+        mock_assembler.assemble.return_value = "This is the async summary"
+        mock_assembler.get_token_count.return_value = 60
+        cast(MagicMock, mock_assembler_class).return_value = mock_assembler
+
+        # Create configs
+        query_config = QueryConfig(budget_tokens=1000)
+        operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            query_log = QueryLog(QueryLog.default_path(Path(tmp_dir)))
+            service = QueryService(
+                mock_store, query_config, operational_config, query_log
+            )
+            result = await service.execute_query_async("async test query", "doc-456")
+
+            assert isinstance(result, QueryResult)
+            assert result.summary == "This is the async summary"
+            assert result.token_count == 60
+            assert result.nodes_retrieved == 2
+            assert result.tiling_size == 3
+
+            mock_assembler.assemble.assert_called_once_with(mock_retrieval_result)
+
     @patch("ragzoom.services.query_service.Retriever")
     def test_update_config(self, mock_retriever_class: object) -> None:
         """Test updating query configuration."""

@@ -24,6 +24,17 @@ NormalizedUpsertItem: TypeAlias = tuple[
 ]
 
 
+def coerce_int(value: object) -> int:
+    """Coerce a value to an integer, handling bools, numbers, and digit strings."""
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if isinstance(value, int | float):
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value)
+    return 0
+
+
 def normalize_upsert_items(
     items: Iterable[VectorUpsertItem],
 ) -> list[NormalizedUpsertItem]:

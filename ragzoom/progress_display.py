@@ -20,6 +20,25 @@ class DocumentProgressTotals:
     completed: int
     total: int
 
+    @classmethod
+    def from_status_dicts(
+        cls,
+        doc_id: str,
+        pending_by_document: Mapping[str, int],
+        inflight_by_document: Mapping[str, int],
+        completed_by_document: Mapping[str, int],
+    ) -> DocumentProgressTotals:
+        """Create progress totals from status dictionaries for a given document."""
+        pending = pending_by_document.get(doc_id, 0)
+        inflight = inflight_by_document.get(doc_id, 0)
+        completed = completed_by_document.get(doc_id, 0)
+        return cls(
+            pending=pending,
+            inflight=inflight,
+            completed=completed,
+            total=pending + inflight + completed,
+        )
+
 
 @lru_cache(maxsize=1)
 def _resolve_tqdm() -> type | None:
