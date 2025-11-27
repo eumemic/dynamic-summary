@@ -2,7 +2,7 @@
 
 This document provides a comprehensive reference for all RagZoom interfaces: CLI commands, REST API endpoints, Python API, and configuration options.
 
-**Last Verified**: September 2025
+**Last Verified**: November 2025
 
 ## Table of Contents
 
@@ -85,6 +85,8 @@ ragzoom query <query_text> [OPTIONS]
 **Optional Parameters:**
 - `--num-seeds` - Number of seed nodes to retrieve
 - `--token-budget` - Token budget for summary
+- `--tiling-strategy` - Algorithm for tiling: `dp` (dynamic programming, default) or `greedy`
+- `--recent-verbatim-token-budget` - Token budget for verbatim recent content (most recent leaves included without summarization)
 - `--debug` - Show debug information and tree visualization
 - `--viz-width` - Tree visualization width (defaults to terminal width)
 - `--viz-coords` - Coordinate system: `source-chars` or `output-tokens` (default: output-tokens)
@@ -99,6 +101,12 @@ ragzoom query "neural networks" -d my-doc -n 10 -b 4000
 
 # Debug mode with visualization
 ragzoom query "transformer architecture" -d my-doc --debug
+
+# Include recent content verbatim (useful for conversation logs)
+ragzoom query "What was just discussed?" -d chat-log --recent-verbatim-token-budget 2000
+
+# Use greedy tiling strategy instead of DP
+ragzoom query "summary" -d my-doc --tiling-strategy greedy
 
 # Validate the document tree separately
 ragzoom validate my-doc
@@ -457,9 +465,12 @@ with GrpcRagzoomClient("localhost:50051") as client:
         debug=False,
         viz_width=120,
         use_token_coords=False,
+        tiling_strategy="dp",  # or "greedy"
+        recent_verbatim_token_budget=2000,  # include recent content verbatim
     )
 
 print(output.query_result.summary)
+print(f"Seeds: {output.query_result.seed_count}, Verbatim: {output.query_result.verbatim_count}")
 ```
 
 ## Configuration
@@ -493,9 +504,11 @@ All parameters can be set via CLI options or config files. For an overview of ho
 
 | Parameter | Type | Default | Description | Status |
 |-----------|------|---------|-------------|---------|
-| `enable_slope_cap` | bool | True | Enable slope capping | **STATUS: NOT IMPLEMENTED** |
-| `slope_cap_size` | int | 1 | Maximum depth difference | **STATUS: NOT IMPLEMENTED** |
-| `enable_smoothing` | bool | False | Enable smoothing pass | **STATUS: NOT IMPLEMENTED** |
+| `tiling_strategy` | str | "dp" | Tiling algorithm: "dp" (dynamic programming) or "greedy" | IMPLEMENTED |
+| `recent_verbatim_token_budget` | int | 0 | Token budget for verbatim recent leaves (0 = disabled) | IMPLEMENTED |
+| `enable_slope_cap` | bool | True | Enable slope capping | **NOT IMPLEMENTED** |
+| `slope_cap_size` | int | 1 | Maximum depth difference | **NOT IMPLEMENTED** |
+| `enable_smoothing` | bool | False | Enable smoothing pass | **NOT IMPLEMENTED** |
 
 #### Operational Configuration
 

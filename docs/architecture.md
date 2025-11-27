@@ -1,6 +1,6 @@
 # RagZoom System Architecture
 
-**Last Verified**: September 2025
+**Last Verified**: November 2025
 
 This document provides a high-level overview of the RagZoom system, its core components, and the flow of data during indexing and querying.
 
@@ -49,13 +49,15 @@ The system is composed of several key modules that work together.
     - PostgresStorageBackend (for production/perf) uses PostgreSQL with pgvector for embeddings via repositories and a `DatabaseManager`.
     - All application code creates a per‑document `DocumentStore` via `store.for_document(doc_id)` to enforce strict document isolation.
 
--   **`ragzoom.dynamic_tiling.DynamicTilingGenerator`**: This is the core "brain" of the retrieval logic. It implements a dynamic programming algorithm to construct the optimal tiling. The algorithm recursively decomposes the problem, choosing at each node whether to use the parent node or recurse into children for higher detail. Budget is split proportionally based on relevance scores. 
+-   **`ragzoom.dynamic_tiling.DynamicTilingGenerator`**: This is the core "brain" of the retrieval logic. It implements a dynamic programming algorithm to construct the optimal tiling. The algorithm recursively decomposes the problem, choosing at each node whether to use the parent node or recurse into children for higher detail. Budget is split proportionally based on relevance scores.
+
+-   **`ragzoom.dynamic_tiling.GreedyTilingGenerator`**: An alternative tiling strategy that walks the tree top-down, making locally optimal decisions. Faster than DP with lower memory overhead, useful for very large documents. Selected via `tiling_strategy="greedy"`.
 
 -   **`ragzoom.dynamic_tiling.AsyncDynamicTilingGenerator`**: An async version of the DP tiling generator that provides fork-join parallelism for independent subtree processing. When both left and right children exist, the algorithm can process them concurrently using asyncio tasks, providing 2-4x speedup on multi-core systems for trees with sufficient size. Parallelization is threshold-controlled (default: 10+ nodes) to avoid overhead on small subtrees.
 
 For a comprehensive technical deep dive into the tiling algorithm, see [The Tiling Algorithm: Deep Dive](deep-dives/tiling-algorithm.md).
 
--   **`ragzoom.retrieve.Retriever`**: Orchestrates the querying process. It takes a user query, generates an embedding, and uses the `Store` to find relevant "seed" nodes via vector search. It applies MMR (Maximal Marginal Relevance) for diversity, then invokes either the `DynamicTilingGenerator` (sync) or `AsyncDynamicTilingGenerator` (parallel) to build the final tiling based on these seed nodes and the budget. The async version can be enabled with `use_async_dp=True` parameter.
+-   **`ragzoom.retrieve.Retriever`**: Orchestrates the querying process. It takes a user query, generates an embedding, and uses the `Store` to find relevant "seed" nodes via vector search. It applies MMR (Maximal Marginal Relevance) for diversity, then invokes the configured tiling generator (DP, Greedy, or async DP) to build the final tiling. Supports `recent_verbatim_token_budget` for including recent content without summarization - useful for conversation logs where the most recent messages should appear verbatim.
 
 -   **`ragzoom.assemble.Assembler`**: The final step in the pipeline. It takes the tiling (a list of node IDs) produced by the retriever and assembles the final summary text by concatenating the text content of each node. **STATUS: IMPLEMENTED** - Only DP-based assembly is supported; legacy assembly has been removed.
 
@@ -132,6 +134,8 @@ Key configuration parameters that affect system behavior:
 | `budget_tokens` | 8000 | Maximum tokens in final summary | IMPLEMENTED |
 | `leaf_tokens` | 200 | Target tokens per leaf chunk | IMPLEMENTED |
 | `mmr_lambda` | 0.7 | MMR diversity vs relevance trade-off | IMPLEMENTED |
+| `tiling_strategy` | "dp" | Tiling algorithm: "dp" or "greedy" | IMPLEMENTED |
+| `recent_verbatim_token_budget` | 0 | Token budget for verbatim recent leaves | IMPLEMENTED |
 | `enable_slope_cap` | True | Limit depth differences between adjacent nodes | **NOT IMPLEMENTED** |
 | `slope_cap_size` | 1 | Maximum depth difference | **NOT IMPLEMENTED** |
 | `enable_smoothing` | False | Add transitions between nodes | **NOT IMPLEMENTED** |
@@ -142,8 +146,10 @@ For complete configuration documentation including all parameters and environmen
 
 ### Currently Implemented
 - ✅ DP tiling algorithm with memoization
+- ✅ Greedy tiling algorithm (alternative strategy)
 - ✅ Budget-aware node selection
 - ✅ MMR diversity in seed selection
+- ✅ Verbatim budget for recent content (conversation logs)
 - ✅ Document isolation and namespacing
 - ✅ Async tree building with progress tracking
 - ✅ LRU caching for performance

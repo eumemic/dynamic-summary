@@ -1,9 +1,12 @@
+from collections.abc import Sequence
+
 import numpy as np
 import pytest
 from numpy.typing import NDArray
 
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig
+from ragzoom.contracts.vector_filter import VectorFilter
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.server.append_executor import AppendExecutor, EmbeddingProvider
@@ -23,7 +26,7 @@ class FakeVectorIndex(VectorIndex):
         self,
         query_embedding: list[float] | NDArray[np.float64],
         k: int,
-        where: dict[str, str | int | float | bool | None] | None = None,
+        filters: Sequence[VectorFilter] | None = None,
     ) -> list[Vector]:  # pragma: no cover - not used
         raise NotImplementedError
 

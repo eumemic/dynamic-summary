@@ -1,7 +1,8 @@
 """Test that demonstrates the current bug in Retriever - creates incomplete coverage trees."""
 
 import asyncio
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping
+from collections.abc import Sequence as Seq
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
 from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.contracts.vector_filter import VectorFilter
 from ragzoom.document_store import DocumentStore
 from ragzoom.dynamic_tiling import DPResult
 from ragzoom.vector_api import Vector
@@ -191,7 +193,7 @@ class TestRetrieverBugSQLite:
         def mock_search_similar(
             query_embedding: list[float] | NDArray[np.float64],
             k: int,
-            where: dict[str, str | int | float | bool | None] | None = None,
+            filters: Seq[VectorFilter] | None = None,
         ) -> list[Vector]:
             import numpy as _np
 
@@ -247,7 +249,7 @@ class TestRetrieverBugSQLite:
         def mock_search_similar(
             query_embedding: list[float] | NDArray[np.float64],
             k: int,
-            where: dict[str, str | int | float | bool | None] | None = None,
+            filters: Seq[VectorFilter] | None = None,
         ) -> list[Vector]:
             import numpy as _np
 
@@ -281,13 +283,16 @@ class TestRetrieverBugSQLite:
         original_find_optimal = retriever.dp_generator.find_optimal_tiling_over_roots
 
         def capture_and_pass_through(
-            root_ids: Sequence[str],
+            root_ids: Seq[str],
             budget_tokens: int,
             scores: dict[str, float],
             nodes: Mapping[str, TreeNode],
+            pinned_ids: set[str] | None = None,
         ) -> DPResult:
             captured_nodes.update(nodes)
-            return original_find_optimal(root_ids, budget_tokens, scores, nodes)
+            return original_find_optimal(
+                root_ids, budget_tokens, scores, nodes, pinned_ids
+            )
 
         retriever.dp_generator.find_optimal_tiling_over_roots = (  # type: ignore[method-assign]
             capture_and_pass_through

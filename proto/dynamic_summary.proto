@@ -77,6 +77,7 @@ message ExecuteQueryRequest {
   int32 viz_width = 7;
   bool use_token_coords = 8;
   string tiling_strategy = 9;
+  int32 recent_verbatim_token_budget = 10;
 }
 
 message ExecuteQueryResponse {
@@ -88,6 +89,8 @@ message ExecuteQueryResponse {
   string visualization = 6;
   string validation_warning = 7;
   string query_id = 8;
+  int32 seed_count = 9;
+  int32 verbatim_count = 10;
 }
 
 enum WorkerRunMode {

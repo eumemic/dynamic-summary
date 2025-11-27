@@ -7,6 +7,11 @@ from typing import TYPE_CHECKING, Optional
 
 from ragzoom.config import QueryConfig
 from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.contracts.vector_filter import (
+    DocumentIdFilter,
+    SpanEndLtFilter,
+    VectorFilter,
+)
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.greedy_tiling import GreedyTilingGenerator
 from ragzoom.retrieval import (
@@ -35,6 +40,8 @@ class RetrievalResult:
     coverage_map: dict[str, bool]
     tiling: list[str] | None = None
     nodes: dict[str, "TreeNode"] | None = None
+    seed_count: int = 0
+    verbatim_count: int = 0
 
 
 class Retriever:
@@ -86,22 +93,13 @@ class Retriever:
         else:
             self.async_dp_generator = None
 
-    def _build_vector_where(
-        self, document_id: str | None
-    ) -> dict[str, str | int | float | bool | None] | None:
-        """Construct metadata filter for vector searches."""
-
-        if not document_id:
-            return None
-
-        return {"document_id": str(document_id)}
-
     async def retrieve_async(
         self,
         query: str,
         num_seeds: int | None = None,
         budget_tokens: int | None = None,
         document_id: str | None = None,
+        recent_verbatim_budget: int | None = None,
         telemetry_collector: TelemetryCollector | None = None,
     ) -> RetrievalResult:
         """Async retrieval method with MMR diversity.
@@ -111,6 +109,7 @@ class Retriever:
             num_seeds: Number of seed nodes to retrieve
             budget_tokens: Token budget for the final summary
             document_id: Optional document ID to filter by
+            recent_verbatim_budget: Token budget for recent leaves to include verbatim
 
         Supports three modes:
         1. Budget only: Calculate conservative num_seeds to guarantee no overflow
@@ -147,6 +146,20 @@ class Retriever:
         if telemetry_collector:
             telemetry_collector.record_metric("seeds_requested", num_seeds)
 
+        # Pre-select verbatim leaves to establish horizon for seed filtering
+        # Seeds should only come from the non-verbatim region (before the horizon)
+        pinned_ids: set[str] = set()
+        verbatim_horizon: int | None = None
+        if recent_verbatim_budget and recent_verbatim_budget > 0:
+            verbatim_leaves = self.document_store.nodes.get_recent_leaves_within_budget(
+                recent_verbatim_budget
+            )
+            pinned_ids = {leaf.id for leaf in verbatim_leaves}
+            if verbatim_leaves:
+                # Horizon = start of verbatim region (earliest span_start among verbatim)
+                # Leaves are returned sorted by span_start, so first one is the horizon
+                verbatim_horizon = verbatim_leaves[0].span_start
+
         # Phase 1: Get query embedding
         query_embedding = self.embedding_service.get_query_embedding(
             query, effective_doc_id
@@ -159,15 +172,20 @@ class Retriever:
             )
 
         # Phase 2: Initial retrieval (always via VectorIndex v2)
+        # Filter seeds to only come from before verbatim horizon
         k_candidates = int(num_seeds * self.query_config.mmr_k_multiplier)
         from ragzoom.retrieval import mmr
         from ragzoom.retrieval import similarity as sim
 
-        where_clause = self._build_vector_where(effective_doc_id)
+        filters: list[VectorFilter] = []
+        if effective_doc_id:
+            filters.append(DocumentIdFilter(effective_doc_id))
+        if verbatim_horizon is not None:
+            filters.append(SpanEndLtFilter(verbatim_horizon))
         raw_candidates = self.vector_index.search_similar(
             query_embedding,
             k_candidates,
-            where_clause,
+            filters if filters else None,
         )
         # Filter out stale vectors that don't exist in storage to preserve invariants
         cand_ids = [v.id for v in raw_candidates]
@@ -192,6 +210,16 @@ class Retriever:
             num_seeds,
             self.query_config.mmr_lambda,
         )
+        seed_count = len(selected_ids)
+        verbatim_count = len(pinned_ids) if pinned_ids else 0
+
+        # Add verbatim leaves to selected_ids so coverage includes them
+        # (verbatim leaves were pre-selected earlier to establish the horizon)
+        if pinned_ids:
+            selected_ids_set = set(selected_ids)
+            for leaf_id in pinned_ids:
+                if leaf_id not in selected_ids_set:
+                    selected_ids.append(leaf_id)
 
         # Build legacy-shaped candidates for scoring service compatibility
         rels = sim.relevance_scores(query_embedding, vec_candidates)
@@ -281,12 +309,21 @@ class Retriever:
         # Sanity: drop any selected ids that aren't present in the document store
         selected_ids = [nid for nid in selected_ids if nid in nodes]
 
-        # Phase 6: Extract tiling using DP algorithm
-        final_budget = (
+        # Phase 6: Extract tiling using DP/greedy algorithm
+        # Combined budget = base + verbatim (pinned nodes are in coverage, can't be rolled up)
+        base_budget = (
             budget_tokens
             if budget_tokens is not None
             else self.query_config.budget_tokens
         )
+        final_budget = base_budget + (recent_verbatim_budget or 0)
+
+        # Apply transient pinning via score boosting: pinned nodes get max relevance
+        # so they're never rolled up in favor of their parents
+        if pinned_ids:
+            for node_id in pinned_ids:
+                if node_id in scores:
+                    scores[node_id] = 1.0
 
         # Choose tiling strategy
         tiling_strategy = getattr(self.query_config, "tiling_strategy", "dp")
@@ -296,11 +333,11 @@ class Retriever:
             )
         elif self.async_dp_generator is not None:
             dp_result = await self.async_dp_generator.find_optimal_tiling_over_roots(
-                root_ids, final_budget, scores, nodes
+                root_ids, final_budget, scores, nodes, pinned_ids=pinned_ids
             )
         else:
             dp_result = self.dp_generator.find_optimal_tiling_over_roots(
-                root_ids, final_budget, scores, nodes
+                root_ids, final_budget, scores, nodes, pinned_ids=pinned_ids
             )
         if telemetry_collector:
             telemetry_collector.end_phase("dp")
@@ -309,8 +346,9 @@ class Retriever:
                 "tiling_size", len(dp_result.tiling.node_ids)
             )
 
-        # Ensure tiling nodes are present in the preloaded set (robust against edge cases)
         tiling_ids = list(dp_result.tiling.node_ids)
+
+        # Ensure all tiling nodes are present in the preloaded set
         missing_in_nodes = [nid for nid in tiling_ids if nid not in nodes]
         if missing_in_nodes:
             try:
@@ -332,8 +370,10 @@ class Retriever:
             node_ids=selected_ids,
             scores=scores,
             coverage_map=coverage_map,
-            tiling=dp_result.tiling.node_ids,
+            tiling=tiling_ids,
             nodes=nodes,
+            seed_count=seed_count,
+            verbatim_count=verbatim_count,
         )
 
     # jscpd:ignore-start - Sync wrapper for async method (legitimate duplication pattern)
@@ -343,6 +383,7 @@ class Retriever:
         num_seeds: int | None = None,
         budget_tokens: int | None = None,
         document_id: str | None = None,
+        recent_verbatim_budget: int | None = None,
     ) -> RetrievalResult:
         """Synchronous wrapper for retrieve_async.
 
@@ -351,13 +392,16 @@ class Retriever:
             num_seeds: Number of seed nodes to retrieve
             budget_tokens: Token budget for the final summary
             document_id: Optional document ID to filter by
+            recent_verbatim_budget: Token budget for recent leaves to include verbatim
 
         Creates a new event loop if needed to run the async version.
         For async contexts, use retrieve_async directly.
         """
         # jscpd:ignore-end
         return asyncio.run(
-            self.retrieve_async(query, num_seeds, budget_tokens, document_id)
+            self.retrieve_async(
+                query, num_seeds, budget_tokens, document_id, recent_verbatim_budget
+            )
         )
 
     async def retrieve_with_telemetry(
@@ -366,6 +410,7 @@ class Retriever:
         num_seeds: int | None = None,
         budget_tokens: int | None = None,
         document_id: str | None = None,
+        recent_verbatim_budget: int | None = None,
     ) -> tuple[RetrievalResult, QueryTelemetry]:
         """Async retrieval with detailed telemetry collection.
 
@@ -374,6 +419,7 @@ class Retriever:
             num_seeds: Number of seed nodes to retrieve
             budget_tokens: Token budget for the final summary
             document_id: Optional document ID to filter by
+            recent_verbatim_budget: Token budget for recent leaves to include verbatim
 
         Returns:
             Tuple of (RetrievalResult, QueryTelemetry) with detailed timing info
@@ -382,7 +428,12 @@ class Retriever:
         collector.start_query(query, num_seeds, budget_tokens, document_id)
 
         result = await self.retrieve_async(
-            query, num_seeds, budget_tokens, document_id, collector
+            query,
+            num_seeds,
+            budget_tokens,
+            document_id,
+            recent_verbatim_budget,
+            telemetry_collector=collector,
         )
         telemetry = collector.finalize()
         if telemetry is None:

@@ -129,6 +129,7 @@ class ExecuteQueryRequest:
     viz_width: int
     use_token_coords: bool
     tiling_strategy: str
+    recent_verbatim_token_budget: int
 
     def __init__(
         self,
@@ -141,7 +142,8 @@ class ExecuteQueryRequest:
         debug: bool,
         viz_width: int,
         use_token_coords: bool,
-        tiling_strategy: str,
+        tiling_strategy: str = ...,
+        recent_verbatim_token_budget: int = ...,
     ) -> None: ...
 
 class ExecuteQueryResponse:
@@ -153,6 +155,8 @@ class ExecuteQueryResponse:
     visualization: str
     validation_warning: str
     query_id: str
+    seed_count: int
+    verbatim_count: int
 
     def __init__(
         self,
@@ -165,6 +169,8 @@ class ExecuteQueryResponse:
         visualization: str,
         validation_warning: str,
         query_id: str,
+        seed_count: int = ...,
+        verbatim_count: int = ...,
     ) -> None: ...
 
 class RunWorkersRequest:

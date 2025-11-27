@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import types
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -17,6 +17,7 @@ from numpy.typing import NDArray
 from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.contracts.vector_filter import VectorFilter
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.server.append_executor import AppendExecutor, EmbeddingProvider
@@ -248,7 +249,7 @@ class StubVectorIndex(VectorIndex):
         self,
         query_embedding: list[float] | NDArray[np.float64],
         k: int,
-        where: dict[str, str | int | float | bool | None] | None = None,
+        filters: Sequence[VectorFilter] | None = None,
     ) -> list[Vector]:  # pragma: no cover - unused
         return []
 

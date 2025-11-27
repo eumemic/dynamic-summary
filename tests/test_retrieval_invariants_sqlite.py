@@ -9,7 +9,7 @@ in storage. Retrieval must:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -17,6 +17,7 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.config import OperationalConfig, QueryConfig, SecretStr
+from ragzoom.contracts.vector_filter import VectorFilter
 from ragzoom.document_store import DocumentStore
 
 
@@ -110,7 +111,7 @@ class TestRetrievalInvariantsSQLite:
             def _mock_search_similar(
                 query_embedding: list[float] | NDArray[np.float64],
                 k: int,
-                where: dict[str, str | int | float | bool | None] | None = None,
+                filters: Sequence[VectorFilter] | None = None,
             ) -> list[Vector]:
                 return [
                     Vector(
