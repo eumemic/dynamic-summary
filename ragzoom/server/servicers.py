@@ -423,10 +423,12 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
                 visualization = f"Visualization error: {exc}"
 
             try:
+                # Total budget includes verbatim budget if specified
+                total_budget = budget + (recent_verbatim_budget or 0)
                 validation_error = validate_tiling(
                     retrieval_result.tiling,
                     document_store,
-                    budget_tokens=budget,
+                    budget_tokens=total_budget,
                     preloaded_nodes=retrieval_result.nodes,
                 )
                 if validation_error:
