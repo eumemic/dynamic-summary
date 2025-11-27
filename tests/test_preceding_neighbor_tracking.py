@@ -156,6 +156,7 @@ class TestPrecedingNeighborTracking:
         finally:
             await indexer_runtime_harness.clear(document_id)
 
+    @pytest.mark.slow_threshold(5)
     @pytest.mark.asyncio
     async def test_preceding_context_reconstruction(
         self,

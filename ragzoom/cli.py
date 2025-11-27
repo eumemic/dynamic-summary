@@ -770,6 +770,11 @@ def validate(
 @click.option("--token-budget", type=int, help="Token budget for summary")
 @click.option("--embedding-model", type=str, help="Embedding model for query")
 @click.option(
+    "--recent-verbatim-token-budget",
+    type=int,
+    help="Token budget for recent content to include verbatim (most recent first)",
+)
+@click.option(
     "--debug",
     is_flag=True,
     help="Show debug information including retrieval statistics",
@@ -806,6 +811,7 @@ def query(
     num_seeds: int | None,
     token_budget: int | None,
     embedding_model: str | None,
+    recent_verbatim_token_budget: int | None,
     debug: bool,
     viz_width: int | None,
     viz_coords: str,
@@ -853,6 +859,7 @@ def query(
                 viz_width=actual_viz_width,
                 use_token_coords=use_token_coords,
                 tiling_strategy=query_config.tiling_strategy,
+                recent_verbatim_token_budget=recent_verbatim_token_budget,
             )
 
         query_result = response.query_result
@@ -895,7 +902,9 @@ def query(
         click.echo("=" * 60)
         click.echo("STATISTICS")
         click.echo("=" * 60)
-        click.echo(f"  Nodes retrieved: {query_result.nodes_retrieved}")
+        click.echo(f"  Seed nodes: {query_result.seed_count}")
+        if query_result.verbatim_count > 0:
+            click.echo(f"  Verbatim leaves: {query_result.verbatim_count}")
         click.echo(f"  Tiling size: {query_result.tiling_size}")
         click.echo(f"  Token count: {query_result.token_count}")
         if debug:

@@ -220,6 +220,7 @@ class GrpcRagzoomClient:
         viz_width: int,
         use_token_coords: bool,
         tiling_strategy: str | None,
+        recent_verbatim_token_budget: int | None = None,
     ) -> ExecuteQueryOutput:
         request = pb2.ExecuteQueryRequest(
             query=query,
@@ -231,6 +232,7 @@ class GrpcRagzoomClient:
             viz_width=viz_width,
             use_token_coords=use_token_coords,
             tiling_strategy=tiling_strategy or "",
+            recent_verbatim_token_budget=recent_verbatim_token_budget or 0,
         )
         try:
             response = self._retrieval.ExecuteQuery(request, timeout=self._timeout)
@@ -243,6 +245,8 @@ class GrpcRagzoomClient:
             nodes_retrieved=response.nodes_retrieved,
             tiling_size=response.tiling_size,
             query_id=response.query_id,
+            seed_count=response.seed_count,
+            verbatim_count=response.verbatim_count,
         )
 
         nodes_payload: dict[str, NodeSummary] = {}

@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
+from ragzoom.contracts.vector_filter import DocumentIdFilter
 from ragzoom.vector_factory import create_vector_index
 
 
@@ -44,7 +45,7 @@ class TestVectorIndexDimensions:
         vi.upsert(items)
 
         # Search with a 3D query
-        res = vi.search_similar([1.0, 0.0, 0.0], 2, {"document_id": "doc"})
+        res = vi.search_similar([1.0, 0.0, 0.0], 2, [DocumentIdFilter("doc")])
         assert len(res) == 2
         for v in res:
             # Normalized float32

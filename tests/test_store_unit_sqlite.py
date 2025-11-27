@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
+from ragzoom.contracts.vector_filter import DocumentIdFilter
 from ragzoom.contracts.vector_index import VectorIndex as VectorIndexV2
 from ragzoom.document_store import DocumentStore
 from tests.test_builders import TreeNodeBuilder
@@ -348,7 +349,7 @@ class TestStoreSQLite:
         # Test similarity search via VectorIndex
         query_embedding = [0.75, 0.25] + [0.1] * 1534
         results = vector_index.search_similar(
-            query_embedding, 2, {"document_id": "test-doc"}
+            query_embedding, 2, [DocumentIdFilter("test-doc")]
         )
 
         assert len(results) <= 2

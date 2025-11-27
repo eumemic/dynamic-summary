@@ -528,6 +528,57 @@ class PostgresNodeRepository(BaseRepository):
             self.cache_manager.put(node.id, node)
             return node
 
+    # jscpd:ignore-start - Same SQL for both SQLite and Postgres (standard window functions)
+    def get_recent_leaves_within_budget(
+        self, document_id: str | None, token_budget: int
+    ) -> list[TreeNode]:
+        """Get most recent leaves (by span_end) that fit within token budget.
+
+        Uses a window function to compute cumulative token sum and stops
+        when budget is exceeded. Returns leaves in span order (ascending).
+        """
+        if token_budget <= 0:
+            return []
+
+        with self.SessionLocal() as session:
+            # Use window function to compute running sum of tokens
+            # ordered by span_end DESC (most recent first)
+            doc_filter = ""
+            params: dict[str, object] = {"budget": token_budget}
+            if document_id is not None:
+                doc_filter = "AND document_id = :doc_id"
+                params["doc_id"] = document_id
+
+            # doc_filter is a hardcoded constant, not user input
+            sql = text(  # nosec B608
+                f"""
+                SELECT * FROM (
+                    SELECT *,
+                        SUM(token_count) OVER (
+                            ORDER BY span_end DESC
+                            ROWS UNBOUNDED PRECEDING
+                        ) as cumsum
+                    FROM tree_nodes
+                    WHERE height = 0 {doc_filter}
+                ) sub
+                WHERE cumsum - token_count < :budget
+                ORDER BY span_start ASC
+            """
+            )
+
+            rows = session.execute(sql, params).fetchall()
+            if not rows:
+                return []
+
+            # Map rows to TreeNode objects
+            node_ids = [row.id for row in rows]
+            nodes = self.get_nodes(node_ids)
+            # Sort by span_start to return in document order
+            nodes.sort(key=lambda n: n.span_start)
+            return nodes
+
+    # jscpd:ignore-end
+
     def update_node_access(self, node_id: str) -> None:
         """Update access time and count for a node.
 

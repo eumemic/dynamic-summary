@@ -300,6 +300,16 @@ class DocumentNodeRepository:
         all_leaves = self._repo.get_leaf_nodes()
         return [node for node in all_leaves if node.document_id == self.document_id]
 
+    def get_recent_leaves_within_budget(self, token_budget: int) -> list[TreeNode]:
+        """Get most recent leaves that fit within token budget.
+
+        Returns leaves ordered by span_start (document order).
+        Uses efficient SQL window function to avoid loading all leaves.
+        """
+        return self._repo.get_recent_leaves_within_budget(
+            self.document_id, token_budget
+        )
+
     def update_access(self, node_id: str) -> None:
         """Update access time for a node."""
         # First verify the node belongs to this document

@@ -28,8 +28,14 @@ class GreedyTilingGenerator:
         scores: Mapping[str, float],
         nodes: Mapping[str, TreeNode],
     ) -> DPResult:
-        """Generate a tiling by pruning the frontier until within budget."""
+        """Generate a tiling by pruning the frontier until within budget.
 
+        Args:
+            root_ids: Root node IDs to start traversal from
+            budget_tokens: Token budget for the tiling
+            scores: Relevance scores for each node
+            nodes: All nodes in the coverage tree
+        """
         if not nodes:
             return DPResult(Tiling.empty(), [], 0.0, {})
 
@@ -138,7 +144,6 @@ def _compute_candidate(
     scores: Mapping[str, float],
 ) -> _RollupCandidate | None:
     """Return a roll-up candidate if the parent is eligible."""
-
     if parent_id not in nodes:
         return None
     parent = nodes[parent_id]
@@ -164,6 +169,7 @@ def _compute_candidate(
         return None
 
     left_child_id, right_child_id = child_ids
+
     pair_tokens = nodes[left_child_id].token_count
     if right_child_id != left_child_id:
         pair_tokens += nodes[right_child_id].token_count
@@ -196,7 +202,6 @@ def _enqueue_candidate(
     scores: Mapping[str, float],
 ) -> None:
     """Add a parent to the priority queue if it just became eligible."""
-
     if parent_id in enqueued:
         return
     candidate = _compute_candidate(parent_id, frontier, nodes, scores)
@@ -212,7 +217,6 @@ def _initialize_candidate_queue(
     scores: Mapping[str, float],
 ) -> tuple[list[_RollupCandidate], set[str]]:
     """Seed the roll-up queue with all eligible parents from the initial frontier."""
-
     queue: list[_RollupCandidate] = []
     enqueued: set[str] = set()
     for node_id in frontier:
@@ -231,7 +235,6 @@ def _pop_next_candidate(
     scores: Mapping[str, float],
 ) -> tuple[str, str, str] | None:
     """Return the best still-valid candidate from the queue."""
-
     while queue:
         candidate = heapq.heappop(queue)
         enqueued.discard(candidate.parent_id)

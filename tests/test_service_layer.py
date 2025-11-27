@@ -483,7 +483,11 @@ class TestQueryService:
             assert result.tiling_size == 3
 
             mock_retriever.retrieve.assert_called_once_with(
-                "test query", budget_tokens=1000, document_id="doc-123", num_seeds=None
+                "test query",
+                budget_tokens=1000,
+                document_id="doc-123",
+                num_seeds=None,
+                recent_verbatim_budget=None,
             )
             mock_assembler.assemble.assert_called_once_with(mock_retrieval_result)
 

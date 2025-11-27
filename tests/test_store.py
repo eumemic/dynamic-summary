@@ -11,6 +11,7 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.contracts.vector_filter import DocumentIdFilter
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 
@@ -294,7 +295,7 @@ class TestStore:
         # Search with a query embedding
         query_embedding = [0.25] * 1536
         results = vector_index.search_similar(
-            query_embedding, 3, {"document_id": "doc-id"}
+            query_embedding, 3, [DocumentIdFilter("doc-id")]
         )
 
         assert len(results) == 3

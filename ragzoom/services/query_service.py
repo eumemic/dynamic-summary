@@ -22,6 +22,8 @@ class QueryResult:
     nodes_retrieved: int
     tiling_size: int
     query_id: str
+    seed_count: int = 0
+    verbatim_count: int = 0
 
 
 class QueryService:
@@ -54,6 +56,7 @@ class QueryService:
         document_id: str,
         num_seeds: int | None = None,
         token_budget: int | None = None,
+        recent_verbatim_budget: int | None = None,
     ) -> QueryResult:
         """Execute a query and return assembled result.
 
@@ -62,6 +65,7 @@ class QueryService:
             document_id: Document ID to query within
             num_seeds: Optional override for number of seed nodes
             token_budget: Optional override for token budget
+            recent_verbatim_budget: Token budget for recent leaves to include verbatim
 
         Returns:
             QueryResult with summary and statistics
@@ -105,6 +109,7 @@ class QueryService:
             budget_tokens=budget,
             document_id=document_id,
             num_seeds=num_seeds,
+            recent_verbatim_budget=recent_verbatim_budget,
         )
 
         # Assemble summary
@@ -125,6 +130,8 @@ class QueryService:
             nodes_retrieved=len(retrieval_result.node_ids),
             tiling_size=len(retrieval_result.tiling) if retrieval_result.tiling else 0,
             query_id=query_id,
+            seed_count=retrieval_result.seed_count,
+            verbatim_count=retrieval_result.verbatim_count,
         )
 
     # jscpd:ignore-end
@@ -136,6 +143,7 @@ class QueryService:
         document_id: str,
         num_seeds: int | None = None,
         token_budget: int | None = None,
+        recent_verbatim_budget: int | None = None,
     ) -> QueryResult:
         """Execute a query asynchronously.
 
@@ -144,6 +152,7 @@ class QueryService:
             document_id: Document ID to query within
             num_seeds: Optional override for number of seed nodes
             token_budget: Optional override for token budget
+            recent_verbatim_budget: Token budget for recent leaves to include verbatim
 
         Returns:
             QueryResult with summary and statistics
@@ -184,9 +193,10 @@ class QueryService:
         # Retrieve relevant nodes
         retrieval_result = await retriever.retrieve_async(
             query_text,
-            num_seeds,
-            budget,
+            num_seeds=num_seeds,
+            budget_tokens=budget,
             document_id=document_id,
+            recent_verbatim_budget=recent_verbatim_budget,
         )
 
         # Assemble summary
@@ -207,6 +217,8 @@ class QueryService:
             nodes_retrieved=len(retrieval_result.node_ids),
             tiling_size=len(retrieval_result.tiling) if retrieval_result.tiling else 0,
             query_id=query_id,
+            seed_count=retrieval_result.seed_count,
+            verbatim_count=retrieval_result.verbatim_count,
         )
 
     # jscpd:ignore-end
