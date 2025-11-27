@@ -155,6 +155,8 @@ class ExecuteQueryResponse:
     visualization: str
     validation_warning: str
     query_id: str
+    seed_count: int
+    verbatim_count: int
 
     def __init__(
         self,
@@ -167,6 +169,8 @@ class ExecuteQueryResponse:
         visualization: str,
         validation_warning: str,
         query_id: str,
+        seed_count: int = ...,
+        verbatim_count: int = ...,
     ) -> None: ...
 
 class RunWorkersRequest:

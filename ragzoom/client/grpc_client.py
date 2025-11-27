@@ -245,6 +245,8 @@ class GrpcRagzoomClient:
             nodes_retrieved=response.nodes_retrieved,
             tiling_size=response.tiling_size,
             query_id=response.query_id,
+            seed_count=response.seed_count,
+            verbatim_count=response.verbatim_count,
         )
 
         nodes_payload: dict[str, NodeSummary] = {}

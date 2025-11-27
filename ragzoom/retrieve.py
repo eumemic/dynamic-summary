@@ -40,6 +40,8 @@ class RetrievalResult:
     coverage_map: dict[str, bool]
     tiling: list[str] | None = None
     nodes: dict[str, "TreeNode"] | None = None
+    seed_count: int = 0
+    verbatim_count: int = 0
 
 
 class Retriever:
@@ -210,6 +212,8 @@ class Retriever:
             num_seeds,
             self.query_config.mmr_lambda,
         )
+        seed_count = len(selected_ids)
+        verbatim_count = len(pinned_ids) if pinned_ids else 0
 
         # Add verbatim leaves to selected_ids so coverage includes them
         # (verbatim leaves were pre-selected earlier to establish the horizon)
@@ -370,6 +374,8 @@ class Retriever:
             coverage_map=coverage_map,
             tiling=tiling_ids,
             nodes=nodes,
+            seed_count=seed_count,
+            verbatim_count=verbatim_count,
         )
 
     # jscpd:ignore-start - Sync wrapper for async method (legitimate duplication pattern)

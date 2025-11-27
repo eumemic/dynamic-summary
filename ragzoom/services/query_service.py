@@ -22,6 +22,8 @@ class QueryResult:
     nodes_retrieved: int
     tiling_size: int
     query_id: str
+    seed_count: int = 0
+    verbatim_count: int = 0
 
 
 class QueryService:
@@ -128,6 +130,8 @@ class QueryService:
             nodes_retrieved=len(retrieval_result.node_ids),
             tiling_size=len(retrieval_result.tiling) if retrieval_result.tiling else 0,
             query_id=query_id,
+            seed_count=retrieval_result.seed_count,
+            verbatim_count=retrieval_result.verbatim_count,
         )
 
     # jscpd:ignore-end
@@ -213,6 +217,8 @@ class QueryService:
             nodes_retrieved=len(retrieval_result.node_ids),
             tiling_size=len(retrieval_result.tiling) if retrieval_result.tiling else 0,
             query_id=query_id,
+            seed_count=retrieval_result.seed_count,
+            verbatim_count=retrieval_result.verbatim_count,
         )
 
     # jscpd:ignore-end

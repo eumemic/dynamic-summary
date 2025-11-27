@@ -448,6 +448,8 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
             visualization=visualization,
             validation_warning=validation_warning,
             query_id=query_id,
+            seed_count=retrieval_result.seed_count,
+            verbatim_count=retrieval_result.verbatim_count,
         )
 
 

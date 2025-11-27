@@ -902,7 +902,9 @@ def query(
         click.echo("=" * 60)
         click.echo("STATISTICS")
         click.echo("=" * 60)
-        click.echo(f"  Nodes retrieved: {query_result.nodes_retrieved}")
+        click.echo(f"  Seed nodes: {query_result.seed_count}")
+        if query_result.verbatim_count > 0:
+            click.echo(f"  Verbatim leaves: {query_result.verbatim_count}")
         click.echo(f"  Tiling size: {query_result.tiling_size}")
         click.echo(f"  Token count: {query_result.token_count}")
         if debug:
