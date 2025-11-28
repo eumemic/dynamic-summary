@@ -8,6 +8,8 @@ from typing import TypeAlias, cast
 import numpy as np
 from numpy.typing import NDArray
 
+from ragzoom.vector_api import MetaDict
+
 VectorUpsertItem: TypeAlias = tuple[
     str,
     list[float] | NDArray[np.float64],
@@ -33,6 +35,49 @@ def coerce_int(value: object) -> int:
     if isinstance(value, str) and value.strip().isdigit():
         return int(value)
     return 0
+
+
+def coerce_str(value: object) -> str:
+    """Coerce a value to string, handling None gracefully."""
+    if value is None:
+        return ""
+    return str(value)
+
+
+def normalize_metadata_from_dict(meta: dict[str, object]) -> MetaDict:
+    """Normalize dict-based metadata to canonical MetaDict.
+
+    Ensures all 8 standard metadata fields are present with correct types:
+    - span_start, span_end, is_leaf, height, level_index, coord_version -> int
+    - parent_id, document_id -> str
+    """
+    return {
+        "span_start": coerce_int(meta.get("span_start", 0)),
+        "span_end": coerce_int(meta.get("span_end", 0)),
+        "parent_id": coerce_str(meta.get("parent_id", "")),
+        "document_id": coerce_str(meta.get("document_id", "")),
+        "is_leaf": coerce_int(meta.get("is_leaf", 0)),
+        "height": coerce_int(meta.get("height", 0)),
+        "level_index": coerce_int(meta.get("level_index", 0)),
+        "coord_version": coerce_int(meta.get("coord_version", 0)),
+    }
+
+
+def normalize_metadata_from_object(meta: object) -> MetaDict:
+    """Normalize object-based metadata (with attributes) to canonical MetaDict.
+
+    Used when metadata comes from an object with attributes rather than a dict.
+    """
+    return {
+        "span_start": coerce_int(getattr(meta, "span_start", 0)),
+        "span_end": coerce_int(getattr(meta, "span_end", 0)),
+        "parent_id": coerce_str(getattr(meta, "parent_id", "")),
+        "document_id": coerce_str(getattr(meta, "document_id", "")),
+        "is_leaf": coerce_int(getattr(meta, "is_leaf", 0)),
+        "height": coerce_int(getattr(meta, "height", 0)),
+        "level_index": coerce_int(getattr(meta, "level_index", 0)),
+        "coord_version": coerce_int(getattr(meta, "coord_version", 0)),
+    }
 
 
 def normalize_upsert_items(

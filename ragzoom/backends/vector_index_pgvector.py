@@ -15,6 +15,11 @@ from numpy.typing import NDArray
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.event import listens_for
 
+from ragzoom.backends.vector_common import (
+    coerce_int,
+    coerce_str,
+    normalize_metadata_from_dict,
+)
 from ragzoom.contracts.vector_filter import (
     DocumentIdFilter,
     SpanEndLtFilter,
@@ -145,19 +150,18 @@ class PgVectorIndexAdapter(VectorIndex):
         )
         with self._engine.begin() as conn:
             for node_id, emb, meta in items:
+                normalized_meta = normalize_metadata_from_dict(meta)
                 params = {
                     "id": node_id,
                     "emb": [float(x) for x in cast(Sequence[float], emb)],
-                    "doc": str(meta.get("document_id", "")),
-                    "ss": int(cast(int | float, meta.get("span_start", 0))),
-                    "se": int(cast(int | float, meta.get("span_end", 0))),
-                    "pid": str(meta.get("parent_id", "")),
-                    "leaf": int(cast(int | float | bool, meta.get("is_leaf", 0))),
-                    "height": int(cast(int | float, meta.get("height", 0))),
-                    "level_index": int(cast(int | float, meta.get("level_index", 0))),
-                    "coord_version": int(
-                        cast(int | float, meta.get("coord_version", 0))
-                    ),
+                    "doc": normalized_meta["document_id"],
+                    "ss": normalized_meta["span_start"],
+                    "se": normalized_meta["span_end"],
+                    "pid": normalized_meta["parent_id"],
+                    "leaf": normalized_meta["is_leaf"],
+                    "height": normalized_meta["height"],
+                    "level_index": normalized_meta["level_index"],
+                    "coord_version": normalized_meta["coord_version"],
                 }
                 conn.execute(sql, params)
 
@@ -297,14 +301,14 @@ class PgVectorIndexAdapter(VectorIndex):
         node_id = str(row[0])
         emb = np.asarray(row[1], dtype=np.float32)
         meta: MetaDict = {
-            "document_id": str(row[2]) if row[2] is not None else "",
-            "span_start": int(cast(int | float, row[3])),
-            "span_end": int(cast(int | float, row[4])),
-            "parent_id": str(row[5]) if row[5] is not None else "",
-            "is_leaf": int(cast(int | float, row[6])),
-            "height": int(cast(int | float, row[7])),
-            "level_index": int(cast(int | float, row[8])),
-            "coord_version": int(cast(int | float, row[9])),
+            "document_id": coerce_str(row[2]),
+            "span_start": coerce_int(row[3]),
+            "span_end": coerce_int(row[4]),
+            "parent_id": coerce_str(row[5]),
+            "is_leaf": coerce_int(row[6]),
+            "height": coerce_int(row[7]),
+            "level_index": coerce_int(row[8]),
+            "coord_version": coerce_int(row[9]),
         }
         return Vector(
             id=node_id, vec=emb, meta=meta, model_id=self._model_id, dim=len(emb)

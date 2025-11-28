@@ -16,6 +16,7 @@ from ragzoom.backends.chroma_vector_index import ChromaVectorIndex
 from ragzoom.backends.vector_common import (
     NormalizedUpsertItem,
     VectorUpsertItem,
+    normalize_metadata_from_dict,
     normalize_upsert_items,
 )
 from ragzoom.contracts.vector_filter import (
@@ -240,27 +241,4 @@ class ChromaVectorIndexAdapter(VectorIndex):
 
 
 def _as_meta(meta: dict[str, object]) -> MetaDict:
-    def _to_int(x: object) -> int:
-        if isinstance(x, bool):
-            return 1 if x else 0
-        if isinstance(x, int):
-            return int(x)
-        if isinstance(x, float):
-            return int(x)
-        return 0
-
-    def _to_str(x: object) -> str:
-        if isinstance(x, str):
-            return x
-        return str(x) if x is not None else ""
-
-    return {
-        "span_start": _to_int(meta.get("span_start", 0)),
-        "span_end": _to_int(meta.get("span_end", 0)),
-        "parent_id": _to_str(meta.get("parent_id", "")),
-        "document_id": _to_str(meta.get("document_id", "")),
-        "is_leaf": _to_int(meta.get("is_leaf", 0)),
-        "height": _to_int(meta.get("height", 0)),
-        "level_index": _to_int(meta.get("level_index", 0)),
-        "coord_version": _to_int(meta.get("coord_version", 0)),
-    }
+    return normalize_metadata_from_dict(meta)
