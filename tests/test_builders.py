@@ -2,6 +2,9 @@
 
 from types import SimpleNamespace
 
+import numpy as np
+from numpy.typing import NDArray
+
 from ragzoom.models import Document
 from ragzoom.models import PostgresTreeNode as TreeNode
 
@@ -22,6 +25,7 @@ class TreeNodeBuilder:
             "document_id": None,
             "token_count": 5,
             "height": 0,
+            "level_index": 0,
         }
 
     def with_id(self, node_id: str) -> "TreeNodeBuilder":
@@ -51,9 +55,9 @@ class TreeNodeBuilder:
         return self
 
     def with_children(
-        self, left_child_id: str | None = None, right_child_id: str | None = None
+        self, left_child_id: str | None, right_child_id: str | None = None
     ) -> "TreeNodeBuilder":
-        """Set the child node IDs."""
+        """Set child node IDs."""
         self._data["left_child_id"] = left_child_id
         self._data["right_child_id"] = right_child_id
         return self
@@ -63,9 +67,9 @@ class TreeNodeBuilder:
         self._data["document_id"] = document_id
         return self
 
-    def with_token_count(self, count: int) -> "TreeNodeBuilder":
+    def with_token_count(self, token_count: int) -> "TreeNodeBuilder":
         """Set the token count."""
-        self._data["token_count"] = count
+        self._data["token_count"] = token_count
         return self
 
     def with_height(self, height: int) -> "TreeNodeBuilder":
@@ -108,6 +112,7 @@ class TreeNodeBuilder:
                 "document_id": self._data["document_id"],
                 "token_count": self._data["token_count"],
                 "height": self._data["height"],
+                "level_index": self._data["level_index"],
             }
         else:
             raise ValueError(
@@ -122,7 +127,7 @@ class TreeNodeBuilder:
         return result
 
     def build_dict(self) -> dict[str, object]:
-        """Build a dictionary for batch operations. [DEPRECATED: Use build('dict')]"""
+        """Build a dict for add_batch. [DEPRECATED: Use build('dict')]"""
         result = self.build("dict")
         assert isinstance(result, dict)
         return result
@@ -216,7 +221,7 @@ def create_test_tree_nodes(
             builder = builder.with_parent("node-0")
         else:
             # Additional nodes as children of previous nodes
-            parent_idx = (i - 3) // 2 + 1  # Distribute among non-root nodes
+            parent_idx = (i - 3) // 2 + 1
             if parent_idx < i:
                 builder = builder.with_parent(f"node-{parent_idx}")
 
@@ -269,3 +274,55 @@ def create_simple_namespace_tree(
         nodes.append(result)
 
     return nodes
+
+
+def make_node_data(
+    node_id: str = "test-node",
+    text: str = "Test text",
+    span_start: int = 0,
+    span_end: int = 10,
+    height: int = 0,
+    token_count: int = 5,
+    level_index: int = 0,
+    parent_id: str | None = None,
+    left_child_id: str | None = None,
+    right_child_id: str | None = None,
+    document_id: str | None = None,
+    **extra: object,
+) -> dict[str, str | int | float | bool | list[float] | NDArray[np.float64] | None]:
+    """Create node data dict with all required fields.
+
+    Use this helper when creating raw node data for tests. It ensures all
+    required fields have sensible defaults, avoiding KeyError when the
+    repository code accesses them directly.
+
+    Example:
+        nodes = [
+            make_node_data(node_id="leaf-1", text="Hello", span_start=0, span_end=5),
+            make_node_data(node_id="leaf-2", text="World", span_start=5, span_end=10),
+        ]
+        doc_store.nodes.add_batch(nodes)
+    """
+    data: dict[
+        str, str | int | float | bool | list[float] | NDArray[np.float64] | None
+    ] = {
+        "node_id": node_id,
+        "text": text,
+        "span_start": span_start,
+        "span_end": span_end,
+        "height": height,
+        "token_count": token_count,
+        "level_index": level_index,
+        "parent_id": parent_id,
+        "left_child_id": left_child_id,
+        "right_child_id": right_child_id,
+        "document_id": document_id,
+    }
+    # Handle extra kwargs - need to ensure they match the type
+    for key, value in extra.items():
+        if isinstance(
+            value,
+            str | int | float | bool | list | np.ndarray | type(None),
+        ):
+            data[key] = value  # type: ignore[assignment]
+    return data

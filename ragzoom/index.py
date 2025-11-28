@@ -134,7 +134,15 @@ class TreeBuilder:
     def _node_to_domain(self, node: TreeNode) -> DomainNode:
         """Convert a stored TreeNode into a DomainNode for patch construction."""
 
-        document_id = node.document_id or (self.document_store.document_id or "")
+        if node.document_id is None:
+            if self.document_store.document_id is None:
+                raise ValueError(
+                    f"Node {node.id} has no document_id and DocumentStore has no default"
+                )
+            document_id = self.document_store.document_id
+        else:
+            document_id = node.document_id
+
         is_pinned_raw = getattr(node, "is_pinned", False)
         if isinstance(is_pinned_raw, int):
             is_pinned = bool(is_pinned_raw)
@@ -149,15 +157,15 @@ class TreeBuilder:
             right_child_id=node.right_child_id,
             span_start=int(node.span_start),
             span_end=int(node.span_end),
-            text=node.text or "",
-            token_count=int(getattr(node, "token_count", 0)),
-            height=int(getattr(node, "height", 0)),
+            text=node.text,
+            token_count=int(node.token_count),
+            height=int(node.height),
             is_pinned=is_pinned,
             depth=int(getattr(node, "depth", 0)),
-            preceding_neighbor_id=getattr(node, "preceding_neighbor_id", None),
-            following_neighbor_id=getattr(node, "following_neighbor_id", None),
+            preceding_neighbor_id=node.preceding_neighbor_id,
+            following_neighbor_id=node.following_neighbor_id,
             embedding=None,
-            level_index=int(getattr(node, "level_index", 0)),
+            level_index=int(node.level_index),
         )
 
     def _generate_node_id(self) -> str:
@@ -756,8 +764,6 @@ class TreeBuilder:
                 embedding = getattr(node, "embedding", None)
                 if embedding is None:
                     continue
-                height = int(getattr(node, "height", 0))
-                level_index = int(getattr(node, "level_index", 0))
                 upsert_items.append(
                     (
                         node.id,
@@ -766,10 +772,10 @@ class TreeBuilder:
                             "span_start": int(node.span_start),
                             "span_end": int(node.span_end),
                             "parent_id": node.parent_id or "",
-                            "document_id": node.document_id or "",
-                            "is_leaf": 1 if height == 0 else 0,
-                            "height": height,
-                            "level_index": level_index,
+                            "document_id": node.document_id,
+                            "is_leaf": 1 if int(node.height) == 0 else 0,
+                            "height": int(node.height),
+                            "level_index": int(node.level_index),
                             "coord_version": 1,
                         },
                     )
@@ -883,7 +889,7 @@ class TreeBuilder:
                 reporter=reporter,
             )
 
-        combined_text = (right_leaf.text or "") + new_text
+        combined_text = right_leaf.text + new_text
         if not combined_text:
             raise ValueError("Append produced no content to index")
 
@@ -924,7 +930,7 @@ class TreeBuilder:
                 if int(node.height) == 0:
                     reporter.record_chunk_created(
                         node.id,
-                        self.tokenizer.count_tokens(node.text or ""),
+                        self.tokenizer.count_tokens(node.text),
                     )
 
         try:
@@ -959,7 +965,7 @@ class TreeBuilder:
                 "document_id": node.document_id,
                 "is_leaf": 1 if int(node.height) == 0 else 0,
                 "height": int(node.height),
-                "level_index": int(getattr(node, "level_index", 0)),
+                "level_index": int(node.level_index),
                 "coord_version": 1,
             }
             vector_node_ids.append(node.id)
@@ -1058,7 +1064,7 @@ class TreeBuilder:
 
         leaves_after = self.document_store.nodes.get_leaves()
         leaves_after.sort(key=lambda n: int(n.span_start))
-        reconstructed = "".join(leaf.text or "" for leaf in leaves_after)
+        reconstructed = "".join(leaf.text for leaf in leaves_after)
 
         logger.debug(
             "Append stats doc=%s mutated=%d new_leaves=%d resummarized=%d",

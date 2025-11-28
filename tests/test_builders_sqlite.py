@@ -41,6 +41,7 @@ class TestBuildersSQLite:
                 "document_id": "test-doc",
                 "token_count": 5,
                 "height": 0,
+                "level_index": 0,
             }
         ]
         doc_store.nodes.add_batch(nodes)
@@ -74,6 +75,7 @@ class TestBuildersSQLite:
                 "document_id": "test-doc",
                 "token_count": 10,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "parent",
             },
             {
@@ -85,6 +87,7 @@ class TestBuildersSQLite:
                 "document_id": "test-doc",
                 "token_count": 20,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "child",
                 "right_child_id": None,
             },
@@ -121,6 +124,7 @@ class TestBuildersSQLite:
                 "document_id": "test-doc",
                 "token_count": 15,
                 "height": 0,
+                "level_index": 0,
             }
         ]
         doc_store.nodes.add_batch(nodes)
@@ -148,6 +152,7 @@ class TestBuildersSQLite:
                 "document_id": "test-doc",
                 "token_count": 12,
                 "height": 0,
+                "level_index": 0,
             }
         ]
         doc_store.nodes.add_batch(nodes)
@@ -173,6 +178,7 @@ class TestBuildersSQLite:
                 "document_id": "test-doc",
                 "token_count": 50,
                 "height": 0,
+                "level_index": 0,
             }
         ]
         doc_store.nodes.add_batch(nodes)
@@ -212,6 +218,7 @@ class TestBuildersSQLite:
                 "document_id": "test-doc",
                 "token_count": 5,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "node-1",
                 "right_child_id": "node-2",
             },
@@ -224,6 +231,7 @@ class TestBuildersSQLite:
                 "document_id": "test-doc",
                 "token_count": 5,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "node-0",
             },
             {
@@ -235,6 +243,7 @@ class TestBuildersSQLite:
                 "document_id": "test-doc",
                 "token_count": 5,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "node-0",
             },
         ]
@@ -275,6 +284,7 @@ class TestBuildersSQLite:
                 "document_id": "test-doc",
                 "token_count": 10,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "middle",
             },
             {
@@ -286,6 +296,7 @@ class TestBuildersSQLite:
                 "document_id": "test-doc",
                 "token_count": 15,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "leaf",
                 "right_child_id": None,  # Single child - avoid duplicates
                 "parent_id": "root",
@@ -299,6 +310,7 @@ class TestBuildersSQLite:
                 "document_id": "test-doc",
                 "token_count": 20,
                 "height": 2,
+                "level_index": 0,
                 "left_child_id": "middle",
                 "right_child_id": None,  # Single child - avoid duplicates
             },

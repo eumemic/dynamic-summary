@@ -77,7 +77,7 @@ class SqliteNodeRepository:
                     "span_start": cast(int, data["span_start"]),
                     "span_end": cast(int, data["span_end"]),
                     "text": cast(str, data["text"]),
-                    "token_count": cast(int, data.get("token_count", 0)),
+                    "token_count": cast(int, data["token_count"]),
                     "document_id": cast(str | None, data.get("document_id")),
                     "preceding_neighbor_id": cast(
                         str | None, data.get("preceding_neighbor_id")
@@ -85,8 +85,8 @@ class SqliteNodeRepository:
                     "following_neighbor_id": cast(
                         str | None, data.get("following_neighbor_id")
                     ),
-                    "height": cast(int, data.get("height", 0)),
-                    "level_index": cast(int, data.get("level_index", 0)),
+                    "height": cast(int, data["height"]),
+                    "level_index": cast(int, data["level_index"]),
                 }
                 for data in nodes_data
             ]
@@ -133,10 +133,10 @@ class SqliteNodeRepository:
                     parent_id=cast(str | None, raw.get("parent_id")),
                     left_child_id=cast(str | None, raw.get("left_child_id")),
                     right_child_id=cast(str | None, raw.get("right_child_id")),
-                    span_start=cast(int, raw.get("span_start", 0)),
-                    span_end=cast(int, raw.get("span_end", 0)),
-                    text=cast(str, raw.get("text", "")),
-                    token_count=cast(int, raw.get("token_count", 0)),
+                    span_start=cast(int, raw["span_start"]),
+                    span_end=cast(int, raw["span_end"]),
+                    text=cast(str, raw["text"]),
+                    token_count=cast(int, raw["token_count"]),
                     document_id=cast(str | None, raw.get("document_id")),
                     preceding_neighbor_id=cast(
                         str | None, raw.get("preceding_neighbor_id")
@@ -144,8 +144,8 @@ class SqliteNodeRepository:
                     following_neighbor_id=cast(
                         str | None, raw.get("following_neighbor_id")
                     ),
-                    height=cast(int, raw.get("height", 0)),
-                    level_index=cast(int, raw.get("level_index", 0)),
+                    height=cast(int, raw["height"]),
+                    level_index=cast(int, raw["level_index"]),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=[SQLiteTreeNode.id],

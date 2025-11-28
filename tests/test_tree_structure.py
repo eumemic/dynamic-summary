@@ -26,6 +26,7 @@ class NodePayload(TypedDict, total=False):
     document_id: str
     height: int
     token_count: int
+    level_index: int
     left_child_id: str | None
     right_child_id: str | None
 
@@ -80,6 +81,8 @@ class TestTreeValidation:
                 span_end=10,
                 document_id="test-doc",
                 height=0,
+                token_count=2,
+                level_index=0,
             ),
             NodePayload(
                 node_id="L2",
@@ -89,6 +92,8 @@ class TestTreeValidation:
                 span_end=20,
                 document_id="test-doc",
                 height=0,
+                token_count=2,
+                level_index=1,
             ),
             NodePayload(
                 node_id="L3",
@@ -98,6 +103,8 @@ class TestTreeValidation:
                 span_end=30,
                 document_id="test-doc",
                 height=0,
+                token_count=2,
+                level_index=2,
             ),
             NodePayload(
                 node_id="L4",
@@ -107,6 +114,8 @@ class TestTreeValidation:
                 span_end=40,
                 document_id="test-doc",
                 height=0,
+                token_count=2,
+                level_index=3,
             ),
             NodePayload(
                 node_id="P1",
@@ -116,6 +125,8 @@ class TestTreeValidation:
                 span_end=20,
                 document_id="test-doc",
                 height=1,
+                token_count=4,
+                level_index=0,
                 left_child_id="L1",
                 right_child_id="L2",
             ),
@@ -127,6 +138,8 @@ class TestTreeValidation:
                 span_end=40,
                 document_id="test-doc",
                 height=1,
+                token_count=4,
+                level_index=1,
                 left_child_id="L3",
                 right_child_id="L4",
             ),
@@ -138,6 +151,8 @@ class TestTreeValidation:
                 span_end=40,
                 document_id="test-doc",
                 height=2,
+                token_count=8,
+                level_index=0,
                 left_child_id="P1",
                 right_child_id="P2",
             ),
@@ -165,6 +180,8 @@ class TestTreeValidation:
                 span_end=10,
                 document_id="test-doc",
                 height=0,
+                token_count=2,
+                level_index=0,
             ),
             NodePayload(
                 node_id="L2",
@@ -174,6 +191,8 @@ class TestTreeValidation:
                 span_end=20,
                 document_id="test-doc",
                 height=0,
+                token_count=2,
+                level_index=1,
             ),
             NodePayload(
                 node_id="L3",
@@ -183,6 +202,8 @@ class TestTreeValidation:
                 span_end=30,
                 document_id="test-doc",
                 height=0,
+                token_count=2,
+                level_index=2,
             ),
             NodePayload(
                 node_id="P1",
@@ -192,6 +213,8 @@ class TestTreeValidation:
                 span_end=20,
                 document_id="test-doc",
                 height=1,
+                token_count=4,
+                level_index=0,
                 left_child_id="L1",
                 right_child_id="L2",
             ),
@@ -203,6 +226,8 @@ class TestTreeValidation:
                 span_end=30,
                 document_id="test-doc",
                 height=1,
+                token_count=2,
+                level_index=1,
                 left_child_id="L3",
                 right_child_id=None,
             ),
@@ -214,6 +239,8 @@ class TestTreeValidation:
                 span_end=30,
                 document_id="test-doc",
                 height=2,
+                token_count=6,
+                level_index=0,
                 left_child_id="P1",
                 right_child_id="P2",
             ),
@@ -242,6 +269,8 @@ class TestTreeValidation:
                     span_end=20,
                     document_id="test-doc",
                     height=1,
+                    token_count=4,
+                    level_index=0,
                     left_child_id="missing-left",
                     right_child_id="missing-right",
                 )
@@ -262,6 +291,8 @@ class TestTreeValidation:
                 span_end=10,
                 document_id="test-doc",
                 height=0,
+                token_count=2,
+                level_index=0,
             ),
             NodePayload(
                 node_id="P1",
@@ -271,6 +302,8 @@ class TestTreeValidation:
                 span_end=20,
                 document_id="test-doc",
                 height=1,
+                token_count=2,
+                level_index=0,
                 left_child_id="L1",
                 right_child_id=None,
             ),
@@ -282,6 +315,8 @@ class TestTreeValidation:
                 span_end=20,
                 document_id="test-doc",
                 height=2,
+                token_count=4,
+                level_index=0,
                 left_child_id=None,
                 right_child_id="P1",
             ),

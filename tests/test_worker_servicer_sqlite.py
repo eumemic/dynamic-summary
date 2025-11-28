@@ -40,6 +40,7 @@ def _leaf_payload(
         "document_id": "doc",
         "token_count": span_end - span_start,
         "height": 0,
+        "level_index": 0,
         "parent_id": None,
         "left_child_id": None,
         "right_child_id": None,
