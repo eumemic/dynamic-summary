@@ -349,7 +349,7 @@ class SqliteNodeRepository:
             count_stmt = select(func.count(literal_column("1"))).select_from(
                 base_stmt.subquery()
             )
-            total = int(session.execute(count_stmt).scalar_one() or 0)
+            total = int(session.execute(count_stmt).scalar_one())
 
             ordered_stmt = base_stmt.order_by(
                 SQLiteTreeNode.height.desc(),
@@ -463,7 +463,7 @@ class SqliteNodeRepository:
                 result = session.execute(
                     select(func.count()).select_from(SQLiteTreeNode)
                 ).scalar_one()
-            return int(result or 0)
+            return int(result)
 
     def get_all_nodes_for_document_paginated(
         self, document_id: str | None, *, page_size: int = 1000
@@ -538,7 +538,7 @@ class SqliteNodeRepository:
             )
             if document_id:
                 stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
-            return int(session.execute(stmt).scalar_one() or 0)
+            return int(session.execute(stmt).scalar_one())
 
     def max_height_for_document(self, document_id: str | None) -> int:
         """Return maximum node height for a document."""
@@ -689,7 +689,7 @@ class SqliteNodeRepository:
             )
             if document_id:
                 stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
-            return int(session.execute(stmt).scalar_one() or 0)
+            return int(session.execute(stmt).scalar_one())
 
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
         with self.SessionLocal() as session:

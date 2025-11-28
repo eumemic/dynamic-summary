@@ -182,6 +182,11 @@ class DocumentRepository(BaseRepository):
 
         Returns:
             Dict with keys: avg_tokens, min_tokens, max_tokens, total_tokens, node_count
+
+        Note:
+            SQL aggregate functions (MIN, MAX, AVG, SUM) return NULL for empty result
+            sets. This is legitimate for documents with no nodes. We convert NULL to 0
+            as a reasonable convention for empty-set statistics.
         """
         with self.SessionLocal() as session:
             from sqlalchemy import func
@@ -201,10 +206,16 @@ class DocumentRepository(BaseRepository):
                 .one()
             )
 
+            # SQL aggregates return NULL for empty sets (documented above).
+            # COUNT() never returns NULL, so no fallback needed.
             return {
-                "avg_tokens": float(result.avg_tokens) if result.avg_tokens else 0.0,
-                "min_tokens": result.min_tokens or 0,
-                "max_tokens": result.max_tokens or 0,
-                "total_tokens": result.total_tokens or 0,
-                "node_count": result.node_count or 0,
+                "avg_tokens": (
+                    float(result.avg_tokens) if result.avg_tokens is not None else 0.0
+                ),
+                "min_tokens": result.min_tokens if result.min_tokens is not None else 0,
+                "max_tokens": result.max_tokens if result.max_tokens is not None else 0,
+                "total_tokens": (
+                    result.total_tokens if result.total_tokens is not None else 0
+                ),
+                "node_count": result.node_count,
             }
