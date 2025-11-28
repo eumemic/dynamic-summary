@@ -12,7 +12,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, SecretStr
-from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.contracts.tree_node import TreeNode, get_depth
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.dataflow import (
     build_full_document_patch,
@@ -161,7 +161,7 @@ class TreeBuilder:
             token_count=int(node.token_count),
             height=int(node.height),
             is_pinned=is_pinned,
-            depth=int(getattr(node, "depth", 0)),
+            depth=get_depth(node),
             preceding_neighbor_id=node.preceding_neighbor_id,
             following_neighbor_id=node.following_neighbor_id,
             embedding=None,
