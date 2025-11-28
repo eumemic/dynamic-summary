@@ -10,6 +10,7 @@ from openai._types import NOT_GIVEN, NotGiven
 from openai.types.chat import ChatCompletionMessageParam
 
 from ragzoom.contracts.chat_model import ChatModel, ChatResult, Message, UsageInfo
+from ragzoom.error_handling import handle_graceful_error
 
 
 class OpenAIChatModel(ChatModel):
@@ -92,8 +93,10 @@ class OpenAIChatModel(ChatModel):
             elif isinstance(cached, str):
                 try:
                     cached_int = int(cached)
-                except Exception:
-                    cached_int = 0
+                except Exception as exc:
+                    cached_int = handle_graceful_error(
+                        exc, f"Failed to parse cached_tokens '{cached}'", default=0
+                    )
             else:
                 cached_int = 0
             if cached_int > 0:

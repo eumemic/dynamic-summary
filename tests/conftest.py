@@ -178,6 +178,19 @@ def ensure_api_key() -> Generator[None, None, None]:
     # Don't clean up - let other tests use it
 
 
+@pytest.fixture(scope="session", autouse=True)
+def enable_strict_errors() -> Generator[None, None, None]:
+    """Enable strict error mode for all tests.
+
+    In strict mode, handle_graceful_error() raises exceptions instead of
+    logging and returning defaults. This ensures tests catch any issues that
+    would be silently handled in production.
+    """
+    os.environ["RAGZOOM_STRICT_ERRORS"] = "1"
+    yield
+    # Don't clean up - let other tests use it
+
+
 # Globally disable the tqdm monitor thread in tests (no background thread)
 @pytest.fixture(scope="session", autouse=True)
 def suppress_progress_globally() -> Generator[None, None, None]:
