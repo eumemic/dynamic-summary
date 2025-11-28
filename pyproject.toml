@@ -111,6 +111,15 @@ ignore_missing_imports = true
 module = "matplotlib.*"
 ignore_missing_imports = true
 
+# psycopg 3 stubs not found by dmypy in hook environment
+[[tool.mypy.overrides]]
+module = "psycopg"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "psycopg.*"
+ignore_missing_imports = true
+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

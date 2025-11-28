@@ -37,10 +37,16 @@ def create_temp_database(
     admin_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT")
     try:
         with admin_engine.connect() as conn:
-            # Create database
-            conn.execute(
-                text(f"CREATE DATABASE {db_name}")
-            )  # nosec B608 - validated above
+            # Create database using psycopg's sql.Identifier for safe quoting
+            from psycopg import Connection as PsycopgConnection
+            from psycopg import sql
+
+            dbapi_conn = conn.connection.dbapi_connection
+            assert isinstance(dbapi_conn, PsycopgConnection)
+            with dbapi_conn.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("CREATE DATABASE {}").format(sql.Identifier(db_name))
+                )
             logger.debug(f"Created temporary database: {db_name}")
 
             # Create vector extension in the new database
@@ -95,10 +101,18 @@ def drop_temp_database(
                     {"db_name": db_name},
                 )
 
-            # Drop database
-            conn.execute(
-                text(f"DROP DATABASE IF EXISTS {db_name}")
-            )  # nosec B608 - validated above
+            # Drop database using psycopg's sql.Identifier for safe quoting
+            from psycopg import Connection as PsycopgConnection
+            from psycopg import sql
+
+            dbapi_conn = conn.connection.dbapi_connection
+            assert isinstance(dbapi_conn, PsycopgConnection)
+            with dbapi_conn.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("DROP DATABASE IF EXISTS {}").format(
+                        sql.Identifier(db_name)
+                    )
+                )
             logger.debug(f"Dropped temporary database: {db_name}")
     except Exception as e:
         logger.warning(f"Failed to drop database {db_name}: {e}")
