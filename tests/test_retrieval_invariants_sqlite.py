@@ -46,6 +46,7 @@ class TestRetrievalInvariantsSQLite:
                 "document_id": "docX",
                 "token_count": 5,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "root",
             },
             {
@@ -57,6 +58,7 @@ class TestRetrievalInvariantsSQLite:
                 "document_id": "docX",
                 "token_count": 5,
                 "height": 0,
+                "level_index": 1,
                 "parent_id": "root",
             },
             {
@@ -68,6 +70,7 @@ class TestRetrievalInvariantsSQLite:
                 "document_id": "docX",
                 "token_count": 9,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "leafL",
                 "right_child_id": "leafR",
                 "parent_id": None,

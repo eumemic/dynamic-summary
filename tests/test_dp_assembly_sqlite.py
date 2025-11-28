@@ -50,6 +50,7 @@ class TestDPAssemblySQLite:
                 "document_id": "doc1",
                 "token_count": 3,
                 "height": 0,
+                "level_index": 0,
             },
             {
                 "node_id": "leaf2",
@@ -60,6 +61,7 @@ class TestDPAssemblySQLite:
                 "document_id": "doc1",
                 "token_count": 4,
                 "height": 0,
+                "level_index": 0,
             },
             {
                 "node_id": "leaf3",
@@ -70,6 +72,7 @@ class TestDPAssemblySQLite:
                 "document_id": "doc1",
                 "token_count": 4,
                 "height": 0,
+                "level_index": 0,
             },
             {
                 "node_id": "leaf4",
@@ -80,6 +83,7 @@ class TestDPAssemblySQLite:
                 "document_id": "doc1",
                 "token_count": 4,
                 "height": 0,
+                "level_index": 0,
             },
             # Internal
             {
@@ -89,7 +93,9 @@ class TestDPAssemblySQLite:
                 "span_start": 0,
                 "span_end": 41,
                 "document_id": "doc1",
+                "token_count": 6,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "leaf1",
                 "right_child_id": "leaf2",
             },
@@ -100,7 +106,9 @@ class TestDPAssemblySQLite:
                 "span_start": 41,
                 "span_end": 82,
                 "document_id": "doc1",
+                "token_count": 6,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "leaf3",
                 "right_child_id": "leaf4",
             },
@@ -111,7 +119,9 @@ class TestDPAssemblySQLite:
                 "span_start": 0,
                 "span_end": 82,
                 "document_id": "doc1",
+                "token_count": 4,
                 "height": 2,
+                "level_index": 0,
                 "left_child_id": "left",
                 "right_child_id": "right",
             },

@@ -60,6 +60,7 @@ class TestTreeNavigation:
                 "document_id": "doc1",
                 "token_count": 3,
                 "height": 0,
+                "level_index": 0,
             },
             {
                 "node_id": "left_right",
@@ -70,6 +71,7 @@ class TestTreeNavigation:
                 "document_id": "doc1",
                 "token_count": 3,
                 "height": 0,
+                "level_index": 0,
             },
             # Internal nodes
             {
@@ -79,7 +81,9 @@ class TestTreeNavigation:
                 "span_start": 0,
                 "span_end": 50,
                 "document_id": "doc1",
+                "token_count": 10,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "left_left",
                 "right_child_id": "left_right",
             },
@@ -90,7 +94,9 @@ class TestTreeNavigation:
                 "span_start": 50,
                 "span_end": 100,
                 "document_id": "doc1",
+                "token_count": 10,
                 "height": 1,
+                "level_index": 0,
             },
             {
                 "node_id": "root",
@@ -99,7 +105,9 @@ class TestTreeNavigation:
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "doc1",
+                "token_count": 10,
                 "height": 2,
+                "level_index": 0,
                 "left_child_id": "left",
                 "right_child_id": "right",
             },

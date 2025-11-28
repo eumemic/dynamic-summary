@@ -26,6 +26,7 @@ class NodePayload(TypedDict, total=False):
     document_id: str
     height: int
     token_count: int
+    level_index: int
     left_child_id: str | None
     right_child_id: str | None
 
@@ -80,6 +81,8 @@ class TestTreeStructureSQLite:
                 span_end=10,
                 document_id="test-doc",
                 height=0,
+                token_count=2,
+                level_index=0,
             ),
             NodePayload(
                 node_id="L2",
@@ -89,6 +92,8 @@ class TestTreeStructureSQLite:
                 span_end=20,
                 document_id="test-doc",
                 height=0,
+                token_count=2,
+                level_index=1,
             ),
             NodePayload(
                 node_id="P1",
@@ -98,6 +103,8 @@ class TestTreeStructureSQLite:
                 span_end=20,
                 document_id="test-doc",
                 height=1,
+                token_count=4,
+                level_index=0,
                 left_child_id="L1",
                 right_child_id="L2",
             ),
@@ -109,6 +116,8 @@ class TestTreeStructureSQLite:
                 span_end=20,
                 document_id="test-doc",
                 height=2,
+                token_count=4,
+                level_index=0,
                 left_child_id="P1",
                 right_child_id=None,
             ),

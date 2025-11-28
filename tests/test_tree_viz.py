@@ -46,6 +46,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 100,
                 "height": 2,
+                "level_index": 0,
                 "left_child_id": "left",
                 "right_child_id": "right",
             },
@@ -59,6 +60,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 50,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "leaf1",
                 "right_child_id": "leaf2",
                 "parent_id": "root",
@@ -73,6 +75,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 50,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "leaf3",
                 "right_child_id": "leaf4",
                 "parent_id": "root",
@@ -87,6 +90,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "left",
             },
             {
@@ -98,6 +102,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "left",
             },
             {
@@ -109,6 +114,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "right",
             },
             {
@@ -120,6 +126,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "right",
             },
         ]
@@ -191,6 +198,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 150,
                 "height": 2,
+                "level_index": 0,
                 "left_child_id": "left",
                 "right_child_id": "right",
             },
@@ -204,6 +212,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 100,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "leaf1",
                 "right_child_id": "leaf2",
                 "parent_id": "root",
@@ -218,6 +227,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 50,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "leaf3",
                 "right_child_id": None,  # No right child - document boundary
                 "parent_id": "root",
@@ -232,6 +242,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 50,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "left",
             },
             {
@@ -243,6 +254,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 50,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "left",
             },
             {
@@ -254,6 +266,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 50,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "right",
             },
         ]
@@ -346,6 +359,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 100,
                 "height": 0,
+                "level_index": 0,
             }
         ]
         doc_store.nodes.add_batch(nodes)
@@ -388,6 +402,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 100,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "leaf1",
                 "right_child_id": "leaf2",
             },
@@ -401,6 +416,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 50,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "root",
             },
             {
@@ -412,6 +428,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 50,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "root",
             },
         ]
@@ -464,6 +481,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 100,
                 "height": 3,
+                "level_index": 0,
                 "left_child_id": "l1",
                 "right_child_id": "r1",
             },
@@ -477,6 +495,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 50,
                 "height": 2,
+                "level_index": 0,
                 "left_child_id": "l2",
                 "right_child_id": "r2",
                 "parent_id": "root",
@@ -490,6 +509,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 50,
                 "height": 2,
+                "level_index": 0,
                 "left_child_id": "l3",
                 "right_child_id": "r3",
                 "parent_id": "root",
@@ -504,6 +524,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "l2_l",
                 "right_child_id": "l2_r",
                 "parent_id": "l1",
@@ -517,6 +538,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "r2_l",
                 "right_child_id": "r2_r",
                 "parent_id": "l1",
@@ -530,6 +552,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "l3_l",
                 "right_child_id": "l3_r",
                 "parent_id": "r1",
@@ -543,6 +566,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "r3_l",
                 "right_child_id": "r3_r",
                 "parent_id": "r1",
@@ -557,6 +581,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 12,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "l2",
             },
             {
@@ -568,6 +593,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 13,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "l2",
             },
             {
@@ -579,6 +605,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 12,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "r2",
             },
             {
@@ -590,6 +617,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 13,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "r2",
             },
             {
@@ -601,6 +629,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 12,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "l3",
             },
             {
@@ -612,6 +641,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 13,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "l3",
             },
             {
@@ -623,6 +653,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 12,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "r3",
             },
             {
@@ -634,6 +665,7 @@ class TestTreeVisualizationSQLite:
                 "document_id": "doc1",
                 "token_count": 13,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "r3",
             },
         ]
