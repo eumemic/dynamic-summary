@@ -227,24 +227,32 @@ class TreeBuilder:
                 (domain.preceding_neighbor_id, domain.following_neighbor_id),
             )
 
-    def _build_append_patch(
+    def _validate_append_inputs(
         self,
-        right_leaf: TreeNode,
         new_chunks: list[str],
-        document_id: str,
-    ) -> tuple[TreePatch, PatchTracking]:
-        """Construct a TreePatch for incremental append."""
+        spine_nodes: list[TreeNode],
+    ) -> None:
+        """Validate inputs for append patch construction.
 
+        Raises:
+            ValueError: If new_chunks is empty or spine is missing.
+        """
         if not new_chunks:
             raise ValueError("Append requires at least one chunk of text")
-
-        lookup: dict[str, DomainNode] = {}
-        tracking = PatchTracking(set(), set(), {})
-
-        spine_nodes = self._collect_spine(right_leaf)
         if not spine_nodes:
             raise ValueError("Rightmost leaf is missing its ancestor chain")
 
+    def _collect_spine_domains(
+        self,
+        spine_nodes: list[TreeNode],
+        lookup: dict[str, DomainNode],
+        tracking: PatchTracking,
+    ) -> dict[str, DomainNode]:
+        """Convert spine TreeNodes to DomainNodes and register for tracking.
+
+        Returns:
+            Dictionary mapping node IDs to spine DomainNodes.
+        """
         spine_domains: dict[str, DomainNode] = {}
         for node in spine_nodes:
             domain = self._node_to_domain(node)
@@ -256,14 +264,24 @@ class TreeBuilder:
                 domain.following_neighbor_id,
             )
             tracking.original_heights[domain.id] = int(domain.height)
+        return spine_domains
 
-        leaf_domain = spine_domains[right_leaf.id]
-        tracking.tail_start = int(leaf_domain.span_start)
-        original_following = leaf_domain.following_neighbor_id
-        self._ensure_context_nodes(
-            lookup, [leaf_domain.preceding_neighbor_id], tracking
-        )
+    def _create_leaf_domains(
+        self,
+        leaf_domain: DomainNode,
+        new_chunks: list[str],
+        document_id: str,
+        lookup: dict[str, DomainNode],
+        tracking: PatchTracking,
+    ) -> list[DomainNode]:
+        """Create new leaf DomainNodes from chunks after the first.
 
+        Updates leaf_domain in place with first chunk.
+        Creates new DomainNode for each subsequent chunk.
+
+        Returns:
+            List of newly created leaf DomainNodes (excludes updated original).
+        """
         new_leaf_domains: list[DomainNode] = []
         span_cursor = leaf_domain.span_start
         for idx, chunk in enumerate(new_chunks):
@@ -297,8 +315,19 @@ class TreeBuilder:
 
             span_cursor = span_end
 
-        tracking.tail_text = "".join(new_chunks)
+        return new_leaf_domains
 
+    def _link_leaf_neighbors(
+        self,
+        leaf_domain: DomainNode,
+        new_leaf_domains: list[DomainNode],
+        original_following: str | None,
+    ) -> str:
+        """Establish neighbor links between leaf nodes.
+
+        Returns:
+            ID of the last leaf in the chain.
+        """
         last_leaf_id = leaf_domain.id
         if new_leaf_domains:
             leaf_domain.following_neighbor_id = new_leaf_domains[0].id
@@ -314,32 +343,48 @@ class TreeBuilder:
             last_leaf_id = new_leaf_domains[-1].id
         else:
             leaf_domain.following_neighbor_id = original_following
+        return last_leaf_id
 
-        tracking.leaf_delta = len(new_chunks) - 1
+    def _handle_following_neighbor(
+        self,
+        original_following: str | None,
+        last_leaf_id: str,
+        tracking: PatchTracking,
+    ) -> None:
+        """Record neighbor updates for rollback when following neighbor exists."""
+        if not original_following:
+            return
 
-        if original_following:
-            following_node = self.document_store.nodes.get(original_following)
-            following_follow = (
-                getattr(following_node, "following_neighbor_id", None)
-                if following_node
-                else None
+        following_node = self.document_store.nodes.get(original_following)
+        following_follow = (
+            getattr(following_node, "following_neighbor_id", None)
+            if following_node
+            else None
+        )
+        # Record how the right-edge neighbor chain is rewritten so rollback can restore it
+        tracking.neighbor_updates.append(
+            (original_following, last_leaf_id, following_follow)
+        )
+        if following_node is not None:
+            tracking.context_node_ids.add(original_following)
+            tracking.original_neighbors.setdefault(
+                original_following,
+                (
+                    getattr(following_node, "preceding_neighbor_id", None),
+                    getattr(following_node, "following_neighbor_id", None),
+                ),
             )
-            # Record how the right-edge neighbor chain is rewritten so rollback can restore it
-            tracking.neighbor_updates.append(
-                (original_following, last_leaf_id, following_follow)
-            )
-            if following_node is not None:
-                tracking.context_node_ids.add(original_following)
-                tracking.original_neighbors.setdefault(
-                    original_following,
-                    (
-                        getattr(following_node, "preceding_neighbor_id", None),
-                        getattr(following_node, "following_neighbor_id", None),
-                    ),
-                )
 
-        embedding_ids = [leaf_domain.id] + [leaf.id for leaf in new_leaf_domains]
-
+    def _initialize_current_level(
+        self,
+        spine_nodes: list[TreeNode],
+        right_leaf: TreeNode,
+        leaf_domain: DomainNode,
+        new_leaf_domains: list[DomainNode],
+        lookup: dict[str, DomainNode],
+        tracking: PatchTracking,
+    ) -> list[DomainNode]:
+        """Initialize current level with left sibling if right child, plus leaves."""
         current_level: list[DomainNode] = []
         # Include left sibling when the path node is a right child
         if len(spine_nodes) > 1:
@@ -372,6 +417,116 @@ class TreeBuilder:
 
         current_level.append(leaf_domain)
         current_level.extend(new_leaf_domains)
+        return current_level
+
+    def _inject_left_sibling_if_needed(
+        self,
+        spine_nodes: list[TreeNode],
+        level_index: int,
+        parent_domain: DomainNode,
+        current_level: list[DomainNode],
+        lookup: dict[str, DomainNode],
+        tracking: PatchTracking,
+    ) -> None:
+        """Inject left sibling into current level during spine traversal."""
+        if level_index + 1 >= len(spine_nodes) - 1:
+            return
+
+        next_parent_tree = spine_nodes[level_index + 2]
+        if next_parent_tree.right_child_id != parent_domain.id:
+            return
+
+        left_sibling_id = next_parent_tree.left_child_id
+        if not left_sibling_id:
+            return
+
+        sibling_domain = lookup.get(left_sibling_id)
+        if sibling_domain is None:
+            sibling_node = self.document_store.nodes.get(left_sibling_id)
+            if sibling_node is not None:
+                sibling_domain = self._node_to_domain(sibling_node)
+                lookup[sibling_domain.id] = sibling_domain
+            if sibling_domain is not None:
+                tracking.context_node_ids.add(sibling_domain.id)
+                tracking.original_neighbors.setdefault(
+                    sibling_domain.id,
+                    (
+                        sibling_domain.preceding_neighbor_id,
+                        sibling_domain.following_neighbor_id,
+                    ),
+                )
+
+        if sibling_domain is not None and all(
+            sibling_domain.id != existing.id for existing in current_level
+        ):
+            # Pull the left sibling into the patch to keep adjacency consistent
+            current_level.insert(0, sibling_domain)
+            self._ensure_context_nodes(
+                lookup,
+                [sibling_domain.preceding_neighbor_id],
+                tracking,
+            )
+
+    def _build_additional_parents(
+        self,
+        current_level: list[DomainNode],
+        document_id: str,
+        lookup: dict[str, DomainNode],
+        tracking: PatchTracking,
+        summary_root_ids: list[str],
+    ) -> list[DomainNode]:
+        """Build additional parent levels if new nodes extended tree height."""
+        while len(current_level) > 1:
+            current_level, summary_ids = self._build_parent_level(
+                current_level,
+                None,
+                document_id,
+                lookup,
+                tracking,
+            )
+            summary_root_ids.extend(summary_ids)
+        return current_level
+
+    def _build_append_patch(
+        self,
+        right_leaf: TreeNode,
+        new_chunks: list[str],
+        document_id: str,
+    ) -> tuple[TreePatch, PatchTracking]:
+        """Construct a TreePatch for incremental append."""
+
+        lookup: dict[str, DomainNode] = {}
+        tracking = PatchTracking(set(), set(), {})
+
+        spine_nodes = self._collect_spine(right_leaf)
+        self._validate_append_inputs(new_chunks, spine_nodes)
+
+        spine_domains = self._collect_spine_domains(spine_nodes, lookup, tracking)
+
+        leaf_domain = spine_domains[right_leaf.id]
+        tracking.tail_start = int(leaf_domain.span_start)
+        original_following = leaf_domain.following_neighbor_id
+        self._ensure_context_nodes(
+            lookup, [leaf_domain.preceding_neighbor_id], tracking
+        )
+
+        new_leaf_domains = self._create_leaf_domains(
+            leaf_domain, new_chunks, document_id, lookup, tracking
+        )
+        tracking.tail_text = "".join(new_chunks)
+
+        last_leaf_id = self._link_leaf_neighbors(
+            leaf_domain, new_leaf_domains, original_following
+        )
+        tracking.leaf_delta = len(new_chunks) - 1
+
+        self._handle_following_neighbor(original_following, last_leaf_id, tracking)
+
+        embedding_ids = [leaf_domain.id] + [leaf.id for leaf in new_leaf_domains]
+
+        current_level = self._initialize_current_level(
+            spine_nodes, right_leaf, leaf_domain, new_leaf_domains, lookup, tracking
+        )
 
         summary_root_ids: list[str] = []
 
@@ -390,50 +545,13 @@ class TreeBuilder:
             summary_root_ids.extend(summary_ids)
             current_level = next_level
 
-            if level_index + 1 < len(spine_nodes) - 1:
-                next_parent_tree = spine_nodes[level_index + 2]
-                if next_parent_tree.right_child_id == parent_domain.id:
-                    left_sibling_id = next_parent_tree.left_child_id
-                    if left_sibling_id:
-                        sibling_domain = lookup.get(left_sibling_id)
-                        if sibling_domain is None:
-                            sibling_node = self.document_store.nodes.get(
-                                left_sibling_id
-                            )
-                            if sibling_node is not None:
-                                sibling_domain = self._node_to_domain(sibling_node)
-                                lookup[sibling_domain.id] = sibling_domain
-                            if sibling_domain is not None:
-                                tracking.context_node_ids.add(sibling_domain.id)
-                                tracking.original_neighbors.setdefault(
-                                    sibling_domain.id,
-                                    (
-                                        sibling_domain.preceding_neighbor_id,
-                                        sibling_domain.following_neighbor_id,
-                                    ),
-                                )
-                        if sibling_domain is not None and all(
-                            sibling_domain.id != existing.id
-                            for existing in current_level
-                        ):
-                            # Pull the left sibling into the patch to keep adjacency consistent
-                            current_level.insert(0, sibling_domain)
-                            self._ensure_context_nodes(
-                                lookup,
-                                [sibling_domain.preceding_neighbor_id],
-                                tracking,
-                            )
-
-        # Build any additional parents if new nodes extended the tree height
-        while len(current_level) > 1:
-            current_level, summary_ids = self._build_parent_level(
-                current_level,
-                None,
-                document_id,
-                lookup,
-                tracking,
+            self._inject_left_sibling_if_needed(
+                spine_nodes, level_index, parent_domain, current_level, lookup, tracking
             )
-            summary_root_ids.extend(summary_ids)
+
+        current_level = self._build_additional_parents(
+            current_level, document_id, lookup, tracking, summary_root_ids
+        )
 
         if current_level:
             current_level[0].parent_id = None
@@ -857,14 +975,16 @@ class TreeBuilder:
         stats = await self.append_text_async(text, show_progress=show_progress)
         return stats.document_id
 
-    async def append_text_async(
-        self,
-        new_text: str,
-        show_progress: bool = True,
-        reporter: TelemetryCollector | None = None,
-    ) -> AppendStats:
-        """Append new text to an existing document incrementally."""
+    def _validate_append_preconditions(self, new_text: str) -> str:
+        """Validate preconditions for append operation.
 
+        Returns:
+            Validated document_id.
+
+        Raises:
+            ValueError: If text is empty or document_id is not set.
+            NotImplementedError: If storage backend lacks required methods.
+        """
         if not new_text:
             raise ValueError("append_text_async requires non-empty text")
 
@@ -878,14 +998,73 @@ class TreeBuilder:
                 "Storage backend must implement upsert_nodes_batch() to enable incremental appends"
             )
 
-        right_leaf = nodes_repo.get_rightmost_leaf_for_document(document_id)
-        if right_leaf is None:
-            return await self._append_into_empty_document(
-                new_text,
-                show_progress=show_progress,
-                reporter=reporter,
-            )
+        return document_id
 
+    def _prepare_vector_upserts(
+        self,
+        mutated_node_objs: list[DomainNode],
+    ) -> tuple[list[VectorPayload], list[str]]:
+        """Prepare vector payloads from mutated nodes.
+
+        Returns:
+            Tuple of (vector_upserts, vector_node_ids).
+        """
+        vector_upserts: list[VectorPayload] = []
+        vector_node_ids: list[str] = []
+        for node in mutated_node_objs:
+            if node.embedding is None:
+                continue
+            meta: dict[str, object] = {
+                "span_start": int(node.span_start),
+                "span_end": int(node.span_end),
+                "parent_id": node.parent_id or "",
+                "document_id": node.document_id,
+                "is_leaf": 1 if int(node.height) == 0 else 0,
+                "height": int(node.height),
+                "level_index": int(node.level_index),
+                "coord_version": 1,
+            }
+            vector_node_ids.append(node.id)
+            vector_upserts.append((node.id, [float(x) for x in node.embedding], meta))
+        return vector_upserts, vector_node_ids
+
+    def _build_neighbor_updates(
+        self,
+        mutated_node_objs: list[DomainNode],
+        tracking: PatchTracking,
+    ) -> list[tuple[str, str | None, str | None]]:
+        """Build list of neighbor relationship updates.
+
+        Returns:
+            List of (node_id, preceding_id, following_id) tuples.
+        """
+        neighbor_map: dict[str, tuple[str | None, str | None]] = {}
+        for node_id, preceding, following in tracking.neighbor_updates:
+            neighbor_map[node_id] = (preceding, following)
+
+        for node in mutated_node_objs:
+            original = tracking.original_neighbors.get(node.id)
+            new_pair = (node.preceding_neighbor_id, node.following_neighbor_id)
+            if original != new_pair:
+                neighbor_map[node.id] = new_pair
+
+        return [
+            (node_id, values[0], values[1]) for node_id, values in neighbor_map.items()
+        ]
+
+    def _prepare_append_chunks(
+        self,
+        right_leaf: TreeNode,
+        new_text: str,
+    ) -> list[str]:
+        """Combine right leaf text with new text and split into chunks.
+
+        Returns:
+            List of validated chunks.
+
+        Raises:
+            ValueError: If combined text is empty or chunking produces no output.
+        """
         combined_text = right_leaf.text + new_text
         if not combined_text:
             raise ValueError("Append produced no content to index")
@@ -908,113 +1087,83 @@ class TreeBuilder:
             "append chunk size validation",
         )
 
-        patch, tracking = self._build_append_patch(right_leaf, new_chunks, document_id)
+        return new_chunks
 
-        progress, async_progress = self._setup_progress_tracking(
-            max(1, len(patch.embedding_node_ids)), show_progress
-        )
+    def _track_mutable_nodes_for_telemetry(
+        self,
+        patch: TreePatch,
+        tracking: PatchTracking,
+        reporter: TelemetryCollector | None,
+    ) -> None:
+        """Record telemetry for mutable nodes in the patch."""
+        if not reporter:
+            return
 
-        if reporter:
-            for mutable_id in tracking.mutable_node_ids:
-                node = patch.lookup.get(mutable_id)
-                if node is None:
-                    continue
-                reporter.track_node_created(
-                    node_id=node.id,
-                    height=int(node.height),
-                    span=(int(node.span_start), int(node.span_end)),
-                )
-                if int(node.height) == 0:
-                    reporter.record_chunk_created(
-                        node.id,
-                        self.tokenizer.count_tokens(node.text),
-                    )
-
-        try:
-            await run_tree_patch(
-                patch=patch,
-                llm_service=self.llm_service,
-                target_tokens=self.config.target_chunk_tokens,
-                max_summary_concurrency=30,
-                max_embedding_concurrency=10,
-                embedding_batch_size=self.config.embedding_batch_size,
-                processing_strategy=ProcessingStrategy(self.config.processing_strategy),
-                reporter=reporter,
-                progress=async_progress,
-            )
-        finally:
-            if progress:
-                progress.close()
-
-        mutated_node_objs = [
-            patch.lookup[node_id] for node_id in tracking.mutable_node_ids
-        ]
-
-        vector_upserts: list[VectorPayload] = []
-        vector_node_ids: list[str] = []
-        for node in mutated_node_objs:
-            if node.embedding is None:
+        for mutable_id in tracking.mutable_node_ids:
+            node = patch.lookup.get(mutable_id)
+            if node is None:
                 continue
-            meta = {
-                "span_start": int(node.span_start),
-                "span_end": int(node.span_end),
-                "parent_id": node.parent_id or "",
-                "document_id": node.document_id,
-                "is_leaf": 1 if int(node.height) == 0 else 0,
-                "height": int(node.height),
-                "level_index": int(node.level_index),
-                "coord_version": 1,
-            }
-            vector_node_ids.append(node.id)
-            vector_upserts.append((node.id, [float(x) for x in node.embedding], meta))
+            reporter.track_node_created(
+                node_id=node.id,
+                height=int(node.height),
+                span=(int(node.span_start), int(node.span_end)),
+            )
+            if int(node.height) == 0:
+                reporter.record_chunk_created(
+                    node.id,
+                    self.tokenizer.count_tokens(node.text),
+                )
 
+    def _capture_rollback_vectors(
+        self,
+        vector_node_ids: list[str],
+        document_id: str,
+    ) -> tuple[list[VectorPayload], set[str]]:
+        """Capture existing vectors for rollback before writing new ones.
+
+        Returns:
+            Tuple of (rollback_vectors to restore, rollback_delete_ids to delete).
+        """
         rollback_vectors: list[VectorPayload] = []
         rollback_delete_ids: set[str] = set()
 
-        if vector_node_ids:
-            for node_id in vector_node_ids:
-                try:
-                    existing_vector = self.vector_index.get_vectors([node_id])[0]
-                except (KeyError, IndexError):
-                    rollback_delete_ids.add(node_id)
-                except Exception as exc:  # pragma: no cover - defensive logging
-                    rollback_delete_ids.add(node_id)
-                    logger.warning(
-                        "Failed to load existing vector before append: doc=%s node=%s error=%s",
-                        document_id,
-                        node_id,
-                        exc,
+        for node_id in vector_node_ids:
+            try:
+                existing_vector = self.vector_index.get_vectors([node_id])[0]
+            except (KeyError, IndexError):
+                rollback_delete_ids.add(node_id)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                rollback_delete_ids.add(node_id)
+                logger.warning(
+                    "Failed to load existing vector before append: doc=%s node=%s error=%s",
+                    document_id,
+                    node_id,
+                    exc,
+                )
+            else:
+                rollback_vectors.append(
+                    (
+                        existing_vector.id,
+                        [float(x) for x in existing_vector.vec.tolist()],
+                        dict(existing_vector.meta),
                     )
-                else:
-                    rollback_vectors.append(
-                        (
-                            existing_vector.id,
-                            [float(x) for x in existing_vector.vec.tolist()],
-                            dict(existing_vector.meta),
-                        )
-                    )
+                )
 
-        vectors_written = len(vector_upserts)
-        if vector_upserts:
-            self.vector_index.upsert(vector_upserts)
+        return rollback_vectors, rollback_delete_ids
 
+    def _persist_with_rollback(
+        self,
+        mutated_node_objs: list[DomainNode],
+        neighbor_updates: list[tuple[str, str | None, str | None]],
+        vectors_written: int,
+        rollback_vectors: list[VectorPayload],
+        rollback_delete_ids: set[str],
+        document_id: str,
+    ) -> None:
+        """Persist nodes with transaction rollback for vectors on failure."""
         from itertools import groupby
 
         mutated_sorted = sorted(mutated_node_objs, key=lambda n: n.height, reverse=True)
-
-        neighbor_map: dict[str, tuple[str | None, str | None]] = {}
-        for node_id, preceding, following in tracking.neighbor_updates:
-            neighbor_map[node_id] = (preceding, following)
-
-        for node in mutated_node_objs:
-            original = tracking.original_neighbors.get(node.id)
-            new_pair = (node.preceding_neighbor_id, node.following_neighbor_id)
-            if original != new_pair:
-                neighbor_map[node.id] = new_pair
-
-        neighbor_updates = [
-            (node_id, values[0], values[1]) for node_id, values in neighbor_map.items()
-        ]
 
         try:
             with self.document_store.transaction() as session:
@@ -1052,6 +1201,14 @@ class TreeBuilder:
                         )
             raise
 
+    def _finalize_append(
+        self,
+        tracking: PatchTracking,
+        patch: TreePatch,
+        neighbor_updates: list[tuple[str, str | None, str | None]],
+        document_id: str,
+    ) -> list[TreeNode]:
+        """Clear caches, validate results, and log stats. Returns leaves_after."""
         if neighbor_updates:
             affected_for_depth = set(tracking.mutable_node_ids)
             affected_for_depth.update(node_id for node_id, _, _ in neighbor_updates)
@@ -1071,6 +1228,8 @@ class TreeBuilder:
             len(tracking.summary_node_ids),
         )
 
+        from ragzoom.validate import validate
+
         validate(
             lambda: self._validate_append_results(
                 tracking,
@@ -1081,6 +1240,16 @@ class TreeBuilder:
             "incremental append",
         )
 
+        return leaves_after
+
+    async def _collect_telemetry_and_build_stats(
+        self,
+        tracking: PatchTracking,
+        leaves_after: list[TreeNode],
+        document_id: str,
+        reporter: TelemetryCollector | None,
+    ) -> AppendStats:
+        """Finalize telemetry and build return stats."""
         telemetry_payload: TelemetryDataDict | None = None
         if reporter:
             reporter.record_append_metadata(
@@ -1113,6 +1282,87 @@ class TreeBuilder:
             new_leaves=max(tracking.leaf_delta, 0),
             total_leaves=len(leaves_after),
             telemetry=telemetry_payload,
+        )
+
+    async def append_text_async(
+        self,
+        new_text: str,
+        show_progress: bool = True,
+        reporter: TelemetryCollector | None = None,
+    ) -> AppendStats:
+        """Append new text to an existing document incrementally."""
+
+        document_id = self._validate_append_preconditions(new_text)
+
+        right_leaf = self.document_store.nodes.get_rightmost_leaf_for_document(
+            document_id
+        )
+        if right_leaf is None:
+            return await self._append_into_empty_document(
+                new_text,
+                show_progress=show_progress,
+                reporter=reporter,
+            )
+
+        new_chunks = self._prepare_append_chunks(right_leaf, new_text)
+
+        patch, tracking = self._build_append_patch(right_leaf, new_chunks, document_id)
+
+        progress, async_progress = self._setup_progress_tracking(
+            max(1, len(patch.embedding_node_ids)), show_progress
+        )
+
+        self._track_mutable_nodes_for_telemetry(patch, tracking, reporter)
+
+        try:
+            await run_tree_patch(
+                patch=patch,
+                llm_service=self.llm_service,
+                target_tokens=self.config.target_chunk_tokens,
+                max_summary_concurrency=30,
+                max_embedding_concurrency=10,
+                embedding_batch_size=self.config.embedding_batch_size,
+                processing_strategy=ProcessingStrategy(self.config.processing_strategy),
+                reporter=reporter,
+                progress=async_progress,
+            )
+        finally:
+            if progress:
+                progress.close()
+
+        mutated_node_objs = [
+            patch.lookup[node_id] for node_id in tracking.mutable_node_ids
+        ]
+
+        vector_upserts, vector_node_ids = self._prepare_vector_upserts(
+            mutated_node_objs
+        )
+
+        rollback_vectors, rollback_delete_ids = self._capture_rollback_vectors(
+            vector_node_ids, document_id
+        )
+
+        vectors_written = len(vector_upserts)
+        if vector_upserts:
+            self.vector_index.upsert(vector_upserts)
+
+        neighbor_updates = self._build_neighbor_updates(mutated_node_objs, tracking)
+
+        self._persist_with_rollback(
+            mutated_node_objs,
+            neighbor_updates,
+            vectors_written,
+            rollback_vectors,
+            rollback_delete_ids,
+            document_id,
+        )
+
+        leaves_after = self._finalize_append(
+            tracking, patch, neighbor_updates, document_id
+        )
+
+        return await self._collect_telemetry_and_build_stats(
+            tracking, leaves_after, document_id, reporter
         )
 
     def append_text(
