@@ -62,6 +62,7 @@ class TestDPAssemblySQLiteExtended:
                 "document_id": "doc1",
                 "token_count": 3,
                 "height": 0,
+                "level_index": 0,
             },
             {
                 "node_id": "leaf2",
@@ -72,6 +73,7 @@ class TestDPAssemblySQLiteExtended:
                 "document_id": "doc1",
                 "token_count": 4,
                 "height": 0,
+                "level_index": 0,
             },
             {
                 "node_id": "leaf3",
@@ -82,6 +84,7 @@ class TestDPAssemblySQLiteExtended:
                 "document_id": "doc1",
                 "token_count": 4,
                 "height": 0,
+                "level_index": 0,
             },
             {
                 "node_id": "leaf4",
@@ -92,6 +95,7 @@ class TestDPAssemblySQLiteExtended:
                 "document_id": "doc1",
                 "token_count": 4,
                 "height": 0,
+                "level_index": 0,
             },
             # Internal nodes
             {
@@ -101,7 +105,9 @@ class TestDPAssemblySQLiteExtended:
                 "span_start": 0,
                 "span_end": 41,
                 "document_id": "doc1",
+                "token_count": 7,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "leaf1",
                 "right_child_id": "leaf2",
             },
@@ -112,7 +118,9 @@ class TestDPAssemblySQLiteExtended:
                 "span_start": 41,
                 "span_end": 82,
                 "document_id": "doc1",
+                "token_count": 7,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "leaf3",
                 "right_child_id": "leaf4",
             },
@@ -123,7 +131,9 @@ class TestDPAssemblySQLiteExtended:
                 "span_start": 0,
                 "span_end": 82,
                 "document_id": "doc1",
+                "token_count": 5,
                 "height": 2,
+                "level_index": 0,
                 "left_child_id": "left",
                 "right_child_id": "right",
             },
@@ -207,6 +217,7 @@ class TestDPAssemblySQLiteExtended:
                 "document_id": "doc1",
                 "token_count": 0,
                 "height": 0,
+                "level_index": 0,
             }
         ]
         doc_store.nodes.add_batch(empty_nodes)

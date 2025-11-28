@@ -195,15 +195,15 @@ class PostgresNodeRepository(BaseRepository):
                     span_end=cast(int, data["span_end"]),
                     text=cast(str, data["text"]),
                     document_id=cast(str | None, data.get("document_id")),
-                    token_count=cast(int, data.get("token_count", 0)),
+                    token_count=cast(int, data["token_count"]),
                     preceding_neighbor_id=cast(
                         str | None, data.get("preceding_neighbor_id")
                     ),
                     following_neighbor_id=cast(
                         str | None, data.get("following_neighbor_id")
                     ),
-                    height=cast(int, data.get("height", 0)),
-                    level_index=cast(int, data.get("level_index", 0)),
+                    height=cast(int, data["height"]),
+                    level_index=cast(int, data["level_index"]),
                 )
                 nodes_pg.append(node)
                 out.append(node)
@@ -296,22 +296,22 @@ class PostgresNodeRepository(BaseRepository):
                 node_ids.append(node_id)
                 params = {
                     "id": node_id,
-                    "text": str(raw.get("text", "")),
-                    "span_start": int(cast(int | float, raw.get("span_start", 0))),
-                    "span_end": int(cast(int | float, raw.get("span_end", 0))),
+                    "text": str(raw["text"]),
+                    "span_start": int(cast(int | float, raw["span_start"])),
+                    "span_end": int(cast(int | float, raw["span_end"])),
                     "parent_id": cast(str | None, raw.get("parent_id")),
                     "left_child_id": cast(str | None, raw.get("left_child_id")),
                     "right_child_id": cast(str | None, raw.get("right_child_id")),
                     "document_id": cast(str | None, raw.get("document_id")),
-                    "token_count": int(cast(int | float, raw.get("token_count", 0))),
-                    "height": int(cast(int | float, raw.get("height", 0))),
+                    "token_count": int(cast(int | float, raw["token_count"])),
+                    "height": int(cast(int | float, raw["height"])),
                     "preceding_neighbor_id": cast(
                         str | None, raw.get("preceding_neighbor_id")
                     ),
                     "following_neighbor_id": cast(
                         str | None, raw.get("following_neighbor_id")
                     ),
-                    "level_index": int(cast(int | float, raw.get("level_index", 0))),
+                    "level_index": int(cast(int | float, raw["level_index"])),
                 }
                 db_session.execute(insert_sql, params)
                 self.cache_manager.invalidate(node_id)

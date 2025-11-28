@@ -47,6 +47,8 @@ class TestIssue150Demonstration:
                 "span_end": 11,
                 "document_id": doc_id,
                 "token_count": 2,
+                "height": 0,
+                "level_index": 0,
             }
         ]
         doc_store.nodes.add_batch(old_nodes_data)
@@ -76,6 +78,8 @@ class TestIssue150Demonstration:
                 "span_end": 11,
                 "document_id": doc_id,
                 "token_count": 2,
+                "height": 0,
+                "level_index": 0,
             }
         ]
 
@@ -138,6 +142,8 @@ class TestIssue150Demonstration:
                 "span_end": 12,
                 "document_id": "backward-compat-doc",
                 "token_count": 3,
+                "height": 0,
+                "level_index": 0,
             }
         ]
         nodes = doc_store.nodes.add_batch(nodes_data)  # No session parameter

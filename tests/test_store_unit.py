@@ -53,6 +53,9 @@ class TestStoreUnit:
                 "embedding": embedding,
                 "span_start": 0,
                 "span_end": 10,
+                "height": 0,
+                "token_count": 2,
+                "level_index": 0,
             }
         ]
 
@@ -88,6 +91,8 @@ class TestStoreUnit:
                 "span_start": 0,
                 "span_end": 10,
                 "height": 0,
+                "token_count": 3,
+                "level_index": 0,
             },
             {
                 "node_id": "batch-2",
@@ -96,6 +101,8 @@ class TestStoreUnit:
                 "span_start": 10,
                 "span_end": 20,
                 "height": 0,
+                "token_count": 3,
+                "level_index": 1,
             },
             {
                 "node_id": "batch-root",
@@ -106,6 +113,8 @@ class TestStoreUnit:
                 "height": 1,
                 "left_child_id": "batch-1",
                 "right_child_id": "batch-2",
+                "token_count": 3,
+                "level_index": 0,
             },
         ]
 
@@ -144,6 +153,7 @@ class TestStoreUnit:
                 "level_index": 0,
                 "document_id": doc_store.document_id,
                 "coord_version": 1,
+                "token_count": 2,
             },
             {
                 "node_id": "leaf-2",
@@ -155,6 +165,7 @@ class TestStoreUnit:
                 "level_index": 1,
                 "document_id": doc_store.document_id,
                 "coord_version": 1,
+                "token_count": 2,
             },
             {
                 "node_id": "root",
@@ -168,6 +179,7 @@ class TestStoreUnit:
                 "level_index": 0,
                 "document_id": doc_store.document_id,
                 "coord_version": 1,
+                "token_count": 2,
             },
         ]
 
@@ -230,6 +242,9 @@ class TestStoreUnit:
                 "embedding": np.array([0.1] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 10,
+                "height": 0,
+                "token_count": 3,
+                "level_index": 0,
             }
         ]
         doc_store.nodes.add_batch(nodes_data)
@@ -266,6 +281,9 @@ class TestStoreUnit:
                     "embedding": np.array([0.1] * 1536, dtype=np.float64),
                     "span_start": 0,
                     "span_end": 10,
+                    "height": 0,
+                    "token_count": 4,
+                    "level_index": 0,
                 }
             ]
         )
@@ -278,6 +296,9 @@ class TestStoreUnit:
                     "embedding": np.array([0.2] * 1536, dtype=np.float64),
                     "span_start": 0,
                     "span_end": 10,
+                    "height": 0,
+                    "token_count": 4,
+                    "level_index": 0,
                 }
             ]
         )
@@ -311,6 +332,9 @@ class TestStoreUnit:
                 "embedding": np.array([0.8, 0.2] + [0.1] * 1534, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 20,
+                "height": 0,
+                "token_count": 3,
+                "level_index": 0,
             },
             {
                 "node_id": "search-2",
@@ -318,6 +342,9 @@ class TestStoreUnit:
                 "embedding": np.array([0.7, 0.3] + [0.1] * 1534, dtype=np.float64),
                 "span_start": 20,
                 "span_end": 40,
+                "height": 0,
+                "token_count": 3,
+                "level_index": 1,
             },
             {
                 "node_id": "search-3",
@@ -325,6 +352,9 @@ class TestStoreUnit:
                 "embedding": np.array([0.1, 0.9] + [0.1] * 1534, dtype=np.float64),
                 "span_start": 40,
                 "span_end": 60,
+                "height": 0,
+                "token_count": 3,
+                "level_index": 2,
             },
         ]
 
@@ -386,6 +416,7 @@ class TestStoreUnit:
                 "parent_id": None,
                 "left_child_id": None,
                 "right_child_id": None,
+                "level_index": 0,
             }
         ]
 
@@ -482,6 +513,7 @@ class TestStoreUnit:
                 "right_child_id": None,
                 "token_count": 25,
                 "height": 0,
+                "level_index": 0,
             }
         ]
 
@@ -518,6 +550,8 @@ class TestStoreUnit:
                 "span_start": 0,
                 "span_end": 10,
                 "height": 0,
+                "token_count": 3,
+                "level_index": 0,
             },
             {
                 "node_id": "path-01",
@@ -526,6 +560,8 @@ class TestStoreUnit:
                 "span_start": 10,
                 "span_end": 20,
                 "height": 0,
+                "token_count": 3,
+                "level_index": 1,
             },
             {
                 "node_id": "path-0",
@@ -536,6 +572,8 @@ class TestStoreUnit:
                 "height": 1,
                 "left_child_id": "path-00",
                 "right_child_id": "path-01",
+                "token_count": 3,
+                "level_index": 0,
             },
         ]
 
@@ -561,6 +599,9 @@ class TestStoreUnit:
                 "embedding": np.array([0.1] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 10,
+                "height": 0,
+                "token_count": 4,
+                "level_index": 0,
             }
         ]
         doc_store.nodes.add_batch(nodes_data)
@@ -585,6 +626,9 @@ class TestStoreUnit:
                 "embedding": np.array([0.1 * i] * 1536, dtype=np.float64),
                 "span_start": i * 10,
                 "span_end": (i + 1) * 10,
+                "height": 0,
+                "token_count": 3,
+                "level_index": i,
             }
             for i in range(5)
         ]
@@ -618,6 +662,8 @@ class TestStoreUnit:
                 "span_start": 0,
                 "span_end": 10,
                 "height": 0,
+                "token_count": 2,
+                "level_index": 0,
             },
             {
                 "node_id": "leaf-b",
@@ -626,6 +672,8 @@ class TestStoreUnit:
                 "span_start": 10,
                 "span_end": 20,
                 "height": 0,
+                "token_count": 2,
+                "level_index": 1,
             },
             {
                 "node_id": "internal",
@@ -636,6 +684,8 @@ class TestStoreUnit:
                 "height": 1,
                 "left_child_id": "leaf-a",
                 "right_child_id": "leaf-b",
+                "token_count": 2,
+                "level_index": 0,
             },
         ]
 

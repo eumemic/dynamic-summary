@@ -58,6 +58,7 @@ class TestDPScoresBugSQLite:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "node_a",
             },
             {
@@ -69,6 +70,7 @@ class TestDPScoresBugSQLite:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "node_a",
             },
             {
@@ -80,6 +82,7 @@ class TestDPScoresBugSQLite:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "node_b",
             },
             {
@@ -91,6 +94,7 @@ class TestDPScoresBugSQLite:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "node_b",
             },
             # Internal nodes
@@ -103,6 +107,7 @@ class TestDPScoresBugSQLite:
                 "document_id": "doc1",
                 "token_count": 50,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "a1",
                 "right_child_id": "a2",
                 "parent_id": "root",
@@ -116,6 +121,7 @@ class TestDPScoresBugSQLite:
                 "document_id": "doc1",
                 "token_count": 50,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "b1",
                 "right_child_id": "b2",
                 "parent_id": "root",
@@ -130,6 +136,7 @@ class TestDPScoresBugSQLite:
                 "document_id": "doc1",
                 "token_count": 100,
                 "height": 2,
+                "level_index": 0,
                 "left_child_id": "node_a",
                 "right_child_id": "node_b",
             },
@@ -216,6 +223,7 @@ class TestDPScoresBugSQLite:
                 "document_id": "doc1",
                 "token_count": 50,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "root",
             },
             {
@@ -227,6 +235,7 @@ class TestDPScoresBugSQLite:
                 "document_id": "doc1",
                 "token_count": 50,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "root",
             },
             {
@@ -238,6 +247,7 @@ class TestDPScoresBugSQLite:
                 "document_id": "doc1",
                 "token_count": 100,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "leaf1",
                 "right_child_id": "leaf2",
             },

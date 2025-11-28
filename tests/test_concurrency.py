@@ -59,6 +59,7 @@ class TestConcurrency:
                     "document_id": "concurrent-doc",
                     "token_count": 25,
                     "height": 0,
+                    "level_index": 0,
                 }
             ]
             doc_store.nodes.add_batch(nodes)
@@ -129,6 +130,7 @@ class TestConcurrency:
                     "document_id": doc_id,
                     "token_count": 25,
                     "height": 0,
+                    "level_index": 0,
                 }
             ]
             doc_store.nodes.add_batch(nodes)
@@ -173,6 +175,7 @@ class TestConcurrency:
                 "document_id": "state-test-1",
                 "token_count": 25,
                 "height": 0,
+                "level_index": 0,
             }
         ]
         store1.nodes.add_batch(nodes1)
@@ -191,6 +194,7 @@ class TestConcurrency:
                 "document_id": "state-test-2",
                 "token_count": 30,
                 "height": 0,
+                "level_index": 0,
             }
         ]
         store2.nodes.add_batch(nodes2)
@@ -237,6 +241,7 @@ class TestConcurrency:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 0,
+                "level_index": 0,
             }
         ]
         doc1_store.nodes.add_batch(nodes_doc1)
@@ -256,6 +261,7 @@ class TestConcurrency:
                 "document_id": "doc2",
                 "token_count": 25,
                 "height": 0,
+                "level_index": 0,
             }
         ]
         doc2_store.nodes.add_batch(nodes_doc2)
@@ -309,6 +315,7 @@ class TestConcurrency:
                         "document_id": "batch-doc",
                         "token_count": 25,
                         "height": 0,
+                        "level_index": 0,
                     }
                 )
             batches.append(batch_nodes)
@@ -356,6 +363,7 @@ class TestConcurrency:
                 "document_id": "search-doc",
                 "token_count": 25,
                 "height": 0,
+                "level_index": 0,
             },
             {
                 "node_id": "search2",
@@ -366,6 +374,7 @@ class TestConcurrency:
                 "document_id": "search-doc",
                 "token_count": 25,
                 "height": 0,
+                "level_index": 0,
             },
         ]
 

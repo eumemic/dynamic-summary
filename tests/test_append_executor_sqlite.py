@@ -136,6 +136,7 @@ async def test_append_replaces_rightmost_path_and_updates_neighbors(
                 "document_id": "doc-2",
                 "token_count": 3,
                 "height": 0,
+                "level_index": 0,
                 "following_neighbor_id": "tail",
             },
             {
@@ -149,6 +150,7 @@ async def test_append_replaces_rightmost_path_and_updates_neighbors(
                 "document_id": "doc-2",
                 "token_count": 3,
                 "height": 0,
+                "level_index": 1,
                 "preceding_neighbor_id": "left",
             },
             {
@@ -162,6 +164,7 @@ async def test_append_replaces_rightmost_path_and_updates_neighbors(
                 "document_id": "doc-2",
                 "token_count": 6,
                 "height": 1,
+                "level_index": 0,
             },
         ]
     )

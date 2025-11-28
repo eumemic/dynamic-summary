@@ -55,7 +55,9 @@ def test_sqlite_upsert_preserves_height_on_conflict() -> None:
             "span_start": 0,
             "span_end": 1,
             "document_id": "doc-1",
+            "token_count": 1,
             "height": 0,
+            "level_index": 0,
         }
 
         repo.add_nodes_batch([node_payload])
@@ -87,6 +89,7 @@ def test_postgres_upsert_omits_height_update_clause() -> None:
         "document_id": "doc-2",
         "token_count": 0,
         "height": 2,
+        "level_index": 0,
     }
 
     repo.upsert_nodes_batch([payload], session=cast(Session, dummy_session))

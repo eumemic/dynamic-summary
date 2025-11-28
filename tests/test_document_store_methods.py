@@ -69,6 +69,7 @@ class TestDocumentStoreMethods:
                 "document_id": "doc1",
                 "token_count": 100,
                 "height": 0,
+                "level_index": 0,
             },
             {
                 "node_id": "leaf_1",
@@ -79,6 +80,7 @@ class TestDocumentStoreMethods:
                 "document_id": "doc1",
                 "token_count": 150,
                 "height": 0,
+                "level_index": 1,
             },
             {
                 "node_id": "leaf_2",
@@ -89,6 +91,7 @@ class TestDocumentStoreMethods:
                 "document_id": "doc1",
                 "token_count": 200,
                 "height": 0,
+                "level_index": 2,
             },
             # Parent node (not a leaf)
             {
@@ -100,6 +103,7 @@ class TestDocumentStoreMethods:
                 "document_id": "doc1",
                 "token_count": 300,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "leaf_0",
                 "right_child_id": "leaf_1",
             },
@@ -152,6 +156,7 @@ class TestDocumentStoreMethods:
                 "document_id": "doc1",
                 "token_count": 100,
                 "height": 0,
+                "level_index": 0,
             }
         ]
         doc1_store.nodes.add_batch(doc1_nodes)
@@ -172,6 +177,7 @@ class TestDocumentStoreMethods:
                 "document_id": "doc2",
                 "token_count": 100,
                 "height": 0,
+                "level_index": 0,
             }
         ]
         doc2_store.nodes.add_batch(doc2_nodes)
@@ -206,6 +212,7 @@ class TestDocumentStoreMethods:
                 "document_id": "doc1",
                 "token_count": 100,
                 "height": 0,
+                "level_index": 0,
             },
             {
                 "node_id": "doc2_node",
@@ -216,6 +223,7 @@ class TestDocumentStoreMethods:
                 "document_id": "doc2",
                 "token_count": 100,
                 "height": 0,
+                "level_index": 0,
             },
         ]
         cross_store.nodes.add_batch(nodes)

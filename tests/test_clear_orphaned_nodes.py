@@ -82,6 +82,8 @@ class TestAutomaticClearing:
                     "span_end": span_end,
                     "document_id": document_id,
                     "token_count": 50,
+                    "height": 0,
+                    "level_index": i,
                 }
             )
 
@@ -158,6 +160,8 @@ class TestAutomaticClearing:
                                 "span_end": 100,
                                 "document_id": document_id,
                                 "token_count": 50,
+                                "height": 0,
+                                "level_index": 0,
                             }
                         ]
                     )
@@ -240,6 +244,8 @@ class TestAutomaticClearing:
                                 "span_end": 100,
                                 "document_id": document_id,
                                 "token_count": 50,
+                                "height": 0,
+                                "level_index": 0,
                             }
                         ]
                     )

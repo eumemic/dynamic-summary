@@ -28,6 +28,7 @@ class ForestNode:
     right_child_id: str | None
     token_count: int
     height: int
+    level_index: int
 
 
 def _seed_forest(document_store: DocumentStore) -> list[str]:
@@ -43,6 +44,7 @@ def _seed_forest(document_store: DocumentStore) -> list[str]:
             right_child_id=None,
             token_count=5,
             height=0,
+            level_index=0,
         ),
         ForestNode(
             node_id="leaf-right",
@@ -54,6 +56,7 @@ def _seed_forest(document_store: DocumentStore) -> list[str]:
             right_child_id=None,
             token_count=5,
             height=0,
+            level_index=1,
         ),
         ForestNode(
             node_id="root-left",
@@ -65,6 +68,7 @@ def _seed_forest(document_store: DocumentStore) -> list[str]:
             right_child_id="leaf-right",
             token_count=10,
             height=1,
+            level_index=0,
         ),
         ForestNode(
             node_id="leaf-mid",
@@ -76,6 +80,7 @@ def _seed_forest(document_store: DocumentStore) -> list[str]:
             right_child_id=None,
             token_count=5,
             height=0,
+            level_index=2,
         ),
         ForestNode(
             node_id="leaf-far",
@@ -87,6 +92,7 @@ def _seed_forest(document_store: DocumentStore) -> list[str]:
             right_child_id=None,
             token_count=5,
             height=0,
+            level_index=3,
         ),
         ForestNode(
             node_id="root-right",
@@ -98,6 +104,7 @@ def _seed_forest(document_store: DocumentStore) -> list[str]:
             right_child_id="leaf-far",
             token_count=10,
             height=1,
+            level_index=1,
         ),
     ]
 
@@ -114,6 +121,7 @@ def _seed_forest(document_store: DocumentStore) -> list[str]:
             "document_id": document_store.document_id,
             "token_count": node.token_count,
             "height": node.height,
+            "level_index": node.level_index,
             "embedding": [0.0, 0.0, 0.0],
         }
         payload.append(payload_item)

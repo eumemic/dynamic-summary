@@ -381,13 +381,11 @@ def _assign_depths(root_id: str, lookup: dict[str, TreeNode]) -> None:
         visited.add(node_id)
         node.depth = depth
 
-        left_id = getattr(node, "left_child_id", None)
-        if left_id:
-            queue.append((left_id, depth + 1))
+        if node.left_child_id:
+            queue.append((node.left_child_id, depth + 1))
 
-        right_id = getattr(node, "right_child_id", None)
-        if right_id:
-            queue.append((right_id, depth + 1))
+        if node.right_child_id:
+            queue.append((node.right_child_id, depth + 1))
 
 
 def poke(
@@ -605,10 +603,10 @@ async def embedding_worker(
                 break
 
             for batch_index, node in enumerate(batch):
-                node_tokens = int(getattr(node, "token_count", 0))
+                node_tokens = node.token_count
                 if node_tokens <= 0:
                     node_tokens = tokenizer.count_tokens(node.text or "")
-                    setattr(node, "token_count", node_tokens)
+                    node.token_count = node_tokens
 
                 if token_limit is not None and node_tokens > token_limit:
                     await flush_pending()
@@ -673,12 +671,10 @@ async def _process_embedding_batch(
         token_counts: list[int] = []
         invalid_nodes: list[str] = []
         for node in batch:
-            raw_count = getattr(node, "token_count", None)
-            if raw_count is None:
+            tokens = node.token_count
+            if tokens <= 0:
                 tokens = tokenizer.count_tokens(node.text or "")
-                setattr(node, "token_count", tokens)
-            else:
-                tokens = int(raw_count)
+                node.token_count = tokens
 
             if tokens < 0:
                 invalid_nodes.append(node.id)

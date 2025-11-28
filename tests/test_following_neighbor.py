@@ -54,6 +54,8 @@ class TestFollowingNeighbor:
                     "span_end": (i + 1) * 100,
                     "document_id": "test-doc",
                     "height": 0,
+                    "token_count": 10,
+                    "level_index": i,
                     "preceding_neighbor_id": node_ids[i - 1] if i > 0 else None,
                     "following_neighbor_id": (
                         node_ids[i + 1] if i < len(node_ids) - 1 else None

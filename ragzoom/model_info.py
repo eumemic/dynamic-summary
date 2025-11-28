@@ -154,6 +154,8 @@ class ModelInfo:
                 f"LLM model '{model}' not found. Available models: {available}"
             )
 
+        # cache_discount is optional (NotRequired in TypedDict).
+        # Default to 0.0 (no discount) for models without caching support.
         return float(self._data["llms"][model].get("cache_discount", 0.0))
 
     def supports_temperature(self, model: str) -> bool:
@@ -174,6 +176,8 @@ class ModelInfo:
                 f"LLM model '{model}' not found. Available models: {available}"
             )
 
+        # supports_temperature is optional (NotRequired in TypedDict).
+        # Default to True since most LLMs support temperature control.
         return bool(self._data["llms"][model].get("supports_temperature", True))
 
     def is_gpt5_model(self, model: str) -> bool:

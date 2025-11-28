@@ -533,7 +533,9 @@ if [ "$RUN_TESTS" = true ]; then
                         fi
                     done
                 fi
-                run_check_background "Tests" "pytest $impacted -q --tb=short -m '$impacted_marker' -n \${PYTEST_XDIST_WORKERS:-8} --dist=worksteal --no-header --max-test-duration \${RZ_MAX_TEST_DURATION} \${dur_flag}"
+                # Wrap pytest to treat exit code 5 (no tests collected) as success
+                # This happens when impacted files have no matching tests after marker filtering
+                run_check_background "Tests" "pytest $impacted -q --tb=short -m '$impacted_marker' -n \${PYTEST_XDIST_WORKERS:-8} --dist=worksteal --no-header --max-test-duration \${RZ_MAX_TEST_DURATION} \${dur_flag}; ret=\$?; if [ \$ret -eq 5 ]; then echo '[Tests] ✅ Passed (no matching tests)'; exit 0; else exit \$ret; fi"
             else
                 echo "[Tests] Skipped (no impacted tests)" > "$tmpdir/Tests.output"
                 echo 0 > "$tmpdir/Tests.result"
