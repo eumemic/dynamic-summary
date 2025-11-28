@@ -350,6 +350,35 @@ except Exception as e:
     raise  # Always re-raise
 ```
 
+#### Environment-Aware Error Handling
+
+For operations where graceful degradation is acceptable in production but errors should surface in development/testing, use `handle_graceful_error()`:
+
+```python
+from ragzoom.error_handling import handle_graceful_error
+
+try:
+    result = risky_operation()
+except Exception as exc:
+    result = handle_graceful_error(
+        exc, "Risky operation failed", default=fallback_value
+    )
+```
+
+**Behavior:**
+- **Strict mode** (`RAGZOOM_STRICT_ERRORS=1`): Re-raises the exception immediately
+- **Production mode** (default): Logs a warning and returns the default value
+
+**Environment Variable:**
+- `RAGZOOM_STRICT_ERRORS`: Set to `1`, `true`, or `yes` to enable strict mode
+- Tests automatically enable strict mode via the `enable_strict_errors` fixture in `conftest.py`
+
+**When to use:**
+- Introspection or reflection that may fail on edge cases
+- Optional optimizations that can be skipped
+- Network calls where partial success is acceptable
+- **Never** for core business logic invariants (those should always fail hard)
+
 #### Success Criteria
 
 Valid error handling ensures:
