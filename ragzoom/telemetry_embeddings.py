@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, MutableMapping, Sequence
-from typing import Protocol
 
 import numpy as np
 from numpy.typing import NDArray
 
+from ragzoom.contracts.embedding_model import EmbeddingProvider
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
@@ -18,10 +18,6 @@ from ragzoom.utils.tokenization import tokenizer
 from ragzoom.vector_api import Vector
 
 logger = logging.getLogger(__name__)
-
-
-class EmbeddingProvider(Protocol):
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
 
 
 async def compute_fidelity_for_telemetry(

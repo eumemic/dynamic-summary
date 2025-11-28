@@ -2,9 +2,7 @@
 
 from types import SimpleNamespace
 
-import numpy as np
-from numpy.typing import NDArray
-
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.models import Document
 from ragzoom.models import PostgresTreeNode as TreeNode
 
@@ -288,8 +286,9 @@ def make_node_data(
     left_child_id: str | None = None,
     right_child_id: str | None = None,
     document_id: str | None = None,
-    **extra: object,
-) -> dict[str, str | int | float | bool | list[float] | NDArray[np.float64] | None]:
+    preceding_neighbor_id: str | None = None,
+    following_neighbor_id: str | None = None,
+) -> NodeDataDict:
     """Create node data dict with all required fields.
 
     Use this helper when creating raw node data for tests. It ensures all
@@ -303,9 +302,7 @@ def make_node_data(
         ]
         doc_store.nodes.add_batch(nodes)
     """
-    data: dict[
-        str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-    ] = {
+    return {
         "node_id": node_id,
         "text": text,
         "span_start": span_start,
@@ -317,12 +314,6 @@ def make_node_data(
         "left_child_id": left_child_id,
         "right_child_id": right_child_id,
         "document_id": document_id,
+        "preceding_neighbor_id": preceding_neighbor_id,
+        "following_neighbor_id": following_neighbor_id,
     }
-    # Handle extra kwargs - need to ensure they match the type
-    for key, value in extra.items():
-        if isinstance(
-            value,
-            str | int | float | bool | list | np.ndarray | type(None),
-        ):
-            data[key] = value
-    return data

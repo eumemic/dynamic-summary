@@ -6,10 +6,8 @@ the coverage tree.
 
 from __future__ import annotations
 
-import numpy as np
-from numpy.typing import NDArray
-
 from ragzoom.config import QueryConfig
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.retrieve import RetrievalResult
@@ -37,17 +35,11 @@ class TestDPScoresBug:
         #      / \      / \
         #    a1  a2   b1  b2
 
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             # Root
             {
                 "node_id": "root",
                 "text": "Root summary of document",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 1000,
                 "document_id": "doc-id",
@@ -61,7 +53,6 @@ class TestDPScoresBug:
             {
                 "node_id": "node_a",
                 "text": "Node A summary",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 500,
                 "document_id": "doc-id",
@@ -74,7 +65,6 @@ class TestDPScoresBug:
             {
                 "node_id": "node_b",
                 "text": "Node B summary",
-                "embedding": [],
                 "span_start": 500,
                 "span_end": 1000,
                 "document_id": "doc-id",
@@ -88,7 +78,6 @@ class TestDPScoresBug:
             {
                 "node_id": "a1",
                 "text": "Leaf a1 content",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 250,
                 "document_id": "doc-id",
@@ -99,7 +88,6 @@ class TestDPScoresBug:
             {
                 "node_id": "a2",
                 "text": "Leaf a2 content",
-                "embedding": [],
                 "span_start": 250,
                 "span_end": 500,
                 "document_id": "doc-id",
@@ -110,7 +98,6 @@ class TestDPScoresBug:
             {
                 "node_id": "b1",
                 "text": "Leaf b1 content",
-                "embedding": [],
                 "span_start": 500,
                 "span_end": 750,
                 "document_id": "doc-id",
@@ -121,7 +108,6 @@ class TestDPScoresBug:
             {
                 "node_id": "b2",
                 "text": "Leaf b2 content",
-                "embedding": [],
                 "span_start": 750,
                 "span_end": 1000,
                 "document_id": "doc-id",
@@ -203,16 +189,10 @@ class TestDPScoresBug:
         )
 
         # Simplified tree setup
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "root",
                 "text": "Root",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 1000,
                 "document_id": "doc-id",
@@ -225,7 +205,6 @@ class TestDPScoresBug:
             {
                 "node_id": "leaf1",
                 "text": "Leaf 1",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 500,
                 "document_id": "doc-id",
@@ -236,7 +215,6 @@ class TestDPScoresBug:
             {
                 "node_id": "leaf2",
                 "text": "Leaf 2",
-                "embedding": [],
                 "span_start": 500,
                 "span_end": 1000,
                 "document_id": "doc-id",

@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-import numpy as np
-from numpy.typing import NDArray
-
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.tree_coordinate import TreeCoordinate
 
@@ -14,12 +12,7 @@ from ragzoom.tree_coordinate import TreeCoordinate
 def test_sqlite_coordinate_lookup(storage_backend: StorageBackend) -> None:
     store = storage_backend.for_document("doc-coordinate")
 
-    nodes: list[
-        dict[
-            str,
-            str | int | float | bool | list[float] | NDArray[np.float64] | None,
-        ]
-    ] = [
+    nodes: list[NodeDataDict] = [
         {
             "node_id": "leaf_left",
             "text": "left",

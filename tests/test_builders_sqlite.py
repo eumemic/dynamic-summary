@@ -8,10 +8,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import numpy as np
 import pytest
-from numpy.typing import NDArray
 
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.document_store import DocumentStore
 
 
@@ -26,16 +25,10 @@ class TestBuildersSQLite:
     def test_tree_node_builder_basic(self, doc_store: DocumentStore) -> None:
         """Test basic TreeNode creation with builder pattern."""
         # Create nodes using the SQLite pattern
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "test-node-1",
                 "text": "Test node text",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 10,
                 "document_id": "test-doc",
@@ -60,16 +53,10 @@ class TestBuildersSQLite:
         self, doc_store: DocumentStore
     ) -> None:
         """Test TreeNode creation with parent-child relationships."""
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "child",
                 "text": "Child node",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 50,
                 "document_id": "test-doc",
@@ -81,7 +68,6 @@ class TestBuildersSQLite:
             {
                 "node_id": "parent",
                 "text": "Parent node",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 50,
                 "document_id": "test-doc",
@@ -106,19 +92,11 @@ class TestBuildersSQLite:
         assert parent.right_child_id is None
 
     def test_tree_node_with_custom_embedding(self, doc_store: DocumentStore) -> None:
-        """Test TreeNode with custom embedding vector."""
-        custom_embedding = np.array([0.1, 0.2, 0.3, 0.4, 0.5])
-
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        """Test TreeNode creation (embeddings handled by VectorIndex separately)."""
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "embedded-node",
                 "text": "Node with custom embedding",
-                "embedding": custom_embedding,
                 "span_start": 0,
                 "span_end": 25,
                 "document_id": "test-doc",
@@ -137,16 +115,10 @@ class TestBuildersSQLite:
 
     def test_tree_node_with_document_reference(self, doc_store: DocumentStore) -> None:
         """Test TreeNode with specific document reference."""
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "doc-specific-node",
                 "text": "Node for specific document",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 30,
                 "document_id": "test-doc",
@@ -163,16 +135,10 @@ class TestBuildersSQLite:
 
     def test_tree_node_with_spans_and_tokens(self, doc_store: DocumentStore) -> None:
         """Test TreeNode with custom span and token count."""
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "span-node",
                 "text": "Node with custom span and token count",
-                "embedding": [],
                 "span_start": 100,
                 "span_end": 200,
                 "document_id": "test-doc",
@@ -203,16 +169,10 @@ class TestBuildersSQLite:
     def test_create_test_tree_nodes(self, doc_store: DocumentStore) -> None:
         """Test creation of a simple test tree structure."""
         # Create a simple 3-node tree
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "node-0",
                 "text": "Test text for node 0",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 10,
                 "document_id": "test-doc",
@@ -225,7 +185,6 @@ class TestBuildersSQLite:
             {
                 "node_id": "node-1",
                 "text": "Test text for node 1",
-                "embedding": [],
                 "span_start": 10,
                 "span_end": 20,
                 "document_id": "test-doc",
@@ -237,7 +196,6 @@ class TestBuildersSQLite:
             {
                 "node_id": "node-2",
                 "text": "Test text for node 2",
-                "embedding": [],
                 "span_start": 20,
                 "span_end": 30,
                 "document_id": "test-doc",
@@ -269,16 +227,10 @@ class TestBuildersSQLite:
     def test_single_child_chain_structure(self, doc_store: DocumentStore) -> None:
         """Test creation of single-child chain to avoid duplicates."""
         # Create a chain: root -> middle -> leaf (single children)
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "leaf",
                 "text": "Leaf node",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 20,
                 "document_id": "test-doc",
@@ -290,7 +242,6 @@ class TestBuildersSQLite:
             {
                 "node_id": "middle",
                 "text": "Middle node",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 20,
                 "document_id": "test-doc",
@@ -304,7 +255,6 @@ class TestBuildersSQLite:
             {
                 "node_id": "root",
                 "text": "Root node",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 20,
                 "document_id": "test-doc",

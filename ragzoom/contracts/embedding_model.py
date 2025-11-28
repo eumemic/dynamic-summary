@@ -1,12 +1,18 @@
-"""Embedding model protocol.
+"""Embedding model protocols.
 
-Defines a minimal, backend-agnostic interface for embedding providers.
+Defines minimal, backend-agnostic interfaces for embedding providers.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
+
+
+class EmbeddingProvider(Protocol):
+    """Protocol for async embedding providers used in indexing and telemetry."""
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
 
 
 @runtime_checkable

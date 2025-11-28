@@ -6,10 +6,9 @@ structural relationships rather than relying on precomputed paths.
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
-from numpy.typing import NDArray
 
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
@@ -45,16 +44,11 @@ class TestTreeNavigation:
    left_left  left_right
     ("00")     ("01")
         """
-        nodes: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             # Leaf nodes
             {
                 "node_id": "left_left",
                 "text": "Left-left grandchild",
-                "embedding": [0.5] * 1536,
                 "span_start": 0,
                 "span_end": 25,
                 "document_id": "doc1",
@@ -65,7 +59,6 @@ class TestTreeNavigation:
             {
                 "node_id": "left_right",
                 "text": "Left-right grandchild",
-                "embedding": [0.5] * 1536,
                 "span_start": 25,
                 "span_end": 50,
                 "document_id": "doc1",
@@ -77,7 +70,6 @@ class TestTreeNavigation:
             {
                 "node_id": "left",
                 "text": "Left child",
-                "embedding": [0.5] * 1536,
                 "span_start": 0,
                 "span_end": 50,
                 "document_id": "doc1",
@@ -90,7 +82,6 @@ class TestTreeNavigation:
             {
                 "node_id": "right",
                 "text": "Right child",
-                "embedding": [0.5] * 1536,
                 "span_start": 50,
                 "span_end": 100,
                 "document_id": "doc1",
@@ -101,7 +92,6 @@ class TestTreeNavigation:
             {
                 "node_id": "root",
                 "text": "Root node",
-                "embedding": [0.5] * 1536,
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "doc1",

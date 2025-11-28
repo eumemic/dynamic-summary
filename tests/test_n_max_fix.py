@@ -10,11 +10,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from unittest.mock import Mock, patch
 
-import numpy as np
 import pytest
-from numpy.typing import NDArray
 
 from ragzoom.config import OperationalConfig, QueryConfig, SecretStr
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.vector_filter import VectorFilter
 
@@ -37,17 +36,11 @@ class TestNumSeedsFixSQLite:
         )
 
         # Build a simple tree with explicit token counts for DP cost control
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             # Leaf nodes
             {
                 "node_id": "leaf1",
                 "text": "Leaf 0 with dragon content",
-                "embedding": np.array([0.9] * 1536),
                 "span_start": 0,
                 "span_end": 250,
                 "document_id": "doc1",
@@ -55,12 +48,10 @@ class TestNumSeedsFixSQLite:
                 "height": 0,
                 "parent_id": "nodeA",
                 "level_index": 0,
-                "coord_version": 1,
             },
             {
                 "node_id": "leaf2",
                 "text": "Leaf 1 with dragon content",
-                "embedding": np.array([0.9] * 1536),
                 "span_start": 250,
                 "span_end": 500,
                 "document_id": "doc1",
@@ -68,12 +59,10 @@ class TestNumSeedsFixSQLite:
                 "height": 0,
                 "parent_id": "nodeA",
                 "level_index": 1,
-                "coord_version": 1,
             },
             {
                 "node_id": "leaf3",
                 "text": "Leaf 2 with dragon content",
-                "embedding": np.array([0.9] * 1536),
                 "span_start": 500,
                 "span_end": 750,
                 "document_id": "doc1",
@@ -81,12 +70,10 @@ class TestNumSeedsFixSQLite:
                 "height": 0,
                 "parent_id": "nodeB",
                 "level_index": 2,
-                "coord_version": 1,
             },
             {
                 "node_id": "leaf4",
                 "text": "Leaf 3 with dragon content",
-                "embedding": np.array([0.9] * 1536),
                 "span_start": 750,
                 "span_end": 1000,
                 "document_id": "doc1",
@@ -94,13 +81,11 @@ class TestNumSeedsFixSQLite:
                 "height": 0,
                 "parent_id": "nodeB",
                 "level_index": 3,
-                "coord_version": 1,
             },
             # Internal nodes
             {
                 "node_id": "nodeA",
                 "text": "Node A content",
-                "embedding": np.array([0.5] * 1536),
                 "span_start": 0,
                 "span_end": 500,
                 "document_id": "doc1",
@@ -110,12 +95,10 @@ class TestNumSeedsFixSQLite:
                 "right_child_id": "leaf2",
                 "parent_id": "root",
                 "level_index": 0,
-                "coord_version": 1,
             },
             {
                 "node_id": "nodeB",
                 "text": "Node B content",
-                "embedding": np.array([0.5] * 1536),
                 "span_start": 500,
                 "span_end": 1000,
                 "document_id": "doc1",
@@ -125,13 +108,11 @@ class TestNumSeedsFixSQLite:
                 "right_child_id": "leaf4",
                 "parent_id": "root",
                 "level_index": 1,
-                "coord_version": 1,
             },
             # Root node
             {
                 "node_id": "root",
                 "text": "Root summary document",
-                "embedding": np.array([0.5] * 1536),
                 "span_start": 0,
                 "span_end": 1000,
                 "document_id": "doc1",
@@ -141,7 +122,6 @@ class TestNumSeedsFixSQLite:
                 "right_child_id": "nodeB",
                 "parent_id": None,
                 "level_index": 0,
-                "coord_version": 1,
             },
         ]
         document_store.nodes.add_batch(nodes)

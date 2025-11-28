@@ -13,6 +13,7 @@ import pytest
 
 from ragzoom.document_store import DocumentStore
 from ragzoom.retrieval.coverage_builder import CoverageBuilder
+from tests.test_builders import make_node_data
 
 
 @pytest.mark.usefixtures("sqlite_backend")
@@ -27,82 +28,76 @@ def test_document_isolation_prevents_contamination_sqlite(
     # Add nodes for doc1
     doc1_store.nodes.add_batch(
         [
-            {
-                "node_id": "doc1_root",
-                "text": "Document 1 root",
-                "span_start": 0,
-                "span_end": 100,
-                "parent_id": None,
-                "embedding": [0.5] * 1536,
-                "token_count": 50,
-                "height": 1,
-                "level_index": 0,
-                "left_child_id": "doc1_left",
-                "right_child_id": "doc1_right",
-            },
-            {
-                "node_id": "doc1_left",
-                "text": "Document 1 left",
-                "span_start": 0,
-                "span_end": 50,
-                "parent_id": "doc1_root",
-                "embedding": [0.5] * 1536,
-                "token_count": 25,
-                "height": 0,
-                "level_index": 0,
-            },
-            {
-                "node_id": "doc1_right",
-                "text": "Document 1 right",
-                "span_start": 50,
-                "span_end": 100,
-                "parent_id": "doc1_root",
-                "embedding": [0.5] * 1536,
-                "token_count": 25,
-                "height": 0,
-                "level_index": 0,
-            },
+            make_node_data(
+                node_id="doc1_root",
+                text="Document 1 root",
+                span_start=0,
+                span_end=100,
+                parent_id=None,
+                token_count=50,
+                height=1,
+                level_index=0,
+                left_child_id="doc1_left",
+                right_child_id="doc1_right",
+            ),
+            make_node_data(
+                node_id="doc1_left",
+                text="Document 1 left",
+                span_start=0,
+                span_end=50,
+                parent_id="doc1_root",
+                token_count=25,
+                height=0,
+                level_index=0,
+            ),
+            make_node_data(
+                node_id="doc1_right",
+                text="Document 1 right",
+                span_start=50,
+                span_end=100,
+                parent_id="doc1_root",
+                token_count=25,
+                height=0,
+                level_index=0,
+            ),
         ]
     )
 
     # Add nodes for doc2
     doc2_store.nodes.add_batch(
         [
-            {
-                "node_id": "doc2_root",
-                "text": "Document 2 root",
-                "span_start": 0,
-                "span_end": 100,
-                "parent_id": None,
-                "embedding": [0.5] * 1536,
-                "token_count": 50,
-                "height": 1,
-                "level_index": 0,
-                "left_child_id": "doc2_left",
-                "right_child_id": "doc2_right",
-            },
-            {
-                "node_id": "doc2_left",
-                "text": "Document 2 left",
-                "span_start": 0,
-                "span_end": 50,
-                "parent_id": "doc2_root",
-                "embedding": [0.5] * 1536,
-                "token_count": 25,
-                "height": 0,
-                "level_index": 0,
-            },
-            {
-                "node_id": "doc2_right",
-                "text": "Document 2 right",
-                "span_start": 50,
-                "span_end": 100,
-                "parent_id": "doc2_root",
-                "embedding": [0.5] * 1536,
-                "token_count": 25,
-                "height": 0,
-                "level_index": 0,
-            },
+            make_node_data(
+                node_id="doc2_root",
+                text="Document 2 root",
+                span_start=0,
+                span_end=100,
+                parent_id=None,
+                token_count=50,
+                height=1,
+                level_index=0,
+                left_child_id="doc2_left",
+                right_child_id="doc2_right",
+            ),
+            make_node_data(
+                node_id="doc2_left",
+                text="Document 2 left",
+                span_start=0,
+                span_end=50,
+                parent_id="doc2_root",
+                token_count=25,
+                height=0,
+                level_index=0,
+            ),
+            make_node_data(
+                node_id="doc2_right",
+                text="Document 2 right",
+                span_start=50,
+                span_end=100,
+                parent_id="doc2_root",
+                token_count=25,
+                height=0,
+                level_index=0,
+            ),
         ]
     )
 

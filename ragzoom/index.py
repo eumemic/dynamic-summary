@@ -12,6 +12,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, SecretStr
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.tree_node import TreeNode, get_depth
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.dataflow import (
@@ -93,10 +94,6 @@ VectorPayload: TypeAlias = tuple[
     list[float] | NDArray[np.float64],
     dict[str, object],
 ]
-
-NodeFieldValue: TypeAlias = (
-    str | int | float | bool | list[float] | NDArray[np.float64] | None
-)
 
 
 class TreeBuilder:
@@ -187,9 +184,8 @@ class TreeBuilder:
             current = parent
         return spine
 
-    def _domain_to_repo_dict(self, node: DomainNode) -> dict[str, object]:
+    def _domain_to_repo_dict(self, node: DomainNode) -> NodeDataDict:
         """Convert DomainNode into repository payload for upsert."""
-
         return {
             "node_id": node.id,
             "text": node.text,
@@ -721,7 +717,7 @@ class TreeBuilder:
                 logger.debug(
                     "Inserting %d nodes at height %d", len(nodes_batch), height
                 )
-                payload: list[dict[str, NodeFieldValue]] = []
+                payload: list[NodeDataDict] = []
                 for node in nodes_batch:
                     payload.append(
                         {
@@ -737,6 +733,7 @@ class TreeBuilder:
                             "following_neighbor_id": node.following_neighbor_id,
                             "token_count": node.token_count,
                             "height": node.height,
+                            "level_index": node.level_index,
                         }
                     )
                 doc_store.nodes.add_batch(payload)

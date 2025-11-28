@@ -9,6 +9,7 @@ from sqlalchemy.sql.elements import TextClause
 
 from ragzoom.backends.sqlite_db import SqliteDatabaseManager
 from ragzoom.backends.sqlite_repositories import SqliteNodeRepository
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.repositories.postgres_node_repository import PostgresNodeRepository
 from ragzoom.services.cache_manager import CacheManager
@@ -49,7 +50,7 @@ def test_sqlite_upsert_preserves_height_on_conflict() -> None:
         repo = SqliteNodeRepository(db, CacheManager())
 
         node_id = "node-1"
-        node_payload = {
+        node_payload: NodeDataDict = {
             "node_id": node_id,
             "text": "leaf",
             "span_start": 0,
@@ -62,8 +63,16 @@ def test_sqlite_upsert_preserves_height_on_conflict() -> None:
 
         repo.add_nodes_batch([node_payload])
 
-        promoted_payload = dict(node_payload)
-        promoted_payload["height"] = 1
+        promoted_payload: NodeDataDict = {
+            "node_id": node_id,
+            "text": "leaf",
+            "span_start": 0,
+            "span_end": 1,
+            "document_id": "doc-1",
+            "token_count": 1,
+            "height": 1,
+            "level_index": 0,
+        }
 
         repo.upsert_nodes_batch([promoted_payload])
 
@@ -81,7 +90,7 @@ def test_postgres_upsert_omits_height_update_clause() -> None:
 
     dummy_session = _DummySession()
 
-    payload = {
+    payload: NodeDataDict = {
         "node_id": "node-2",
         "text": "internal",
         "span_start": 0,

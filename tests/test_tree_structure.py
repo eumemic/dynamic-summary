@@ -10,6 +10,7 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
 from ragzoom.splitter import TextSplitter
@@ -48,12 +49,7 @@ def doc_store(storage_backend: StorageBackend) -> Generator[DocumentStore, None,
 def _add_nodes(store: DocumentStore, nodes: list[NodePayload]) -> None:
     store.nodes.add_batch(
         cast(
-            list[
-                dict[
-                    str,
-                    str | int | float | bool | list[float] | NDArray[np.float64] | None,
-                ]
-            ],
+            list[NodeDataDict],
             nodes,
         )
     )

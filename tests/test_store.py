@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.vector_filter import DocumentIdFilter
 from ragzoom.contracts.vector_index import VectorIndex
@@ -33,12 +34,7 @@ class TestStore:
         self, doc_store: DocumentStore, vector_index: VectorIndex
     ) -> None:
         """Test adding a node to the store."""
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "test-1",
                 "text": "Test text",
@@ -81,12 +77,7 @@ class TestStore:
         self, doc_store: DocumentStore, vector_index: VectorIndex
     ) -> None:
         """Test retrieving a node."""
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "test-2",
                 "text": "Test text 2",
@@ -131,12 +122,7 @@ class TestStore:
         self, doc_store: DocumentStore, vector_index: VectorIndex
     ) -> None:
         """Test parent-child relationships."""
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "child1",
                 "text": "Child 1",
@@ -149,7 +135,6 @@ class TestStore:
                 "left_child_id": None,
                 "right_child_id": None,
                 "level_index": 0,
-                "coord_version": 1,
             },
             {
                 "node_id": "child2",
@@ -163,7 +148,6 @@ class TestStore:
                 "left_child_id": None,
                 "right_child_id": None,
                 "level_index": 1,
-                "coord_version": 1,
             },
             {
                 "node_id": "parent",
@@ -177,7 +161,6 @@ class TestStore:
                 "left_child_id": "child1",
                 "right_child_id": "child2",
                 "level_index": 0,
-                "coord_version": 1,
             },
         ]
         doc_store.nodes.add_batch(nodes)
@@ -249,12 +232,7 @@ class TestStore:
         self, doc_store: DocumentStore, vector_index: VectorIndex
     ) -> None:
         """Test vector similarity search."""
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = []
+        nodes: list[NodeDataDict] = []
         from collections.abc import Sequence
 
         vector_entries: list[tuple[str, Sequence[float], dict[str, object]]] = []
@@ -385,12 +363,7 @@ class TestStore:
             [0.0, 0.0, 1.0],  # node-5 (very different)
         ]
 
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = []
+        nodes: list[NodeDataDict] = []
         vector_entries: list[tuple[str, Sequence[float], dict[str, object]]] = []
 
         for i, (node_id, _, metadata) in enumerate(candidates):
@@ -434,12 +407,7 @@ class TestStore:
     ) -> None:
         """Test node pinning functionality."""
         # Create a tree structure with proper depths
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             # Root node (depth 0)
             {
                 "node_id": "root",
@@ -575,12 +543,7 @@ class TestStore:
         self, doc_store: DocumentStore, vector_index: VectorIndex
     ) -> None:
         """Test LRU cache behavior."""
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "cached",
                 "text": "Cached node",
@@ -637,12 +600,7 @@ class TestStore:
         #  /  \     |
         # ll  lr    rc
 
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             # Root node (depth 0)
             {
                 "node_id": "root",
@@ -833,12 +791,7 @@ class TestStore:
     ) -> None:
         """Test dynamic height calculation."""
         # Create the same tree structure
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "root",
                 "text": "Root",
@@ -1036,12 +989,7 @@ class TestStore:
     ) -> None:
         """Test edge cases for depth/height calculation."""
         # Test single node (both root and leaf)
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "single",
                 "text": "Single node",
@@ -1198,12 +1146,7 @@ class TestStore:
     ) -> None:
         """Test that depth calculation is O(log n) by creating a deep tree."""
         # Create a linear chain of nodes to test worst case
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = []
+        nodes: list[NodeDataDict] = []
         from collections.abc import Sequence
 
         vector_entries: list[tuple[str, Sequence[float], dict[str, object]]] = []
@@ -1278,12 +1221,7 @@ class TestStore:
     ) -> None:
         """Test consistent error handling patterns."""
         # Create a simple tree for testing
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "root",
                 "text": "Root",

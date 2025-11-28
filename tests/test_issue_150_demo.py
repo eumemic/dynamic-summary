@@ -4,9 +4,7 @@ This version avoids leaking DB sessions and uses the StorageBackend
 and per-document DocumentStore APIs exclusively.
 """
 
-import numpy as np
-from numpy.typing import NDArray
-
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 
 
@@ -34,15 +32,10 @@ class TestIssue150Demonstration:
             summary_model="gpt-4o-mini",
         )
 
-        old_nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        old_nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "old-node",
                 "text": "Old content",
-                "embedding": [0.1] * 1536,
                 "span_start": 0,
                 "span_end": 11,
                 "document_id": doc_id,
@@ -65,15 +58,10 @@ class TestIssue150Demonstration:
             "summary_model": "gpt-4o-mini",
         }
 
-        new_nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        new_nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "new-node",
                 "text": "New content",
-                "embedding": [0.2] * 1536,
                 "span_start": 0,
                 "span_end": 11,
                 "document_id": doc_id,
@@ -129,15 +117,10 @@ class TestIssue150Demonstration:
         assert doc_store.document_id == "backward-compat-doc"
 
         # Add nodes without session (existing API)
-        nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "compat-node",
                 "text": "Test content",
-                "embedding": [0.1] * 1536,
                 "span_start": 0,
                 "span_end": 12,
                 "document_id": "backward-compat-doc",
