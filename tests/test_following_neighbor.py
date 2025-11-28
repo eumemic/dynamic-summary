@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
-from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.models import PostgresTreeNode as ORMTreeNode
@@ -37,11 +36,7 @@ class TestFollowingNeighbor:
         self, base_config: BackwardCompatibilityConfig, storage_backend: StorageBackend
     ) -> None:
         """Verify bidirectional consistency: if A.following = B, then B.preceding = A."""
-        nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = []
+        nodes_data: list[NodeDataDict] = []
         node_ids = ["node1", "node2", "node3", "node4"]
 
         for i, node_id in enumerate(node_ids):
@@ -49,7 +44,6 @@ class TestFollowingNeighbor:
                 {
                     "node_id": node_id,
                     "text": f"Node {i} text",
-                    "embedding": [0.1] * 10,
                     "span_start": i * 100,
                     "span_end": (i + 1) * 100,
                     "document_id": "test-doc",

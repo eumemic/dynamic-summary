@@ -6,10 +6,9 @@ only includes nodes from the specified document.
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
-from numpy.typing import NDArray
 
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
 from ragzoom.retrieval.coverage_builder import CoverageBuilder
@@ -47,12 +46,7 @@ class TestContaminationBug:
     ) -> None:
         """Test that coverage builder only includes nodes from the specified document."""
         # Add nodes for doc1
-        doc1_nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        doc1_nodes: list[NodeDataDict] = [
             {
                 "node_id": "doc1_root",
                 "text": "Document 1 root",
@@ -95,12 +89,7 @@ class TestContaminationBug:
         )
 
         # Add nodes for doc2 using separate document store
-        doc2_nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        doc2_nodes: list[NodeDataDict] = [
             {
                 "node_id": "doc2_root",
                 "text": "Document 2 root",

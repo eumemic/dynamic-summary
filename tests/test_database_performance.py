@@ -8,10 +8,9 @@ import time
 from collections.abc import Generator
 from typing import cast
 
-import numpy as np
 import pytest
-from numpy.typing import NDArray
 
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -36,8 +35,7 @@ def large_document_data() -> (
         nodes_data.append(
             {
                 "node_id": f"node_{i:06d}",
-                "text": f"Text content for node {i:06d}",
-                "embedding": [0.1] * 1536,  # Standard embedding dimension
+                "text": f"Text content for node {i:06d}",  # Standard embedding dimension
                 "span_start": span_start,
                 "span_end": span_end,
                 "document_id": document_id,
@@ -72,7 +70,6 @@ def small_document_data() -> (
             {
                 "node_id": f"small_node_{i:03d}",
                 "text": f"Text content for small node {i:03d}",
-                "embedding": [0.1] * 1536,
                 "span_start": span_start,
                 "span_end": span_end,
                 "document_id": document_id,
@@ -101,19 +98,12 @@ class TestDatabaseScalability:
         """Helper to add test nodes to the backend."""
         doc_store = storage_backend.for_document(document_id)
 
-        # Convert to proper dict format
-        node_data_dicts: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = []
+        # Convert to proper dict format (embeddings handled separately by VectorIndex)
+        node_data_dicts: list[NodeDataDict] = []
         for node_data in nodes_data:
-            node_data_dict: dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ] = {
+            node_data_dict: NodeDataDict = {
                 "node_id": cast(str, node_data["node_id"]),
                 "text": cast(str, node_data["text"]),
-                "embedding": cast(list[float], node_data["embedding"]),
                 "span_start": cast(int, node_data["span_start"]),
                 "span_end": cast(int, node_data["span_end"]),
                 "document_id": cast(str, node_data["document_id"]),
@@ -279,17 +269,12 @@ class TestDatabaseScalability:
 
         # Add exactly one page worth of nodes
         page_size = 10
-        nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = []
+        nodes_data: list[NodeDataDict] = []
         for i in range(page_size):
             nodes_data.append(
                 {
                     "node_id": f"boundary_node_{i}",
                     "text": f"Boundary test node {i}",
-                    "embedding": [0.1] * 1536,
                     "span_start": i * 10,
                     "span_end": (i + 1) * 10,
                     "document_id": document_id,
@@ -306,12 +291,9 @@ class TestDatabaseScalability:
         assert len(batches[0]) == page_size
 
         # Test with page_size + 1 nodes
-        additional_node: dict[
-            str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-        ] = {
+        additional_node: NodeDataDict = {
             "node_id": f"boundary_node_{page_size}",
             "text": f"Boundary test node {page_size}",
-            "embedding": [0.1] * 1536,
             "span_start": page_size * 10,
             "span_end": (page_size + 1) * 10,
             "document_id": document_id,
@@ -356,17 +338,12 @@ class TestMemoryEfficiency:
         )
 
         # Add test nodes in batches for efficiency
-        nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = []
+        nodes_data: list[NodeDataDict] = []
         for i in range(num_nodes):
             nodes_data.append(
                 {
                     "node_id": f"mem_test_node_{i}",
                     "text": f"Memory test node {i} " * 10,
-                    "embedding": [0.1] * 128,
                     "span_start": i * 100,
                     "span_end": (i + 1) * 100,
                     "document_id": document_id,
@@ -414,12 +391,9 @@ class TestRegressionPrevention:
         )
 
         # Add a node
-        node_data: dict[
-            str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-        ] = {
+        node_data: NodeDataDict = {
             "node_id": node_id,
             "text": "Cache test node",
-            "embedding": [0.1] * 1536,
             "span_start": 0,
             "span_end": 10,
             "document_id": document_id,
@@ -457,17 +431,12 @@ class TestRegressionPrevention:
         )
 
         # Add test nodes
-        nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = []
+        nodes_data: list[NodeDataDict] = []
         for i in range(5):
             nodes_data.append(
                 {
                     "node_id": f"trans_test_node_{i}",
                     "text": f"Transaction test node {i}",
-                    "embedding": [0.1] * 1536,
                     "span_start": i * 10,
                     "span_end": (i + 1) * 10,
                     "document_id": document_id,

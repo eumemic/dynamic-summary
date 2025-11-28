@@ -8,12 +8,14 @@ import time
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig
+from ragzoom.contracts.embedding_model import EmbeddingProvider
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
@@ -23,16 +25,6 @@ from ragzoom.utils.tokenization import tokenizer
 from ragzoom.vector_api import Vector
 
 logger = logging.getLogger(__name__)
-
-
-NodePayload = dict[
-    str,
-    str | int | float | bool | list[float] | NDArray[np.float64] | None,
-]
-
-
-class EmbeddingProvider(Protocol):
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
 
 
 @dataclass
@@ -246,7 +238,7 @@ class AppendExecutor:
         rollback_vectors = self._load_existing_vectors(vector_index, deleted_node_ids)
         rollback_new_ids: list[str] = []
 
-        payload: list[NodePayload] = []
+        payload: list[NodeDataDict] = []
         for leaf in leaf_specs:
             payload.append(
                 {

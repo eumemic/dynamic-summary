@@ -10,6 +10,7 @@ from numpy.typing import NDArray
 
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.vector_filter import VectorFilter
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
@@ -22,34 +23,36 @@ from ragzoom.server.state import ServerState
 from ragzoom.server.worker_coordinator import WorkerCoordinator
 from ragzoom.vector_api import Vector
 
-NodePayloadValue = str | int | float | bool | list[float] | NDArray[np.float64] | None
-NodePayload = dict[str, NodePayloadValue]
-
 
 def _leaf_payload(
     node_id: str,
     span_start: int,
     span_end: int,
-    **kwargs: NodePayloadValue,
-) -> NodePayload:
-    payload: NodePayload = {
+    document_id: str = "doc",
+    parent_id: str | None = None,
+    left_child_id: str | None = None,
+    right_child_id: str | None = None,
+    preceding_neighbor_id: str | None = None,
+    following_neighbor_id: str | None = None,
+) -> NodeDataDict:
+    return {
         "node_id": node_id,
         "text": f"text-{node_id}",
         "span_start": span_start,
         "span_end": span_end,
-        "document_id": "doc",
+        "document_id": document_id,
         "token_count": span_end - span_start,
         "height": 0,
         "level_index": 0,
-        "parent_id": None,
-        "left_child_id": None,
-        "right_child_id": None,
+        "parent_id": parent_id,
+        "left_child_id": left_child_id,
+        "right_child_id": right_child_id,
+        "preceding_neighbor_id": preceding_neighbor_id,
+        "following_neighbor_id": following_neighbor_id,
     }
-    payload.update(kwargs)
-    return payload
 
 
-def _add_batch(store: DocumentStore, *payloads: NodePayload) -> None:
+def _add_batch(store: DocumentStore, *payloads: NodeDataDict) -> None:
     store.nodes.add_batch(list(payloads))
 
 

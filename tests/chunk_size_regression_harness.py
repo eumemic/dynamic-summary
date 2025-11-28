@@ -8,6 +8,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.document_store import DocumentStore
 from ragzoom.splitter import TextSplitter
 from tests.conftest import IndexerRuntimeHarness
@@ -89,12 +90,7 @@ def add_nodes(store: DocumentStore, nodes: list[NodePayload]) -> None:
 
     store.nodes.add_batch(
         cast(
-            list[
-                dict[
-                    str,
-                    str | int | float | bool | list[float] | NDArray[np.float64] | None,
-                ]
-            ],
+            list[NodeDataDict],
             nodes,
         )
     )

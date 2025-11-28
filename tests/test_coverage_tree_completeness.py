@@ -10,11 +10,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import numpy as np
 import pytest
-from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig, SecretStr
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
 
@@ -58,16 +57,11 @@ class TestCoverageTreeCompletenessSQLite:
         #     /  \    /  \
         #    L1  L2  L3  L4
 
-        nodes: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             # Leaf nodes
             {
                 "node_id": "L1",
                 "text": "Chapter 1 content",
-                "embedding": [0.1] * 1536,
                 "span_start": 0,
                 "span_end": 20,
                 "document_id": "test-doc",
@@ -78,7 +72,6 @@ class TestCoverageTreeCompletenessSQLite:
             {
                 "node_id": "L2",
                 "text": "Chapter 2 content",
-                "embedding": [0.2] * 1536,
                 "span_start": 20,
                 "span_end": 40,
                 "document_id": "test-doc",
@@ -89,7 +82,6 @@ class TestCoverageTreeCompletenessSQLite:
             {
                 "node_id": "L3",
                 "text": "Chapter 3 content",
-                "embedding": [0.3] * 1536,
                 "span_start": 40,
                 "span_end": 60,
                 "document_id": "test-doc",
@@ -100,7 +92,6 @@ class TestCoverageTreeCompletenessSQLite:
             {
                 "node_id": "L4",
                 "text": "Chapter 4 content",
-                "embedding": [0.4] * 1536,
                 "span_start": 60,
                 "span_end": 80,
                 "document_id": "test-doc",
@@ -112,7 +103,6 @@ class TestCoverageTreeCompletenessSQLite:
             {
                 "node_id": "P1",
                 "text": "Summary of chapters 1-2",
-                "embedding": [0.15] * 1536,
                 "span_start": 0,
                 "span_end": 40,
                 "document_id": "test-doc",
@@ -125,7 +115,6 @@ class TestCoverageTreeCompletenessSQLite:
             {
                 "node_id": "P2",
                 "text": "Summary of chapters 3-4",
-                "embedding": [0.35] * 1536,
                 "span_start": 40,
                 "span_end": 80,
                 "document_id": "test-doc",
@@ -139,7 +128,6 @@ class TestCoverageTreeCompletenessSQLite:
             {
                 "node_id": "root",
                 "text": "Full document summary",
-                "embedding": [0.25] * 1536,
                 "span_start": 0,
                 "span_end": 80,
                 "document_id": "test-doc",

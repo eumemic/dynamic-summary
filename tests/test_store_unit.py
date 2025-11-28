@@ -5,12 +5,9 @@ with the configured backend, providing higher fidelity testing while
 maintaining the unit test focus.
 """
 
-from typing import cast
-
-import numpy as np
 import pytest
-from numpy.typing import NDArray
 
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.vector_filter import DocumentIdFilter
 from ragzoom.contracts.vector_index import VectorIndex as VectorIndexV2
@@ -39,18 +36,11 @@ class TestStoreUnit:
 
     def test_add_and_get_node(self, doc_store: DocumentStore) -> None:
         """Test basic node addition and retrieval."""
-        embedding: NDArray[np.float64] = np.array([0.1] * 1536, dtype=np.float64)
-
         # SQLite repository uses batch operations
-        nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "test-1",
                 "text": "Test text",
-                "embedding": embedding,
                 "span_start": 0,
                 "span_end": 10,
                 "height": 0,
@@ -79,15 +69,10 @@ class TestStoreUnit:
 
     def test_batch_node_operations(self, doc_store: DocumentStore) -> None:
         """Test batch node addition and retrieval."""
-        nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "batch-1",
                 "text": "First batch node",
-                "embedding": np.array([0.1] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 10,
                 "height": 0,
@@ -97,7 +82,6 @@ class TestStoreUnit:
             {
                 "node_id": "batch-2",
                 "text": "Second batch node",
-                "embedding": np.array([0.2] * 1536, dtype=np.float64),
                 "span_start": 10,
                 "span_end": 20,
                 "height": 0,
@@ -107,7 +91,6 @@ class TestStoreUnit:
             {
                 "node_id": "batch-root",
                 "text": "Root batch node",
-                "embedding": np.array([0.3] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 20,
                 "height": 1,
@@ -138,39 +121,30 @@ class TestStoreUnit:
     def test_tree_navigation(self, doc_store: DocumentStore) -> None:
         """Test tree structure navigation."""
         # Create a simple tree structure
-        nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "leaf-1",
                 "text": "Left leaf",
-                "embedding": np.array([0.1] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 10,
                 "height": 0,
                 "level_index": 0,
                 "document_id": doc_store.document_id,
-                "coord_version": 1,
                 "token_count": 2,
             },
             {
                 "node_id": "leaf-2",
                 "text": "Right leaf",
-                "embedding": np.array([0.2] * 1536, dtype=np.float64),
                 "span_start": 10,
                 "span_end": 20,
                 "height": 0,
                 "level_index": 1,
                 "document_id": doc_store.document_id,
-                "coord_version": 1,
                 "token_count": 2,
             },
             {
                 "node_id": "root",
                 "text": "Root node",
-                "embedding": np.array([0.3] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 20,
                 "height": 1,
@@ -178,7 +152,6 @@ class TestStoreUnit:
                 "right_child_id": "leaf-2",
                 "level_index": 0,
                 "document_id": doc_store.document_id,
-                "coord_version": 1,
                 "token_count": 2,
             },
         ]
@@ -231,15 +204,10 @@ class TestStoreUnit:
     def test_node_pinning(self, doc_store: DocumentStore) -> None:
         """Test node pinning functionality."""
         # Add a test node using batch operation
-        nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "pinnable-1",
                 "text": "Node to pin",
-                "embedding": np.array([0.1] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 10,
                 "height": 0,
@@ -278,7 +246,6 @@ class TestStoreUnit:
                 {
                     "node_id": "node-1",
                     "text": "Node in doc 1",
-                    "embedding": np.array([0.1] * 1536, dtype=np.float64),
                     "span_start": 0,
                     "span_end": 10,
                     "height": 0,
@@ -293,7 +260,6 @@ class TestStoreUnit:
                 {
                     "node_id": "node-2",
                     "text": "Node in doc 2",
-                    "embedding": np.array([0.2] * 1536, dtype=np.float64),
                     "span_start": 0,
                     "span_end": 10,
                     "height": 0,
@@ -321,15 +287,10 @@ class TestStoreUnit:
     ) -> None:
         """Test search within document scope."""
         # Add nodes for searching
-        nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "search-1",
                 "text": "Machine learning algorithms",
-                "embedding": np.array([0.8, 0.2] + [0.1] * 1534, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 20,
                 "height": 0,
@@ -339,7 +300,6 @@ class TestStoreUnit:
             {
                 "node_id": "search-2",
                 "text": "Deep neural networks",
-                "embedding": np.array([0.7, 0.3] + [0.1] * 1534, dtype=np.float64),
                 "span_start": 20,
                 "span_end": 40,
                 "height": 0,
@@ -349,7 +309,6 @@ class TestStoreUnit:
             {
                 "node_id": "search-3",
                 "text": "Natural language processing",
-                "embedding": np.array([0.1, 0.9] + [0.1] * 1534, dtype=np.float64),
                 "span_start": 40,
                 "span_end": 60,
                 "height": 0,
@@ -360,13 +319,15 @@ class TestStoreUnit:
 
         # Persist nodes and upsert embeddings
         doc_store.nodes.add_batch(nodes_data)
+        # Create dummy embeddings for vector index (separate from node data)
+        dummy_embedding = [0.1] * 1536
         vector_entries = [
             (
-                cast(str, d["node_id"]),
-                cast(list[float], list(np.asarray(d["embedding"], dtype=np.float64))),
+                d["node_id"],
+                dummy_embedding,
                 {
-                    "span_start": cast(int, d["span_start"]),
-                    "span_end": cast(int, d["span_end"]),
+                    "span_start": d["span_start"],
+                    "span_end": d["span_end"],
                     "parent_id": "",
                     "document_id": "test-doc",
                     "is_leaf": 1,
@@ -400,15 +361,10 @@ class TestStoreUnit:
     ) -> None:
         """Test integration with TreeNodeBuilder patterns."""
         # Build node data directly for SQLite compatibility
-        batch_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        batch_data: list[NodeDataDict] = [
             {
                 "node_id": "builder-test",
                 "text": "Built with TreeNodeBuilder",
-                "embedding": np.array([0.1] * 1536, dtype=np.float64),
                 "span_start": 50,
                 "span_end": 100,
                 "height": 1,
@@ -497,15 +453,10 @@ class TestStoreUnit:
     def test_node_metadata_handling(self, doc_store: DocumentStore) -> None:
         """Test proper handling of node metadata fields."""
         # Create node with various metadata using batch operation
-        nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "metadata-test",
                 "text": "Node with metadata",
-                "embedding": np.array([0.1] * 1536, dtype=np.float64),
                 "span_start": 100,
                 "span_end": 200,
                 "parent_id": None,
@@ -538,15 +489,10 @@ class TestStoreUnit:
     def test_path_based_operations(self, doc_store: DocumentStore) -> None:
         """Test operations that depend on path values."""
         # Create nodes with specific path values
-        nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "path-00",
                 "text": "Path 00 node",
-                "embedding": np.array([0.1] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 10,
                 "height": 0,
@@ -556,7 +502,6 @@ class TestStoreUnit:
             {
                 "node_id": "path-01",
                 "text": "Path 01 node",
-                "embedding": np.array([0.2] * 1536, dtype=np.float64),
                 "span_start": 10,
                 "span_end": 20,
                 "height": 0,
@@ -566,7 +511,6 @@ class TestStoreUnit:
             {
                 "node_id": "path-0",
                 "text": "Path 0 node",
-                "embedding": np.array([0.3] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 20,
                 "height": 1,
@@ -588,15 +532,10 @@ class TestStoreUnit:
     def test_node_access_patterns(self, doc_store: DocumentStore) -> None:
         """Test node access tracking functionality."""
         # Add a test node using batch operation
-        nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "access-test",
                 "text": "Node for access testing",
-                "embedding": np.array([0.1] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 10,
                 "height": 0,
@@ -615,15 +554,10 @@ class TestStoreUnit:
     def test_multi_node_operations(self, doc_store: DocumentStore) -> None:
         """Test operations on multiple nodes."""
         # Add multiple nodes
-        nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": f"multi-{i}",
                 "text": f"Multi node {i}",
-                "embedding": np.array([0.1 * i] * 1536, dtype=np.float64),
                 "span_start": i * 10,
                 "span_end": (i + 1) * 10,
                 "height": 0,
@@ -650,15 +584,10 @@ class TestStoreUnit:
     def test_leaf_node_operations(self, doc_store: DocumentStore) -> None:
         """Test operations specific to leaf nodes."""
         # Create a tree with leaf nodes
-        nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "leaf-a",
                 "text": "Leaf A",
-                "embedding": np.array([0.1] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 10,
                 "height": 0,
@@ -668,7 +597,6 @@ class TestStoreUnit:
             {
                 "node_id": "leaf-b",
                 "text": "Leaf B",
-                "embedding": np.array([0.2] * 1536, dtype=np.float64),
                 "span_start": 10,
                 "span_end": 20,
                 "height": 0,
@@ -678,7 +606,6 @@ class TestStoreUnit:
             {
                 "node_id": "internal",
                 "text": "Internal node",
-                "embedding": np.array([0.3] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 20,
                 "height": 1,

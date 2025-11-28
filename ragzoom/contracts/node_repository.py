@@ -7,10 +7,43 @@ Implementations include Postgres and SQLite repositories.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypedDict, runtime_checkable
+
+import numpy as np
+from numpy.typing import NDArray
+from typing_extensions import Required
 
 # jscpd:ignore-start - Protocol declares signatures mirrored by implementations
 from ragzoom.contracts.tree_node import TreeNode
+
+# Value types that can appear in node data fields
+NodeFieldValue = str | int | float | bool | list[float] | NDArray[np.float64] | None
+
+
+class NodeDataDict(TypedDict, total=False):
+    """Type definition for node data used in batch operations.
+
+    Required fields are accessed directly in implementations.
+    Optional fields are accessed with .get() and may be None.
+    """
+
+    # Required fields (always accessed directly in implementations)
+    node_id: Required[str]
+    text: Required[str]
+    span_start: Required[int]
+    span_end: Required[int]
+    token_count: Required[int]
+    height: Required[int]
+    level_index: Required[int]
+
+    # Optional fields (accessed with .get())
+    document_id: str | None
+    parent_id: str | None
+    left_child_id: str | None
+    right_child_id: str | None
+    preceding_neighbor_id: str | None
+    following_neighbor_id: str | None
+
 
 try:  # Optional typing import; not required at runtime
     from typing import TYPE_CHECKING
@@ -43,14 +76,14 @@ class NodeRepository(Protocol):
 
     def add_nodes_batch(
         self,
-        nodes_data: list[dict[str, object]],
+        nodes_data: list[NodeDataDict],
         *,
         session: Session | None = None,
     ) -> list[TreeNode]: ...
 
     def upsert_nodes_batch(
         self,
-        nodes_data: list[dict[str, object]],
+        nodes_data: list[NodeDataDict],
         *,
         session: Session | None = None,
     ) -> list[TreeNode]: ...

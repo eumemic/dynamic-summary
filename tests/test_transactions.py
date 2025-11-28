@@ -6,10 +6,9 @@ for testing transactional operations and atomic behavior.
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
-from numpy.typing import NDArray
 
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 
 
@@ -23,12 +22,7 @@ class TestTransactionContext:
         # Use transaction to add document and nodes atomically
         doc_id = "test-doc"
         doc_store = storage_backend.for_document(doc_id)
-        nodes_data: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "node-1",
                 "text": "Test content",
@@ -102,12 +96,7 @@ class TestTransactionContext:
         doc_store = storage_backend.for_document(doc_id)
 
         # Create nodes in transaction
-        nodes_data: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "leaf-1",
                 "text": "Leaf 1",
@@ -209,12 +198,7 @@ class TestBackwardCompatibility:
             summary_model="gpt-4o-mini",
         )
 
-        nodes_data: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "node-no-session",
                 "text": "Test content",
@@ -247,12 +231,7 @@ class TestBackwardCompatibility:
             summary_model="gpt-4o-mini",
         )
 
-        nodes_data: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "node-to-delete",
                 "text": "Test content",
@@ -291,12 +270,7 @@ class TestAtomicReindexing:
             summary_model="gpt-4o-mini",
         )
 
-        old_nodes_data: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        old_nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "old-node-1",
                 "text": "Old content",
@@ -314,12 +288,7 @@ class TestAtomicReindexing:
         assert doc_store.nodes.get_node("old-node-1") is not None
 
         # Now atomically re-index with new content
-        new_nodes_data: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        new_nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "new-node-1",
                 "text": "New content",
@@ -357,12 +326,7 @@ class TestAtomicReindexing:
             summary_model="gpt-4o-mini",
         )
 
-        old_nodes_data: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        old_nodes_data: list[NodeDataDict] = [
             {
                 "node_id": "old-node-fail",
                 "text": "Old content",
@@ -412,12 +376,7 @@ class TestTransactionSafety:
         )
 
         # First, add a valid node
-        valid_nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        valid_nodes: list[NodeDataDict] = [
             {
                 "node_id": "valid-node",
                 "text": "Valid content",
@@ -435,18 +394,7 @@ class TestTransactionSafety:
         with pytest.raises(ValueError, match="Simulated exception"):
             with doc_store.transaction() as session:
                 # Add a test node
-                invalid_nodes: list[
-                    dict[
-                        str,
-                        str
-                        | int
-                        | float
-                        | bool
-                        | list[float]
-                        | NDArray[np.float64]
-                        | None,
-                    ]
-                ] = [
+                invalid_nodes: list[NodeDataDict] = [
                     {
                         "node_id": "test-node-exception",
                         "text": "Test content",

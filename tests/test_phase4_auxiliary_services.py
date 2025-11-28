@@ -9,11 +9,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from unittest.mock import Mock
 
-import numpy as np
 import pytest
-from numpy.typing import NDArray
 from openai import OpenAI
 
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.document_store import DocumentStore
 from ragzoom.retrieval.budget_planner import BudgetPlanner
 from ragzoom.retrieval.embedding_service import EmbeddingService
@@ -97,12 +96,7 @@ class TestBudgetPlannerIsolation:
         doc2_store = sqlite_store_factory("doc2")
 
         # Add nodes for doc1 (small chunks)
-        doc1_nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        doc1_nodes: list[NodeDataDict] = [
             {
                 "node_id": f"doc1_leaf_{i}",
                 "text": f"Small text {i}",
@@ -121,12 +115,7 @@ class TestBudgetPlannerIsolation:
         doc1_store.nodes.add_batch(doc1_nodes)
 
         # Add nodes for doc2 (large chunks)
-        doc2_nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        doc2_nodes: list[NodeDataDict] = [
             {
                 "node_id": f"doc2_leaf_{i}",
                 "text": f"Large text content here {i}" * 10,
@@ -180,12 +169,7 @@ class TestBudgetPlannerIsolation:
         doc_store = sqlite_store_factory("doc1")
 
         # Add document with very large chunks
-        large_nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        large_nodes: list[NodeDataDict] = [
             {
                 "node_id": "doc1_leaf",
                 "text": "Very large text" * 100,

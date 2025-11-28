@@ -10,17 +10,17 @@ from typing import cast
 
 import numpy as np
 import pytest
-
-# from numpy.typing import NDArray
 from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
+from ragzoom.contracts.embedding_model import EmbeddingProvider
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_filter import VectorFilter
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
-from ragzoom.server.append_executor import AppendExecutor, EmbeddingProvider
+from ragzoom.server.append_executor import AppendExecutor
 from ragzoom.server.worker_coordinator import (
     DocumentState,
     ReadyParentCandidate,
@@ -31,8 +31,6 @@ from ragzoom.splitter import TextSplitter
 from ragzoom.vector_api import Vector
 
 DocStoreFixture = tuple[str, DocumentStore]
-NodePayloadValue = str | int | float | bool | list[float] | NDArray[np.float64] | None
-NodePayload = dict[str, NodePayloadValue]
 
 
 @pytest.fixture()
@@ -62,7 +60,7 @@ def _leaf_payload(
     document_id: str,
     preceding: str | None = None,
     following: str | None = None,
-) -> NodePayload:
+) -> NodeDataDict:
     return {
         "node_id": node_id,
         "text": node_id,
@@ -549,7 +547,7 @@ async def test_worker_coordinator_converges_to_single_root(
     index_config: IndexConfig,
 ) -> None:
     document_id, store = doc_store
-    leaf_payloads: list[NodePayload] = []
+    leaf_payloads: list[NodeDataDict] = []
     for idx in range(8):
         span_start = idx * 100
         span_end = (idx + 1) * 100
@@ -643,7 +641,7 @@ async def test_worker_coordinator_converges_with_odd_parent_count(
     index_config: IndexConfig,
 ) -> None:
     document_id, store = doc_store
-    leaf_payloads: list[NodePayload] = []
+    leaf_payloads: list[NodeDataDict] = []
     for idx in range(10):
         span_start = idx * 100
         span_end = (idx + 1) * 100
