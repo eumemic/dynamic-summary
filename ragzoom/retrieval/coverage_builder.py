@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ragzoom.backends.vector_common import coerce_int
+from ragzoom.error_handling import handle_graceful_error
 from ragzoom.tree_coordinate import TreeCoordinate
 
 if TYPE_CHECKING:
@@ -60,7 +61,9 @@ class CoverageBuilder:
         try:
             root_nodes = self.store.nodes.get_root_nodes()
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning("Failed to load root nodes for coverage map: %s", exc)
+            handle_graceful_error(
+                exc, "Failed to load root nodes for coverage map", default=None
+            )
         else:
             for root in root_nodes:
                 coverage_map[root.id] = True
@@ -85,7 +88,9 @@ class CoverageBuilder:
                 coverage_map[node.id] = True
                 nodes.setdefault(node.id, node)
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning("Failed to include pinned nodes in coverage map: %s", exc)
+            handle_graceful_error(
+                exc, "Failed to include pinned nodes in coverage map", default=None
+            )
 
         return CoverageResult(coverage_map=coverage_map, nodes=nodes)
 
@@ -142,8 +147,10 @@ class CoverageBuilder:
             existing_nodes = (
                 self.store.nodes.get_nodes(missing_seed_ids) if missing_seed_ids else []
             )
-        except Exception:
-            existing_nodes = []
+        except Exception as exc:
+            existing_nodes = handle_graceful_error(
+                exc, "Failed to fetch nodes for coverage seeds", default=[]
+            )
 
         touched_ids: set[str] = set()
 
@@ -197,8 +204,10 @@ class CoverageBuilder:
         if missing_after_coord:
             try:
                 fallback_nodes = self.store.nodes.get_nodes(missing_after_coord)
-            except Exception:
-                fallback_nodes = []
+            except Exception as exc:
+                fallback_nodes = handle_graceful_error(
+                    exc, "Failed to fetch fallback nodes for coverage", default=[]
+                )
             for node in fallback_nodes:
                 register(node)
 

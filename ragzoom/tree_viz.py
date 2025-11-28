@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
+from ragzoom.error_handling import handle_graceful_error
 from ragzoom.utils.tokenization import tokenizer as default_tokenizer
 
 logger = logging.getLogger(__name__)
@@ -66,8 +67,10 @@ class CharacterPositionResolver(PositionResolver):
             if getter is not None:
                 try:
                     node = getter.get(node_id)
-                except Exception:
-                    node = None
+                except Exception as exc:
+                    node = handle_graceful_error(
+                        exc, f"Node fetch failed for {node_id}", default=None
+                    )
         if node is None:
             raise ValueError(
                 f"Node {node_id} not found for visualization (missing in cache and store)"
@@ -148,8 +151,10 @@ class TokenPositionResolver(PositionResolver):
         if nodes_api is not None:
             try:
                 fetched = nodes_api.get(node_id)
-            except Exception:
-                fetched = None
+            except Exception as exc:
+                fetched = handle_graceful_error(
+                    exc, f"Node fetch failed for {node_id}", default=None
+                )
             if fetched is not None:
                 return cast(TreeNode, fetched)
         raise ValueError(

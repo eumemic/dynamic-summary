@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from ragzoom.contracts.document_repository import DocumentRepository
 from ragzoom.contracts.node_repository import NodeRepository as NodeRepositoryProtocol
 from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.error_handling import handle_graceful_error
 from ragzoom.services.tree_navigator import TreeNavigator
 
 if TYPE_CHECKING:
@@ -552,7 +553,10 @@ class DocumentStore:
         for node in pinned:
             try:
                 depth = self.tree.get_depth(node.id)
-            except Exception:
+            except Exception as exc:
+                handle_graceful_error(
+                    exc, f"Depth lookup failed for pinned node {node.id}", default=None
+                )
                 continue
             if depth_max is None or depth <= depth_max:
                 filtered.append(node)
