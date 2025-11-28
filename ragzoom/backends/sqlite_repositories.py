@@ -32,6 +32,7 @@ from ragzoom.backends.sqlite_db import (
     SqliteDocument,
     SQLiteTreeNode,
 )
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.tree_node import TreeNode  # For type hints only
 from ragzoom.services.cache_manager import CacheManager
 
@@ -58,7 +59,7 @@ class SqliteNodeRepository:
 
     # --- Create/Update ---
     def add_nodes_batch(
-        self, nodes_data: list[dict[str, object]], *, session: Session | None = None
+        self, nodes_data: list[NodeDataDict], *, session: Session | None = None
     ) -> list[TreeNode]:
         if not nodes_data:
             return []
@@ -70,23 +71,19 @@ class SqliteNodeRepository:
             # Build payload once to avoid duplication
             payload = [
                 {
-                    "id": str(data["node_id"]),
-                    "parent_id": cast(str | None, data.get("parent_id")),
-                    "left_child_id": cast(str | None, data.get("left_child_id")),
-                    "right_child_id": cast(str | None, data.get("right_child_id")),
-                    "span_start": cast(int, data["span_start"]),
-                    "span_end": cast(int, data["span_end"]),
-                    "text": cast(str, data["text"]),
-                    "token_count": cast(int, data["token_count"]),
-                    "document_id": cast(str | None, data.get("document_id")),
-                    "preceding_neighbor_id": cast(
-                        str | None, data.get("preceding_neighbor_id")
-                    ),
-                    "following_neighbor_id": cast(
-                        str | None, data.get("following_neighbor_id")
-                    ),
-                    "height": cast(int, data["height"]),
-                    "level_index": cast(int, data["level_index"]),
+                    "id": data["node_id"],
+                    "parent_id": data.get("parent_id"),
+                    "left_child_id": data.get("left_child_id"),
+                    "right_child_id": data.get("right_child_id"),
+                    "span_start": data["span_start"],
+                    "span_end": data["span_end"],
+                    "text": data["text"],
+                    "token_count": data["token_count"],
+                    "document_id": data.get("document_id"),
+                    "preceding_neighbor_id": data.get("preceding_neighbor_id"),
+                    "following_neighbor_id": data.get("following_neighbor_id"),
+                    "height": data["height"],
+                    "level_index": data["level_index"],
                 }
                 for data in nodes_data
             ]
@@ -100,7 +97,7 @@ class SqliteNodeRepository:
                 return []
 
             # Fetch and detach inserted rows so callers receive ORM-like objects
-            ids = [str(data["node_id"]) for data in nodes_data]
+            ids = [data["node_id"] for data in nodes_data]
             rows = (
                 session.execute(
                     select(SQLiteTreeNode).where(SQLiteTreeNode.id.in_(ids))
@@ -115,7 +112,7 @@ class SqliteNodeRepository:
 
     # jscpd:ignore-start - SQLite implementation parallels Postgres version for parity
     def upsert_nodes_batch(
-        self, nodes_data: list[dict[str, object]], *, session: Session | None = None
+        self, nodes_data: list[NodeDataDict], *, session: Session | None = None
     ) -> list[TreeNode]:
         if not nodes_data:
             return []
@@ -125,27 +122,23 @@ class SqliteNodeRepository:
             own_session = True
         try:
             node_ids: list[str] = []
-            for raw in nodes_data:
-                node_id = str(raw["node_id"])
+            for data in nodes_data:
+                node_id = data["node_id"]
                 node_ids.append(node_id)
                 stmt = sqlite_insert(SQLiteTreeNode).values(
                     id=node_id,
-                    parent_id=cast(str | None, raw.get("parent_id")),
-                    left_child_id=cast(str | None, raw.get("left_child_id")),
-                    right_child_id=cast(str | None, raw.get("right_child_id")),
-                    span_start=cast(int, raw["span_start"]),
-                    span_end=cast(int, raw["span_end"]),
-                    text=cast(str, raw["text"]),
-                    token_count=cast(int, raw["token_count"]),
-                    document_id=cast(str | None, raw.get("document_id")),
-                    preceding_neighbor_id=cast(
-                        str | None, raw.get("preceding_neighbor_id")
-                    ),
-                    following_neighbor_id=cast(
-                        str | None, raw.get("following_neighbor_id")
-                    ),
-                    height=cast(int, raw["height"]),
-                    level_index=cast(int, raw["level_index"]),
+                    parent_id=data.get("parent_id"),
+                    left_child_id=data.get("left_child_id"),
+                    right_child_id=data.get("right_child_id"),
+                    span_start=data["span_start"],
+                    span_end=data["span_end"],
+                    text=data["text"],
+                    token_count=data["token_count"],
+                    document_id=data.get("document_id"),
+                    preceding_neighbor_id=data.get("preceding_neighbor_id"),
+                    following_neighbor_id=data.get("following_neighbor_id"),
+                    height=data["height"],
+                    level_index=data["level_index"],
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=[SQLiteTreeNode.id],

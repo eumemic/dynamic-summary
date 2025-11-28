@@ -7,12 +7,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import numpy as np
 import pytest
-from numpy.typing import NDArray
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import OperationalConfig, QueryConfig, SecretStr
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.document_store import DocumentStore
 from tests.utils import create_retriever
 
@@ -46,17 +45,11 @@ class TestDPAssembly:
         # /\ /\
         # 1 2 3 4 (depth=0)
 
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             # Leaf nodes
             {
                 "node_id": "leaf1",
                 "text": "First chunk of text.",
-                "embedding": np.array([0.1] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 20,
                 "document_id": "doc1",
@@ -67,7 +60,6 @@ class TestDPAssembly:
             {
                 "node_id": "leaf2",
                 "text": "Second chunk of text.",
-                "embedding": np.array([0.2] * 1536, dtype=np.float64),
                 "span_start": 20,
                 "span_end": 41,
                 "document_id": "doc1",
@@ -78,7 +70,6 @@ class TestDPAssembly:
             {
                 "node_id": "leaf3",
                 "text": "Third chunk of text.",
-                "embedding": np.array([0.3] * 1536, dtype=np.float64),
                 "span_start": 41,
                 "span_end": 61,
                 "document_id": "doc1",
@@ -89,7 +80,6 @@ class TestDPAssembly:
             {
                 "node_id": "leaf4",
                 "text": "Fourth chunk of text.",
-                "embedding": np.array([0.4] * 1536, dtype=np.float64),
                 "span_start": 61,
                 "span_end": 82,
                 "document_id": "doc1",
@@ -101,7 +91,6 @@ class TestDPAssembly:
             {
                 "node_id": "left",
                 "text": "Summary of first and second chunks.",
-                "embedding": np.array([0.15] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 41,
                 "left_child_id": "leaf1",
@@ -114,7 +103,6 @@ class TestDPAssembly:
             {
                 "node_id": "right",
                 "text": "Summary of third and fourth chunks.",
-                "embedding": np.array([0.35] * 1536, dtype=np.float64),
                 "span_start": 41,
                 "span_end": 82,
                 "left_child_id": "leaf3",
@@ -127,7 +115,6 @@ class TestDPAssembly:
             {
                 "node_id": "root",
                 "text": "Overall document summary.",
-                "embedding": np.array([0.25] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 82,
                 "left_child_id": "left",
@@ -221,16 +208,10 @@ class TestDPAssembly:
     ) -> None:
         """Test handling of nodes with empty text."""
         # Add a node with empty text
-        empty_nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        empty_nodes: list[NodeDataDict] = [
             {
                 "node_id": "empty",
                 "text": "",
-                "embedding": np.array([0.5] * 1536, dtype=np.float64),
                 "span_start": 82,
                 "span_end": 82,
                 "document_id": "doc1",
@@ -318,16 +299,10 @@ class TestDPAssembly:
         dp_generator = retriever.dp_generator
 
         # Manually create a single-node tree
-        single_node: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        single_node: list[NodeDataDict] = [
             {
                 "node_id": "root",
                 "text": "single node",
-                "embedding": np.array([0.1] * 1536, dtype=np.float64),
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "test-doc-single",

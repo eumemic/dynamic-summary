@@ -6,11 +6,10 @@ when ancestors have lower scores and budget cannot fit deeper nodes.
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
-from numpy.typing import NDArray
 
 from ragzoom.config import QueryConfig
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
@@ -39,16 +38,10 @@ class TestZeroScoreCollapse:
                    └─ leaf (token_count=50)
         """
         # Seed nodes; set token_count explicitly to control DP costs
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "leaf",
                 "text": "x",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "test-doc",
@@ -60,7 +53,6 @@ class TestZeroScoreCollapse:
             {
                 "node_id": "parent",
                 "text": "y",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "test-doc",
@@ -74,7 +66,6 @@ class TestZeroScoreCollapse:
             {
                 "node_id": "root",
                 "text": "z",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "test-doc",
@@ -129,16 +120,10 @@ class TestZeroScoreCollapse:
     def test_zero_score_collapse_to_root(self, doc_store: DocumentStore) -> None:
         """Deeper tree: with constrained budget, algorithm collapses to root."""
         # Seed deeper left-chain tree with explicit token counts (single child each level)
-        seeds: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        seeds: list[NodeDataDict] = [
             {
                 "node_id": "leaf",
                 "text": "leaf",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "test-doc",
@@ -150,7 +135,6 @@ class TestZeroScoreCollapse:
             {
                 "node_id": "level3",
                 "text": "l3",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "test-doc",
@@ -164,7 +148,6 @@ class TestZeroScoreCollapse:
             {
                 "node_id": "level2",
                 "text": "l2",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "test-doc",
@@ -178,7 +161,6 @@ class TestZeroScoreCollapse:
             {
                 "node_id": "level1",
                 "text": "l1",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "test-doc",
@@ -192,7 +174,6 @@ class TestZeroScoreCollapse:
             {
                 "node_id": "root",
                 "text": "root",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "test-doc",

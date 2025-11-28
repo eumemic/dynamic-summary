@@ -10,7 +10,12 @@ from numpy.typing import NDArray
 from sqlalchemy.orm import Session
 
 from ragzoom.contracts.document_repository import DocumentRepository
-from ragzoom.contracts.node_repository import NodeRepository as NodeRepositoryProtocol
+from ragzoom.contracts.node_repository import (
+    NodeDataDict,
+)
+from ragzoom.contracts.node_repository import (
+    NodeRepository as NodeRepositoryProtocol,
+)
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.error_handling import handle_graceful_error
 from ragzoom.services.tree_navigator import TreeNavigator
@@ -69,42 +74,37 @@ class DocumentNodeRepository:
 
     def add_batch(
         self,
-        nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ],
+        nodes_data: list[NodeDataDict],
         *,
         session: Session | None = None,
     ) -> list[TreeNode]:
         """Add multiple nodes to this document in batch."""
         # Ensure all nodes have the document_id set
-        processed_data: list[dict[str, object]] = []
+        processed_data: list[NodeDataDict] = []
         for node_data in nodes_data:
-            # Create a copy and set document_id
-            processed_node = node_data.copy()
-            processed_node["document_id"] = self.document_id
-            processed_data.append(processed_node)  # type: ignore[arg-type]
+            processed_node: NodeDataDict = {
+                **node_data,
+                "document_id": self.document_id,
+            }
+            processed_data.append(processed_node)
         return self._repo.add_nodes_batch(processed_data, session=session)
 
     # jscpd:ignore-start - wrappers mirror repository signatures for document scoping
     def upsert_nodes_batch(
         self,
-        nodes_data: list[dict[str, object]],
+        nodes_data: list[NodeDataDict],
         *,
         session: Session | None = None,
     ) -> list[TreeNode]:
         """Upsert multiple nodes while enforcing document scope."""
-
-        processed: list[dict[str, object]] = []
+        processed: list[NodeDataDict] = []
         for node_data in nodes_data:
-            data_copy = dict(node_data)
-            data_copy["document_id"] = self.document_id
-            processed.append(data_copy)
-        upserts = getattr(self._repo, "upsert_nodes_batch", None)
-        if not callable(upserts):
-            raise NotImplementedError("Underlying repository does not support upsert")
-        return cast(list[TreeNode], upserts(processed, session=session))
+            processed_node: NodeDataDict = {
+                **node_data,
+                "document_id": self.document_id,
+            }
+            processed.append(processed_node)
+        return self._repo.upsert_nodes_batch(processed, session=session)
 
     def delete_nodes(
         self,
