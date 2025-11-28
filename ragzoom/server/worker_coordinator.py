@@ -14,9 +14,9 @@ from itertools import count
 from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
-from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig, OperationalConfig
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex
@@ -42,9 +42,6 @@ class ReadyParentCandidate:
     level_index: int
     span_start: int
     run_id: str | None = None
-
-
-NodeFieldValue = str | int | float | bool | list[float] | NDArray[np.float64] | None
 
 
 @dataclass(frozen=True)
@@ -1264,7 +1261,7 @@ class WorkerCoordinator:
                         following_parent_node = fallback_next
                         affected_ids.add(following_parent_id)
 
-                node_payload: dict[str, NodeFieldValue] = {
+                node_payload: NodeDataDict = {
                     "node_id": parent_id,
                     "text": summary,
                     "span_start": span_start_final,

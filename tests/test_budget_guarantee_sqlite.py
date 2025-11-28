@@ -15,6 +15,7 @@ from numpy.typing import NDArray
 from ragzoom.assemble import Assembler
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import QueryConfig
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.validate import validate_tiling
@@ -45,12 +46,7 @@ class TestBudgetGuarantee:
     ) -> None:
         """Test that assembly never exceeds budget even in worst case."""
         # Create a multi-level tree with known token costs
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             # Leaf nodes (level 0)
             {
                 "node_id": "leaf1",
@@ -288,12 +284,7 @@ class TestBudgetGuarantee:
     ) -> None:
         """Test worst case where parent-child extraction could double content."""
         # Create a simple parent-child structure with precise token costs
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "expensive_leaf",
                 "text": "Very long content. " * 60,  # ~300 tokens
@@ -390,12 +381,7 @@ class TestBudgetGuarantee:
     ) -> None:
         """Test that the conservative num_seeds calculation respects budget."""
         # Create multiple nodes with varying token costs
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = []
+        nodes: list[NodeDataDict] = []
 
         # Create 10 leaf nodes with 100 tokens each
         for i in range(10):
@@ -526,12 +512,7 @@ class TestBudgetGuarantee:
     ) -> None:
         """Test mixed mode where both budget and num_seeds are specified."""
         # Create several nodes that could exceed budget if all selected
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "node1",
                 "text": "Node 1 content. " * 30,  # ~120 tokens
@@ -678,12 +659,7 @@ class TestBudgetGuarantee:
     ) -> None:
         """Test num_seeds only mode (no budget enforcement)."""
         # Create a simple tree structure
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "leaf1",
                 "text": "Test content. " * 50,  # ~200 tokens
@@ -808,12 +784,7 @@ class TestBudgetValidation:
     def test_budget_validation_catches_overflow(self, doc_store: DocumentStore) -> None:
         """Test that validation fails when tiling exceeds budget."""
         # Create some nodes with known token costs
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "node1",
                 "text": "test " * 20,  # ~20 tokens
@@ -859,12 +830,7 @@ class TestBudgetValidation:
     ) -> None:
         """Test that validation passes when tiling is within budget."""
         # Create a node
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "node1",
                 "text": "test " * 10,  # ~10 tokens
@@ -895,12 +861,7 @@ class TestBudgetValidation:
     ) -> None:
         """Test budget validation with parent and child nodes."""
         # Create parent-child structure
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "left_child",
                 "text": "left part " * 10,  # ~10 tokens

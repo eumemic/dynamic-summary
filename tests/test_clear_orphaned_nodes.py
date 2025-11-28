@@ -10,6 +10,7 @@ from click.testing import CliRunner
 
 from ragzoom.cli import cli
 from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.services.indexing_service import IndexingResult
 
@@ -76,8 +77,7 @@ class TestAutomaticClearing:
             nodes_data.append(
                 {
                     "node_id": f"node_{i}",
-                    "text": f"Text content {i}",
-                    "embedding": [0.1] * 1536,  # Dummy embedding
+                    "text": f"Text content {i}",  # Dummy embedding
                     "span_start": span_start,
                     "span_end": span_end,
                     "document_id": document_id,
@@ -89,21 +89,9 @@ class TestAutomaticClearing:
 
         from typing import cast
 
-        import numpy as np
-        from numpy.typing import NDArray
-
         # Convert to properly typed format
-        typed_nodes_data: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = cast(
-            list[
-                dict[
-                    str,
-                    str | int | float | bool | list[float] | NDArray[np.float64] | None,
-                ]
-            ],
+        typed_nodes_data: list[NodeDataDict] = cast(
+            list[NodeDataDict],
             nodes_data,
         )
         doc_store.nodes.add_batch(typed_nodes_data)
@@ -155,7 +143,6 @@ class TestAutomaticClearing:
                             {
                                 "node_id": "mock_root",
                                 "text": "Mock root node",
-                                "embedding": [0.1, 0.1, 0.1],
                                 "span_start": 0,
                                 "span_end": 100,
                                 "document_id": document_id,
@@ -239,7 +226,6 @@ class TestAutomaticClearing:
                             {
                                 "node_id": "mock_root",
                                 "text": "Mock root node",
-                                "embedding": [0.1, 0.1, 0.1],
                                 "span_start": 0,
                                 "span_end": 100,
                                 "document_id": document_id,

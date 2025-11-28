@@ -10,11 +10,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import numpy as np
 import pytest
-from numpy.typing import NDArray
 
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.vector_filter import DocumentIdFilter
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
@@ -42,12 +41,7 @@ class TestDocumentAPISQLite:
         wizards_store = sqlite_store_factory("wizards-doc")
 
         # Add nodes to dragons document
-        dragon_nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        dragon_nodes: list[NodeDataDict] = [
             {
                 "node_id": "dragon_node1",
                 "text": "Dragons breathe fire and soar through skies",
@@ -62,12 +56,7 @@ class TestDocumentAPISQLite:
         dragons_store.nodes.add_batch(dragon_nodes)
 
         # Add nodes to wizards document
-        wizard_nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        wizard_nodes: list[NodeDataDict] = [
             {
                 "node_id": "wizard_node1",
                 "text": "Wizards practice magic and cast spells",
@@ -140,12 +129,7 @@ class TestDocumentAPISQLite:
             assert isinstance(text, str)
             assert isinstance(token_count, int)
 
-            nodes: list[
-                dict[
-                    str,
-                    str | int | float | bool | list[float] | NDArray[np.float64] | None,
-                ]
-            ] = [
+            nodes: list[NodeDataDict] = [
                 {
                     "node_id": node_id,
                     "text": text,
@@ -189,12 +173,7 @@ class TestDocumentAPISQLite:
         creative_store = sqlite_store_factory("creative-writing")
 
         # Add technical document content
-        technical_nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        technical_nodes: list[NodeDataDict] = [
             {
                 "node_id": "tech_node1",
                 "text": "Database optimization and indexing strategies",
@@ -209,12 +188,7 @@ class TestDocumentAPISQLite:
         technical_store.nodes.add_batch(technical_nodes)
 
         # Add creative writing content
-        creative_nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        creative_nodes: list[NodeDataDict] = [
             {
                 "node_id": "creative_node1",
                 "text": "The mystical forest whispered ancient secrets",
@@ -298,12 +272,7 @@ class TestDocumentAPISQLite:
         store = sqlite_store_factory("test-operations")
 
         # Add multiple nodes
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "node1",
                 "text": "First test node",

@@ -5,13 +5,14 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, literal_column, or_, text, tuple_, update
 
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.models import PostgresTreeNode
 
@@ -22,30 +23,6 @@ from ragzoom.services.cache_manager import CacheManager
 from ragzoom.storage.database_manager import DatabaseManager
 
 logger = logging.getLogger(__name__)
-
-
-class NodeDataDict(TypedDict, total=False):
-    """Type definition for node data used in batch operations."""
-
-    # Required fields
-    node_id: str
-    document_id: str
-    # Optional fields
-    parent_id: str | None
-    left_child_id: str | None
-    right_child_id: str | None
-    span_start: int
-    span_end: int
-    text: str
-    embedding: list[float] | None
-    node_type: str
-    height: int
-    token_count: int
-    created_at: datetime
-    updated_at: datetime
-    preceding_neighbor_id: str | None
-    following_neighbor_id: str | None
-    level_index: int
 
 
 class PostgresNodeRepository(BaseRepository):
@@ -161,7 +138,7 @@ class PostgresNodeRepository(BaseRepository):
 
     def add_nodes_batch(
         self,
-        nodes_data: list[dict[str, object]],
+        nodes_data: list[NodeDataDict],
         *,
         session: Session | None = None,
     ) -> list[TreeNode]:
@@ -184,26 +161,21 @@ class PostgresNodeRepository(BaseRepository):
             # Create PostgresTreeNode objects for regular session.add_all()
             nodes_pg: list[PostgresTreeNode] = []
             out: list[TreeNode] = []
-            for raw in nodes_data:
-                data = raw  # accept generic dicts per protocol
+            for data in nodes_data:
                 node = PostgresTreeNode(
-                    id=str(data["node_id"]),
-                    parent_id=cast(str | None, data.get("parent_id")),
-                    left_child_id=cast(str | None, data.get("left_child_id")),
-                    right_child_id=cast(str | None, data.get("right_child_id")),
-                    span_start=cast(int, data["span_start"]),
-                    span_end=cast(int, data["span_end"]),
-                    text=cast(str, data["text"]),
-                    document_id=cast(str | None, data.get("document_id")),
-                    token_count=cast(int, data["token_count"]),
-                    preceding_neighbor_id=cast(
-                        str | None, data.get("preceding_neighbor_id")
-                    ),
-                    following_neighbor_id=cast(
-                        str | None, data.get("following_neighbor_id")
-                    ),
-                    height=cast(int, data["height"]),
-                    level_index=cast(int, data["level_index"]),
+                    id=data["node_id"],
+                    parent_id=data.get("parent_id"),
+                    left_child_id=data.get("left_child_id"),
+                    right_child_id=data.get("right_child_id"),
+                    span_start=data["span_start"],
+                    span_end=data["span_end"],
+                    text=data["text"],
+                    document_id=data.get("document_id"),
+                    token_count=data["token_count"],
+                    preceding_neighbor_id=data.get("preceding_neighbor_id"),
+                    following_neighbor_id=data.get("following_neighbor_id"),
+                    height=data["height"],
+                    level_index=data["level_index"],
                 )
                 nodes_pg.append(node)
                 out.append(node)
@@ -235,7 +207,7 @@ class PostgresNodeRepository(BaseRepository):
     # jscpd:ignore-start - Upsert mirrors SQLite implementation for parity
     def upsert_nodes_batch(
         self,
-        nodes_data: list[dict[str, object]],
+        nodes_data: list[NodeDataDict],
         *,
         session: Session | None = None,
     ) -> list[TreeNode]:
@@ -291,27 +263,23 @@ class PostgresNodeRepository(BaseRepository):
 
         node_ids: list[str] = []
         try:
-            for raw in nodes_data:
-                node_id = str(raw["node_id"])
+            for data in nodes_data:
+                node_id = data["node_id"]
                 node_ids.append(node_id)
                 params = {
                     "id": node_id,
-                    "text": str(raw["text"]),
-                    "span_start": int(cast(int | float, raw["span_start"])),
-                    "span_end": int(cast(int | float, raw["span_end"])),
-                    "parent_id": cast(str | None, raw.get("parent_id")),
-                    "left_child_id": cast(str | None, raw.get("left_child_id")),
-                    "right_child_id": cast(str | None, raw.get("right_child_id")),
-                    "document_id": cast(str | None, raw.get("document_id")),
-                    "token_count": int(cast(int | float, raw["token_count"])),
-                    "height": int(cast(int | float, raw["height"])),
-                    "preceding_neighbor_id": cast(
-                        str | None, raw.get("preceding_neighbor_id")
-                    ),
-                    "following_neighbor_id": cast(
-                        str | None, raw.get("following_neighbor_id")
-                    ),
-                    "level_index": int(cast(int | float, raw["level_index"])),
+                    "text": data["text"],
+                    "span_start": data["span_start"],
+                    "span_end": data["span_end"],
+                    "parent_id": data.get("parent_id"),
+                    "left_child_id": data.get("left_child_id"),
+                    "right_child_id": data.get("right_child_id"),
+                    "document_id": data.get("document_id"),
+                    "token_count": data["token_count"],
+                    "height": data["height"],
+                    "preceding_neighbor_id": data.get("preceding_neighbor_id"),
+                    "following_neighbor_id": data.get("following_neighbor_id"),
+                    "level_index": data["level_index"],
                 }
                 db_session.execute(insert_sql, params)
                 self.cache_manager.invalidate(node_id)

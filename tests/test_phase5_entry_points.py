@@ -3,11 +3,10 @@
 from typing import cast
 from unittest.mock import MagicMock, Mock, patch
 
-import numpy as np
 from click.testing import CliRunner
-from numpy.typing import NDArray
 
 from ragzoom.cli import cli
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.vector_index import VectorIndex
 
@@ -38,11 +37,7 @@ class TestCLIPinCommandIsolation:
         )
 
         # Add nodes to different documents using proper add_batch format
-        nodes: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "doc1_node",
                 "text": "Document 1 content",
@@ -59,11 +54,7 @@ class TestCLIPinCommandIsolation:
         ]
         doc1_store.nodes.add_batch(nodes)
 
-        nodes_doc2: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes_doc2: list[NodeDataDict] = [
             {
                 "node_id": "doc2_node",
                 "text": "Document 2 content",
@@ -141,11 +132,7 @@ class TestCLIPinCommandIsolation:
         )
 
         # Add node using proper add_batch format
-        nodes: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "doc1_node",
                 "text": "Document 1 content",
@@ -210,11 +197,7 @@ class TestCLIPinCommandIsolation:
         )
 
         # Add node to doc1 using proper add_batch format
-        nodes: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "doc1_node",
                 "text": "Document 1 content",
@@ -327,11 +310,7 @@ class SkipTestQueryVisualizationIsolation:
         )
 
         # Add nodes for doc1 using proper add_batch format
-        doc1_nodes: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        doc1_nodes: list[NodeDataDict] = [
             {
                 "node_id": "doc1_root",
                 "text": "Document 1 root",
@@ -382,11 +361,7 @@ class SkipTestQueryVisualizationIsolation:
         )
 
         # Add nodes for doc2 using proper add_batch format
-        doc2_nodes: list[
-            dict[
-                str, str | int | float | bool | list[float] | NDArray[np.float64] | None
-            ]
-        ] = [
+        doc2_nodes: list[NodeDataDict] = [
             {
                 "node_id": "doc2_root",
                 "text": "Document 2 root",

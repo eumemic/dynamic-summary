@@ -6,10 +6,11 @@ from numpy.typing import NDArray
 
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import IndexConfig
+from ragzoom.contracts.embedding_model import EmbeddingProvider
 from ragzoom.contracts.vector_filter import VectorFilter
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
-from ragzoom.server.append_executor import AppendExecutor, EmbeddingProvider
+from ragzoom.server.append_executor import AppendExecutor
 from ragzoom.vector_api import Vector
 
 

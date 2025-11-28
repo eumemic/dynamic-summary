@@ -17,6 +17,7 @@ import pytest
 from numpy.typing import NDArray
 
 from ragzoom.config import OperationalConfig, QueryConfig, SecretStr
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.vector_filter import VectorFilter
 from ragzoom.document_store import DocumentStore
 
@@ -31,16 +32,10 @@ class TestRetrievalInvariantsSQLite:
 
     def test_retrieval_filters_stale_candidates(self, doc_store: DocumentStore) -> None:
         # Build a tiny tree (root with two leaves)
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "leafL",
                 "text": "left leaf",
-                "embedding": np.array([0.9] * 1536),
                 "span_start": 0,
                 "span_end": 10,
                 "document_id": "docX",
@@ -52,7 +47,6 @@ class TestRetrievalInvariantsSQLite:
             {
                 "node_id": "leafR",
                 "text": "right leaf",
-                "embedding": np.array([0.9] * 1536),
                 "span_start": 10,
                 "span_end": 20,
                 "document_id": "docX",
@@ -64,7 +58,6 @@ class TestRetrievalInvariantsSQLite:
             {
                 "node_id": "root",
                 "text": "root",
-                "embedding": np.array([0.1] * 1536),
                 "span_start": 0,
                 "span_end": 20,
                 "document_id": "docX",

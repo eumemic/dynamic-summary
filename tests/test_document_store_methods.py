@@ -6,10 +6,9 @@ with the configured backend.
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
-from numpy.typing import NDArray
 
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
 
@@ -54,16 +53,10 @@ class TestDocumentStoreMethods:
     def test_get_avg_leaf_tokens(self, doc_store: DocumentStore) -> None:
         """Test that DocumentStore correctly calculates average leaf tokens."""
         # Seed leaf nodes with different token counts
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "leaf_0",
                 "text": "Leaf text 0",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "doc1",
@@ -74,7 +67,6 @@ class TestDocumentStoreMethods:
             {
                 "node_id": "leaf_1",
                 "text": "Leaf text 1",
-                "embedding": [],
                 "span_start": 100,
                 "span_end": 200,
                 "document_id": "doc1",
@@ -85,7 +77,6 @@ class TestDocumentStoreMethods:
             {
                 "node_id": "leaf_2",
                 "text": "Leaf text 2",
-                "embedding": [],
                 "span_start": 200,
                 "span_end": 300,
                 "document_id": "doc1",
@@ -97,7 +88,6 @@ class TestDocumentStoreMethods:
             {
                 "node_id": "parent",
                 "text": "Parent text",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 300,
                 "document_id": "doc1",
@@ -141,16 +131,10 @@ class TestDocumentStoreMethods:
         )
 
         # Add node to doc1
-        doc1_nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        doc1_nodes: list[NodeDataDict] = [
             {
                 "node_id": "doc1_node",
                 "text": "Doc 1 content",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "doc1",
@@ -162,16 +146,10 @@ class TestDocumentStoreMethods:
         doc1_store.nodes.add_batch(doc1_nodes)
 
         # Add node to doc2
-        doc2_nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        doc2_nodes: list[NodeDataDict] = [
             {
                 "node_id": "doc2_node",
                 "text": "Doc 2 content",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "doc2",
@@ -197,16 +175,10 @@ class TestDocumentStoreMethods:
         cross_store = storage_backend.for_document(None)
 
         # Seed nodes to different documents
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "doc1_node",
                 "text": "Doc 1 content",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "doc1",
@@ -217,7 +189,6 @@ class TestDocumentStoreMethods:
             {
                 "node_id": "doc2_node",
                 "text": "Doc 2 content",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "doc2",

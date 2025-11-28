@@ -8,10 +8,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import numpy as np
 import pytest
-from numpy.typing import NDArray
 
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.document_store import DocumentStore
 from ragzoom.tree_viz import build_ascii_tree
 
@@ -30,17 +29,11 @@ class TestTreeVisualizationSQLite:
     def test_basic_tree_visualization(self, doc_store: DocumentStore) -> None:
         """Test basic tree visualization with selected nodes."""
         # Create a tree structure with proper parent references
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             # Root node
             {
                 "node_id": "root",
                 "text": "Root summary",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "doc1",
@@ -54,7 +47,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "left",
                 "text": "Left content",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 50,
                 "document_id": "doc1",
@@ -69,7 +61,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "right",
                 "text": "Right content",
-                "embedding": [],
                 "span_start": 50,
                 "span_end": 100,
                 "document_id": "doc1",
@@ -84,7 +75,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "leaf1",
                 "text": "Leaf 0 text",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 25,
                 "document_id": "doc1",
@@ -96,7 +86,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "leaf2",
                 "text": "Leaf 1 text",
-                "embedding": [],
                 "span_start": 25,
                 "span_end": 50,
                 "document_id": "doc1",
@@ -108,7 +97,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "leaf3",
                 "text": "Leaf 2 text",
-                "embedding": [],
                 "span_start": 50,
                 "span_end": 75,
                 "document_id": "doc1",
@@ -120,7 +108,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "leaf4",
                 "text": "Leaf 3 text",
-                "embedding": [],
                 "span_start": 75,
                 "span_end": 100,
                 "document_id": "doc1",
@@ -182,17 +169,11 @@ class TestTreeVisualizationSQLite:
 
     def test_node_with_only_left_child(self, doc_store: DocumentStore) -> None:
         """Test visualization of nodes with only a left child (document boundary case)."""
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             # Root node
             {
                 "node_id": "root",
                 "text": "Root summary",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 150,
                 "document_id": "doc1",
@@ -206,7 +187,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "left",
                 "text": "Left content",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "doc1",
@@ -221,7 +201,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "right",
                 "text": "Right content",
-                "embedding": [],
                 "span_start": 100,
                 "span_end": 150,
                 "document_id": "doc1",
@@ -236,7 +215,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "leaf1",
                 "text": "Leaf 1",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 50,
                 "document_id": "doc1",
@@ -248,7 +226,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "leaf2",
                 "text": "Leaf 2",
-                "embedding": [],
                 "span_start": 50,
                 "span_end": 100,
                 "document_id": "doc1",
@@ -260,7 +237,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "leaf3",
                 "text": "Leaf 3",
-                "embedding": [],
                 "span_start": 100,
                 "span_end": 150,
                 "document_id": "doc1",
@@ -344,16 +320,10 @@ class TestTreeVisualizationSQLite:
     def test_empty_tiling(self, doc_store: DocumentStore) -> None:
         """Test visualization with no selected nodes."""
         # Add a single node
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             {
                 "node_id": "root",
                 "text": "Root",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "doc1",
@@ -386,17 +356,11 @@ class TestTreeVisualizationSQLite:
     def test_coverage_visualization(self, doc_store: DocumentStore) -> None:
         """Test visualization with coverage map showing covered but not selected nodes."""
         # Create a simple tree
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             # Root node
             {
                 "node_id": "root",
                 "text": "Root summary",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "doc1",
@@ -410,7 +374,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "leaf1",
                 "text": "Leaf 1 text",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 50,
                 "document_id": "doc1",
@@ -422,7 +385,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "leaf2",
                 "text": "Leaf 2 text",
-                "embedding": [],
                 "span_start": 50,
                 "span_end": 100,
                 "document_id": "doc1",
@@ -465,17 +427,11 @@ class TestTreeVisualizationSQLite:
     def test_mixed_height_tiling(self, doc_store: DocumentStore) -> None:
         """Test visualization with nodes at different heights."""
         # Create a deeper tree structure
-        nodes: list[
-            dict[
-                str,
-                str | int | float | bool | list[float] | NDArray[np.float64] | None,
-            ]
-        ] = [
+        nodes: list[NodeDataDict] = [
             # Root (H3)
             {
                 "node_id": "root",
                 "text": "Root",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 100,
                 "document_id": "doc1",
@@ -489,7 +445,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "l1",
                 "text": "L1",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 50,
                 "document_id": "doc1",
@@ -503,7 +458,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "r1",
                 "text": "R1",
-                "embedding": [],
                 "span_start": 50,
                 "span_end": 100,
                 "document_id": "doc1",
@@ -518,7 +472,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "l2",
                 "text": "l2",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 25,
                 "document_id": "doc1",
@@ -532,7 +485,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "r2",
                 "text": "r2",
-                "embedding": [],
                 "span_start": 25,
                 "span_end": 50,
                 "document_id": "doc1",
@@ -546,7 +498,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "l3",
                 "text": "l3",
-                "embedding": [],
                 "span_start": 50,
                 "span_end": 75,
                 "document_id": "doc1",
@@ -560,7 +511,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "r3",
                 "text": "r3",
-                "embedding": [],
                 "span_start": 75,
                 "span_end": 100,
                 "document_id": "doc1",
@@ -575,7 +525,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "l2_l",
                 "text": "Leaf 0",
-                "embedding": [],
                 "span_start": 0,
                 "span_end": 12,
                 "document_id": "doc1",
@@ -587,7 +536,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "l2_r",
                 "text": "Leaf 1",
-                "embedding": [],
                 "span_start": 12,
                 "span_end": 25,
                 "document_id": "doc1",
@@ -599,7 +547,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "r2_l",
                 "text": "Leaf 2",
-                "embedding": [],
                 "span_start": 25,
                 "span_end": 37,
                 "document_id": "doc1",
@@ -611,7 +558,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "r2_r",
                 "text": "Leaf 3",
-                "embedding": [],
                 "span_start": 37,
                 "span_end": 50,
                 "document_id": "doc1",
@@ -623,7 +569,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "l3_l",
                 "text": "Leaf 4",
-                "embedding": [],
                 "span_start": 50,
                 "span_end": 62,
                 "document_id": "doc1",
@@ -635,7 +580,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "l3_r",
                 "text": "Leaf 5",
-                "embedding": [],
                 "span_start": 62,
                 "span_end": 75,
                 "document_id": "doc1",
@@ -647,7 +591,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "r3_l",
                 "text": "Leaf 6",
-                "embedding": [],
                 "span_start": 75,
                 "span_end": 87,
                 "document_id": "doc1",
@@ -659,7 +602,6 @@ class TestTreeVisualizationSQLite:
             {
                 "node_id": "r3_r",
                 "text": "Leaf 7",
-                "embedding": [],
                 "span_start": 87,
                 "span_end": 100,
                 "document_id": "doc1",
