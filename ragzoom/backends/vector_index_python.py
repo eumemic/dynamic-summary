@@ -15,7 +15,8 @@ from ragzoom.backends.python_vector_index import PythonVectorIndex
 from ragzoom.backends.vector_common import (
     NormalizedUpsertItem,
     VectorUpsertItem,
-    coerce_int,
+    normalize_metadata_from_dict,
+    normalize_metadata_from_object,
     normalize_upsert_items,
 )
 from ragzoom.contracts.vector_filter import (
@@ -152,28 +153,10 @@ class PythonVectorIndexAdapter(VectorIndex):
         meta_obj = self._idx._meta.get(node_id)
         if meta_obj is None:
             return {}
-        if hasattr(meta_obj, "span_start"):
-            return {
-                "span_start": coerce_int(getattr(meta_obj, "span_start")),
-                "span_end": coerce_int(getattr(meta_obj, "span_end")),
-                "parent_id": str(getattr(meta_obj, "parent_id")),
-                "document_id": str(getattr(meta_obj, "document_id")),
-                "is_leaf": coerce_int(getattr(meta_obj, "is_leaf")),
-                "height": coerce_int(getattr(meta_obj, "height", 0)),
-                "level_index": coerce_int(getattr(meta_obj, "level_index", 0)),
-                "coord_version": coerce_int(getattr(meta_obj, "coord_version", 0)),
-            }
         if isinstance(meta_obj, dict):
-            return {
-                "span_start": coerce_int(meta_obj.get("span_start", 0)),
-                "span_end": coerce_int(meta_obj.get("span_end", 0)),
-                "parent_id": str(meta_obj.get("parent_id", "")),
-                "document_id": str(meta_obj.get("document_id", "")),
-                "is_leaf": coerce_int(meta_obj.get("is_leaf", 0)),
-                "height": coerce_int(meta_obj.get("height", 0)),
-                "level_index": coerce_int(meta_obj.get("level_index", 0)),
-                "coord_version": coerce_int(meta_obj.get("coord_version", 0)),
-            }
+            return normalize_metadata_from_dict(meta_obj)
+        if hasattr(meta_obj, "span_start"):
+            return normalize_metadata_from_object(meta_obj)
         return {}
 
     def _wrap(self, node_id: str, vec: NDArray[np.float32], meta: MetaDict) -> Vector:
@@ -187,26 +170,8 @@ class PythonVectorIndexAdapter(VectorIndex):
 
 
 def _as_meta(meta: object) -> MetaDict:
-    if hasattr(meta, "span_start"):
-        return {
-            "span_start": coerce_int(getattr(meta, "span_start")),
-            "span_end": coerce_int(getattr(meta, "span_end")),
-            "parent_id": str(getattr(meta, "parent_id")),
-            "document_id": str(getattr(meta, "document_id")),
-            "is_leaf": coerce_int(getattr(meta, "is_leaf")),
-            "height": coerce_int(getattr(meta, "height", 0)),
-            "level_index": coerce_int(getattr(meta, "level_index", 0)),
-            "coord_version": coerce_int(getattr(meta, "coord_version", 0)),
-        }
     if isinstance(meta, dict):
-        return {
-            "span_start": coerce_int(meta.get("span_start", 0)),
-            "span_end": coerce_int(meta.get("span_end", 0)),
-            "parent_id": str(meta.get("parent_id", "")),
-            "document_id": str(meta.get("document_id", "")),
-            "is_leaf": coerce_int(meta.get("is_leaf", 0)),
-            "height": coerce_int(meta.get("height", 0)),
-            "level_index": coerce_int(meta.get("level_index", 0)),
-            "coord_version": coerce_int(meta.get("coord_version", 0)),
-        }
+        return normalize_metadata_from_dict(meta)
+    if hasattr(meta, "span_start"):
+        return normalize_metadata_from_object(meta)
     return {}
