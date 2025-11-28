@@ -324,5 +324,5 @@ def make_node_data(
             value,
             str | int | float | bool | list | np.ndarray | type(None),
         ):
-            data[key] = value  # type: ignore[assignment]
+            data[key] = value
     return data
