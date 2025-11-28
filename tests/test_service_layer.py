@@ -42,6 +42,7 @@ class TestDocumentService:
                 "document_id": doc_id,
                 "token_count": 1,
                 "height": 0,
+                "level_index": i,
             }
             for i in range(10)
         ]
@@ -77,6 +78,7 @@ class TestDocumentService:
                     "document_id": d,
                     "token_count": 1,
                     "height": 0,
+                    "level_index": i,
                 }
                 for i in range(5)
             ]

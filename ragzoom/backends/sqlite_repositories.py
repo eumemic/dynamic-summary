@@ -77,7 +77,7 @@ class SqliteNodeRepository:
                     "span_start": cast(int, data["span_start"]),
                     "span_end": cast(int, data["span_end"]),
                     "text": cast(str, data["text"]),
-                    "token_count": cast(int, data.get("token_count", 0)),
+                    "token_count": cast(int, data["token_count"]),
                     "document_id": cast(str | None, data.get("document_id")),
                     "preceding_neighbor_id": cast(
                         str | None, data.get("preceding_neighbor_id")
@@ -85,8 +85,8 @@ class SqliteNodeRepository:
                     "following_neighbor_id": cast(
                         str | None, data.get("following_neighbor_id")
                     ),
-                    "height": cast(int, data.get("height", 0)),
-                    "level_index": cast(int, data.get("level_index", 0)),
+                    "height": cast(int, data["height"]),
+                    "level_index": cast(int, data["level_index"]),
                 }
                 for data in nodes_data
             ]
@@ -133,10 +133,10 @@ class SqliteNodeRepository:
                     parent_id=cast(str | None, raw.get("parent_id")),
                     left_child_id=cast(str | None, raw.get("left_child_id")),
                     right_child_id=cast(str | None, raw.get("right_child_id")),
-                    span_start=cast(int, raw.get("span_start", 0)),
-                    span_end=cast(int, raw.get("span_end", 0)),
-                    text=cast(str, raw.get("text", "")),
-                    token_count=cast(int, raw.get("token_count", 0)),
+                    span_start=cast(int, raw["span_start"]),
+                    span_end=cast(int, raw["span_end"]),
+                    text=cast(str, raw["text"]),
+                    token_count=cast(int, raw["token_count"]),
                     document_id=cast(str | None, raw.get("document_id")),
                     preceding_neighbor_id=cast(
                         str | None, raw.get("preceding_neighbor_id")
@@ -144,8 +144,8 @@ class SqliteNodeRepository:
                     following_neighbor_id=cast(
                         str | None, raw.get("following_neighbor_id")
                     ),
-                    height=cast(int, raw.get("height", 0)),
-                    level_index=cast(int, raw.get("level_index", 0)),
+                    height=cast(int, raw["height"]),
+                    level_index=cast(int, raw["level_index"]),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=[SQLiteTreeNode.id],
@@ -349,7 +349,7 @@ class SqliteNodeRepository:
             count_stmt = select(func.count(literal_column("1"))).select_from(
                 base_stmt.subquery()
             )
-            total = int(session.execute(count_stmt).scalar_one() or 0)
+            total = int(session.execute(count_stmt).scalar_one())
 
             ordered_stmt = base_stmt.order_by(
                 SQLiteTreeNode.height.desc(),
@@ -463,7 +463,7 @@ class SqliteNodeRepository:
                 result = session.execute(
                     select(func.count()).select_from(SQLiteTreeNode)
                 ).scalar_one()
-            return int(result or 0)
+            return int(result)
 
     def get_all_nodes_for_document_paginated(
         self, document_id: str | None, *, page_size: int = 1000
@@ -538,7 +538,7 @@ class SqliteNodeRepository:
             )
             if document_id:
                 stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
-            return int(session.execute(stmt).scalar_one() or 0)
+            return int(session.execute(stmt).scalar_one())
 
     def max_height_for_document(self, document_id: str | None) -> int:
         """Return maximum node height for a document."""
@@ -689,7 +689,7 @@ class SqliteNodeRepository:
             )
             if document_id:
                 stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
-            return int(session.execute(stmt).scalar_one() or 0)
+            return int(session.execute(stmt).scalar_one())
 
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
         with self.SessionLocal() as session:

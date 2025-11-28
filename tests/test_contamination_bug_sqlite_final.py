@@ -51,6 +51,7 @@ class TestContaminationBugSQLite:
                 "document_id": "doc1",
                 "token_count": 17,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "doc1_left",
                 "right_child_id": "doc1_right",
             },
@@ -63,6 +64,7 @@ class TestContaminationBugSQLite:
                 "document_id": "doc1",
                 "token_count": 16,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "doc1_root",
             },
             {
@@ -74,6 +76,7 @@ class TestContaminationBugSQLite:
                 "document_id": "doc1",
                 "token_count": 17,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "doc1_root",
             },
         ]
@@ -101,6 +104,7 @@ class TestContaminationBugSQLite:
                 "document_id": "doc2",
                 "token_count": 17,
                 "height": 1,
+                "level_index": 0,
                 "left_child_id": "doc2_left",
                 "right_child_id": "doc2_right",
             },
@@ -113,6 +117,7 @@ class TestContaminationBugSQLite:
                 "document_id": "doc2",
                 "token_count": 16,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "doc2_root",
             },
             {
@@ -124,6 +129,7 @@ class TestContaminationBugSQLite:
                 "document_id": "doc2",
                 "token_count": 17,
                 "height": 0,
+                "level_index": 0,
                 "parent_id": "doc2_root",
             },
         ]

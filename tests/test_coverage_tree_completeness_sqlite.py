@@ -67,6 +67,7 @@ class TestCoverageTreeCompletenessSQLite:
                 "document_id": "test-doc",
                 "token_count": 5,
                 "height": 0,
+                "level_index": 0,
             },
             {
                 "node_id": "L2",
@@ -77,6 +78,7 @@ class TestCoverageTreeCompletenessSQLite:
                 "document_id": "test-doc",
                 "token_count": 5,
                 "height": 0,
+                "level_index": 0,
             },
             {
                 "node_id": "L3",
@@ -87,6 +89,7 @@ class TestCoverageTreeCompletenessSQLite:
                 "document_id": "test-doc",
                 "token_count": 5,
                 "height": 0,
+                "level_index": 0,
             },
             {
                 "node_id": "L4",
@@ -97,6 +100,7 @@ class TestCoverageTreeCompletenessSQLite:
                 "document_id": "test-doc",
                 "token_count": 5,
                 "height": 0,
+                "level_index": 0,
             },
             # Parent nodes
             {
@@ -107,6 +111,8 @@ class TestCoverageTreeCompletenessSQLite:
                 "span_end": 40,
                 "document_id": "test-doc",
                 "height": 1,
+                "token_count": 10,
+                "level_index": 0,
                 "left_child_id": "L1",
                 "right_child_id": "L2",
             },
@@ -118,6 +124,8 @@ class TestCoverageTreeCompletenessSQLite:
                 "span_end": 80,
                 "document_id": "test-doc",
                 "height": 1,
+                "token_count": 10,
+                "level_index": 0,
                 "left_child_id": "L3",
                 "right_child_id": "L4",
             },
@@ -130,6 +138,8 @@ class TestCoverageTreeCompletenessSQLite:
                 "span_end": 80,
                 "document_id": "test-doc",
                 "height": 2,
+                "token_count": 20,
+                "level_index": 0,
                 "left_child_id": "P1",
                 "right_child_id": "P2",
             },

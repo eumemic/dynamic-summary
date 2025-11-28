@@ -42,6 +42,8 @@ def large_document_data() -> (
                 "span_end": span_end,
                 "document_id": document_id,
                 "token_count": 10,
+                "height": 0,
+                "level_index": 0,
             }
         )
 
@@ -75,6 +77,8 @@ def small_document_data() -> (
                 "span_end": span_end,
                 "document_id": document_id,
                 "token_count": 10,
+                "height": 0,
+                "level_index": 0,
             }
         )
 
@@ -114,6 +118,8 @@ class TestDatabaseScalability:
                 "span_end": cast(int, node_data["span_end"]),
                 "document_id": cast(str, node_data["document_id"]),
                 "token_count": cast(int, node_data["token_count"]),
+                "height": 0,
+                "level_index": 0,
             }
             node_data_dicts.append(node_data_dict)
 
@@ -288,6 +294,8 @@ class TestDatabaseScalability:
                     "span_end": (i + 1) * 10,
                     "document_id": document_id,
                     "token_count": 10,
+                    "height": 0,
+                    "level_index": 0,
                 }
             )
         doc_store.nodes.add_batch(nodes_data)
@@ -308,6 +316,8 @@ class TestDatabaseScalability:
             "span_end": (page_size + 1) * 10,
             "document_id": document_id,
             "token_count": 10,
+            "height": 0,
+            "level_index": 0,
         }
         doc_store.nodes.add_batch([additional_node])
 
@@ -361,6 +371,8 @@ class TestMemoryEfficiency:
                     "span_end": (i + 1) * 100,
                     "document_id": document_id,
                     "token_count": 50,
+                    "height": 0,
+                    "level_index": 0,
                 }
             )
         doc_store.nodes.add_batch(nodes_data)
@@ -412,6 +424,8 @@ class TestRegressionPrevention:
             "span_end": 10,
             "document_id": document_id,
             "token_count": 10,
+            "height": 0,
+            "level_index": 0,
         }
         doc_store.nodes.add_batch([node_data])
 
@@ -458,6 +472,8 @@ class TestRegressionPrevention:
                     "span_end": (i + 1) * 10,
                     "document_id": document_id,
                     "token_count": 10,
+                    "height": 0,
+                    "level_index": 0,
                 }
             )
         doc_store.nodes.add_batch(nodes_data)

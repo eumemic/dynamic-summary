@@ -192,13 +192,13 @@ class PgVectorIndexAdapter(VectorIndex):
                         id TEXT PRIMARY KEY,
                         embedding VECTOR,
                         document_id TEXT,
-                        span_start INTEGER,
-                        span_end INTEGER,
+                        span_start INTEGER NOT NULL DEFAULT 0,
+                        span_end INTEGER NOT NULL DEFAULT 0,
                         parent_id TEXT,
-                        is_leaf SMALLINT,
-                        height INTEGER DEFAULT 0,
-                        level_index INTEGER DEFAULT 0,
-                        coord_version SMALLINT DEFAULT 0
+                        is_leaf SMALLINT NOT NULL DEFAULT 0,
+                        height INTEGER NOT NULL DEFAULT 0,
+                        level_index INTEGER NOT NULL DEFAULT 0,
+                        coord_version SMALLINT NOT NULL DEFAULT 0
                     );
                     """
                 )
@@ -209,12 +209,13 @@ class PgVectorIndexAdapter(VectorIndex):
                     "CREATE INDEX IF NOT EXISTS idx_node_vectors_doc ON node_vectors(document_id)"
                 )
             )
-            # Drop legacy doc_version column if still present
+            # Migrations: Drop legacy columns and add NOT NULL constraints to existing tables
             conn.execute(
                 text(
                     """
                     DO $$
                     BEGIN
+                        -- Drop legacy doc_version column if still present
                         IF EXISTS (
                             SELECT 1 FROM information_schema.columns
                             WHERE table_name = 'node_vectors'
@@ -223,6 +224,8 @@ class PgVectorIndexAdapter(VectorIndex):
                             ALTER TABLE node_vectors
                             DROP COLUMN doc_version;
                         END IF;
+
+                        -- Add height column with NOT NULL constraint if missing
                         IF NOT EXISTS (
                             SELECT 1 FROM information_schema.columns
                             WHERE table_name = 'node_vectors'
@@ -230,6 +233,8 @@ class PgVectorIndexAdapter(VectorIndex):
                         ) THEN
                             ALTER TABLE node_vectors ADD COLUMN height INTEGER NOT NULL DEFAULT 0;
                         END IF;
+
+                        -- Add level_index column with NOT NULL constraint if missing
                         IF NOT EXISTS (
                             SELECT 1 FROM information_schema.columns
                             WHERE table_name = 'node_vectors'
@@ -237,12 +242,51 @@ class PgVectorIndexAdapter(VectorIndex):
                         ) THEN
                             ALTER TABLE node_vectors ADD COLUMN level_index INTEGER NOT NULL DEFAULT 0;
                         END IF;
+
+                        -- Add coord_version column with NOT NULL constraint if missing
                         IF NOT EXISTS (
                             SELECT 1 FROM information_schema.columns
                             WHERE table_name = 'node_vectors'
                             AND column_name = 'coord_version'
                         ) THEN
                             ALTER TABLE node_vectors ADD COLUMN coord_version SMALLINT NOT NULL DEFAULT 0;
+                        END IF;
+
+                        -- Add NOT NULL constraints to span_start, span_end, is_leaf for existing tables
+                        -- First update any NULL values to 0, then add the constraint
+                        UPDATE node_vectors SET span_start = 0 WHERE span_start IS NULL;
+                        UPDATE node_vectors SET span_end = 0 WHERE span_end IS NULL;
+                        UPDATE node_vectors SET is_leaf = 0 WHERE is_leaf IS NULL;
+
+                        -- Add NOT NULL constraints if not already present
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'node_vectors'
+                            AND column_name = 'span_start'
+                            AND is_nullable = 'YES'
+                        ) THEN
+                            ALTER TABLE node_vectors ALTER COLUMN span_start SET NOT NULL;
+                            ALTER TABLE node_vectors ALTER COLUMN span_start SET DEFAULT 0;
+                        END IF;
+
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'node_vectors'
+                            AND column_name = 'span_end'
+                            AND is_nullable = 'YES'
+                        ) THEN
+                            ALTER TABLE node_vectors ALTER COLUMN span_end SET NOT NULL;
+                            ALTER TABLE node_vectors ALTER COLUMN span_end SET DEFAULT 0;
+                        END IF;
+
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'node_vectors'
+                            AND column_name = 'is_leaf'
+                            AND is_nullable = 'YES'
+                        ) THEN
+                            ALTER TABLE node_vectors ALTER COLUMN is_leaf SET NOT NULL;
+                            ALTER TABLE node_vectors ALTER COLUMN is_leaf SET DEFAULT 0;
                         END IF;
                     END $$;
                     """
@@ -254,13 +298,13 @@ class PgVectorIndexAdapter(VectorIndex):
         emb = np.asarray(row[1], dtype=np.float32)
         meta: MetaDict = {
             "document_id": str(row[2]) if row[2] is not None else "",
-            "span_start": int(cast(int | float | None, row[3]) or 0),
-            "span_end": int(cast(int | float | None, row[4]) or 0),
+            "span_start": int(cast(int | float, row[3])),
+            "span_end": int(cast(int | float, row[4])),
             "parent_id": str(row[5]) if row[5] is not None else "",
-            "is_leaf": int(cast(int | float | None, row[6]) or 0),
-            "height": int(cast(int | float | None, row[7]) or 0),
-            "level_index": int(cast(int | float | None, row[8]) or 0),
-            "coord_version": int(cast(int | float | None, row[9]) or 0),
+            "is_leaf": int(cast(int | float, row[6])),
+            "height": int(cast(int | float, row[7])),
+            "level_index": int(cast(int | float, row[8])),
+            "coord_version": int(cast(int | float, row[9])),
         }
         return Vector(
             id=node_id, vec=emb, meta=meta, model_id=self._model_id, dim=len(emb)

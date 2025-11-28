@@ -11,6 +11,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from ragzoom.contracts.chat_model import ChatModel, ChatResult, Message, UsageInfo
 from ragzoom.error_handling import handle_graceful_error
+from ragzoom.exceptions import LLMError
 
 
 class OpenAIChatModel(ChatModel):
@@ -53,7 +54,13 @@ class OpenAIChatModel(ChatModel):
             reasoning_effort=reasoning_arg,
         )
 
-        content = response.choices[0].message.content or ""
+        content = response.choices[0].message.content
+        if not content:
+            raise LLMError(
+                operation="complete",
+                model=self._model_id,
+                message="LLM returned empty response content",
+            )
 
         # Extract usage with optional cached_tokens
         if not response.usage:
