@@ -529,6 +529,39 @@ class PostgresNodeRepository(BaseRepository):
             return node
 
     # jscpd:ignore-start - Same SQL for both SQLite and Postgres (standard window functions)
+    # Static SQL queries to avoid f-string interpolation
+    _SQL_RECENT_LEAVES_ALL_DOCS = text(
+        """
+        SELECT * FROM (
+            SELECT *,
+                SUM(token_count) OVER (
+                    ORDER BY span_end DESC
+                    ROWS UNBOUNDED PRECEDING
+                ) as cumsum
+            FROM tree_nodes
+            WHERE height = 0
+        ) sub
+        WHERE cumsum - token_count < :budget
+        ORDER BY span_start ASC
+    """
+    )
+
+    _SQL_RECENT_LEAVES_ONE_DOC = text(
+        """
+        SELECT * FROM (
+            SELECT *,
+                SUM(token_count) OVER (
+                    ORDER BY span_end DESC
+                    ROWS UNBOUNDED PRECEDING
+                ) as cumsum
+            FROM tree_nodes
+            WHERE height = 0 AND document_id = :doc_id
+        ) sub
+        WHERE cumsum - token_count < :budget
+        ORDER BY span_start ASC
+    """
+    )
+
     def get_recent_leaves_within_budget(
         self, document_id: str | None, token_budget: int
     ) -> list[TreeNode]:
@@ -541,32 +574,17 @@ class PostgresNodeRepository(BaseRepository):
             return []
 
         with self.SessionLocal() as session:
-            # Use window function to compute running sum of tokens
-            # ordered by span_end DESC (most recent first)
-            doc_filter = ""
-            params: dict[str, object] = {"budget": token_budget}
             if document_id is not None:
-                doc_filter = "AND document_id = :doc_id"
-                params["doc_id"] = document_id
+                query = self._SQL_RECENT_LEAVES_ONE_DOC
+                params: dict[str, object] = {
+                    "budget": token_budget,
+                    "doc_id": document_id,
+                }
+            else:
+                query = self._SQL_RECENT_LEAVES_ALL_DOCS
+                params = {"budget": token_budget}
 
-            # doc_filter is a hardcoded constant, not user input
-            sql = text(  # nosec B608
-                f"""
-                SELECT * FROM (
-                    SELECT *,
-                        SUM(token_count) OVER (
-                            ORDER BY span_end DESC
-                            ROWS UNBOUNDED PRECEDING
-                        ) as cumsum
-                    FROM tree_nodes
-                    WHERE height = 0 {doc_filter}
-                ) sub
-                WHERE cumsum - token_count < :budget
-                ORDER BY span_start ASC
-            """
-            )
-
-            rows = session.execute(sql, params).fetchall()
+            rows = session.execute(query, params).fetchall()
             if not rows:
                 return []
 
