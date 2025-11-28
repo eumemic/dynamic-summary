@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
+from ragzoom.error_handling import handle_graceful_error
+
 logger = logging.getLogger(__name__)
 
 # Default configuration - can be overridden for different projects
@@ -19,8 +21,10 @@ def _ensure_str_path(p: Path) -> str:
     """Return POSIX-style absolute path string for URLs."""
     try:
         return p.resolve().as_posix()
-    except Exception:
-        return str(p)
+    except Exception as exc:
+        return handle_graceful_error(
+            exc, f"Path resolution failed for {p}", default=str(p)
+        )
 
 
 def get_worktree_id() -> str | None:

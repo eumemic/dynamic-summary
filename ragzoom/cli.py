@@ -30,6 +30,7 @@ from ragzoom.constants import (
     DEFAULT_GRPC_HOST,
     DEFAULT_GRPC_PORT,
 )
+from ragzoom.error_handling import handle_graceful_error
 from ragzoom.exceptions import (
     ConfigurationError,
     DatabaseError,
@@ -346,8 +347,13 @@ def index(
                 params: Mapping[str, inspect.Parameter] = inspect.signature(
                     target_callable_obj
                 ).parameters
-            except (TypeError, ValueError):  # pragma: no cover - dynamic callables
-                params = {}
+            except (
+                TypeError,
+                ValueError,
+            ) as exc:  # pragma: no cover - dynamic callables
+                params = handle_graceful_error(
+                    exc, "Signature introspection failed for append method", default={}
+                )
 
             if "replace_existing" in params:
                 result = append_method(

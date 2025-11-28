@@ -13,6 +13,7 @@ from ragzoom.contracts.vector_filter import (
     VectorFilter,
 )
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
+from ragzoom.error_handling import handle_graceful_error
 from ragzoom.greedy_tiling import GreedyTilingGenerator
 from ragzoom.retrieval import (
     BudgetPlanner,
@@ -355,9 +356,10 @@ class Retriever:
                 loaded_more = self.document_store.nodes.get_nodes(missing_in_nodes)
                 for n in loaded_more:
                     nodes[n.id] = n
-            except Exception:
-                # Leave as-is; downstream consumers guard against missing nodes
-                pass
+            except Exception as exc:
+                handle_graceful_error(
+                    exc, "Failed to load missing tiling nodes", default=None
+                )
 
         # Calculate output tokens (after best-effort completion)
         output_tokens = sum(

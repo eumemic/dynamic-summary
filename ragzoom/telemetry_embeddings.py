@@ -12,6 +12,7 @@ from numpy.typing import NDArray
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
+from ragzoom.error_handling import handle_graceful_error
 from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
 from ragzoom.vector_api import Vector
@@ -186,7 +187,10 @@ async def _resolve_parent_vectors(
         try:
             resolved[vector.id] = np.asarray(vector.vec, dtype=np.float64)
             missing.discard(vector.id)
-        except Exception:
+        except Exception as exc:
+            handle_graceful_error(
+                exc, f"Vector conversion failed for {vector.id}", default=None
+            )
             continue
 
     if missing and vectors:
@@ -203,7 +207,10 @@ async def _resolve_parent_vectors(
                 continue
             try:
                 recovered[node_id] = np.asarray(single[0].vec, dtype=np.float64)
-            except Exception:
+            except Exception as exc:
+                handle_graceful_error(
+                    exc, f"Vector recovery failed for {node_id}", default=None
+                )
                 still_missing.add(node_id)
                 continue
         resolved.update(recovered)
