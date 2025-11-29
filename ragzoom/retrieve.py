@@ -325,6 +325,16 @@ class Retriever:
 
         # Choose tiling strategy
         tiling_strategy = self.query_config.tiling_strategy
+        if tiling_strategy == "dp":
+            import warnings
+
+            warnings.warn(
+                "tiling_strategy='dp' is deprecated and will be removed in a future version. "
+                "The greedy algorithm produces better results in practice because it doesn't "
+                "rely on heuristic budget allocation. Use tiling_strategy='greedy' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         if tiling_strategy == "greedy":
             dp_result = self.greedy_generator.find_optimal_tiling_over_roots(
                 root_ids, final_budget, scores, nodes

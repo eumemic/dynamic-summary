@@ -41,11 +41,11 @@ Based on your focus area, adapt the learning path:
 _Follow this path when developing comprehensive expertise:_
 
 ## Core Algorithm (MUST understand first)
-1. Read `ragzoom/greedy_tiling.py` - The default tiling algorithm. Focus on:
+1. Read `ragzoom/greedy_tiling.py` - The tiling algorithm. Focus on:
    - `find_optimal_tiling_over_roots()` - starts with leaf frontier, rolls up to fit budget
    - `_RollupCandidate` priority: quality_lost / tokens_saved (lower = better to roll up)
    - Quality metric: relevance × tokens
-   - Also read `ragzoom/dynamic_tiling.py` for the DP alternative (optimal but slower)
+   - Note: `ragzoom/dynamic_tiling.py` contains a deprecated DP alternative
 
 2. Read `ragzoom/store.py` - Data structures that make it work:
    - Study `TreeNode` class - binary tree with character spans
@@ -100,4 +100,4 @@ When developing expertise:
 - **Follow the data** - Understand transformations at each step
 - **Question assumptions** - Many design decisions optimize for specific constraints
 
-Remember: The tiling algorithms (`greedy_tiling.py` default, `dynamic_tiling.py` alternative) are the crown jewels. Everything else exists to support them.
+Remember: The greedy tiling algorithm in `greedy_tiling.py` is the crown jewel. Everything else exists to support it.
