@@ -376,7 +376,10 @@ ragzoom server start
 ### Python API
 
 ```python
-from ragzoom import IndexConfig, QueryConfig, OperationalConfig, TreeBuilder, Retriever, Assembler, create_store
+from ragzoom import IndexConfig, QueryConfig, OperationalConfig, create_store
+from ragzoom.indexing import IndexerRuntime
+from ragzoom.retrieve import Retriever
+from ragzoom.assemble import Assembler
 
 # Initialize
 index_config = IndexConfig.load()
@@ -384,18 +387,19 @@ query_config = QueryConfig()
 operational_config = OperationalConfig()  # defaults to SQLite
 store = create_store(operational_config)
 
-# Build helpers per document
-document_id = "my-doc-id"
-document_store = store.for_document(document_id)
-tree_builder = TreeBuilder(index_config, document_store, operational_config.openai_api_key.get_secret_value())
-retriever = Retriever(query_config, document_store, None, None)  # see CLI/services for embedding setup
-assembler = Assembler(document_store)
+# Create runtime for indexing
+runtime = IndexerRuntime(index_config, store, operational_config.openai_api_key.get_secret_value())
 
-# Index from text
-doc_id = tree_builder.add_document("Your document text here...", document_id=document_id)
+# Index a document
+document_id = "my-doc-id"
+await runtime.append_text(document_id, "Your document text here...", replace_existing=True)
 
 # Query within a specific document
-result = retriever.retrieve("Your query here", document_id=document_id)
+document_store = store.for_document(document_id)
+retriever = Retriever(query_config, document_store, embedding_service, budget_planner, vector_index)
+result = await retriever.retrieve_async("Your query here", document_id=document_id)
+
+assembler = Assembler(document_store)
 summary = assembler.assemble(result)
 print(summary)
 ```
