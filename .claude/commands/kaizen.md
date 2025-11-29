@@ -37,7 +37,7 @@ Execute a comprehensive code quality assessment to identify the area most needin
 
 Use the Task tool to launch 10 parallel code-reviewer agents, each analyzing a specific system area:
 
-1. **Core Indexing Algorithm** - TreeBuilder, text splitting, summarization flow
+1. **Core Indexing Algorithm** - IndexerRuntime, AppendExecutor, text splitting, summarization flow
 2. **Core Query Algorithm** - Retriever, DP tiling, assembly pipeline  
 3. **Storage Layer** - Store, repositories, database abstractions, caching
 4. **API & CLI Layer** - REST endpoints, CLI commands, configuration handling

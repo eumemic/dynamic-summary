@@ -16,6 +16,6 @@ Adapters
 Migration notes
 
 - `LLMService` now composes the batcher and summarizer. Existing code can keep using it.
-- Temporary shim: `TreeBuilder` still constructs `LLMService` by default; can inject a custom one.
-- Tests that patch `llm_service.client` keep working via a temporary compatibility property. Plan to remove after tests migrate to protocol injection.
+- `IndexerRuntime` constructs `LLMService` by default; can inject a custom one.
+- Tests use `IndexerRuntimeHarness` which provides mock implementations via protocol injection.
 

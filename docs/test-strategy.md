@@ -52,14 +52,14 @@ def test_text_splitter_chunks_correctly(self, mock_tokenizer):
 
 ```python
 @pytest.mark.integration
-def test_index_and_retrieve_workflow(self, real_store):
+async def test_index_and_retrieve_workflow(self, real_store):
     # Uses real PostgreSQL, real embeddings
-    indexer = TreeBuilder(config, real_store, api_key)
-    doc_id = indexer.add_document(text)
-    
-    retriever = Retriever(config, real_store, api_key)
-    results = retriever.retrieve(query, doc_id)
-    assert len(results) > 0
+    runtime = IndexerRuntime(config, real_store, api_key)
+    await runtime.append_text(doc_id, text, replace_existing=True)
+
+    retriever = Retriever(config, document_store, embedding_service, budget_planner, vector_index)
+    results = await retriever.retrieve_async(query, doc_id)
+    assert len(results.node_ids) > 0
 ```
 
 **Characteristics**:
@@ -159,7 +159,7 @@ def test_embedding_generation(self, mock_openai_async_client):
 
 #### Inline Mocking (When Needed)
 ```python
-@patch('ragzoom.index.openai.Embedding.create')
+@patch('ragzoom.indexing.runtime.openai.Embedding.create')
 def test_specific_embedding_behavior(self, mock_create):
     mock_create.return_value = specific_response
     # Test specific behavior

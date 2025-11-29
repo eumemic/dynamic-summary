@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from ragzoom.config import QueryConfig
 from ragzoom.contracts.tree_node import TreeNode
@@ -27,7 +27,6 @@ from ragzoom.telemetry_query import QueryTelemetry
 if TYPE_CHECKING:
     from ragzoom.contracts.vector_index import VectorIndex
     from ragzoom.document_store import DocumentStore
-    from ragzoom.index import TreeBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +54,6 @@ class Retriever:
         embedding_service: EmbeddingService,
         budget_planner: BudgetPlanner,
         vector_index: "VectorIndex",
-        tree_builder: Optional["TreeBuilder"] = None,
         use_async_dp: bool = False,
         min_nodes_for_parallel: int = 10,
     ):
@@ -66,7 +64,6 @@ class Retriever:
             document_store: DocumentStore instance for document-scoped operations
             embedding_service: Service for generating query embeddings
             budget_planner: Service for calculating conservative seed counts
-            tree_builder: Optional TreeBuilder instance
             use_async_dp: Whether to use async DP generator for parallelization
             min_nodes_for_parallel: Minimum nodes in subtree to enable parallelization
         """

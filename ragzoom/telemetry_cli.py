@@ -275,10 +275,7 @@ def analyze(telemetry_file: Path) -> None:
                     )
 
         # Outlier detection message
-        click.echo("\n💡 To analyze problematic summaries:")
-        click.echo(
-            "   python scripts/analyze-outlier-nodes.py --db benchmarks/latest/ragzoom.db"
-        )
+        click.echo("\n💡 Low fidelity nodes may indicate summarization issues.")
 
     click.echo(f"\n{'='*60}\n")
 

@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from dataclasses import dataclass
 from uuid import uuid4
 
 import numpy as np
@@ -9,11 +10,21 @@ from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.vector_filter import VectorFilter
 from ragzoom.document_store import DocumentStore
-from ragzoom.index import AppendStats
 from ragzoom.splitter import TextSplitter
 from ragzoom.validate import set_validation_enabled
 from ragzoom.vector_api import Vector, ensure_normalized
 from tests.conftest import BackwardCompatibilityConfig, IndexerRuntimeHarness
+
+
+@dataclass
+class AppendStats:
+    """Test-local stats for tracking append results."""
+
+    document_id: str
+    mutated_nodes: int
+    resummarized_nodes: int
+    new_leaves: int
+    total_leaves: int
 
 
 class InMemoryVectorIndex:
