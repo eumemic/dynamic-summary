@@ -78,6 +78,31 @@ message ExecuteQueryRequest {
   bool use_token_coords = 8;
   string tiling_strategy = 9;
   int32 recent_verbatim_token_budget = 10;
+  bool profile = 11;
+}
+
+message QueryTelemetry {
+  // Phase timings in milliseconds
+  double embedding_ms = 1;
+  double search_ms = 2;
+  double mmr_ms = 3;
+  double coverage_map_ms = 4;
+  double scoring_ms = 5;
+  double tiling_ms = 6;
+  double assembly_ms = 7;
+  double total_ms = 8;
+
+  // Metrics
+  int32 seeds_requested = 10;
+  int32 seeds_found = 11;
+  int32 candidates_retrieved = 12;
+  int32 candidates_filtered = 13;
+  int32 coverage_size = 14;
+  int32 tiling_size = 15;
+  int32 output_tokens = 16;
+
+  // Model info
+  string embedding_model = 20;
 }
 
 message ExecuteQueryResponse {
@@ -91,6 +116,7 @@ message ExecuteQueryResponse {
   string query_id = 8;
   int32 seed_count = 9;
   int32 verbatim_count = 10;
+  QueryTelemetry telemetry = 11;
 }
 
 enum WorkerRunMode {
