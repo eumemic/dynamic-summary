@@ -324,7 +324,7 @@ class Retriever:
                     scores[node_id] = 1.0
 
         # Choose tiling strategy
-        tiling_strategy = getattr(self.query_config, "tiling_strategy", "dp")
+        tiling_strategy = self.query_config.tiling_strategy
         if tiling_strategy == "greedy":
             dp_result = self.greedy_generator.find_optimal_tiling_over_roots(
                 root_ids, final_budget, scores, nodes

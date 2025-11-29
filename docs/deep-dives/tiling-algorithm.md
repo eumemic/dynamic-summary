@@ -24,13 +24,13 @@ RagZoom supports two tiling strategies, selectable via the `tiling_strategy` con
 
 | Strategy | Default | Description |
 |----------|---------|-------------|
-| `dp` | Yes | Dynamic programming - optimal quality within budget |
-| `greedy` | No | Top-down greedy - faster, good for large trees |
+| `greedy` | Yes | Bottom-up roll-up - fast, good quality |
+| `dp` | No | Dynamic programming - globally optimal but slower |
 
 Both strategies produce valid tilings that completely cover the document without gaps or overlaps. The choice depends on your priorities:
 
-- **DP (default)**: Guarantees optimal quality-per-token by exploring all valid combinations. Best for most use cases.
-- **Greedy**: Faster execution with predictable behavior. Useful for very large trees or when you want consistent top-down resolution.
+- **Greedy (default)**: Starts with all leaves, iteratively rolls up least-valuable sibling pairs until within budget. Fast O(n log n) execution.
+- **DP**: Guarantees globally optimal quality-per-token by exploring all valid combinations via memoization. Better for small trees where optimality matters.
 
 ## Core Concepts
 
@@ -103,48 +103,71 @@ Results are cached by `(node_id, budget)` to avoid recomputing subproblems, maki
 
 ## Greedy Algorithm
 
-The greedy algorithm (`tiling_strategy="greedy"`) provides a simpler, faster alternative to DP. It walks the tree top-down, making locally optimal decisions at each node.
+The greedy algorithm (`tiling_strategy="greedy"`) is the default. Unlike DP which works top-down from the root, greedy works **bottom-up**: it starts with all leaves and iteratively rolls up sibling pairs until within budget.
 
 ### Algorithm
 
 ```python
-def find_greedy_tiling(node, budget, scores):
-    # If node fits in budget, consider using it
-    node_cost = get_token_cost(node)
+def find_greedy_tiling(root_ids, budget, scores, nodes):
+    # Start with the full frontier (all leaves in coverage)
+    frontier = build_frontier(nodes, root_ids)
+    total_tokens = sum(nodes[nid].token_count for nid in frontier)
 
-    if node.is_leaf():
-        if node_cost <= budget:
-            return [node], node_cost
-        return [], 0
+    # If already within budget, done
+    if total_tokens <= budget:
+        return frontier
 
-    # Try children first (prefer detail when budget allows)
-    left_result = find_greedy_tiling(node.left, budget * left_ratio, scores)
-    right_result = find_greedy_tiling(node.right, budget * right_ratio, scores)
+    # Initialize priority queue with roll-up candidates
+    # Priority = quality_lost / tokens_saved (lower = better to roll up)
+    queue = initialize_candidates(frontier, nodes, scores)
 
-    child_cost = left_result[1] + right_result[1]
+    # Iteratively roll up least-valuable sibling pairs
+    while total_tokens > budget and queue:
+        parent_id, left_id, right_id = pop_best_candidate(queue)
 
-    # Use children if they fit, otherwise fall back to parent
-    if child_cost <= budget:
-        return left_result[0] + right_result[0], child_cost
-    elif node_cost <= budget:
-        return [node], node_cost
-    else:
-        return [], 0
+        # Replace children with parent in frontier
+        pair_tokens = nodes[left_id].token_count + nodes[right_id].token_count
+        parent_tokens = nodes[parent_id].token_count
+
+        frontier.remove(left_id)
+        frontier.remove(right_id)
+        frontier.add(parent_id)
+        total_tokens = total_tokens - pair_tokens + parent_tokens
+
+        # Add grandparent as new candidate if eligible
+        if nodes[parent_id].parent_id:
+            enqueue_candidate(grandparent_id, queue, frontier, nodes, scores)
+
+    return sorted(frontier, key=span_start)
 ```
+
+### Roll-up Priority
+
+Each candidate is scored by how much quality is lost per token saved:
+
+```python
+quality_lost = (left_relevance * left_tokens + right_relevance * right_tokens)
+             - (parent_relevance * parent_tokens)
+tokens_saved = (left_tokens + right_tokens) - parent_tokens
+priority = quality_lost / tokens_saved  # Lower = better to roll up
+```
+
+Summaries that capture most of their children's relevance are prioritized for roll-up.
 
 ### When to Use Greedy
 
-- **Large documents**: Greedy has lower constant factors than DP
-- **Predictable behavior**: Always prefers detail when budget allows
-- **Debugging**: Easier to reason about the tiling choices
+- **Default choice**: Good balance of speed and quality
+- **Large documents**: O(n log n) heap operations
+- **Predictable behavior**: Always starts with maximum detail, coarsens as needed
 
 ### Trade-offs
 
-| Aspect | DP | Greedy |
-|--------|-----|--------|
-| Optimality | Globally optimal | Locally optimal |
-| Speed | O(n × b) with memoization | O(n) single pass |
-| Memory | Cache scales with budget values | Minimal |
+| Aspect | Greedy | DP |
+|--------|--------|-----|
+| Optimality | Locally optimal per roll-up | Globally optimal |
+| Speed | O(n log n) heap operations | O(n × b) with memoization |
+| Memory | O(n) frontier + heap | O(n × b) cache |
+| Direction | Bottom-up (leaves → root) | Top-down (root → leaves) |
 
 ## Verbatim Budget
 
