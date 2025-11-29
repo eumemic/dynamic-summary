@@ -29,7 +29,7 @@ Based on your focus area, adapt the learning path:
 
 ### Example Focus Adaptations:
 
-- **"tiling algorithm"** → Start with `dynamic_tiling.py`, study DP memoization, test budget guarantees
+- **"tiling algorithm"** → Start with `greedy_tiling.py` (default), understand roll-up strategy; also study `dynamic_tiling.py` for DP alternative
 - **"tree structure"** → Focus on how nodes maintain spans, parent-child relationships, tree invariants
 - **"performance"** → Study async patterns, batch operations, caching strategies
 - **Any specific file** → Read it deeply, find its tests, trace its callers and dependencies
@@ -41,11 +41,11 @@ Based on your focus area, adapt the learning path:
 _Follow this path when developing comprehensive expertise:_
 
 ## Core Algorithm (MUST understand first)
-1. Read `ragzoom/dynamic_tiling.py` - The heart of RagZoom. Focus on:
-   - `_find_optimal_tiling_for_span()` - recursive DP with memoization
-   - Budget splitting logic in `_split_budget_proportionally()`
+1. Read `ragzoom/greedy_tiling.py` - The tiling algorithm. Focus on:
+   - `find_optimal_tiling_over_roots()` - starts with leaf frontier, rolls up to fit budget
+   - `_RollupCandidate` priority: quality_lost / tokens_saved (lower = better to roll up)
    - Quality metric: relevance × tokens
-   - Correct-by-construction: single pass, no corrections needed
+   - Note: `ragzoom/dynamic_tiling.py` contains a deprecated DP alternative
 
 2. Read `ragzoom/store.py` - Data structures that make it work:
    - Study `TreeNode` class - binary tree with character spans
@@ -64,7 +64,7 @@ _Follow this path when developing comprehensive expertise:_
    - Trace how vector search finds seeds → MMR for diversity
    - Understand coverage map includes ancestors + siblings (tree fullness)
    - Notice ALL nodes get relevance scores (not just seeds!)
-   - See how it returns node IDs + scores for DP algorithm
+   - See how it returns node IDs + scores for tiling algorithm
 
 5. Skim `ragzoom/assembler.py` - Observe simple concatenation of selected nodes
 
@@ -85,7 +85,7 @@ _Follow this path when developing comprehensive expertise:_
 - Token budget is STRICT - algorithm guarantees it's never exceeded
 - Tree fullness enforced everywhere (no missing children)
 - Relevance propagation happens for entire coverage tree
-- Memoization makes DP efficient: O(n×b) where n=nodes, b=budget
+- Greedy tiling is O(n log n) via heap; DP is O(n×b) with memoization
 - "Correct-by-construction" means no post-processing needed
 
 ## Quick Validation
@@ -100,4 +100,4 @@ When developing expertise:
 - **Follow the data** - Understand transformations at each step
 - **Question assumptions** - Many design decisions optimize for specific constraints
 
-Remember: The DP algorithm in `dynamic_tiling.py` is the crown jewel. Everything else exists to support it.
+Remember: The greedy tiling algorithm in `greedy_tiling.py` is the crown jewel. Everything else exists to support it.
