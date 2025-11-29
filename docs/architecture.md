@@ -42,7 +42,7 @@ The RagZoom system maintains several critical invariants to ensure correct opera
 
 The system is composed of several key modules that work together.
 
--   **`ragzoom.index.TreeBuilder`**: Orchestrates the patch engine that builds both full-document and incremental append patches. It splits text into leaves, constructs `TreePatch` objects, and drives the LLM to generate parent summaries while preserving tree invariants and document/version metadata.
+-   **`ragzoom.indexing.IndexerRuntime`**: Orchestrates document indexing via the append executor. It manages text splitting, tree construction, and LLM-driven summarization while preserving tree invariants and document/version metadata. The actual patch-building logic lives in `ragzoom.server.append_executor.AppendExecutor`.
 
 -   **Storage Layer (StorageBackend + DocumentStore)**: The persistence layer is abstracted behind a `StorageBackend` protocol.
     - SQLiteStorageBackend (default for development) stores nodes in `data/sqlite.db` and vectors in a local index (Chroma in `data/chroma/` or a pure‑Python index).
@@ -69,7 +69,7 @@ For a comprehensive technical deep dive into the tiling algorithm, see [The Tili
 
 ```mermaid
 graph TD;
-    A[Source Text] --> B(TreeBuilder);
+    A[Source Text] --> B(IndexerRuntime);
     B --> C{Split into Chunks};
     C --> D[Create Leaf Nodes];
     D --> E(Store);
@@ -172,7 +172,7 @@ For complete configuration documentation including all parameters and environmen
 
 ### Indexing a Document
 1. Text splitter creates leaf nodes
-2. TreeBuilder builds a `TreePatch` (full document or append) and drives the LLM to produce summaries bottom-up
+2. AppendExecutor builds a `TreePatch` (full document or append) and drives the LLM to produce summaries bottom-up
 3. Each parent summarizes its children into a single coherent text while the patch tracks neighbor and span updates
 4. Store persists nodes, embeddings, and document/version metadata in a single transaction
 
