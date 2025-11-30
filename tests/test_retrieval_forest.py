@@ -162,6 +162,22 @@ def test_forest_root_injection(forest_store: DocumentStore) -> None:
         assert root_id in coverage, "Coverage must include every root in the forest"
 
 
+def test_forest_roots_included_with_empty_selection(
+    forest_store: DocumentStore,
+) -> None:
+    """Roots should be included in coverage even with no selections."""
+    root_ids = _seed_forest(forest_store)
+    coverage_builder = CoverageBuilder(forest_store)
+
+    # Empty selection - roots should still be included for forest support
+    result = coverage_builder.build_complete_coverage([])
+    assert root_ids, "Seed helper should produce forest roots"
+    for root_id in root_ids:
+        assert (
+            root_id in result.coverage_map
+        ), "Roots must be in coverage even with empty selection"
+
+
 def test_dp_accepts_multiple_roots(forest_store: DocumentStore) -> None:
     root_ids = _seed_forest(forest_store)
     nodes = {node.id: node for node in forest_store.nodes.get_all()}
