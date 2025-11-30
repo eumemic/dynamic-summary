@@ -205,7 +205,6 @@ async def test_run_workers_until_idle_streams_status() -> None:
                 database_url="sqlite:///:memory:",
             ),
             llm_service=llm,
-            vector_index_factory=lambda _doc: vector_index,
             worker_count=1,
         )
 
@@ -304,7 +303,6 @@ async def test_clear_document_rpc_clears_existing_document() -> None:
             index_config=index_config,
             operational_config=operational_config,
             llm_service=ImmediateLLMService(),
-            vector_index_factory=lambda _doc: vector_index,
             worker_count=1,
         )
         await coordinator.start()
@@ -363,7 +361,6 @@ async def test_clear_document_rpc_handles_missing_document() -> None:
             index_config=index_config,
             operational_config=operational_config,
             llm_service=ImmediateLLMService(),
-            vector_index_factory=lambda _doc: StubVectorIndex(),
             worker_count=1,
         )
         await coordinator.start()
@@ -435,7 +432,6 @@ async def test_clear_document_rpc_cancels_inflight_work() -> None:
             index_config=index_config,
             operational_config=operational_config,
             llm_service=llm,
-            vector_index_factory=lambda _doc: vector_index,
             worker_count=1,
         )
         await coordinator.start()
@@ -518,7 +514,6 @@ async def test_get_document_reflects_pending_work() -> None:
                 database_url="sqlite:///:memory:",
             ),
             llm_service=llm,
-            vector_index_factory=lambda _doc: vector_index,
             worker_count=1,
         )
 

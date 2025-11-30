@@ -162,7 +162,6 @@ async def _build_full_and_incremental_documents(
     incremental_vector_index = InMemoryVectorIndex()
 
     runtime.runtime._vector_index_factory = lambda _model: full_vector_index
-    runtime.worker_coordinator._vector_index_factory = lambda _doc_id: full_vector_index
 
     await runtime.clear(full_doc_id)
     await runtime.clear(incremental_doc_id)
@@ -173,9 +172,6 @@ async def _build_full_and_incremental_documents(
         file_path=f"{full_doc_id}.txt",
     )
     runtime.runtime._vector_index_factory = lambda _model: incremental_vector_index
-    runtime.worker_coordinator._vector_index_factory = (
-        lambda _doc_id: incremental_vector_index
-    )
 
     for idx, segment in enumerate(segments):
         stats = await runtime.append(

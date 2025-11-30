@@ -5,24 +5,19 @@ from __future__ import annotations
 import asyncio
 import heapq
 import logging
-import time
 import uuid
 from collections import defaultdict, deque
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass
 from itertools import count
 from typing import TYPE_CHECKING, Protocol
-
-import numpy as np
 
 from ragzoom.config import IndexConfig, OperationalConfig
 from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
-from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.server.run_manager import IndexRunContext, TelemetryRunManager
-from ragzoom.vector_factory import create_vector_index
 
 if TYPE_CHECKING:  # pragma: no cover - import only for typing
     from ragzoom.telemetry_collection import TelemetryCollector
@@ -136,7 +131,6 @@ class WorkerCoordinator:
         operational_config: OperationalConfig,
         llm_service: SummaryBackend,
         run_manager: TelemetryRunManager | None = None,
-        vector_index_factory: Callable[[str], VectorIndex] | None = None,
         worker_count: int = 30,
     ) -> None:
         self._store = store
@@ -145,16 +139,6 @@ class WorkerCoordinator:
         self._llm_service = llm_service
         self._worker_count = max(worker_count, 1)
         self._run_manager = run_manager
-
-        # Active run contexts keyed by document_id
-
-        if vector_index_factory is None:
-            vector_index_factory = lambda _doc_id: create_vector_index(  # noqa: E731
-                operational_config.vector_backend,
-                operational_config.database_url,
-                index_config.embedding_model,
-            )
-        self._vector_index_factory = vector_index_factory
 
         self._queue: asyncio.PriorityQueue[
             tuple[tuple[int, int, int, int], ReadyParentCandidate]
@@ -1114,69 +1098,29 @@ class WorkerCoordinator:
         if not ready or not self._dependencies_match(snapshot, post_summary):
             return _skip("post-summary", "dependencies changed after summary")
 
-        if post_summary.left is None:
+        left_after_summary = post_summary.left
+        right_after_summary = post_summary.right
+        if left_after_summary is None:
             return _skip("post-summary", "left missing after summary")
 
-        start_time = time.time()
-        embeddings = await self._llm_service.embed_texts([summary])
-        if len(embeddings) != 1:
-            raise ValueError("Embedding provider returned unexpected batch size")
-        embedding_vector = np.asarray(embeddings[0], dtype=np.float64)
-        logger.debug(
-            "worker: embedded parent doc=%s parent=%s",
-            candidate.document_id,
-            parent_id,
-        )
-
-        if collector is not None:
-            collector.record_embedding_call_v2(
-                [(parent_id, summary_tokens)],
-                batch_size=1,
-                model=self._index_config.embedding_model,
-                start_time=start_time,
-            )
-
-        if self._is_cancelled(candidate.document_id):
-            logger.debug(
-                "worker: candidate doc=%s left=%s aborted after embedding (cancelled)",
-                candidate.document_id,
-                candidate.left_child_id,
-            )
-            return [], False
-
-        ready, post_embedding = self._check_dependencies_still_valid(
-            candidate.document_id, candidate.left_child_id, state
-        )
-        if not ready or not self._dependencies_match(post_summary, post_embedding):
-            return _skip("post-embedding", "dependencies changed after embedding")
-
-        left_after_embedding = post_embedding.left
-        right_after_embedding = post_embedding.right
-        if left_after_embedding is None:
-            return _skip("post-embedding", "left missing after embedding")
-
         following_neighbor_id = (
-            getattr(right_after_embedding, "following_neighbor_id", None)
-            if right_after_embedding is not None
+            getattr(right_after_summary, "following_neighbor_id", None)
+            if right_after_summary is not None
             else None
         )
 
-        vector_index = self._vector_index_factory(candidate.document_id)
-
-        affected_ids = {parent_id, left_after_embedding.id}
-        parent_refs: list[tuple[str, str | None]] = [
-            (left_after_embedding.id, parent_id)
-        ]
-        if right_after_embedding is not None:
-            affected_ids.add(right_after_embedding.id)
-            parent_refs.append((right_after_embedding.id, parent_id))
+        affected_ids = {parent_id, left_after_summary.id}
+        parent_refs: list[tuple[str, str | None]] = [(left_after_summary.id, parent_id)]
+        if right_after_summary is not None:
+            affected_ids.add(right_after_summary.id)
+            parent_refs.append((right_after_summary.id, parent_id))
 
         ready, final_snapshot = self._check_dependencies_still_valid(
-            candidate.document_id, left_after_embedding.id, state
+            candidate.document_id, left_after_summary.id, state
         )
         if (
             not ready
-            or not self._dependencies_match(post_embedding, final_snapshot)
+            or not self._dependencies_match(post_summary, final_snapshot)
             or final_snapshot.left is None
         ):
             return _skip("final-check", "dependencies changed before commit")
@@ -1195,156 +1139,124 @@ class WorkerCoordinator:
 
         preceding_node_id_final = getattr(left_final, "preceding_neighbor_id", None)
 
-        vector_written = False
-        try:
-            with store.transaction() as session:
-                if self._is_cancelled(candidate.document_id):
-                    logger.debug(
-                        "worker: candidate doc=%s left=%s aborted during commit (cancelled)",
-                        candidate.document_id,
-                        candidate.left_child_id,
+        with store.transaction() as session:
+            if self._is_cancelled(candidate.document_id):
+                logger.debug(
+                    "worker: candidate doc=%s left=%s aborted during commit (cancelled)",
+                    candidate.document_id,
+                    candidate.left_child_id,
+                )
+                return [], False
+            preceding_parent_id: str | None = None
+            preceding_parent_node = None
+            if preceding_node_id_final:
+                refreshed_preceding = store.nodes.get(preceding_node_id_final)
+                if refreshed_preceding is None:
+                    return _skip(
+                        "commit",
+                        f"preceding neighbor {preceding_node_id_final} missing",
                     )
-                    return [], False
-                preceding_parent_id: str | None = None
-                preceding_parent_node = None
-                if preceding_node_id_final:
-                    refreshed_preceding = store.nodes.get(preceding_node_id_final)
-                    if refreshed_preceding is None:
-                        return _skip(
-                            "commit",
-                            f"preceding neighbor {preceding_node_id_final} missing",
+                parent_candidate = getattr(refreshed_preceding, "parent_id", None)
+                if parent_candidate:
+                    preceding_parent_id = str(parent_candidate)
+                    preceding_parent_node = store.nodes.get(preceding_parent_id)
+                    if preceding_parent_node is None:
+                        store.nodes.update_parent_references_batch(
+                            [(refreshed_preceding.id, None)]
                         )
-                    parent_candidate = getattr(refreshed_preceding, "parent_id", None)
-                    if parent_candidate:
-                        preceding_parent_id = str(parent_candidate)
-                        preceding_parent_node = store.nodes.get(preceding_parent_id)
-                        if preceding_parent_node is None:
-                            store.nodes.update_parent_references_batch(
-                                [(refreshed_preceding.id, None)]
-                            )
-                            preceding_parent_id = None
-                if preceding_parent_id is None and parent_level_index > 0:
-                    fallback_prev = store.nodes.get_by_height_and_level(
-                        height=height,
-                        level_index=parent_level_index - 1,
-                    )
-                    if fallback_prev is not None:
-                        preceding_parent_id = fallback_prev.id
-                        preceding_parent_node = fallback_prev
-                        affected_ids.add(preceding_parent_id)
-
-                following_parent_id: str | None = None
-                following_parent_node = None
-                if following_neighbor_id:
-                    refreshed_following = store.nodes.get(following_neighbor_id)
-                    if refreshed_following is None:
-                        return _skip(
-                            "commit",
-                            f"following neighbor {following_neighbor_id} missing",
-                        )
-                    parent_candidate = getattr(refreshed_following, "parent_id", None)
-                    if parent_candidate:
-                        following_parent_id = str(parent_candidate)
-                        following_parent_node = store.nodes.get(following_parent_id)
-                        if following_parent_node is None:
-                            store.nodes.update_parent_references_batch(
-                                [(refreshed_following.id, None)]
-                            )
-                            following_parent_id = None
-                if following_parent_id is None:
-                    fallback_next = store.nodes.get_by_height_and_level(
-                        height=height,
-                        level_index=parent_level_index + 1,
-                    )
-                    if fallback_next is not None:
-                        following_parent_id = fallback_next.id
-                        following_parent_node = fallback_next
-                        affected_ids.add(following_parent_id)
-
-                node_payload: NodeDataDict = {
-                    "node_id": parent_id,
-                    "text": summary,
-                    "span_start": span_start_final,
-                    "span_end": span_end_final,
-                    "parent_id": None,
-                    "left_child_id": left_final.id,
-                    "right_child_id": right_final.id if right_final else None,
-                    "document_id": candidate.document_id,
-                    "token_count": summary_tokens,
-                    "height": height,
-                    "preceding_neighbor_id": preceding_parent_id,
-                    "following_neighbor_id": following_parent_id,
-                    "level_index": parent_level_index,
-                }
-
-                neighbors_update: list[tuple[str, str | None, str | None]] = [
-                    (parent_id, preceding_parent_id, following_parent_id)
-                ]
-
-                if preceding_parent_id and preceding_parent_node is not None:
-                    neighbors_update.append(
-                        (
-                            preceding_parent_id,
-                            getattr(
-                                preceding_parent_node,
-                                "preceding_neighbor_id",
-                                None,
-                            ),
-                            parent_id,
-                        )
-                    )
+                        preceding_parent_id = None
+            if preceding_parent_id is None and parent_level_index > 0:
+                fallback_prev = store.nodes.get_by_height_and_level(
+                    height=height,
+                    level_index=parent_level_index - 1,
+                )
+                if fallback_prev is not None:
+                    preceding_parent_id = fallback_prev.id
+                    preceding_parent_node = fallback_prev
                     affected_ids.add(preceding_parent_id)
 
-                if following_parent_id and following_parent_node is not None:
-                    neighbors_update.append(
-                        (
-                            following_parent_id,
-                            parent_id,
-                            getattr(
-                                following_parent_node,
-                                "following_neighbor_id",
-                                None,
-                            ),
-                        )
+            following_parent_id: str | None = None
+            following_parent_node = None
+            if following_neighbor_id:
+                refreshed_following = store.nodes.get(following_neighbor_id)
+                if refreshed_following is None:
+                    return _skip(
+                        "commit",
+                        f"following neighbor {following_neighbor_id} missing",
                     )
+                parent_candidate = getattr(refreshed_following, "parent_id", None)
+                if parent_candidate:
+                    following_parent_id = str(parent_candidate)
+                    following_parent_node = store.nodes.get(following_parent_id)
+                    if following_parent_node is None:
+                        store.nodes.update_parent_references_batch(
+                            [(refreshed_following.id, None)]
+                        )
+                        following_parent_id = None
+            if following_parent_id is None:
+                fallback_next = store.nodes.get_by_height_and_level(
+                    height=height,
+                    level_index=parent_level_index + 1,
+                )
+                if fallback_next is not None:
+                    following_parent_id = fallback_next.id
+                    following_parent_node = fallback_next
                     affected_ids.add(following_parent_id)
 
-                store.nodes.add_batch([node_payload], session=session)
-                store.nodes.update_parent_references_batch(parent_refs, session=session)
-                if neighbors_update:
-                    store.nodes.update_neighbors_batch(
-                        neighbors_update, session=session
-                    )
+            node_payload: NodeDataDict = {
+                "node_id": parent_id,
+                "text": summary,
+                "span_start": span_start_final,
+                "span_end": span_end_final,
+                "parent_id": None,
+                "left_child_id": left_final.id,
+                "right_child_id": right_final.id if right_final else None,
+                "document_id": candidate.document_id,
+                "token_count": summary_tokens,
+                "height": height,
+                "preceding_neighbor_id": preceding_parent_id,
+                "following_neighbor_id": following_parent_id,
+                "level_index": parent_level_index,
+            }
 
-                vector_index.upsert(
-                    [
-                        (
-                            parent_id,
-                            embedding_vector,
-                            {
-                                "document_id": candidate.document_id,
-                                "span_start": span_start_final,
-                                "span_end": span_end_final,
-                                "is_leaf": 0,
-                                "height": height,
-                                "level_index": parent_level_index,
-                                "coord_version": 1,
-                            },
-                        )
-                    ]
+            neighbors_update: list[tuple[str, str | None, str | None]] = [
+                (parent_id, preceding_parent_id, following_parent_id)
+            ]
+
+            if preceding_parent_id and preceding_parent_node is not None:
+                neighbors_update.append(
+                    (
+                        preceding_parent_id,
+                        getattr(
+                            preceding_parent_node,
+                            "preceding_neighbor_id",
+                            None,
+                        ),
+                        parent_id,
+                    )
                 )
-                vector_written = True
+                affected_ids.add(preceding_parent_id)
 
-            store.tree.clear_depth_cache(list(affected_ids))
-        except Exception:
-            if vector_written:
-                try:  # pragma: no cover - best-effort cleanup
-                    vector_index.delete(ids=[parent_id])
-                except Exception:
-                    logger.exception(
-                        "Failed to delete vector during rollback", exc_info=True
+            if following_parent_id and following_parent_node is not None:
+                neighbors_update.append(
+                    (
+                        following_parent_id,
+                        parent_id,
+                        getattr(
+                            following_parent_node,
+                            "following_neighbor_id",
+                            None,
+                        ),
                     )
-            raise
+                )
+                affected_ids.add(following_parent_id)
+
+            store.nodes.add_batch([node_payload], session=session)
+            store.nodes.update_parent_references_batch(parent_refs, session=session)
+            if neighbors_update:
+                store.nodes.update_neighbors_batch(neighbors_update, session=session)
+
+        store.tree.clear_depth_cache(list(affected_ids))
 
         if context is not None:
             context.register_summary_node(parent_id)
