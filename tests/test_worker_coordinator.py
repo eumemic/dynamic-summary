@@ -345,7 +345,6 @@ async def test_worker_coordinator_builds_parent(
             database_url="sqlite:///:memory:",
         ),
         llm_service=StubLLMService(),
-        vector_index_factory=_vector_factory,
         worker_count=2,
     )
 
@@ -405,7 +404,6 @@ async def test_worker_skips_candidate_when_dependencies_change(
             database_url="sqlite:///:memory:",
         ),
         llm_service=llm_service,
-        vector_index_factory=_vector_factory,
         worker_count=1,
     )
 
@@ -482,7 +480,6 @@ async def test_append_after_parent_reference_cleared_removes_ancestor(
             database_url="sqlite:///:memory:",
         ),
         llm_service=StubLLMService(),
-        vector_index_factory=_vector_factory,
         worker_count=2,
     )
 
@@ -617,7 +614,6 @@ async def test_worker_coordinator_converges_to_single_root(
             database_url="sqlite:///:memory:",
         ),
         llm_service=llm,
-        vector_index_factory=_vector_factory,
         worker_count=4,
     )
 
@@ -674,7 +670,6 @@ async def test_worker_coordinator_converges_with_odd_parent_count(
             database_url="sqlite:///:memory:",
         ),
         llm_service=StubLLMService(),
-        vector_index_factory=_vector_factory,
         worker_count=4,
     )
 
@@ -752,7 +747,6 @@ async def test_worker_status_tracks_queue_and_inflight(
             database_url="sqlite:///:memory:",
         ),
         llm_service=llm,
-        vector_index_factory=_vector_factory,
         worker_count=1,
     )
 
@@ -830,7 +824,6 @@ async def test_worker_coordinator_preserves_preceding_parent_links(
             database_url="sqlite:///:memory:",
         ),
         llm_service=StubLLMService(),
-        vector_index_factory=_vector_factory,
         worker_count=2,
     )
 
@@ -1227,7 +1220,6 @@ async def test_possibly_enqueue_requires_preceding_neighbor(
             database_url="sqlite:///:memory:",
         ),
         llm_service=StubLLMService(),
-        vector_index_factory=lambda _: StubVectorIndex(),
         worker_count=1,
     )
 
@@ -1289,7 +1281,6 @@ async def test_possibly_enqueue_skips_root_span(
             database_url="sqlite:///:memory:",
         ),
         llm_service=StubLLMService(),
-        vector_index_factory=lambda _: StubVectorIndex(),
         worker_count=1,
     )
 
@@ -1358,7 +1349,6 @@ async def test_worker_coordinator_rolls_up_after_reappend(
         index_config=index_config,
         operational_config=operational_config,
         llm_service=StubLLMService(),
-        vector_index_factory=lambda _: StubVectorIndex(),
         worker_count=8,
     )
 

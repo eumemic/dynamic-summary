@@ -715,11 +715,13 @@ def _vector_index_consistency(
     snapshot: DocumentSnapshot, vector_index: VectorIndex
 ) -> list[ValidationFinding]:
     findings: list[ValidationFinding] = []
-    node_ids = list(snapshot.node_lookup.keys())
+    # Only leaf nodes (height == 0) should have embeddings.
+    # Summary nodes (height > 0) derive their scores from bottom-up propagation.
+    leaf_ids = [leaf.id for leaf in snapshot.leaves]
     batch_size = 256
 
-    for start in range(0, len(node_ids), batch_size):
-        chunk = node_ids[start : start + batch_size]
+    for start in range(0, len(leaf_ids), batch_size):
+        chunk = leaf_ids[start : start + batch_size]
         try:
             vectors = vector_index.get_vectors(chunk)
         except Exception as exc:  # pragma: no cover - defensive
@@ -739,7 +741,7 @@ def _vector_index_consistency(
                 findings.append(
                     ValidationFinding(
                         code="vector.missing",
-                        message=f"Embedding missing for node {node_id}",
+                        message=f"Embedding missing for leaf node {node_id}",
                         node_id=node_id,
                     )
                 )

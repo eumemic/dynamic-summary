@@ -41,9 +41,6 @@ class TestIntegration:
         """Route runtime vector lookups to the provided stub index."""
 
         harness.runtime._vector_index_factory = lambda _model_id: vector_index
-        harness.worker_coordinator._vector_index_factory = (
-            lambda _document_id: vector_index
-        )
 
     @staticmethod
     async def _index_document(

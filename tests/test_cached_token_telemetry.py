@@ -375,4 +375,3 @@ def _configure_runtime(
     harness.llm_service.config = config
     harness.telemetry_manager._index_config = config
     harness.runtime._vector_index_factory = lambda _model: vector_index
-    harness.worker_coordinator._vector_index_factory = lambda _doc_id: vector_index
