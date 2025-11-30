@@ -268,7 +268,7 @@ class Retriever:
         # Use document-scoped scoring service
         doc_scoring_service = ScoringService(self.document_store, self.vector_index)
         scores = doc_scoring_service.compute_scores(
-            query_embedding, coverage_map, candidates
+            query_embedding, coverage_map, candidates, nodes=coverage_result.nodes
         )
         if telemetry_collector:
             telemetry_collector.end_phase("scoring")
