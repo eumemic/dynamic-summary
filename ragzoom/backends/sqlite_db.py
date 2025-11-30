@@ -40,10 +40,6 @@ class SQLiteTreeNode(TreeNodeColumnsMixin, SqliteBase):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     parent_id: Mapped[str | None] = mapped_column(String, nullable=True)
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
-    last_accessed: Mapped[dt.datetime] = mapped_column(
-        DateTime, default=dt.datetime.utcnow
-    )
-    access_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime, default=dt.datetime.utcnow
     )

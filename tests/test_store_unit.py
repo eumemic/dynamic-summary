@@ -545,12 +545,6 @@ class TestStoreUnit:
         ]
         doc_store.nodes.add_batch(nodes_data)
 
-        # Test access update (should not raise errors)
-        doc_store.nodes.update_access("access-test")
-
-        # Test access update on non-existent node (should not raise errors)
-        doc_store.nodes.update_access("non-existent")
-
     def test_multi_node_operations(self, doc_store: DocumentStore) -> None:
         """Test operations on multiple nodes."""
         # Add multiple nodes

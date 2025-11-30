@@ -809,6 +809,11 @@ def validate(
     show_default=False,
     help=GRPC_ADDRESS_HELP,
 )
+@click.option(
+    "--profile",
+    is_flag=True,
+    help="Show detailed timing breakdown for each pipeline phase",
+)
 @click.pass_context
 def query(
     ctx: click.Context,
@@ -823,6 +828,7 @@ def query(
     viz_coords: str,
     tiling_strategy: str | None,
     server_address: str | None,
+    profile: bool,
 ) -> None:
     """Query the system and get a summary."""
 
@@ -866,6 +872,7 @@ def query(
                 use_token_coords=use_token_coords,
                 tiling_strategy=query_config.tiling_strategy,
                 recent_verbatim_token_budget=recent_verbatim_token_budget,
+                profile=profile,
             )
 
         query_result = response.query_result
@@ -915,6 +922,36 @@ def query(
         click.echo(f"  Token count: {query_result.token_count}")
         if debug:
             click.echo(f"  Coverage: {len(retrieval.coverage_map)} nodes")
+
+        if profile and response.profile:
+            p = response.profile
+            click.echo("")
+            click.echo("=" * 60)
+            click.echo("PROFILE")
+            click.echo("=" * 60)
+            click.echo("")
+            click.echo("Phase Timings:")
+            click.echo(f"  embedding:     {p.embedding_ms:8.2f} ms")
+            click.echo(f"  search:        {p.search_ms:8.2f} ms")
+            click.echo(f"  mmr:           {p.mmr_ms:8.2f} ms")
+            click.echo(f"  coverage_map:  {p.coverage_map_ms:8.2f} ms")
+            click.echo(f"  scoring:       {p.scoring_ms:8.2f} ms")
+            click.echo(f"  tiling:        {p.tiling_ms:8.2f} ms")
+            click.echo(f"  assembly:      {p.assembly_ms:8.2f} ms")
+            click.echo("  ─────────────────────────")
+            click.echo(f"  TOTAL:         {p.total_ms:8.2f} ms")
+            click.echo("")
+            click.echo("Metrics:")
+            click.echo(
+                f"  candidates:    {p.candidates_retrieved} retrieved, {p.candidates_filtered} after filter"
+            )
+            click.echo(f"  seeds:         {p.seeds_found}/{p.seeds_requested} found")
+            click.echo(f"  coverage:      {p.coverage_size} nodes")
+            click.echo(
+                f"  tiling:        {p.tiling_size} nodes -> {p.output_tokens} tokens"
+            )
+            if p.embedding_model:
+                click.echo(f"  model:         {p.embedding_model}")
 
     except Exception as e:
         handle_cli_error(e, "processing query")

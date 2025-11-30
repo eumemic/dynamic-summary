@@ -38,8 +38,6 @@ class PostgresTreeNode(TreeNodeColumnsMixin, Base):
         String, ForeignKey("tree_nodes.id"), nullable=True
     )
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
-    last_accessed: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    access_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     document_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("documents.id"), nullable=True

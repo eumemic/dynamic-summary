@@ -130,6 +130,7 @@ class ExecuteQueryRequest:
     use_token_coords: bool
     tiling_strategy: str
     recent_verbatim_token_budget: int
+    profile: bool
 
     def __init__(
         self,
@@ -144,6 +145,46 @@ class ExecuteQueryRequest:
         use_token_coords: bool,
         tiling_strategy: str = ...,
         recent_verbatim_token_budget: int = ...,
+        profile: bool = ...,
+    ) -> None: ...
+
+class QueryTelemetry:
+    embedding_ms: float
+    search_ms: float
+    mmr_ms: float
+    coverage_map_ms: float
+    scoring_ms: float
+    tiling_ms: float
+    assembly_ms: float
+    total_ms: float
+    seeds_requested: int
+    seeds_found: int
+    candidates_retrieved: int
+    candidates_filtered: int
+    coverage_size: int
+    tiling_size: int
+    output_tokens: int
+    embedding_model: str
+
+    def __init__(
+        self,
+        *,
+        embedding_ms: float = ...,
+        search_ms: float = ...,
+        mmr_ms: float = ...,
+        coverage_map_ms: float = ...,
+        scoring_ms: float = ...,
+        tiling_ms: float = ...,
+        assembly_ms: float = ...,
+        total_ms: float = ...,
+        seeds_requested: int = ...,
+        seeds_found: int = ...,
+        candidates_retrieved: int = ...,
+        candidates_filtered: int = ...,
+        coverage_size: int = ...,
+        tiling_size: int = ...,
+        output_tokens: int = ...,
+        embedding_model: str = ...,
     ) -> None: ...
 
 class ExecuteQueryResponse:
@@ -157,6 +198,7 @@ class ExecuteQueryResponse:
     query_id: str
     seed_count: int
     verbatim_count: int
+    telemetry: QueryTelemetry
 
     def __init__(
         self,
@@ -171,6 +213,7 @@ class ExecuteQueryResponse:
         query_id: str,
         seed_count: int = ...,
         verbatim_count: int = ...,
+        telemetry: QueryTelemetry = ...,
     ) -> None: ...
 
 class RunWorkersRequest:

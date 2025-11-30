@@ -86,11 +86,34 @@ class RetrievalView:
 
 
 @dataclass
+class QueryProfileResult:
+    """Profiling telemetry from query execution."""
+
+    embedding_ms: float
+    search_ms: float
+    mmr_ms: float
+    coverage_map_ms: float
+    scoring_ms: float
+    tiling_ms: float
+    assembly_ms: float
+    total_ms: float
+    seeds_requested: int
+    seeds_found: int
+    candidates_retrieved: int
+    candidates_filtered: int
+    coverage_size: int
+    tiling_size: int
+    output_tokens: int
+    embedding_model: str
+
+
+@dataclass
 class ExecuteQueryOutput:
     query_result: QueryResult
     retrieval: RetrievalView
     visualization: str
     validation_warning: str
+    profile: QueryProfileResult | None = None
 
 
 @dataclass
@@ -231,6 +254,7 @@ class GrpcRagzoomClient:
         use_token_coords: bool,
         tiling_strategy: str | None,
         recent_verbatim_token_budget: int | None = None,
+        profile: bool = False,
     ) -> ExecuteQueryOutput:
         request = pb2.ExecuteQueryRequest(
             query=query,
@@ -243,6 +267,7 @@ class GrpcRagzoomClient:
             use_token_coords=use_token_coords,
             tiling_strategy=tiling_strategy or "",
             recent_verbatim_token_budget=recent_verbatim_token_budget or 0,
+            profile=profile,
         )
         try:
             response = self._retrieval.ExecuteQuery(request, timeout=self._timeout)
@@ -281,11 +306,36 @@ class GrpcRagzoomClient:
             nodes=nodes_payload,
         )
 
+        # Extract profile telemetry if available
+        profile_result: QueryProfileResult | None = None
+        t = response.telemetry
+        # Check if telemetry has data (total_ms > 0 indicates profiling was enabled)
+        if t.total_ms > 0:
+            profile_result = QueryProfileResult(
+                embedding_ms=t.embedding_ms,
+                search_ms=t.search_ms,
+                mmr_ms=t.mmr_ms,
+                coverage_map_ms=t.coverage_map_ms,
+                scoring_ms=t.scoring_ms,
+                tiling_ms=t.tiling_ms,
+                assembly_ms=t.assembly_ms,
+                total_ms=t.total_ms,
+                seeds_requested=t.seeds_requested,
+                seeds_found=t.seeds_found,
+                candidates_retrieved=t.candidates_retrieved,
+                candidates_filtered=t.candidates_filtered,
+                coverage_size=t.coverage_size,
+                tiling_size=t.tiling_size,
+                output_tokens=t.output_tokens,
+                embedding_model=t.embedding_model,
+            )
+
         return ExecuteQueryOutput(
             query_result=query_result,
             retrieval=retrieval_view,
             visualization=response.visualization,
             validation_warning=response.validation_warning,
+            profile=profile_result,
         )
 
     def run_workers_once(self) -> list[WorkerRunSnapshot]:
