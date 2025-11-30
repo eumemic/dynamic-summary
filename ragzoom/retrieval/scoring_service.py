@@ -4,9 +4,6 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-import numpy as np
-from numpy.typing import NDArray
-
 from ragzoom.vector_api import ensure_normalized
 
 if TYPE_CHECKING:
@@ -139,39 +136,3 @@ class ScoringService:
                 scores[node_id] = (
                     sum(child_scores) / len(child_scores) if child_scores else 0.0
                 )
-
-    @staticmethod
-    def _compute_cosine_similarities_batch(
-        query_vec: NDArray[np.float64], embeddings_matrix: NDArray[np.float64]
-    ) -> NDArray[np.float64]:
-        """Compute cosine similarities between query and multiple embeddings.
-
-        Args:
-            query_vec: Query embedding vector (1D)
-            embeddings_matrix: Matrix of embeddings (2D: num_embeddings x embedding_dim)
-
-        Returns:
-            Array of cosine similarities in range [0, 1]
-        """
-        # Normalize query vector
-        query_norm = np.linalg.norm(query_vec)
-        if query_norm == 0:
-            return np.zeros(embeddings_matrix.shape[0])
-
-        # Normalize embedding vectors
-        embedding_norms = np.linalg.norm(embeddings_matrix, axis=1)
-
-        # Handle zero-norm embeddings
-        zero_norm_mask = embedding_norms == 0
-        embedding_norms = np.where(zero_norm_mask, 1.0, embedding_norms)
-
-        # Compute similarities
-        similarities = np.dot(embeddings_matrix, query_vec) / (
-            query_norm * embedding_norms
-        )
-
-        # Set zero-norm embeddings to 0 similarity
-        similarities = np.where(zero_norm_mask, 0.0, similarities)
-
-        # Clip to [0, 1] range
-        return np.clip(similarities, 0.0, 1.0)
