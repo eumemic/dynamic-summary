@@ -47,6 +47,7 @@ class QueryTelemetry:
     seeds_requested: int = 0
     seeds_found: int = 0
     candidates_retrieved: int = 0
+    candidates_filtered: int = 0
     coverage_size: int = 0
     tiling_size: int = 0
     output_tokens: int = 0
@@ -100,6 +101,7 @@ class QueryTelemetry:
                 "seeds_requested": self.seeds_requested,
                 "seeds_found": self.seeds_found,
                 "candidates_retrieved": self.candidates_retrieved,
+                "candidates_filtered": self.candidates_filtered,
                 "coverage_size": self.coverage_size,
                 "tiling_size": self.tiling_size,
                 "output_tokens": self.output_tokens,
@@ -173,6 +175,7 @@ class QueryMetricsDict(TypedDict):
     seeds_requested: int
     seeds_found: int
     candidates_retrieved: int
+    candidates_filtered: int
     coverage_size: int
     tiling_size: int
     output_tokens: int

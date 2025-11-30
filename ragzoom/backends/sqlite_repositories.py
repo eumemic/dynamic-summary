@@ -718,14 +718,6 @@ class SqliteNodeRepository:
             )
             session.commit()
 
-    def update_node_access(self, node_id: str) -> None:
-        with self.SessionLocal() as session:
-            row = session.get(SQLiteTreeNode, node_id)
-            if row:
-                row.access_count = (row.access_count or 0) + 1
-                session.add(row)
-                session.commit()
-
     def delete_nodes(
         self,
         node_ids: Sequence[str],

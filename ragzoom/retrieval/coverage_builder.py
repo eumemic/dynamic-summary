@@ -152,12 +152,9 @@ class CoverageBuilder:
                 exc, "Failed to fetch nodes for coverage seeds", default=[]
             )
 
-        touched_ids: set[str] = set()
-
         def register(node: TreeNode) -> None:
             coverage_map[node.id] = True
             nodes.setdefault(node.id, node)
-            touched_ids.add(node.id)
 
         def coord_for_node(node: TreeNode) -> TreeCoordinate | None:
             raw_index = getattr(node, "level_index", None)
@@ -210,8 +207,5 @@ class CoverageBuilder:
                 )
             for node in fallback_nodes:
                 register(node)
-
-        for node_id in touched_ids:
-            self.store.nodes.update_access(node_id)
 
         return coverage_map, nodes

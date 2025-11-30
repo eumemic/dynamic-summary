@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from datetime import datetime
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -56,8 +55,6 @@ class PostgresNodeRepository(BaseRepository):
             node.text,
             node.token_count,
             node.is_pinned,
-            node.last_accessed,
-            node.access_count,
             node.created_at,
             node.document_id,
             node.preceding_neighbor_id,
@@ -564,25 +561,6 @@ class PostgresNodeRepository(BaseRepository):
             return nodes
 
     # jscpd:ignore-end
-
-    def update_node_access(self, node_id: str) -> None:
-        """Update access time and count for a node.
-
-        Args:
-            node_id: Node ID to update access info
-        """
-        with self.SessionLocal() as session:
-            node = session.query(PostgresTreeNode).filter_by(id=node_id).first()
-            if node:
-                node.last_accessed = datetime.utcnow()
-                node.access_count += 1
-                session.commit()
-
-                # Update cache if present
-                cached = self.cache_manager.get(node_id)
-                if cached:
-                    cached.last_accessed = node.last_accessed
-                    cached.access_count = node.access_count
 
     def delete_nodes(
         self,
