@@ -377,16 +377,39 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
             if request.recent_verbatim_token_budget > 0
             else None
         )
-        retrieval_result = await retriever.retrieve_async(
-            request.query,
-            num_seeds=num_seeds,
-            budget_tokens=budget,
-            document_id=request.document_id,
-            recent_verbatim_budget=recent_verbatim_budget,
-        )
+
+        # Use telemetry-enabled retrieval if profiling requested
+        query_telemetry = None
+        if request.profile:
+            retrieval_result, query_telemetry = await retriever.retrieve_with_telemetry(
+                request.query,
+                num_seeds=num_seeds,
+                budget_tokens=budget,
+                document_id=request.document_id,
+                recent_verbatim_budget=recent_verbatim_budget,
+            )
+        else:
+            retrieval_result = await retriever.retrieve_async(
+                request.query,
+                num_seeds=num_seeds,
+                budget_tokens=budget,
+                document_id=request.document_id,
+                recent_verbatim_budget=recent_verbatim_budget,
+            )
 
         assembler = Assembler(document_store)
-        summary_text = assembler.assemble(retrieval_result)
+
+        # Track assembly time if profiling
+        if query_telemetry:
+            import time
+
+            assembly_start = time.perf_counter()
+            summary_text = assembler.assemble(retrieval_result)
+            query_telemetry.assembly_time = time.perf_counter() - assembly_start
+            query_telemetry.end_time = time.perf_counter()
+        else:
+            summary_text = assembler.assemble(retrieval_result)
+
         token_count = assembler.get_token_count(summary_text)
         nodes_retrieved = len(retrieval_result.node_ids)
         tiling_size = len(retrieval_result.tiling or [])
@@ -439,6 +462,42 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
 
         retrieval_proto = _retrieval_to_proto(cast(Retrievable, retrieval_result))
 
+        # Build telemetry proto if profiling was enabled
+        telemetry_proto = None
+        if query_telemetry:
+            telemetry_proto = pb2.QueryTelemetry(
+                embedding_ms=query_telemetry.embedding_time * 1000,
+                search_ms=query_telemetry.search_time * 1000,
+                mmr_ms=query_telemetry.mmr_time * 1000,
+                coverage_map_ms=query_telemetry.coverage_map_time * 1000,
+                scoring_ms=query_telemetry.scoring_time * 1000,
+                tiling_ms=query_telemetry.dp_time * 1000,
+                assembly_ms=query_telemetry.assembly_time * 1000,
+                total_ms=query_telemetry.total_time * 1000,
+                seeds_requested=query_telemetry.seeds_requested,
+                seeds_found=query_telemetry.seeds_found,
+                candidates_retrieved=query_telemetry.candidates_retrieved,
+                candidates_filtered=query_telemetry.candidates_filtered,
+                coverage_size=query_telemetry.coverage_size,
+                tiling_size=query_telemetry.tiling_size,
+                output_tokens=query_telemetry.output_tokens,
+                embedding_model=query_telemetry.embedding_model,
+            )
+
+        if telemetry_proto is not None:
+            return pb2.ExecuteQueryResponse(
+                summary=summary_text,
+                token_count=token_count,
+                nodes_retrieved=nodes_retrieved,
+                tiling_size=tiling_size,
+                retrieval=retrieval_proto,
+                visualization=visualization,
+                validation_warning=validation_warning,
+                query_id=query_id,
+                seed_count=retrieval_result.seed_count,
+                verbatim_count=retrieval_result.verbatim_count,
+                telemetry=telemetry_proto,
+            )
         return pb2.ExecuteQueryResponse(
             summary=summary_text,
             token_count=token_count,
