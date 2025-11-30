@@ -36,7 +36,6 @@ def _configure_runtime(
     harness.llm_service.config = config
     harness.telemetry_manager._index_config = config
     harness.runtime._vector_index_factory = lambda _model: vector_index
-    harness.worker_coordinator._vector_index_factory = lambda _doc_id: vector_index
 
 
 class TestTelemetryDataStructures:
@@ -559,18 +558,23 @@ class TestTelemetryIntegration:
         # Should have summary nodes since we have multiple leaves
         assert summary_count >= 1
 
-        # Every node should have embedding telemetry
+        # Only leaf nodes (height == 0) have embeddings
+        # Summary nodes (height > 0) do not have embeddings - scores come from
+        # bottom-up propagation from leaves
         for node_data in nodes:
-            assert (
-                "embedding" in node_data
-            ), f"Node {node_data['node_id']} missing embedding"
-            assert node_data["embedding"]["model"] == "text-embedding-3-small"
-
-            # Summary nodes (height > 0) should have summary attempts
-            # unless they are passthrough nodes (text was already short enough)
-            if node_data["height"] > 0:
-                # Only check for summary_attempts if the node actually performed a summary
-                # Passthrough nodes won't have summary_attempts
+            if node_data["height"] == 0:
+                # Leaf nodes must have embedding telemetry
+                assert (
+                    "embedding" in node_data
+                ), f"Leaf node {node_data['node_id']} missing embedding"
+                assert node_data["embedding"]["model"] == "text-embedding-3-small"
+            else:
+                # Summary nodes should NOT have embeddings
+                assert (
+                    "embedding" not in node_data
+                ), f"Summary node {node_data['node_id']} should not have embedding"
+                # Summary nodes should have summary attempts
+                # unless they are passthrough nodes (text was already short enough)
                 if "summary_attempts" in node_data:
                     assert len(node_data["summary_attempts"]) > 0
                     # The node should have marked which attempt was accepted
