@@ -122,7 +122,8 @@ class PgVectorIndexAdapter(VectorIndex):
         for node_id in ids:
             r = by_id.get(node_id)
             if r is None:
-                raise KeyError(f"Vector not found for id {node_id}")
+                # Skip missing vectors - caller handles partial results
+                continue
             out.append(self._row_to_vector(r))
         return out
 

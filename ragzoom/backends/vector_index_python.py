@@ -74,9 +74,13 @@ class PythonVectorIndexAdapter(VectorIndex):
     def get_vectors(self, ids: list[str]) -> list[Vector]:
         out: list[Vector] = []
         for node_id in ids:
-            vec = self._vector_for_id(node_id)
-            meta = self._meta_for_id(node_id)
-            out.append(self._wrap(node_id, vec, meta))
+            try:
+                vec = self._vector_for_id(node_id)
+                meta = self._meta_for_id(node_id)
+                out.append(self._wrap(node_id, vec, meta))
+            except KeyError:
+                # Skip missing vectors - caller handles partial results
+                continue
         return out
 
     def upsert(self, items: Sequence[VectorUpsertItem]) -> None:
