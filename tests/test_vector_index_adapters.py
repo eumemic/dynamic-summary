@@ -197,8 +197,8 @@ def test_python_vector_index_adapter_round_trip(
     # Delete by id
     deleted = adapter.delete(ids=["n1"])
     assert deleted == 1
-    with pytest.raises(KeyError):
-        adapter.get_vectors(["n1"])
+    # get_vectors returns empty for missing IDs (no KeyError)
+    assert adapter.get_vectors(["n1"]) == []
 
     # Delete remaining by document filter
     deleted_by_filter = adapter.delete(filter={"document_id": "doc-1"})
