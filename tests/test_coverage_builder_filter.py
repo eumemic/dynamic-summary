@@ -29,12 +29,11 @@ class TestFilterPinnedAncestors:
         ]
         pinned_coords: list[TreeCoordinate] = []
 
-        filtered, excluded_roots = coverage_builder._filter_pinned_ancestors(
+        filtered = coverage_builder._filter_pinned_ancestors(
             coords, pinned_coords, max_height=2
         )
 
         assert filtered == coords
-        assert excluded_roots == set()
 
     def test_filters_ancestors_of_pinned_leaf(
         self, coverage_builder: CoverageBuilder
@@ -57,7 +56,7 @@ class TestFilterPinnedAncestors:
         ]
         pinned_coords = [TreeCoordinate("doc", 0, 0)]
 
-        filtered, excluded_roots = coverage_builder._filter_pinned_ancestors(
+        filtered = coverage_builder._filter_pinned_ancestors(
             coords, pinned_coords, max_height=2
         )
 
@@ -83,30 +82,13 @@ class TestFilterPinnedAncestors:
         ]
         pinned_coords = [TreeCoordinate("doc", 0, 2)]
 
-        filtered, excluded_roots = coverage_builder._filter_pinned_ancestors(
+        filtered = coverage_builder._filter_pinned_ancestors(
             coords, pinned_coords, max_height=2
         )
 
         filtered_tuples = {c.as_tuple() for c in filtered}
         assert (1, 0) in filtered_tuples  # sibling preserved
         assert (1, 1) not in filtered_tuples  # parent removed
-
-    def test_tracks_excluded_root_coordinates(
-        self, coverage_builder: CoverageBuilder
-    ) -> None:
-        """Root-level coordinates in ancestor chain should be in excluded_roots."""
-        coords = [
-            TreeCoordinate("doc", 0, 0),
-            TreeCoordinate("doc", 1, 0),
-            TreeCoordinate("doc", 2, 0),  # root
-        ]
-        pinned_coords = [TreeCoordinate("doc", 0, 0)]
-
-        _, excluded_roots = coverage_builder._filter_pinned_ancestors(
-            coords, pinned_coords, max_height=2
-        )
-
-        assert (2, 0) in excluded_roots
 
     def test_shared_ancestor_chain_early_exit(
         self, coverage_builder: CoverageBuilder
@@ -124,7 +106,7 @@ class TestFilterPinnedAncestors:
             TreeCoordinate("doc", 0, 1),
         ]
 
-        filtered, excluded_roots = coverage_builder._filter_pinned_ancestors(
+        filtered = coverage_builder._filter_pinned_ancestors(
             coords, pinned_coords, max_height=2
         )
 
@@ -147,7 +129,7 @@ class TestFilterPinnedAncestors:
         ]
         pinned_coords = [TreeCoordinate("doc", 1, 0)]
 
-        filtered, excluded_roots = coverage_builder._filter_pinned_ancestors(
+        filtered = coverage_builder._filter_pinned_ancestors(
             coords, pinned_coords, max_height=2
         )
 
@@ -173,7 +155,7 @@ class TestFilterPinnedAncestors:
             TreeCoordinate("doc", 0, 3),
         ]
 
-        filtered, excluded_roots = coverage_builder._filter_pinned_ancestors(
+        filtered = coverage_builder._filter_pinned_ancestors(
             coords, pinned_coords, max_height=2
         )
 
@@ -184,23 +166,22 @@ class TestFilterPinnedAncestors:
         assert (1, 1) not in filtered_tuples
         assert (2, 0) not in filtered_tuples
 
-    def test_no_roots_excluded_when_max_height_not_reached(
+    def test_ancestors_removed_up_to_max_height(
         self, coverage_builder: CoverageBuilder
     ) -> None:
-        """If pinned node's ancestors don't reach max_height, no roots excluded."""
-        # Pinned at height 1, max_height=3, so ancestors are (2,0) and (3,0)
-        # But coords only go up to height 2
+        """Ancestors are removed up to max_height even if not in coords."""
+        # Pinned at height 1, max_height=3
+        # Ancestors (2,0) should be removed from coords
         coords = [
             TreeCoordinate("doc", 1, 0),  # pinned
             TreeCoordinate("doc", 2, 0),  # parent - removed
         ]
         pinned_coords = [TreeCoordinate("doc", 1, 0)]
 
-        filtered, excluded_roots = coverage_builder._filter_pinned_ancestors(
+        filtered = coverage_builder._filter_pinned_ancestors(
             coords, pinned_coords, max_height=3
         )
 
-        # (2,0) removed but not at max_height=3
-        assert (2, 0) not in excluded_roots
-        # (3,0) would be at max_height but not in coords
-        assert (3, 0) in excluded_roots
+        filtered_tuples = {c.as_tuple() for c in filtered}
+        assert (1, 0) in filtered_tuples  # pinned remains
+        assert (2, 0) not in filtered_tuples  # parent removed

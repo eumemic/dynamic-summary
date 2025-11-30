@@ -62,29 +62,9 @@ class CoverageBuilder:
                 avoiding unnecessary ancestor fetches and scoring.
         """
 
-        coverage_map, nodes, excluded_root_coords = self._build_coordinate_closure(
+        coverage_map, nodes = self._build_coordinate_closure(
             selected_ids, seed_metadata, pinned_ids=pinned_ids
         )
-
-        # Ensure every root participates (forest support)
-        # But exclude roots that are ancestors of pinned nodes
-        try:
-            root_nodes = self.store.nodes.get_root_nodes()
-        except Exception as exc:  # pragma: no cover - defensive logging
-            handle_graceful_error(
-                exc, "Failed to load root nodes for coverage map", default=None
-            )
-        else:
-            for root in root_nodes:
-                # Skip roots that are ancestors of pinned nodes
-                root_coord = (
-                    getattr(root, "height", 0),
-                    getattr(root, "level_index", 0),
-                )
-                if root_coord in excluded_root_coords:
-                    continue
-                coverage_map[root.id] = True
-                nodes.setdefault(root.id, root)
 
         # Include pinned nodes scoped to this document
         try:
@@ -121,7 +101,7 @@ class CoverageBuilder:
 
         if not selected_ids:
             return {}
-        coverage_map, _, _ = self._build_coordinate_closure(selected_ids, seed_metadata)
+        coverage_map, _ = self._build_coordinate_closure(selected_ids, seed_metadata)
         return coverage_map
 
     def _filter_pinned_ancestors(
@@ -129,7 +109,7 @@ class CoverageBuilder:
         coords: list[TreeCoordinate],
         pinned_coords: list[TreeCoordinate],
         max_height: int,
-    ) -> tuple[list[TreeCoordinate], set[tuple[int, int]]]:
+    ) -> list[TreeCoordinate]:
         """Remove ancestors of pinned nodes from coordinate list.
 
         Pinned nodes should be roots of their own trees - they never roll up.
@@ -138,14 +118,11 @@ class CoverageBuilder:
         2. Eliminate scoring overhead for those nodes
         3. Make pinned nodes natural roots (parent not in coverage)
 
-        Returns:
-            Tuple of (filtered coordinates, root coordinates that were removed).
-            The root coordinates are those at max_height that are ancestors of
-            pinned nodes - these should be excluded from forest support.
+        Document roots are added to the coordinate pool before this filter,
+        so roots that are ancestors of pinned nodes are filtered naturally.
         """
-        excluded_roots: set[tuple[int, int]] = set()
         if not pinned_coords:
-            return coords, excluded_roots
+            return coords
 
         # Build set of coordinates to remove (ancestors of pinned nodes)
         to_remove: set[tuple[int, int]] = set()
@@ -158,14 +135,10 @@ class CoverageBuilder:
                     # Another pinned node already covered this ancestor chain
                     break
                 to_remove.add(key)
-                # Track root-level coordinates for forest support exclusion
-                if current.height == max_height:
-                    excluded_roots.add(key)
                 current = current.parent()
 
         # Filter out ancestors (siblings are preserved)
-        filtered = [c for c in coords if c.as_tuple() not in to_remove]
-        return filtered, excluded_roots
+        return [c for c in coords if c.as_tuple() not in to_remove]
 
     def _build_coordinate_closure(
         self,
@@ -173,12 +146,9 @@ class CoverageBuilder:
         seed_metadata: Mapping[str, MetaDict] | None = None,
         *,
         pinned_ids: set[str] | None = None,
-    ) -> tuple[dict[str, bool], dict[str, TreeNode], set[tuple[int, int]]]:
+    ) -> tuple[dict[str, bool], dict[str, TreeNode]]:
         coverage_map: dict[str, bool] = {}
         nodes: dict[str, TreeNode] = {}
-        excluded_root_coords: set[tuple[int, int]] = set()
-        if not selected_ids:
-            return coverage_map, nodes, excluded_root_coords
 
         document_default = getattr(self.store, "document_id", None)
         meta_map = seed_metadata or {}
@@ -250,6 +220,21 @@ class CoverageBuilder:
         for coord in meta_seed_coords.values():
             enqueue(coord)
 
+        # Add document roots to pool - they'll be filtered if ancestors of pinned nodes
+        try:
+            root_nodes = self.store.nodes.get_root_nodes()
+            for root in root_nodes:
+                root_coord = TreeCoordinate(
+                    document_id=getattr(root, "document_id", None),
+                    height=getattr(root, "height", 0),
+                    level_index=getattr(root, "level_index", 0),
+                )
+                coordinates.append(root_coord)
+        except Exception as exc:
+            handle_graceful_error(
+                exc, "Failed to get root nodes for coverage", default=None
+            )
+
         unique_coords = TreeCoordinate.unique(coordinates)
 
         # Filter out ancestors of pinned nodes - they become roots of their own trees
@@ -265,7 +250,7 @@ class CoverageBuilder:
                     node_coord = coord_for_node(node)
                     if node_coord is not None:
                         pinned_coords.append(node_coord)
-            unique_coords, excluded_root_coords = self._filter_pinned_ancestors(
+            unique_coords = self._filter_pinned_ancestors(
                 unique_coords, pinned_coords, max_height
             )
 
@@ -289,4 +274,4 @@ class CoverageBuilder:
             for node in fallback_nodes:
                 register(node)
 
-        return coverage_map, nodes, excluded_root_coords
+        return coverage_map, nodes
