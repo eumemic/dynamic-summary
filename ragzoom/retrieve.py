@@ -256,7 +256,7 @@ class Retriever:
         }
         doc_coverage_builder = CoverageBuilder(self.document_store)
         coverage_result = doc_coverage_builder.build_complete_coverage(
-            selected_ids, seed_metadata=seed_metadata
+            selected_ids, seed_metadata=seed_metadata, pinned_ids=pinned_ids
         )
         coverage_map = coverage_result.coverage_map
         if telemetry_collector:
@@ -315,13 +315,6 @@ class Retriever:
             else self.query_config.budget_tokens
         )
         final_budget = base_budget + (recent_verbatim_budget or 0)
-
-        # Apply transient pinning via score boosting: pinned nodes get max relevance
-        # so they're never rolled up in favor of their parents
-        if pinned_ids:
-            for node_id in pinned_ids:
-                if node_id in scores:
-                    scores[node_id] = 1.0
 
         # Choose tiling strategy
         tiling_strategy = self.query_config.tiling_strategy
