@@ -162,11 +162,9 @@ class TestModelIntegration:
             span_end=100,
             text="Test content",
             created_at=now,
-            last_accessed=now,
         )
 
         assert node.created_at == now
-        assert node.last_accessed == now
 
     def test_nullable_fields(self) -> None:
         """Test that nullable fields can be None."""

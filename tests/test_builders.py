@@ -92,8 +92,6 @@ class TreeNodeBuilder:
             node = SimpleNamespace(**self._data)
             # Add additional attributes for compatibility
             node.is_pinned = 0
-            node.last_accessed = None
-            node.access_count = 0
             node.created_at = None
             node.preceding_neighbor_id = None
             return node

@@ -311,13 +311,6 @@ class DocumentNodeRepository:
             self.document_id, token_budget
         )
 
-    def update_access(self, node_id: str) -> None:
-        """Update access time for a node."""
-        # First verify the node belongs to this document
-        node = self.get(node_id)
-        if node:
-            self._repo.update_node_access(node_id)
-
     def update_parent_references_batch(
         self,
         updates: Sequence[tuple[str, str | None]],

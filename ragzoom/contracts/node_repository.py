@@ -127,7 +127,6 @@ class NodeRepository(Protocol):
     ) -> list[TreeNode]: ...
 
     # Mutations
-    def update_node_access(self, node_id: str) -> None: ...
     def update_parent_references_batch(
         self,
         updates: Sequence[tuple[str, str | None]],
