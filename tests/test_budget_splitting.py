@@ -1,12 +1,44 @@
 """Test budget splitting logic in dynamic tiling."""
 
 import math
+from types import SimpleNamespace
 from typing import cast
 
 from ragzoom.config import QueryConfig
 from ragzoom.contracts.tree_node import TreeNode as ProtoTreeNode
-from ragzoom.dataflow.domain import DomainNode as TreeNode
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
+
+
+def _make_node(
+    *,
+    id: str,
+    text: str,
+    span_start: int,
+    span_end: int,
+    document_id: str,
+    token_count: int,
+    parent_id: str | None = None,
+    left_child_id: str | None = None,
+    right_child_id: str | None = None,
+) -> SimpleNamespace:
+    """Create a minimal TreeNode-like object for testing."""
+    node = SimpleNamespace(
+        id=id,
+        text=text,
+        span_start=span_start,
+        span_end=span_end,
+        document_id=document_id,
+        token_count=token_count,
+        parent_id=parent_id,
+        left_child_id=left_child_id,
+        right_child_id=right_child_id,
+        height=0 if left_child_id is None else 1,
+        is_pinned=False,
+        preceding_neighbor_id=None,
+        following_neighbor_id=None,
+        level_index=0,
+    )
+    return node
 
 
 class TestBudgetSplitting:
@@ -23,7 +55,7 @@ class TestBudgetSplitting:
         left_text = " ".join(["word"] * 100)  # ~100 tokens
         right_text = " ".join(["word"] * 100)  # ~100 tokens
 
-        left_child = TreeNode(
+        left_child = _make_node(
             id="left",
             text=left_text,
             span_start=0,
@@ -33,7 +65,7 @@ class TestBudgetSplitting:
             token_count=100,
         )
 
-        right_child = TreeNode(
+        right_child = _make_node(
             id="right",
             text=right_text,
             span_start=100,
@@ -43,7 +75,7 @@ class TestBudgetSplitting:
             token_count=100,
         )
 
-        parent = TreeNode(
+        parent = _make_node(
             id="parent",
             text="summary",
             span_start=0,
@@ -105,7 +137,7 @@ class TestBudgetSplitting:
         left_text = " ".join(["word"] * 150)  # ~150 tokens
         right_text = " ".join(["word"] * 50)  # ~50 tokens
 
-        left_child = TreeNode(
+        left_child = _make_node(
             id="left",
             text=left_text,
             span_start=0,
@@ -115,7 +147,7 @@ class TestBudgetSplitting:
             token_count=150,
         )
 
-        right_child = TreeNode(
+        right_child = _make_node(
             id="right",
             text=right_text,
             span_start=150,
@@ -125,7 +157,7 @@ class TestBudgetSplitting:
             token_count=50,
         )
 
-        parent = TreeNode(
+        parent = _make_node(
             id="parent",
             text="summary",
             span_start=0,
@@ -169,7 +201,7 @@ class TestBudgetSplitting:
         left_text = " ".join(["word"] * 100)  # ~100 tokens
         right_text = " ".join(["word"] * 100)  # ~100 tokens
 
-        left_child = TreeNode(
+        left_child = _make_node(
             id="left",
             text=left_text,
             span_start=0,
@@ -179,7 +211,7 @@ class TestBudgetSplitting:
             token_count=100,
         )
 
-        right_child = TreeNode(
+        right_child = _make_node(
             id="right",
             text=right_text,
             span_start=100,
@@ -189,7 +221,7 @@ class TestBudgetSplitting:
             token_count=100,
         )
 
-        parent = TreeNode(
+        parent = _make_node(
             id="parent",
             text="summary",
             span_start=0,
