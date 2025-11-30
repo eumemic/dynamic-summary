@@ -64,16 +64,12 @@ async def create_runtime(
         vector_backend=vector_backend,
     )
 
-    def _vector_index_for_document(_document_id: str) -> _VectorIndexProtocol:
-        return vector_index
-
     worker_coordinator = WorkerCoordinator(
         store=storage_backend,
         index_config=index_config,
         operational_config=operational_config,
         llm_service=llm_service,
         run_manager=telemetry_manager,
-        vector_index_factory=_vector_index_for_document,
         worker_count=worker_count,
     )
     await worker_coordinator.start()
