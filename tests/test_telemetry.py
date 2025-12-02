@@ -312,7 +312,6 @@ class TestTelemetryCollection:
             }
         )
 
-        vector_index = _MissingVectorIndex()
         reporter.track_node_created(parent.id, parent.height)
         reporter.track_node_created(child_a.id, child_a.height)
         reporter.track_node_created(child_b.id, child_b.height)
@@ -320,7 +319,6 @@ class TestTelemetryCollection:
         await compute_fidelity_for_telemetry(
             document_store=store,  # type: ignore[arg-type]
             collector=reporter,
-            vector_index=vector_index,  # type: ignore[arg-type]
             embedder=embedder,
             token_limit=2048,
             max_batch_items=16,
@@ -417,7 +415,6 @@ class TestTelemetryCollection:
         await annotate_telemetry_fidelity(
             document_store=store,  # type: ignore[arg-type]
             telemetry_nodes=telemetry_nodes,
-            vector_index=_MissingVectorIndex(),  # type: ignore[arg-type]
             embedder=embedder,
             token_limit=2048,
             max_batch_items=16,

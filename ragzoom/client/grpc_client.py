@@ -445,7 +445,8 @@ class GrpcRagzoomClient:
         )
         try:
             get_telemetry = getattr(self._workers, "GetTelemetry")
-            response = get_telemetry(request, timeout=self._timeout)
+            # Use stream timeout - fidelity computation requires embedding many nodes
+            response = get_telemetry(request, timeout=self._stream_timeout)
         except grpc.RpcError as error:  # pragma: no cover
             raise _map_rpc_error(error) from error
 
