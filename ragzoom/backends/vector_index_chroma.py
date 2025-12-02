@@ -173,7 +173,8 @@ class ChromaVectorIndexAdapter(VectorIndex):
         for node_id in ids:
             tup = by_id.get(node_id)
             if tup is None:
-                raise KeyError(f"Vector not found for id {node_id}")
+                # Skip missing vectors (matches Python backend behavior)
+                continue
             emb = np.asarray(tup[0], dtype=np.float32)
             out.append(
                 Vector(
