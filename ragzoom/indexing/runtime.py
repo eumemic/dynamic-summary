@@ -400,6 +400,16 @@ class DocumentIndexSession:
             if run_context is not None:
                 await self._runtime._worker_coordinator.attach_run(run_context)
 
+            # Queue embedding work for new leaves (async, like summaries)
+            if outcome and outcome.new_leaf_ids:
+                await self._runtime._worker_coordinator.enqueue_embedding(
+                    document_id=self._document_id,
+                    leaf_ids=outcome.new_leaf_ids,
+                    leaf_texts=outcome.leaf_texts,
+                    metadata=outcome.leaf_metadata,
+                    run_id=run_context.run_id if run_context else None,
+                )
+
             await self._runtime._worker_coordinator.enqueue_document(
                 self._document_id,
                 deleted_node_ids=outcome.deleted_node_ids if outcome else None,

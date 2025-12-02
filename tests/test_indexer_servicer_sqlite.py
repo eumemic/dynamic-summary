@@ -66,6 +66,17 @@ class StubWorkerCoordinator:
         self.cancelled: list[str] = []
         self.attached_runs: list[object] = []
         self.detached: list[str] = []
+        self.embedding_enqueued: list[tuple[str, list[str]]] = []
+
+    async def enqueue_embedding(
+        self,
+        document_id: str,
+        leaf_ids: list[str],
+        leaf_texts: list[str],
+        metadata: list[dict[str, object]],
+        run_id: str | None = None,
+    ) -> None:
+        self.embedding_enqueued.append((document_id, leaf_ids))
 
     async def enqueue_document(
         self,
@@ -125,6 +136,8 @@ async def test_append_text_uses_append_executor() -> None:
             new_leaf_ids=["leaf-1", "leaf-2"],
             deleted_node_ids=["old"],
             total_leaves=10,
+            leaf_texts=["text1", "text2"],
+            leaf_metadata=[{"document_id": "doc"}, {"document_id": "doc"}],
         )
 
         append_executor = StubAppendExecutor(outcome)
@@ -246,6 +259,8 @@ async def test_append_text_with_replace_existing_sets_flag() -> None:
             new_leaf_ids=["leaf-1"],
             deleted_node_ids=[],
             total_leaves=1,
+            leaf_texts=["text1"],
+            leaf_metadata=[{"document_id": document_id}],
         )
 
         append_executor = StubAppendExecutor(outcome)
@@ -361,6 +376,8 @@ async def test_index_document_clears_then_appends() -> None:
             new_leaf_ids=["leaf-1"],
             deleted_node_ids=[],
             total_leaves=1,
+            leaf_texts=["text1"],
+            leaf_metadata=[{"document_id": document_id}],
         )
 
         append_executor = StubAppendExecutor(outcome)

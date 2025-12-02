@@ -1386,3 +1386,207 @@ async def test_worker_coordinator_rolls_up_after_reappend(
     second_roots = [node for node in second_parentless if node.height > 0]
     assert len(second_roots) == 1
     assert len(second_parentless) == len(second_roots)
+
+
+# =============================================================================
+# Async Embedding Queue Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_embedding_candidate_dataclass() -> None:
+    """EmbeddingCandidate should hold leaf IDs, texts, and metadata for embedding."""
+    from ragzoom.server.worker_coordinator import EmbeddingCandidate
+
+    candidate = EmbeddingCandidate(
+        document_id="doc-1",
+        leaf_ids=["leaf-1", "leaf-2"],
+        leaf_texts=["hello world", "goodbye world"],
+        metadata=[
+            {"span_start": 0, "span_end": 11, "height": 0, "level_index": 0},
+            {"span_start": 11, "span_end": 24, "height": 0, "level_index": 1},
+        ],
+        run_id="run-123",
+    )
+    assert candidate.document_id == "doc-1"
+    assert len(candidate.leaf_ids) == 2
+    assert len(candidate.leaf_texts) == 2
+    assert len(candidate.metadata) == 2
+    assert candidate.run_id == "run-123"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_embedding_increments_pending(
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    """enqueue_embedding should increment embedding pending count."""
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        worker_count=1,
+    )
+
+    document_id = "test-embed-doc"
+
+    # Initially no embedding work pending
+    assert coordinator.embedding_queue_depth(document_id) == 0
+
+    # Enqueue embedding work
+    await coordinator.enqueue_embedding(
+        document_id=document_id,
+        leaf_ids=["leaf-1", "leaf-2"],
+        leaf_texts=["text1", "text2"],
+        metadata=[
+            {"span_start": 0, "span_end": 5, "height": 0, "level_index": 0},
+            {"span_start": 5, "span_end": 10, "height": 0, "level_index": 1},
+        ],
+    )
+
+    # Should have 1 pending embedding batch
+    assert coordinator.embedding_queue_depth(document_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_enqueue_embedding_clears_idle_event(
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    """enqueue_embedding should clear the idle event when work is queued."""
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        worker_count=1,
+    )
+
+    # Initially idle
+    assert coordinator._idle_event.is_set()
+
+    # Enqueue embedding work
+    await coordinator.enqueue_embedding(
+        document_id="test-doc",
+        leaf_ids=["leaf-1"],
+        leaf_texts=["text"],
+        metadata=[{"span_start": 0, "span_end": 4, "height": 0, "level_index": 0}],
+    )
+
+    # Should no longer be idle
+    assert not coordinator._idle_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_is_fully_idle_checks_both_queues(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    """_is_fully_idle should return False if either queue has work."""
+    document_id, store = doc_store
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        worker_count=1,
+    )
+
+    # Initially fully idle
+    assert coordinator._is_fully_idle(document_id)
+
+    # Add embedding work
+    await coordinator.enqueue_embedding(
+        document_id=document_id,
+        leaf_ids=["leaf-1"],
+        leaf_texts=["text"],
+        metadata=[{"span_start": 0, "span_end": 4, "height": 0, "level_index": 0}],
+    )
+
+    # No longer fully idle (embedding work pending)
+    assert not coordinator._is_fully_idle(document_id)
+
+
+@pytest.mark.asyncio
+async def test_wait_until_idle_waits_for_embeddings(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    """wait_until_idle should block until both summary and embedding queues are empty."""
+    document_id, store = doc_store
+
+    # Add leaves that don't need summarization (single leaf = document root)
+    store.nodes.add_batch(
+        [
+            _leaf_payload(
+                "only-leaf",
+                span_start=0,
+                span_end=100,
+                level_index=0,
+                document_id=document_id,
+            ),
+        ]
+    )
+
+    vector_index = StubVectorIndex()
+
+    def _vector_factory(_: str) -> VectorIndex:
+        return vector_index
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        worker_count=1,
+        vector_index_factory=_vector_factory,
+    )
+
+    await coordinator.start()
+    try:
+        # Enqueue embedding work
+        await coordinator.enqueue_embedding(
+            document_id=document_id,
+            leaf_ids=["only-leaf"],
+            leaf_texts=["some text"],
+            metadata=[
+                {
+                    "document_id": document_id,
+                    "span_start": 0,
+                    "span_end": 100,
+                    "height": 0,
+                    "level_index": 0,
+                    "is_leaf": 1,
+                    "coord_version": 1,
+                }
+            ],
+        )
+
+        # Wait for idle - should complete once embedding worker processes
+        await asyncio.wait_for(coordinator.wait_until_idle(document_id), timeout=2.0)
+
+        # Verify embedding was written
+        assert len(vector_index.upserts) == 1
+        assert vector_index.upserts[0][0] == "only-leaf"
+    finally:
+        await coordinator.shutdown()

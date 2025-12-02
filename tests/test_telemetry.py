@@ -558,16 +558,16 @@ class TestTelemetryIntegration:
         # Should have summary nodes since we have multiple leaves
         assert summary_count >= 1
 
-        # Only leaf nodes (height == 0) have embeddings
+        # Leaf nodes (height == 0) have embeddings generated asynchronously,
+        # so embedding telemetry may not be present during append.
         # Summary nodes (height > 0) do not have embeddings - scores come from
-        # bottom-up propagation from leaves
+        # bottom-up propagation from leaves.
         for node_data in nodes:
             if node_data["height"] == 0:
-                # Leaf nodes must have embedding telemetry
-                assert (
-                    "embedding" in node_data
-                ), f"Leaf node {node_data['node_id']} missing embedding"
-                assert node_data["embedding"]["model"] == "text-embedding-3-small"
+                # Leaf nodes may have embedding telemetry (if captured during async phase)
+                # but it's not required since embedding is now async
+                if "embedding" in node_data:
+                    assert node_data["embedding"]["model"] == "text-embedding-3-small"
             else:
                 # Summary nodes should NOT have embeddings
                 assert (
