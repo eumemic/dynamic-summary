@@ -299,6 +299,50 @@ class WorkerCoordinator:
             )
             return summary_idle and embedding_idle
 
+    def _discover_leaves_without_embeddings(
+        self,
+        document_id: str,
+        store: DocumentStore,
+    ) -> tuple[list[str], list[str], list[dict[str, object]]]:
+        """Find leaves missing from vector index.
+
+        Returns (leaf_ids, leaf_texts, metadata) ready for enqueue_embedding().
+        """
+        if self._vector_index_factory is None:
+            return [], [], []
+
+        leaves = store.nodes.get_leaves()
+        if not leaves:
+            return [], [], []
+
+        leaf_ids = [leaf.id for leaf in leaves]
+        vector_index = self._vector_index_factory(
+            store.get_embedding_model() or self._index_config.embedding_model
+        )
+        existing_vectors = vector_index.get_vectors(leaf_ids)
+        existing_ids = {v.id for v in existing_vectors}
+
+        missing_leaves = [leaf for leaf in leaves if leaf.id not in existing_ids]
+        if not missing_leaves:
+            return [], [], []
+
+        return (
+            [leaf.id for leaf in missing_leaves],
+            [leaf.text or "" for leaf in missing_leaves],
+            [
+                {
+                    "document_id": document_id,
+                    "span_start": leaf.span_start,
+                    "span_end": leaf.span_end,
+                    "is_leaf": 1,
+                    "height": 0,
+                    "level_index": getattr(leaf, "level_index", 0),
+                    "coord_version": 1,
+                }
+                for leaf in missing_leaves
+            ],
+        )
+
     async def enqueue_embedding(
         self,
         document_id: str,
@@ -501,6 +545,19 @@ class WorkerCoordinator:
                     document_id,
                     sorted(reinstated),
                 )
+
+        # Discover and queue leaves missing embeddings (restart tolerance)
+        leaf_ids, leaf_texts, metadata = self._discover_leaves_without_embeddings(
+            document_id, store
+        )
+        if leaf_ids:
+            await self.enqueue_embedding(
+                document_id=document_id,
+                leaf_ids=leaf_ids,
+                leaf_texts=leaf_texts,
+                metadata=metadata,
+                run_id=run_id,
+            )
 
         for root_id in root_ids:
             if run_id is not None:
