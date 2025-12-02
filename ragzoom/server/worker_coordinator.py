@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import heapq
 import logging
+import time
 import uuid
 from collections import defaultdict, deque
 from collections.abc import Callable, Iterable
@@ -18,6 +19,7 @@ from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
 from ragzoom.server.run_manager import IndexRunContext, TelemetryRunManager
+from ragzoom.utils.tokenization import tokenizer
 
 if TYPE_CHECKING:  # pragma: no cover - import only for typing
     from ragzoom.contracts.vector_index import VectorIndex
@@ -1164,10 +1166,36 @@ class WorkerCoordinator:
                 len(candidate.leaf_ids),
             )
 
+            # Get telemetry collector if available
+            collector: TelemetryCollector | None = None
+            if self._run_manager is not None and candidate.run_id is not None:
+                context = await self._run_manager.get_run(candidate.run_id)
+                collector = context.telemetry_collector if context else None
+
             error_exc: Exception | None = None
             try:
                 # Get embeddings from LLM service
+                start_time = time.time()
                 embeddings = await self._llm_service.embed_texts(candidate.leaf_texts)
+
+                # Record telemetry if collector available
+                if collector is not None:
+                    node_embeddings: list[tuple[str, int]] = []
+                    for leaf_id, text in zip(
+                        candidate.leaf_ids, candidate.leaf_texts, strict=True
+                    ):
+                        token_count = tokenizer.count_tokens(text)
+                        node_embeddings.append((leaf_id, token_count))
+                    try:
+                        collector.record_embedding_call_v2(
+                            node_embeddings=node_embeddings,
+                            batch_size=len(candidate.leaf_ids),
+                            model=self._index_config.embedding_model,
+                            start_time=start_time,
+                        )
+                    except ValueError:
+                        # Node not tracked - skip telemetry (common for discovery)
+                        pass
 
                 # Write to vector index
                 if self._vector_index_factory is not None:
