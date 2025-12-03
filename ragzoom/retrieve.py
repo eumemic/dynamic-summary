@@ -27,6 +27,7 @@ from ragzoom.telemetry_query import QueryTelemetry
 if TYPE_CHECKING:
     from ragzoom.contracts.vector_index import VectorIndex
     from ragzoom.document_store import DocumentStore
+    from ragzoom.vector_api import Vector
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,76 @@ class Retriever:
             )
         else:
             self.async_dp_generator = None
+
+    # ------------------------------------------------------------------
+    # Helper methods for shared retrieval logic
+    # ------------------------------------------------------------------
+
+    def _filter_stale_vectors(self, raw_candidates: list["Vector"]) -> list["Vector"]:
+        """Filter out vectors that don't exist in storage to preserve invariants."""
+        cand_ids = [v.id for v in raw_candidates]
+        existing_nodes = self.document_store.nodes.get_nodes(cand_ids)
+        existing_ids = {n.id for n in existing_nodes}
+        return [v for v in raw_candidates if v.id in existing_ids]
+
+    def _build_candidates_for_scoring(
+        self,
+        query_embedding: list[float],
+        vec_candidates: list["Vector"],
+    ) -> list[tuple[str, float, dict[str, str | int | float | bool | None]]]:
+        """Build legacy-shaped candidates list for scoring service compatibility."""
+        from typing import cast as _cast
+
+        from ragzoom.retrieval import similarity as sim
+
+        rels = sim.relevance_scores(query_embedding, vec_candidates)
+        candidates: list[
+            tuple[str, float, dict[str, str | int | float | bool | None]]
+        ] = []
+        for i, v in enumerate(vec_candidates):
+            md = v.meta
+            candidates.append(
+                (
+                    v.id,
+                    float(rels[i]),
+                    {
+                        "span_start": _cast(int, md["span_start"]),
+                        "span_end": _cast(int, md["span_end"]),
+                        "parent_id": _cast(str, md["parent_id"]),
+                        "document_id": _cast(str, md["document_id"]),
+                        "is_leaf": _cast(int, md["is_leaf"]),
+                    },
+                )
+            )
+        return candidates
+
+    def _load_coverage_nodes(
+        self,
+        coverage_map: dict[str, bool],
+        base_nodes: dict[str, TreeNode],
+    ) -> dict[str, TreeNode]:
+        """Load all nodes in coverage map, supplementing base_nodes as needed."""
+        nodes: dict[str, TreeNode] = dict(base_nodes)
+        missing_ids = [nid for nid in coverage_map.keys() if nid not in nodes]
+        if missing_ids:
+            loaded_nodes = self.document_store.nodes.get_nodes(missing_ids)
+            for node in loaded_nodes:
+                nodes[node.id] = node
+        return nodes
+
+    def _find_coverage_root_ids(self, nodes: dict[str, TreeNode]) -> list[str]:
+        """Find root node IDs in the coverage map (nodes without parents in coverage)."""
+        root_ids: list[str] = []
+        for node_id, node_p in nodes.items():
+            parent_id = node_p.parent_id
+            is_root = getattr(node_p, "is_root", lambda: parent_id is None)()
+            if is_root or parent_id not in nodes:
+                root_ids.append(node_id)
+        return root_ids
+
+    # ------------------------------------------------------------------
+    # Main retrieval methods
+    # ------------------------------------------------------------------
 
     async def retrieve_async(
         self,
@@ -173,7 +244,6 @@ class Retriever:
         # Filter seeds to only come from before verbatim horizon
         k_candidates = int(num_seeds * self.query_config.mmr_k_multiplier)
         from ragzoom.retrieval import mmr
-        from ragzoom.retrieval import similarity as sim
 
         filters: list[VectorFilter] = []
         if effective_doc_id:
@@ -186,10 +256,7 @@ class Retriever:
             filters if filters else None,
         )
         # Filter out stale vectors that don't exist in storage to preserve invariants
-        cand_ids = [v.id for v in raw_candidates]
-        existing_nodes = self.document_store.nodes.get_nodes(cand_ids)
-        existing_ids = {n.id for n in existing_nodes}
-        vec_candidates = [v for v in raw_candidates if v.id in existing_ids]
+        vec_candidates = self._filter_stale_vectors(raw_candidates)
         if telemetry_collector:
             telemetry_collector.record_metric(
                 "candidates_filtered", len(vec_candidates)
@@ -220,27 +287,7 @@ class Retriever:
                     selected_ids.append(leaf_id)
 
         # Build legacy-shaped candidates for scoring service compatibility
-        rels = sim.relevance_scores(query_embedding, vec_candidates)
-        from typing import cast as _cast
-
-        candidates: list[
-            tuple[str, float, dict[str, str | int | float | bool | None]]
-        ] = []
-        for i, v in enumerate(vec_candidates):
-            md = v.meta
-            candidates.append(
-                (
-                    v.id,
-                    float(rels[i]),
-                    {
-                        "span_start": _cast(int, md["span_start"]),
-                        "span_end": _cast(int, md["span_end"]),
-                        "parent_id": _cast(str, md["parent_id"]),
-                        "document_id": _cast(str, md["document_id"]),
-                        "is_leaf": _cast(int, md["is_leaf"]),
-                    },
-                )
-            )
+        candidates = self._build_candidates_for_scoring(query_embedding, vec_candidates)
         if telemetry_collector:
             telemetry_collector.end_phase("mmr")
             telemetry_collector.start_phase()
@@ -275,20 +322,10 @@ class Retriever:
             telemetry_collector.start_phase()
 
         # Load all nodes in coverage map
-        nodes: dict[str, TreeNode] = dict(coverage_result.nodes)
-        missing_ids = [nid for nid in coverage_map.keys() if nid not in nodes]
-        if missing_ids:
-            loaded_nodes = self.document_store.nodes.get_nodes(missing_ids)
-            for node in loaded_nodes:
-                nodes[node.id] = node
+        nodes = self._load_coverage_nodes(coverage_map, coverage_result.nodes)
 
         # Find all root nodes (supporting forests)
-        root_ids: list[str] = []
-        for node_id, node_p in nodes.items():
-            parent_id = node_p.parent_id
-            is_root = getattr(node_p, "is_root", lambda: parent_id is None)()
-            if is_root or parent_id not in nodes:
-                root_ids.append(node_id)
+        root_ids = self._find_coverage_root_ids(nodes)
 
         if not root_ids:
             raise ValueError(
@@ -405,6 +442,141 @@ class Retriever:
                 query, num_seeds, budget_tokens, document_id, recent_verbatim_budget
             )
         )
+
+    async def retrieve_for_context(
+        self,
+        query_text: str,
+        span_end_limit: int,
+        budget_tokens: int,
+        document_id: str | None = None,
+    ) -> str:
+        """Retrieve and assemble context for nodes before span_end_limit.
+
+        Used during indexing to build preceding_context for nodes. Queries the
+        existing tree using the node's own text as the query, returning assembled
+        text from the semantically relevant preceding content.
+
+        Args:
+            query_text: The text to use as query (typically the node's own text)
+            span_end_limit: Only include nodes where span_end < this value
+            budget_tokens: Token budget for the assembled context
+            document_id: Optional document ID to filter by
+
+        Returns:
+            Assembled text from the tiled retrieval result, or empty string if
+            no relevant preceding content exists.
+        """
+        # Determine effective document scope
+        effective_doc_id = (
+            getattr(self.document_store, "document_id", None) or document_id
+        )
+
+        # Calculate conservative num_seeds for the budget
+        num_seeds = self.budget_planner.calculate_conservative_num_seeds(
+            budget_tokens, effective_doc_id
+        )
+        if num_seeds == 0:
+            return ""
+
+        # Get query embedding from the node's text
+        query_embedding = self.embedding_service.get_query_embedding(
+            query_text, effective_doc_id
+        )
+
+        # Build filters: document scope + span_end < limit
+        filters: list[VectorFilter] = [SpanEndLtFilter(span_end_limit)]
+        if effective_doc_id:
+            filters.append(DocumentIdFilter(effective_doc_id))
+
+        # Search for candidates from preceding tree only
+        k_candidates = int(num_seeds * self.query_config.mmr_k_multiplier)
+        raw_candidates = self.vector_index.search_similar(
+            query_embedding,
+            k_candidates,
+            filters,
+        )
+
+        if not raw_candidates:
+            return ""
+
+        # Filter out stale vectors
+        vec_candidates = self._filter_stale_vectors(raw_candidates)
+
+        if not vec_candidates:
+            return ""
+
+        # Apply MMR selection
+        from ragzoom.retrieval import mmr
+
+        selected_ids = mmr.select_diverse(
+            query_embedding,
+            vec_candidates,
+            num_seeds,
+            self.query_config.mmr_lambda,
+        )
+
+        if not selected_ids:
+            return ""
+
+        # Build coverage map
+        seed_meta_all = {v.id: v.meta for v in vec_candidates}
+        seed_metadata = {
+            node_id: seed_meta_all[node_id]
+            for node_id in selected_ids
+            if node_id in seed_meta_all
+        }
+        from ragzoom.retrieval import CoverageBuilder
+
+        doc_coverage_builder = CoverageBuilder(self.document_store)
+        coverage_result = doc_coverage_builder.build_complete_coverage(
+            selected_ids, seed_metadata=seed_metadata
+        )
+        coverage_map = coverage_result.coverage_map
+
+        # Build scores map
+        candidates = self._build_candidates_for_scoring(query_embedding, vec_candidates)
+        doc_scoring_service = ScoringService(self.document_store, self.vector_index)
+        scores = doc_scoring_service.compute_scores(
+            query_embedding, coverage_map, candidates, nodes=coverage_result.nodes
+        )
+
+        # Load all nodes in coverage map
+        nodes = self._load_coverage_nodes(coverage_map, coverage_result.nodes)
+
+        # Find root nodes
+        root_ids = self._find_coverage_root_ids(nodes)
+
+        if not root_ids:
+            return ""
+
+        root_ids.sort(
+            key=lambda node_id: (
+                int(getattr(nodes[node_id], "span_start", 0)),
+                node_id,
+            )
+        )
+
+        # Generate tiling using greedy algorithm
+        dp_result = self.greedy_generator.find_optimal_tiling_over_roots(
+            root_ids, budget_tokens, scores, nodes
+        )
+        tiling_ids = list(dp_result.tiling.node_ids)
+
+        if not tiling_ids:
+            return ""
+
+        # Ensure all tiling nodes are loaded
+        missing_in_nodes = [nid for nid in tiling_ids if nid not in nodes]
+        if missing_in_nodes:
+            loaded_more = self.document_store.nodes.get_nodes(missing_in_nodes)
+            for n in loaded_more:
+                nodes[n.id] = n
+
+        # Assemble text from tiling
+        texts = [
+            nodes[nid].text for nid in tiling_ids if nid in nodes and nodes[nid].text
+        ]
+        return "\n\n".join(texts)
 
     async def retrieve_with_telemetry(
         self,

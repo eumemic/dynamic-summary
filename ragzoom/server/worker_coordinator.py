@@ -23,9 +23,11 @@ from ragzoom.utils.tokenization import tokenizer
 
 if TYPE_CHECKING:  # pragma: no cover - import only for typing
     from ragzoom.contracts.vector_index import VectorIndex
+    from ragzoom.retrieve import Retriever
     from ragzoom.telemetry_collection import TelemetryCollector
-else:  # pragma: no cover - fallback for runtime when telemetry isn’t available
+else:  # pragma: no cover - fallback for runtime when telemetry isn't available
     TelemetryCollector = object
+    Retriever = object
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +150,7 @@ class WorkerCoordinator:
         worker_count: int = 30,
         embedding_worker_ratio: float = 0.5,
         vector_index_factory: Callable[[str], VectorIndex] | None = None,
+        retriever_factory: Callable[[str], Retriever] | None = None,
     ) -> None:
         self._store = store
         self._index_config = index_config
@@ -157,6 +160,7 @@ class WorkerCoordinator:
         self._embedding_worker_ratio = max(0.0, min(1.0, embedding_worker_ratio))
         self._run_manager = run_manager
         self._vector_index_factory = vector_index_factory
+        self._retriever_factory = retriever_factory
 
         # Summary queue (existing)
         self._queue: asyncio.PriorityQueue[
@@ -543,6 +547,22 @@ class WorkerCoordinator:
         or when a summary commits that might affect the frontier).
         """
         self._tree_frontiers.pop(document_id, None)
+
+    def get_retriever(self, document_id: str) -> Retriever | None:
+        """Get a retriever for context assembly during indexing.
+
+        Returns a Retriever configured for the given document, or None if
+        no retriever factory was provided during initialization.
+
+        Args:
+            document_id: Document to get retriever for
+
+        Returns:
+            Configured Retriever instance, or None if unavailable
+        """
+        if self._retriever_factory is None:
+            return None
+        return self._retriever_factory(document_id)
 
     def _candidate_key(self, candidate: ReadyParentCandidate) -> str:
         return f"{candidate.document_id}:{candidate.left_child_id}"
