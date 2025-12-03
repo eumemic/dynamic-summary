@@ -742,6 +742,30 @@ class SqliteNodeRepository:
             if own_session:
                 session.close()
 
+    def get_tree_completion_frontier(self, document_id: str | None) -> int:
+        """Get the tree completion frontier for contextual indexing.
+
+        The frontier is defined as the span_end of the first root node
+        (ordered by span_start). This indicates how far the summary tree
+        is complete from the beginning of the document.
+
+        Args:
+            document_id: Document to get frontier for
+
+        Returns:
+            span_end of the first root, or 0 if no roots exist
+        """
+        with self.SessionLocal() as session:
+            stmt = select(SQLiteTreeNode).where(SQLiteTreeNode.parent_id.is_(None))
+            if document_id is not None:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+            stmt = stmt.order_by(SQLiteTreeNode.span_start.asc()).limit(1)
+
+            first_root = session.execute(stmt).scalars().first()
+            if first_root is None:
+                return 0
+            return int(first_root.span_end)
+
 
 class SqliteDocumentRepository:
     def __init__(self, db: SqliteDatabaseManager):

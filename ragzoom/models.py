@@ -27,6 +27,10 @@ class TreeNodeColumnsMixin:
     text: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # Contextual indexing fields (populated during context-aware indexing)
+    preceding_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preceding_context_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
 
 class PostgresTreeNode(TreeNodeColumnsMixin, Base):
     """Database model for tree nodes (no embeddings in storage)."""

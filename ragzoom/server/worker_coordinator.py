@@ -174,6 +174,10 @@ class WorkerCoordinator:
         self._embedding_pending_counts: defaultdict[str, int] = defaultdict(int)
         self._embedding_inflight_counts: defaultdict[str, int] = defaultdict(int)
 
+        # Contextual indexing: tree completion frontier cache per document
+        # The frontier is the span_end of the first root (ordered by span_start)
+        self._tree_frontiers: dict[str, int] = {}
+
         self._coord_lock = asyncio.Lock()
         self._shutdown = asyncio.Event()
         self._workers: list[asyncio.Task[None]] = []
@@ -506,6 +510,39 @@ class WorkerCoordinator:
             )
             self._documents[document_id] = state
         return state
+
+    # ------------------------------------------------------------------
+    # Contextual indexing: tree frontier tracking
+    # ------------------------------------------------------------------
+    def get_tree_frontier(self, document_id: str) -> int:
+        """Get the tree completion frontier for a document.
+
+        Uses in-memory cache if available, otherwise queries the database.
+        The frontier is the span_end of the first root node (ordered by span_start),
+        indicating how far the summary tree is complete from the start.
+
+        Args:
+            document_id: Document to get frontier for
+
+        Returns:
+            span_end of first root, or 0 if no roots exist
+        """
+        if document_id in self._tree_frontiers:
+            return self._tree_frontiers[document_id]
+
+        # Cache miss - query the database
+        store = self._store.for_document(document_id)
+        frontier = store.nodes.get_tree_completion_frontier(document_id)
+        self._tree_frontiers[document_id] = frontier
+        return frontier
+
+    def invalidate_tree_frontier(self, document_id: str) -> None:
+        """Invalidate the cached tree frontier for a document.
+
+        Called when the tree structure changes (e.g., after appending content
+        or when a summary commits that might affect the frontier).
+        """
+        self._tree_frontiers.pop(document_id, None)
 
     def _candidate_key(self, candidate: ReadyParentCandidate) -> str:
         return f"{candidate.document_id}:{candidate.left_child_id}"

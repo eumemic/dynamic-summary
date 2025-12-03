@@ -61,6 +61,8 @@ class PostgresNodeRepository(BaseRepository):
             node.following_neighbor_id,
             node.height,
             node.level_index,
+            node.preceding_context,
+            node.preceding_context_summary,
         )
         session.expunge(node)
 
@@ -913,3 +915,28 @@ class PostgresNodeRepository(BaseRepository):
             else:
                 count_val = session.query(func.count(PostgresTreeNode.id)).scalar()
             return int(count_val or 0)
+
+    def get_tree_completion_frontier(self, document_id: str | None) -> int:
+        """Get the tree completion frontier for contextual indexing.
+
+        The frontier is defined as the span_end of the first root node
+        (ordered by span_start). This indicates how far the summary tree
+        is complete from the beginning of the document.
+
+        Args:
+            document_id: Document to get frontier for
+
+        Returns:
+            span_end of the first root, or 0 if no roots exist
+        """
+        with self.SessionLocal() as session:
+            query = session.query(PostgresTreeNode).filter(
+                PostgresTreeNode.parent_id.is_(None)
+            )
+            if document_id is not None:
+                query = query.filter(PostgresTreeNode.document_id == document_id)
+
+            first_root = query.order_by(PostgresTreeNode.span_start.asc()).first()
+            if first_root is None:
+                return 0
+            return int(first_root.span_end)

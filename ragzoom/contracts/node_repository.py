@@ -156,3 +156,6 @@ class NodeRepository(Protocol):
         *,
         session: Session | None = None,
     ) -> None: ...
+
+    # Frontier tracking for contextual indexing
+    def get_tree_completion_frontier(self, document_id: str | None) -> int: ...

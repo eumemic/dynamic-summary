@@ -39,6 +39,10 @@ class TreeNode(Protocol):
     following_neighbor_id: str | None
     level_index: int
 
+    # Contextual indexing fields (populated during context-aware indexing)
+    preceding_context: str | None
+    preceding_context_summary: str | None
+
     # Optional helpers many implementations already provide
     def is_leaf(self) -> bool: ...  # pragma: no cover - protocol signature
     def is_root(self) -> bool: ...  # pragma: no cover - protocol signature

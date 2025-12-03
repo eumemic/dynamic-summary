@@ -335,6 +335,26 @@ class DocumentNodeRepository:
             )
         updater(updates, session=session)
 
+    def get_tree_completion_frontier(self, document_id: str | None = None) -> int:
+        """Get the tree completion frontier for contextual indexing.
+
+        The frontier is the span_end of the first root node (ordered by span_start),
+        indicating how far the summary tree is complete from the document start.
+
+        Args:
+            document_id: Document to query (defaults to this repository's document_id)
+
+        Returns:
+            span_end of first root, or 0 if no roots exist
+        """
+        target_doc = document_id or self.document_id
+        getter = getattr(self._repo, "get_tree_completion_frontier", None)
+        if not callable(getter):
+            raise NotImplementedError(
+                "Underlying repository does not support tree frontier queries"
+            )
+        return int(getter(target_doc))
+
     # jscpd:ignore-end
 
 
