@@ -129,7 +129,7 @@ class TestIndexingFast:
                 test_document,
                 replace_existing=True,
                 file_path="test-doc.txt",
-                await_idle=False,
+                await_idle=True,  # Wait for async embedding to complete
             )
 
         doc_store = storage_backend.for_document("test-doc")

@@ -1,17 +1,16 @@
-"""Server-side append pipeline that creates leaf nodes and embeddings."""
+"""Server-side append pipeline that creates leaf nodes.
+
+Leaf embedding is handled asynchronously via WorkerCoordinator.
+"""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-
-import numpy as np
-from numpy.typing import NDArray
 
 from ragzoom.config import IndexConfig
 from ragzoom.contracts.embedding_model import EmbeddingProvider
@@ -22,7 +21,6 @@ from ragzoom.document_store import DocumentStore
 from ragzoom.splitter import TextSplitter
 from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
-from ragzoom.vector_api import Vector
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +45,17 @@ class AppendOutcome:
     new_leaf_ids: list[str]
     deleted_node_ids: list[str]
     total_leaves: int
+    # Data for async embedding (leaves no longer embedded during append)
+    leaf_texts: list[str]
+    leaf_metadata: list[dict[str, object]]
 
 
 class AppendExecutor:
-    """Create new leaves for appended content and write embeddings synchronously."""
+    """Create new leaves for appended content.
+
+    Embedding is handled asynchronously via WorkerCoordinator after append completes.
+    The AppendOutcome includes leaf_texts and leaf_metadata for queuing embedding work.
+    """
 
     def __init__(
         self,
@@ -173,70 +178,7 @@ class AppendExecutor:
                     span=(leaf.span_start, leaf.span_end),
                 )
 
-        configured_batch_size = max(1, self._config.embedding_batch_size)
-        provider_limit = int(
-            getattr(
-                self._embedder,
-                "_provider_max_embedding_batch_size",
-                configured_batch_size,
-            )
-        )
-        batch_size = max(1, min(configured_batch_size, provider_limit))
-
-        chunk_specs_list = [
-            leaf_specs[offset : offset + batch_size]
-            for offset in range(0, len(leaf_specs), batch_size)
-        ]
-
-        if not chunk_specs_list:
-            raise RuntimeError("No leaf batches prepared for embedding")
-
-        max_parallel_batches = max(
-            1,
-            min(
-                len(chunk_specs_list),
-                int(getattr(self._embedder, "_max_parallel_api_calls", 4)),
-            ),
-        )
-        semaphore = asyncio.Semaphore(max_parallel_batches)
-
-        async def _embed_chunk(
-            index: int, chunk_specs: list[LeafSpec]
-        ) -> tuple[int, list[list[float]]]:
-            async with semaphore:
-                chunk_start_time = time.time()
-                chunk_embeddings = await self._embedder.embed_texts(
-                    [leaf.text for leaf in chunk_specs]
-                )
-            if len(chunk_embeddings) != len(chunk_specs):
-                raise RuntimeError(
-                    "Embedding provider returned mismatched result count"
-                )
-
-            if reporter is not None:
-                payload = [(leaf.node_id, leaf.token_count) for leaf in chunk_specs]
-                reporter.record_embedding_call_v2(
-                    payload,
-                    batch_size=len(chunk_specs),
-                    model=self._config.embedding_model,
-                    start_time=chunk_start_time,
-                )
-
-            return index, chunk_embeddings
-
-        chunk_results = await asyncio.gather(
-            *[
-                asyncio.create_task(_embed_chunk(idx, chunk_specs))
-                for idx, chunk_specs in enumerate(chunk_specs_list)
-            ]
-        )
-        embeddings: list[list[float]] = []
-        for _, chunk_embeddings in sorted(chunk_results, key=lambda item: item[0]):
-            embeddings.extend(chunk_embeddings)
-
         deleted_node_ids = self._collect_deletion_ids(store, right_leaf)
-        rollback_vectors = self._load_existing_vectors(vector_index, deleted_node_ids)
-        rollback_new_ids: list[str] = []
 
         payload: list[NodeDataDict] = []
         for leaf in leaf_specs:
@@ -265,69 +207,25 @@ class AppendExecutor:
             following_neighbor,
         )
 
-        try:
-            with store.transaction() as session:
-                if deleted_node_ids:
-                    store.nodes.delete_nodes(deleted_node_ids, session=session)
-                store.nodes.add_batch(payload, session=session)
-                if neighbor_updates:
-                    store.nodes.update_neighbors_batch(
-                        neighbor_updates, session=session
-                    )
+        with store.transaction() as session:
+            if deleted_node_ids:
+                store.nodes.delete_nodes(deleted_node_ids, session=session)
+            store.nodes.add_batch(payload, session=session)
+            if neighbor_updates:
+                store.nodes.update_neighbors_batch(neighbor_updates, session=session)
 
-                if deleted_node_ids:
-                    self._delete_vectors(vector_index, deleted_node_ids)
+            # Clean up vectors for deleted nodes
+            if deleted_node_ids:
+                self._delete_vectors(vector_index, deleted_node_ids)
 
-                vector_payload: list[
-                    tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
-                ] = []
-                for leaf, embedding in zip(leaf_specs, embeddings, strict=True):
-                    embedding_array = np.asarray(embedding, dtype=np.float64)
-                    embedding_value: list[float] | NDArray[np.float64] = embedding_array
-                    vector_payload.append(
-                        (
-                            leaf.node_id,
-                            embedding_value,
-                            {
-                                "document_id": document_id,
-                                "span_start": leaf.span_start,
-                                "span_end": leaf.span_end,
-                                "is_leaf": 1,
-                                "height": 0,
-                                "level_index": leaf.level_index,
-                                "coord_version": 1,
-                            },
-                        )
-                    )
-
-                vector_index.upsert(vector_payload)
-                rollback_new_ids = [leaf.node_id for leaf in leaf_specs]
-            logger.debug(
-                "append[%s]: wrote %d leaves (deleted=%d) span=(%d,%d)",
-                document_id,
-                len(leaf_specs),
-                len(deleted_node_ids),
-                leaf_specs[0].span_start,
-                leaf_specs[-1].span_end,
-            )
-        except Exception:
-            if rollback_vectors:
-                try:
-                    vector_index.upsert(rollback_vectors)
-                except Exception:  # pragma: no cover - best effort rollback
-                    logger.exception(
-                        "Failed to restore vectors after append rollback",
-                        extra={"document_id": document_id},
-                    )
-            if rollback_new_ids:
-                try:
-                    vector_index.delete(ids=rollback_new_ids)
-                except Exception:  # pragma: no cover - best effort cleanup
-                    logger.exception(
-                        "Failed to delete new vectors during append rollback",
-                        extra={"document_id": document_id},
-                    )
-            raise
+        logger.debug(
+            "append[%s]: wrote %d leaves (deleted=%d) span=(%d,%d)",
+            document_id,
+            len(leaf_specs),
+            len(deleted_node_ids),
+            leaf_specs[0].span_start,
+            leaf_specs[-1].span_end,
+        )
 
         affected_nodes = set(deleted_node_ids)
         affected_nodes.update(leaf.node_id for leaf in leaf_specs)
@@ -357,6 +255,21 @@ class AppendExecutor:
             appended_span_end,
         )
 
+        # Build metadata for async embedding
+        leaf_metadata: list[dict[str, object]] = []
+        for leaf in leaf_specs:
+            leaf_metadata.append(
+                {
+                    "document_id": document_id,
+                    "span_start": leaf.span_start,
+                    "span_end": leaf.span_end,
+                    "is_leaf": 1,
+                    "height": 0,
+                    "level_index": leaf.level_index,
+                    "coord_version": 1,
+                }
+            )
+
         return AppendOutcome(
             document_id=document_id,
             appended_span_start=leaf_specs[0].span_start,
@@ -364,6 +277,8 @@ class AppendExecutor:
             new_leaf_ids=[leaf.node_id for leaf in leaf_specs],
             deleted_node_ids=deleted_node_ids,
             total_leaves=total_leaves,
+            leaf_texts=[leaf.text for leaf in leaf_specs],
+            leaf_metadata=leaf_metadata,
         )
 
     def _build_leaf_specs(
@@ -503,37 +418,6 @@ class AppendExecutor:
                 )
             )
         return updates
-
-    def _load_existing_vectors(
-        self,
-        vector_index: VectorIndex,
-        node_ids: Sequence[str],
-    ) -> list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]]:
-        if not node_ids:
-            return []
-        try:
-            existing = vector_index.get_vectors(list(node_ids))
-        except Exception:
-            logger.exception("Failed to load vectors prior to append deletion")
-            return []
-
-        restored: list[
-            tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
-        ] = []
-        for vec in existing:
-            if not isinstance(vec, Vector):
-                continue
-            embedding_value: list[float] | NDArray[np.float64] = np.asarray(
-                vec.vec, dtype=np.float64
-            )
-            restored.append(
-                (
-                    vec.id,
-                    embedding_value,
-                    dict(vec.meta),
-                )
-            )
-        return restored
 
     @staticmethod
     def _delete_vectors(vector_index: VectorIndex, node_ids: Sequence[str]) -> None:

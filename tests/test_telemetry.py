@@ -35,7 +35,9 @@ def _configure_runtime(
     harness.worker_coordinator._index_config = config
     harness.llm_service.config = config
     harness.telemetry_manager._index_config = config
-    harness.runtime._vector_index_factory = lambda _model: vector_index
+    vector_factory = lambda _model: vector_index  # noqa: E731
+    harness.runtime._vector_index_factory = vector_factory
+    harness.worker_coordinator._vector_index_factory = vector_factory
 
 
 class TestTelemetryDataStructures:
@@ -312,7 +314,6 @@ class TestTelemetryCollection:
             }
         )
 
-        vector_index = _MissingVectorIndex()
         reporter.track_node_created(parent.id, parent.height)
         reporter.track_node_created(child_a.id, child_a.height)
         reporter.track_node_created(child_b.id, child_b.height)
@@ -320,7 +321,6 @@ class TestTelemetryCollection:
         await compute_fidelity_for_telemetry(
             document_store=store,  # type: ignore[arg-type]
             collector=reporter,
-            vector_index=vector_index,  # type: ignore[arg-type]
             embedder=embedder,
             token_limit=2048,
             max_batch_items=16,
@@ -417,7 +417,6 @@ class TestTelemetryCollection:
         await annotate_telemetry_fidelity(
             document_store=store,  # type: ignore[arg-type]
             telemetry_nodes=telemetry_nodes,
-            vector_index=_MissingVectorIndex(),  # type: ignore[arg-type]
             embedder=embedder,
             token_limit=2048,
             max_batch_items=16,
@@ -558,16 +557,16 @@ class TestTelemetryIntegration:
         # Should have summary nodes since we have multiple leaves
         assert summary_count >= 1
 
-        # Only leaf nodes (height == 0) have embeddings
+        # Leaf nodes (height == 0) have embeddings generated asynchronously,
+        # so embedding telemetry may not be present during append.
         # Summary nodes (height > 0) do not have embeddings - scores come from
-        # bottom-up propagation from leaves
+        # bottom-up propagation from leaves.
         for node_data in nodes:
             if node_data["height"] == 0:
-                # Leaf nodes must have embedding telemetry
-                assert (
-                    "embedding" in node_data
-                ), f"Leaf node {node_data['node_id']} missing embedding"
-                assert node_data["embedding"]["model"] == "text-embedding-3-small"
+                # Leaf nodes may have embedding telemetry (if captured during async phase)
+                # but it's not required since embedding is now async
+                if "embedding" in node_data:
+                    assert node_data["embedding"]["model"] == "text-embedding-3-small"
             else:
                 # Summary nodes should NOT have embeddings
                 assert (
