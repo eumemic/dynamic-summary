@@ -76,17 +76,18 @@ class ServerState:
             telemetry_log=telemetry_log,
         )
         append_executor = AppendExecutor(index_cfg, llm_service)
+        vector_factory = lambda model: create_vector_index(  # noqa: E731
+            operational_cfg.vector_backend,
+            operational_cfg.database_url,
+            model,
+        )
         worker_coordinator = WorkerCoordinator(
             store=store,
             index_config=index_cfg,
             operational_config=operational_cfg,
             llm_service=llm_service,
             run_manager=telemetry_run_manager,
-        )
-        vector_factory = lambda model: create_vector_index(  # noqa: E731
-            operational_cfg.vector_backend,
-            operational_cfg.database_url,
-            model,
+            vector_index_factory=vector_factory,
         )
         index_runtime = IndexerRuntime(
             store=store,

@@ -224,12 +224,19 @@ class StubVectorIndex(VectorIndex):
             tuple[str, NDArray[np.float64] | list[float], dict[str, object]]
         ] = []
         self.deletions: list[str] = []
+        self._vectors: dict[str, tuple[list[float], dict[str, object]]] = {}
 
     def upsert(
         self,
         items: list[tuple[str, list[float] | NDArray[np.float64], dict[str, object]]],
     ) -> None:
         self.upserts.extend(items)
+        for item_id, embedding, metadata in items:
+            if isinstance(embedding, np.ndarray):
+                embedding_list = embedding.tolist()
+            else:
+                embedding_list = list(embedding)
+            self._vectors[item_id] = (embedding_list, metadata)
 
     def delete(
         self,
@@ -238,10 +245,31 @@ class StubVectorIndex(VectorIndex):
     ) -> int:
         if ids:
             self.deletions.extend(ids)
+            for id_ in ids:
+                self._vectors.pop(id_, None)
         return len(ids or [])
 
-    def get_vectors(self, ids: list[str]) -> list[Vector]:  # pragma: no cover - unused
-        return []
+    def get_vectors(self, ids: list[str]) -> list[Vector]:
+        result: list[Vector] = []
+        for id_ in ids:
+            if id_ in self._vectors:
+                embedding, metadata = self._vectors[id_]
+                vec = np.asarray(embedding, dtype=np.float32)
+                # Convert metadata to MetaDict format (str, int, float, bool, None)
+                meta: dict[str, str | int | float | bool | None] = {}
+                for k, v in metadata.items():
+                    if isinstance(v, str | int | float | bool) or v is None:
+                        meta[k] = v
+                result.append(
+                    Vector(
+                        id=id_,
+                        vec=vec,
+                        meta=meta,
+                        model_id="test-model",
+                        dim=len(embedding),
+                    )
+                )
+        return result
 
     def search_similar(
         self,
@@ -1386,3 +1414,547 @@ async def test_worker_coordinator_rolls_up_after_reappend(
     second_roots = [node for node in second_parentless if node.height > 0]
     assert len(second_roots) == 1
     assert len(second_parentless) == len(second_roots)
+
+
+# =============================================================================
+# Async Embedding Queue Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_embedding_candidate_dataclass() -> None:
+    """EmbeddingCandidate should hold leaf IDs, texts, and metadata for embedding."""
+    from ragzoom.server.worker_coordinator import EmbeddingCandidate
+
+    candidate = EmbeddingCandidate(
+        document_id="doc-1",
+        leaf_ids=["leaf-1", "leaf-2"],
+        leaf_texts=["hello world", "goodbye world"],
+        metadata=[
+            {"span_start": 0, "span_end": 11, "height": 0, "level_index": 0},
+            {"span_start": 11, "span_end": 24, "height": 0, "level_index": 1},
+        ],
+        run_id="run-123",
+    )
+    assert candidate.document_id == "doc-1"
+    assert len(candidate.leaf_ids) == 2
+    assert len(candidate.leaf_texts) == 2
+    assert len(candidate.metadata) == 2
+    assert candidate.run_id == "run-123"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_embedding_increments_pending(
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    """enqueue_embedding should increment embedding pending count."""
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        worker_count=1,
+    )
+
+    document_id = "test-embed-doc"
+
+    # Initially no embedding work pending
+    assert coordinator.embedding_queue_depth(document_id) == 0
+
+    # Enqueue embedding work
+    await coordinator.enqueue_embedding(
+        document_id=document_id,
+        leaf_ids=["leaf-1", "leaf-2"],
+        leaf_texts=["text1", "text2"],
+        metadata=[
+            {"span_start": 0, "span_end": 5, "height": 0, "level_index": 0},
+            {"span_start": 5, "span_end": 10, "height": 0, "level_index": 1},
+        ],
+    )
+
+    # Should have 1 pending embedding batch
+    assert coordinator.embedding_queue_depth(document_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_enqueue_embedding_clears_idle_event(
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    """enqueue_embedding should clear the idle event when work is queued."""
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        worker_count=1,
+    )
+
+    # Initially idle
+    assert coordinator._idle_event.is_set()
+
+    # Enqueue embedding work
+    await coordinator.enqueue_embedding(
+        document_id="test-doc",
+        leaf_ids=["leaf-1"],
+        leaf_texts=["text"],
+        metadata=[{"span_start": 0, "span_end": 4, "height": 0, "level_index": 0}],
+    )
+
+    # Should no longer be idle
+    assert not coordinator._idle_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_is_fully_idle_checks_both_queues(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    """_is_fully_idle should return False if either queue has work."""
+    document_id, store = doc_store
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        worker_count=1,
+    )
+
+    # Initially fully idle
+    assert coordinator._is_fully_idle(document_id)
+
+    # Add embedding work
+    await coordinator.enqueue_embedding(
+        document_id=document_id,
+        leaf_ids=["leaf-1"],
+        leaf_texts=["text"],
+        metadata=[{"span_start": 0, "span_end": 4, "height": 0, "level_index": 0}],
+    )
+
+    # No longer fully idle (embedding work pending)
+    assert not coordinator._is_fully_idle(document_id)
+
+
+@pytest.mark.asyncio
+async def test_wait_until_idle_waits_for_embeddings(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    """wait_until_idle should block until both summary and embedding queues are empty."""
+    document_id, store = doc_store
+
+    # Add leaves that don't need summarization (single leaf = document root)
+    store.nodes.add_batch(
+        [
+            _leaf_payload(
+                "only-leaf",
+                span_start=0,
+                span_end=100,
+                level_index=0,
+                document_id=document_id,
+            ),
+        ]
+    )
+
+    vector_index = StubVectorIndex()
+
+    def _vector_factory(_: str) -> VectorIndex:
+        return vector_index
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        worker_count=1,
+        vector_index_factory=_vector_factory,
+    )
+
+    await coordinator.start()
+    try:
+        # Enqueue embedding work
+        await coordinator.enqueue_embedding(
+            document_id=document_id,
+            leaf_ids=["only-leaf"],
+            leaf_texts=["some text"],
+            metadata=[
+                {
+                    "document_id": document_id,
+                    "span_start": 0,
+                    "span_end": 100,
+                    "height": 0,
+                    "level_index": 0,
+                    "is_leaf": 1,
+                    "coord_version": 1,
+                }
+            ],
+        )
+
+        # Wait for idle - should complete once embedding worker processes
+        await asyncio.wait_for(coordinator.wait_until_idle(document_id), timeout=2.0)
+
+        # Verify embedding was written
+        assert len(vector_index.upserts) == 1
+        assert vector_index.upserts[0][0] == "only-leaf"
+    finally:
+        await coordinator.shutdown()
+
+
+# =============================================================================
+# Discovery Mechanism Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_discover_leaves_without_embeddings_finds_missing(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    """Discovery returns leaves not in vector index."""
+    document_id, store = doc_store
+
+    # Add leaves to store (no vectors yet)
+    store.nodes.add_batch(
+        [
+            _leaf_payload(
+                "leaf-1",
+                span_start=0,
+                span_end=50,
+                level_index=0,
+                document_id=document_id,
+                following="leaf-2",
+            ),
+            _leaf_payload(
+                "leaf-2",
+                span_start=50,
+                span_end=100,
+                level_index=1,
+                document_id=document_id,
+                preceding="leaf-1",
+            ),
+        ]
+    )
+
+    vector_index = StubVectorIndex()
+
+    def _vector_factory(_: str) -> VectorIndex:
+        return vector_index
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        worker_count=1,
+        vector_index_factory=_vector_factory,
+    )
+
+    # Discover leaves without embeddings
+    leaf_ids, texts, metadata = coordinator._discover_leaves_without_embeddings(
+        document_id, store
+    )
+
+    # Both leaves should be discovered as missing
+    assert set(leaf_ids) == {"leaf-1", "leaf-2"}
+    assert len(texts) == 2
+    assert len(metadata) == 2
+    # Verify metadata has required fields
+    for meta in metadata:
+        assert "document_id" in meta
+        assert "span_start" in meta
+        assert "span_end" in meta
+        assert "height" in meta
+        assert meta["height"] == 0
+        assert meta["is_leaf"] == 1
+
+
+@pytest.mark.asyncio
+async def test_discover_leaves_without_embeddings_empty_when_all_embedded(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    """Returns empty when all leaves have embeddings."""
+    document_id, store = doc_store
+
+    # Add leaf to store
+    store.nodes.add_batch(
+        [
+            _leaf_payload(
+                "leaf-1",
+                span_start=0,
+                span_end=100,
+                level_index=0,
+                document_id=document_id,
+            ),
+        ]
+    )
+
+    vector_index = StubVectorIndex()
+
+    # Pre-populate vector index with embedding for leaf-1
+    vector_index.upsert(
+        [
+            (
+                "leaf-1",
+                [0.1] * 4,
+                {"document_id": document_id, "span_start": 0, "span_end": 100},
+            )
+        ]
+    )
+
+    def _vector_factory(_: str) -> VectorIndex:
+        return vector_index
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        worker_count=1,
+        vector_index_factory=_vector_factory,
+    )
+
+    # Discover leaves without embeddings
+    leaf_ids, texts, metadata = coordinator._discover_leaves_without_embeddings(
+        document_id, store
+    )
+
+    # No leaves should be discovered (all have embeddings)
+    assert leaf_ids == []
+    assert texts == []
+    assert metadata == []
+
+
+@pytest.mark.asyncio
+async def test_resync_queues_missing_embeddings(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    """_resync_document() enqueues leaves missing embeddings."""
+    document_id, store = doc_store
+
+    # Add a single leaf (won't trigger summarization since it's the only root)
+    store.nodes.add_batch(
+        [
+            _leaf_payload(
+                "leaf-1",
+                span_start=0,
+                span_end=100,
+                level_index=0,
+                document_id=document_id,
+            ),
+        ]
+    )
+
+    vector_index = StubVectorIndex()
+
+    def _vector_factory(_: str) -> VectorIndex:
+        return vector_index
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        worker_count=1,
+        vector_index_factory=_vector_factory,
+    )
+
+    await coordinator.start()
+    try:
+        # Trigger resync via enqueue_document
+        await coordinator.enqueue_document(document_id)
+        await asyncio.wait_for(coordinator.wait_until_idle(document_id), timeout=2.0)
+
+        # Verify embedding was written for the leaf
+        assert len(vector_index.upserts) == 1
+        assert vector_index.upserts[0][0] == "leaf-1"
+    finally:
+        await coordinator.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.slow_threshold(5.0)
+async def test_restart_discovers_missing_embeddings(
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    """New coordinator discovers and embeds leaves missing vectors (restart tolerance)."""
+    document_id = "restart-test-doc"
+    storage_backend.clear_document(document_id)
+    store = storage_backend.add_document(
+        document_id=document_id,
+        file_path=None,
+        embedding_model="text-embedding-3-small",
+        summary_model="gpt-5-mini",
+    )
+
+    try:
+        # Create document with leaves but NO embeddings (simulates interrupted indexing)
+        store.nodes.add_batch(
+            [
+                _leaf_payload(
+                    "leaf-1",
+                    span_start=0,
+                    span_end=50,
+                    level_index=0,
+                    document_id=document_id,
+                    following="leaf-2",
+                ),
+                _leaf_payload(
+                    "leaf-2",
+                    span_start=50,
+                    span_end=100,
+                    level_index=1,
+                    document_id=document_id,
+                    preceding="leaf-1",
+                ),
+            ]
+        )
+
+        # Create vector index that starts empty
+        vector_index = StubVectorIndex()
+
+        def _vector_factory(_: str) -> VectorIndex:
+            return vector_index
+
+        # Start fresh coordinator (simulates restart after crash)
+        coordinator = WorkerCoordinator(
+            store=storage_backend,
+            index_config=index_config,
+            operational_config=OperationalConfig(
+                openai_api_key=SecretStr("test"),
+                vector_backend="python",
+                database_url="sqlite:///:memory:",
+            ),
+            llm_service=StubLLMService(),
+            worker_count=2,
+            vector_index_factory=_vector_factory,
+        )
+
+        await coordinator.start()
+        try:
+            # Trigger resync - should discover missing embeddings
+            await coordinator.enqueue_document(document_id)
+            await asyncio.wait_for(
+                coordinator.wait_until_idle(document_id), timeout=5.0
+            )
+
+            # Verify embeddings were created for both leaves
+            embedded_ids = {upsert[0] for upsert in vector_index.upserts}
+            assert "leaf-1" in embedded_ids
+            assert "leaf-2" in embedded_ids
+        finally:
+            await coordinator.shutdown()
+    finally:
+        storage_backend.clear_document(document_id)
+
+
+@pytest.mark.asyncio
+async def test_discovery_skips_already_embedded_leaves(
+    doc_store: DocStoreFixture,
+    storage_backend: StorageBackend,
+    index_config: IndexConfig,
+) -> None:
+    """Discovery only queues leaves that are actually missing from vector index."""
+    document_id, store = doc_store
+
+    # Add two leaves
+    store.nodes.add_batch(
+        [
+            _leaf_payload(
+                "leaf-1",
+                span_start=0,
+                span_end=50,
+                level_index=0,
+                document_id=document_id,
+                following="leaf-2",
+            ),
+            _leaf_payload(
+                "leaf-2",
+                span_start=50,
+                span_end=100,
+                level_index=1,
+                document_id=document_id,
+                preceding="leaf-1",
+            ),
+        ]
+    )
+
+    vector_index = StubVectorIndex()
+
+    # Pre-populate vector index with embedding for leaf-1 only
+    vector_index.upsert(
+        [
+            (
+                "leaf-1",
+                [0.1] * 4,
+                {"document_id": document_id, "span_start": 0, "span_end": 50},
+            )
+        ]
+    )
+    # Clear upserts tracking to see only new upserts
+    vector_index.upserts.clear()
+
+    def _vector_factory(_: str) -> VectorIndex:
+        return vector_index
+
+    coordinator = WorkerCoordinator(
+        store=storage_backend,
+        index_config=index_config,
+        operational_config=OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        ),
+        llm_service=StubLLMService(),
+        worker_count=1,
+        vector_index_factory=_vector_factory,
+    )
+
+    await coordinator.start()
+    try:
+        # Trigger resync
+        await coordinator.enqueue_document(document_id)
+        await asyncio.wait_for(coordinator.wait_until_idle(document_id), timeout=2.0)
+
+        # Only leaf-2 should be embedded (leaf-1 was already in vector index)
+        assert len(vector_index.upserts) == 1
+        assert vector_index.upserts[0][0] == "leaf-2"
+    finally:
+        await coordinator.shutdown()

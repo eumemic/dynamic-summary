@@ -458,6 +458,7 @@ async def indexer_runtime_harness(
         llm_service=llm_service,
         run_manager=telemetry_manager,
         worker_count=4,
+        vector_index_factory=_index_for_model,
     )
     await worker_coordinator.start()
 

@@ -235,8 +235,8 @@ def test_chroma_vector_index_adapter_round_trip(
 
     deleted = adapter.delete(ids=["n1"])
     assert deleted == 1
-    with pytest.raises(KeyError):
-        adapter.get_vectors(["n1"])
+    # get_vectors returns empty for missing IDs (no KeyError) - matches Python backend
+    assert adapter.get_vectors(["n1"]) == []
 
     # Remaining vector should be removed by document filter delete
     deleted_by_filter = adapter.delete(filter={"document_id": "doc-1"})
@@ -276,6 +276,37 @@ def test_chroma_vector_index_adapter_chunks_large_batches(
     assert sum(sizes) == len(large_items)
     assert len(sizes) > 1
     assert all(size <= adapter._max_batch_size for size in sizes)
+
+
+def test_chroma_get_vectors_returns_only_existing(
+    tmp_path: Path,
+    sample_items: list[
+        tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
+    ],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """get_vectors returns only existing vectors, skipping missing IDs.
+
+    This is critical for the discovery mechanism which queries for all leaf IDs
+    and expects to get back only those that already have embeddings.
+    """
+    from ragzoom.backends.vector_index_chroma import ChromaVectorIndexAdapter
+
+    if chromadb is None or Settings is None:
+        pytest.skip("chromadb is required for adapter tests")
+
+    _install_fake_chroma_client(monkeypatch)
+
+    chroma_dir = tmp_path / "chroma-get-partial"
+    chroma_dir.mkdir()
+    adapter = ChromaVectorIndexAdapter(str(chroma_dir), "test-model")
+
+    # Only insert n1, not n2
+    adapter.upsert([sample_items[0]])
+
+    # Query for both n1 and n2 - should return only n1, no KeyError
+    vectors = adapter.get_vectors(["n1", "n2", "nonexistent"])
+    assert _vector_ids(vectors) == ["n1"]
 
 
 def test_chroma_adapter_combines_multiple_filters(

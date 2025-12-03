@@ -113,7 +113,15 @@ async def test_append_creates_leaves_from_scratch(
     assert outcome.total_leaves == len(leaves)
     assert all(node.parent_id is None for node in leaves)
     assert set(outcome.new_leaf_ids) == {leaf.id for leaf in leaves}
-    assert vector_index.vectors.keys() == set(outcome.new_leaf_ids)
+    # Vectors are now written asynchronously, not during append
+    assert len(vector_index.vectors) == 0
+    # AppendOutcome includes data for async embedding
+    assert len(outcome.leaf_texts) == len(outcome.new_leaf_ids)
+    assert len(outcome.leaf_metadata) == len(outcome.new_leaf_ids)
+    for meta in outcome.leaf_metadata:
+        assert "document_id" in meta
+        assert "span_start" in meta
+        assert "span_end" in meta
 
 
 @pytest.mark.asyncio
@@ -194,4 +202,9 @@ async def test_append_replaces_rightmost_path_and_updates_neighbors(
     left_leaf = store.nodes.get("left")
     assert left_leaf is not None
     assert left_leaf.following_neighbor_id == tail_leaf.id
-    assert vector_index.vectors.keys() == {"left", *outcome.new_leaf_ids}
+    # Vectors for new leaves are now written asynchronously
+    # Only the pre-existing "left" vector should remain (parent/tail were deleted)
+    assert vector_index.vectors.keys() == {"left"}
+    # AppendOutcome includes data for async embedding
+    assert len(outcome.leaf_texts) == len(outcome.new_leaf_ids)
+    assert len(outcome.leaf_metadata) == len(outcome.new_leaf_ids)

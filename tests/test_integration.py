@@ -39,8 +39,9 @@ class TestIntegration:
         harness: IndexerRuntimeHarness, vector_index: RecordingVectorIndex
     ) -> None:
         """Route runtime vector lookups to the provided stub index."""
-
-        harness.runtime._vector_index_factory = lambda _model_id: vector_index
+        vector_factory = lambda _model_id: vector_index  # noqa: E731
+        harness.runtime._vector_index_factory = vector_factory
+        harness.worker_coordinator._vector_index_factory = vector_factory
 
     @staticmethod
     async def _index_document(
