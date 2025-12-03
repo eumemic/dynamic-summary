@@ -161,7 +161,9 @@ async def _build_full_and_incremental_documents(
     full_vector_index = InMemoryVectorIndex()
     incremental_vector_index = InMemoryVectorIndex()
 
-    runtime.runtime._vector_index_factory = lambda _model: full_vector_index
+    full_factory = lambda _model: full_vector_index  # noqa: E731
+    runtime.runtime._vector_index_factory = full_factory
+    runtime.worker_coordinator._vector_index_factory = full_factory
 
     await runtime.clear(full_doc_id)
     await runtime.clear(incremental_doc_id)
@@ -171,7 +173,9 @@ async def _build_full_and_incremental_documents(
         replace_existing=True,
         file_path=f"{full_doc_id}.txt",
     )
-    runtime.runtime._vector_index_factory = lambda _model: incremental_vector_index
+    incremental_factory = lambda _model: incremental_vector_index  # noqa: E731
+    runtime.runtime._vector_index_factory = incremental_factory
+    runtime.worker_coordinator._vector_index_factory = incremental_factory
 
     for idx, segment in enumerate(segments):
         stats = await runtime.append(

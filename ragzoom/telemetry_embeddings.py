@@ -10,12 +10,9 @@ from numpy.typing import NDArray
 
 from ragzoom.contracts.embedding_model import EmbeddingProvider
 from ragzoom.contracts.tree_node import TreeNode
-from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
-from ragzoom.error_handling import handle_graceful_error
 from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
-from ragzoom.vector_api import Vector
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +21,6 @@ async def compute_fidelity_for_telemetry(
     *,
     document_store: DocumentStore,
     collector: TelemetryCollector,
-    vector_index: VectorIndex,
     embedder: EmbeddingProvider,
     token_limit: int,
     max_batch_items: int,
@@ -45,7 +41,6 @@ async def compute_fidelity_for_telemetry(
     await _compute_fidelity(
         document_store=document_store,
         parent_ids=parent_ids,
-        vector_index=vector_index,
         embedder=embedder,
         token_limit=token_limit,
         max_batch_items=max_batch_items,
@@ -57,7 +52,6 @@ async def annotate_telemetry_fidelity(
     *,
     document_store: DocumentStore,
     telemetry_nodes: Sequence[object],
-    vector_index: VectorIndex,
     embedder: EmbeddingProvider,
     token_limit: int,
     max_batch_items: int,
@@ -88,7 +82,6 @@ async def annotate_telemetry_fidelity(
     await _compute_fidelity(
         document_store=document_store,
         parent_ids=parent_ids,
-        vector_index=vector_index,
         embedder=embedder,
         token_limit=token_limit,
         max_batch_items=max_batch_items,
@@ -100,7 +93,6 @@ async def _compute_fidelity(
     *,
     document_store: DocumentStore,
     parent_ids: Sequence[str],
-    vector_index: VectorIndex,
     embedder: EmbeddingProvider,
     token_limit: int,
     max_batch_items: int,
@@ -114,10 +106,21 @@ async def _compute_fidelity(
             node = document_store.nodes.get(node_id)
             if node is not None:
                 node_map[node_id] = node
-    child_cache: dict[str, TreeNode] = {}
+
+    # Pre-fetch all children in bulk to avoid per-node DB queries
+    child_ids: set[str] = set()
+    for node in node_map.values():
+        left_id = getattr(node, "left_child_id", None)
+        right_id = getattr(node, "right_child_id", None)
+        if left_id:
+            child_ids.add(left_id)
+        if right_id:
+            child_ids.add(right_id)
+    child_cache: dict[str, TreeNode] = {
+        child.id: child for child in document_store.nodes.get_many(list(child_ids))
+    }
 
     parent_vectors = await _resolve_parent_vectors(
-        vector_index=vector_index,
         node_ids=parent_ids,
         node_map=node_map,
         embedder=embedder,
@@ -166,57 +169,19 @@ async def _compute_fidelity(
 
 async def _resolve_parent_vectors(
     *,
-    vector_index: VectorIndex,
     node_ids: Sequence[str],
     node_map: dict[str, TreeNode],
     embedder: EmbeddingProvider,
     token_limit: int,
     max_batch_items: int,
 ) -> dict[str, NDArray[np.float64]]:
-    """Load parent vectors from the index or re-embed summaries if missing."""
+    """Embed parent summary texts for fidelity computation.
 
-    resolved: dict[str, NDArray[np.float64]] = {}
-    missing: set[str] = set(node_ids)
-
-    vectors = _safe_get_vectors(vector_index, list(node_ids))
-    for vector in vectors:
-        try:
-            resolved[vector.id] = np.asarray(vector.vec, dtype=np.float64)
-            missing.discard(vector.id)
-        except Exception as exc:
-            handle_graceful_error(
-                exc, f"Vector conversion failed for {vector.id}", default=None
-            )
-            continue
-
-    if missing and vectors:
-        # get_vectors succeeded, so missing nodes truly have no stored vectors.
-        logger.debug("Missing %d parent vectors; will re-embed summaries", len(missing))
-    elif missing:
-        # Bulk fetch failed entirely, retry per-id for partial salvage.
-        recovered: dict[str, NDArray[np.float64]] = {}
-        still_missing: set[str] = set()
-        for node_id in list(missing):
-            single = _safe_get_vectors(vector_index, [node_id])
-            if not single:
-                still_missing.add(node_id)
-                continue
-            try:
-                recovered[node_id] = np.asarray(single[0].vec, dtype=np.float64)
-            except Exception as exc:
-                handle_graceful_error(
-                    exc, f"Vector recovery failed for {node_id}", default=None
-                )
-                still_missing.add(node_id)
-                continue
-        resolved.update(recovered)
-        missing = still_missing
-
-    if not missing:
-        return resolved
-
-    fallback_entries: list[tuple[str, str, int]] = []
-    for node_id in missing:
+    Since only leaf nodes are stored in the vector index, parent summaries
+    must be embedded on-demand for fidelity analysis.
+    """
+    entries: list[tuple[str, str, int]] = []
+    for node_id in node_ids:
         node = node_map.get(node_id)
         if node is None or not node.text:
             continue
@@ -226,12 +191,13 @@ async def _resolve_parent_vectors(
         token_count = tokenizer.count_tokens(truncated)
         if token_count <= 0:
             continue
-        fallback_entries.append((node_id, truncated, token_count))
+        entries.append((node_id, truncated, token_count))
 
-    if not fallback_entries:
-        return resolved
+    if not entries:
+        return {}
 
-    batches = _build_embedding_batches(fallback_entries, max_batch_items, token_limit)
+    resolved: dict[str, NDArray[np.float64]] = {}
+    batches = _build_embedding_batches(entries, max_batch_items, token_limit)
     for batch_ids, texts in batches:
         embeddings = await embedder.embed_texts(texts)
         if len(embeddings) != len(batch_ids):
@@ -240,16 +206,6 @@ async def _resolve_parent_vectors(
             resolved[node_id] = np.asarray(values, dtype=np.float64)
 
     return resolved
-
-
-def _safe_get_vectors(vector_index: VectorIndex, ids: list[str]) -> list[Vector]:
-    if not ids:
-        return []
-    try:
-        return vector_index.get_vectors(ids)
-    except Exception as exc:
-        logger.debug("Failed to fetch %d vectors: %s", len(ids), exc)
-        return []
 
 
 def _cosine_similarity(

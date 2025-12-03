@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import heapq
 import logging
+import time
 import uuid
 from collections import defaultdict, deque
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from itertools import count
 from typing import TYPE_CHECKING, Protocol
@@ -18,8 +19,10 @@ from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
 from ragzoom.server.run_manager import IndexRunContext, TelemetryRunManager
+from ragzoom.utils.tokenization import tokenizer
 
 if TYPE_CHECKING:  # pragma: no cover - import only for typing
+    from ragzoom.contracts.vector_index import VectorIndex
     from ragzoom.telemetry_collection import TelemetryCollector
 else:  # pragma: no cover - fallback for runtime when telemetry isn’t available
     TelemetryCollector = object
@@ -71,6 +74,17 @@ class DocumentState:
     pending_by_run: dict[str, int]
     inflight_by_run: dict[str, int]
     run_assignments: dict[str, str]
+
+
+@dataclass(slots=True)
+class EmbeddingCandidate:
+    """Work item for async leaf embedding."""
+
+    document_id: str
+    leaf_ids: list[str]
+    leaf_texts: list[str]
+    metadata: list[dict[str, object]]
+    run_id: str | None = None
 
 
 # jscpd:ignore-start - Signature must match LLMService._summarize_text exactly for type safety
@@ -132,14 +146,19 @@ class WorkerCoordinator:
         llm_service: SummaryBackend,
         run_manager: TelemetryRunManager | None = None,
         worker_count: int = 30,
+        embedding_worker_ratio: float = 0.5,
+        vector_index_factory: Callable[[str], VectorIndex] | None = None,
     ) -> None:
         self._store = store
         self._index_config = index_config
         self._operational_config = operational_config
         self._llm_service = llm_service
         self._worker_count = max(worker_count, 1)
+        self._embedding_worker_ratio = max(0.0, min(1.0, embedding_worker_ratio))
         self._run_manager = run_manager
+        self._vector_index_factory = vector_index_factory
 
+        # Summary queue (existing)
         self._queue: asyncio.PriorityQueue[
             tuple[tuple[int, int, int, int], ReadyParentCandidate]
         ] = asyncio.PriorityQueue()
@@ -150,9 +169,15 @@ class WorkerCoordinator:
         self._doc_locks: dict[str, asyncio.Lock] = {}
         self._cancelled_documents: set[str] = set()
 
+        # Embedding queue (new)
+        self._embedding_queue: asyncio.Queue[EmbeddingCandidate] = asyncio.Queue()
+        self._embedding_pending_counts: defaultdict[str, int] = defaultdict(int)
+        self._embedding_inflight_counts: defaultdict[str, int] = defaultdict(int)
+
         self._coord_lock = asyncio.Lock()
         self._shutdown = asyncio.Event()
         self._workers: list[asyncio.Task[None]] = []
+        self._embedding_workers: list[asyncio.Task[None]] = []
         self._next_worker_id = 0
         self._idle_event = asyncio.Event()
         self._idle_event.set()
@@ -165,17 +190,26 @@ class WorkerCoordinator:
             self._shutdown = asyncio.Event()
         if self._workers:
             self._ensure_workers()
+            self._ensure_embedding_workers()
             return
         for _ in range(self._worker_count):
             self._spawn_worker()
+        # Spawn embedding workers (fewer needed - I/O bound)
+        embedding_worker_count = self._compute_embedding_worker_count()
+        for _ in range(embedding_worker_count):
+            self._spawn_embedding_worker()
+        # Yield to event loop so workers can start their coroutines
+        await asyncio.sleep(0)
 
     async def shutdown(self) -> None:
         self._shutdown.set()
-        for task in self._workers:
+        all_workers = self._workers + self._embedding_workers
+        for task in all_workers:
             task.cancel()
-        if self._workers:
-            await asyncio.gather(*self._workers, return_exceptions=True)
+        if all_workers:
+            await asyncio.gather(*all_workers, return_exceptions=True)
         self._workers.clear()
+        self._embedding_workers.clear()
         self._idle_event.set()
 
     # ------------------------------------------------------------------
@@ -229,19 +263,9 @@ class WorkerCoordinator:
     async def wait_until_idle(self, document_id: str | None = None) -> None:
         while True:
             self._ensure_workers()
-            if document_id is None:
-                if (
-                    not self._pending_counts
-                    and self._queue.empty()
-                    and sum(self._inflight_counts.values()) == 0
-                ):
-                    return
-            else:
-                if (
-                    self._pending_counts.get(document_id, 0) == 0
-                    and self._inflight_counts.get(document_id, 0) == 0
-                ):
-                    return
+            self._ensure_embedding_workers()
+            if self._is_fully_idle(document_id):
+                return
 
             await self._idle_event.wait()
 
@@ -249,6 +273,107 @@ class WorkerCoordinator:
         if document_id is None:
             return sum(self._pending_counts.values())
         return self._pending_counts.get(document_id, 0)
+
+    def embedding_queue_depth(self, document_id: str | None = None) -> int:
+        """Return count of pending embedding batches."""
+        if document_id is None:
+            return sum(self._embedding_pending_counts.values())
+        return self._embedding_pending_counts.get(document_id, 0)
+
+    def _is_fully_idle(self, document_id: str | None = None) -> bool:
+        """Check if both summary and embedding queues are idle."""
+        if document_id is None:
+            summary_idle = (
+                not self._pending_counts
+                and self._queue.empty()
+                and sum(self._inflight_counts.values()) == 0
+            )
+            embedding_idle = (
+                not self._embedding_pending_counts
+                and self._embedding_queue.empty()
+                and sum(self._embedding_inflight_counts.values()) == 0
+            )
+            return summary_idle and embedding_idle
+        else:
+            summary_idle = (
+                self._pending_counts.get(document_id, 0) == 0
+                and self._inflight_counts.get(document_id, 0) == 0
+            )
+            embedding_idle = (
+                self._embedding_pending_counts.get(document_id, 0) == 0
+                and self._embedding_inflight_counts.get(document_id, 0) == 0
+            )
+            return summary_idle and embedding_idle
+
+    def _discover_leaves_without_embeddings(
+        self,
+        document_id: str,
+        store: DocumentStore,
+    ) -> tuple[list[str], list[str], list[dict[str, object]]]:
+        """Find leaves missing from vector index.
+
+        Returns (leaf_ids, leaf_texts, metadata) ready for enqueue_embedding().
+        """
+        if self._vector_index_factory is None:
+            return [], [], []
+
+        leaves = store.nodes.get_leaves()
+        if not leaves:
+            return [], [], []
+
+        leaf_ids = [leaf.id for leaf in leaves]
+        vector_index = self._vector_index_factory(
+            store.get_embedding_model() or self._index_config.embedding_model
+        )
+        existing_vectors = vector_index.get_vectors(leaf_ids)
+        existing_ids = {v.id for v in existing_vectors}
+
+        missing_leaves = [leaf for leaf in leaves if leaf.id not in existing_ids]
+        if not missing_leaves:
+            return [], [], []
+
+        return (
+            [leaf.id for leaf in missing_leaves],
+            [leaf.text or "" for leaf in missing_leaves],
+            [
+                {
+                    "document_id": document_id,
+                    "span_start": leaf.span_start,
+                    "span_end": leaf.span_end,
+                    "is_leaf": 1,
+                    "height": 0,
+                    "level_index": getattr(leaf, "level_index", 0),
+                    "coord_version": 1,
+                }
+                for leaf in missing_leaves
+            ],
+        )
+
+    async def enqueue_embedding(
+        self,
+        document_id: str,
+        leaf_ids: list[str],
+        leaf_texts: list[str],
+        metadata: list[dict[str, object]],
+        run_id: str | None = None,
+    ) -> None:
+        """Queue a batch of leaves for async embedding."""
+        if not leaf_ids:
+            return
+
+        candidate = EmbeddingCandidate(
+            document_id=document_id,
+            leaf_ids=leaf_ids,
+            leaf_texts=leaf_texts,
+            metadata=metadata,
+            run_id=run_id,
+        )
+
+        async with self._coord_lock:
+            self._embedding_pending_counts[document_id] += 1
+            self._idle_event.clear()
+
+        await self._embedding_queue.put(candidate)
 
     def _spawn_worker(self) -> None:
         if self._shutdown.is_set():
@@ -259,6 +384,44 @@ class WorkerCoordinator:
             self._worker_loop(worker_id), name=f"worker-{worker_id}"
         )
         self._workers.append(task)
+
+    def _spawn_embedding_worker(self) -> None:
+        if self._shutdown.is_set():
+            return
+        worker_id = self._next_worker_id
+        self._next_worker_id += 1
+        task = asyncio.create_task(
+            self._embedding_worker_loop(worker_id), name=f"embedding-worker-{worker_id}"
+        )
+        self._embedding_workers.append(task)
+
+    def _ensure_embedding_workers(self) -> None:
+        if self._shutdown.is_set():
+            return
+        alive: list[asyncio.Task[None]] = []
+        for task in self._embedding_workers:
+            if task.done():
+                try:
+                    exc = task.exception()
+                except asyncio.CancelledError:
+                    exc = None
+                if task.cancelled():
+                    logger.warning("Embedding worker task cancelled unexpectedly")
+                elif exc is not None:
+                    logger.exception(
+                        "Embedding worker task failed unexpectedly", exc_info=exc
+                    )
+                continue
+            alive.append(task)
+        embedding_worker_count = self._compute_embedding_worker_count()
+        missing = embedding_worker_count - len(alive)
+        self._embedding_workers = alive
+        for _ in range(missing):
+            self._spawn_embedding_worker()
+
+    def _compute_embedding_worker_count(self) -> int:
+        """Compute number of embedding workers based on ratio."""
+        return max(1, int(self._worker_count * self._embedding_worker_ratio))
 
     def _ensure_workers(self) -> None:
         if self._shutdown.is_set():
@@ -392,6 +555,19 @@ class WorkerCoordinator:
                     document_id,
                     sorted(reinstated),
                 )
+
+        # Discover and queue leaves missing embeddings (restart tolerance)
+        leaf_ids, leaf_texts, metadata = self._discover_leaves_without_embeddings(
+            document_id, store
+        )
+        if leaf_ids:
+            await self.enqueue_embedding(
+                document_id=document_id,
+                leaf_ids=leaf_ids,
+                leaf_texts=leaf_texts,
+                metadata=metadata,
+                run_id=run_id,
+            )
 
         for root_id in root_ids:
             if run_id is not None:
@@ -883,11 +1059,8 @@ class WorkerCoordinator:
                         self._pending_counts[doc_id] = current_pending - 1
                     else:
                         self._pending_counts.pop(doc_id, None)
-                    if (
-                        not self._pending_counts
-                        and self._queue.empty()
-                        and sum(self._inflight_counts.values()) == 0
-                    ):
+                    # Set idle event if both queues are empty
+                    if self._is_fully_idle():
                         self._idle_event.set()
 
                 self._queue.task_done()
@@ -970,6 +1143,136 @@ class WorkerCoordinator:
         await self._run_manager.complete_run(run_id, error=message)
         await self.detach_run(document_id, run_id)
         await self._maybe_finish_run(document_id)
+
+    async def _embedding_worker_loop(self, worker_id: int) -> None:
+        """Process embedding candidates from the embedding queue."""
+        import numpy as np
+
+        while not self._shutdown.is_set():
+            try:
+                candidate = await asyncio.wait_for(
+                    self._embedding_queue.get(), timeout=0.1
+                )
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:  # pragma: no cover - shutdown
+                return
+
+            doc_id = candidate.document_id
+            async with self._coord_lock:
+                self._embedding_inflight_counts[doc_id] += 1
+                current_pending = self._embedding_pending_counts.get(doc_id, 0)
+                if current_pending > 1:
+                    self._embedding_pending_counts[doc_id] = current_pending - 1
+                else:
+                    self._embedding_pending_counts.pop(doc_id, None)
+
+            logger.debug(
+                "embedding-worker-%d: start batch doc=%s leaves=%d",
+                worker_id,
+                doc_id,
+                len(candidate.leaf_ids),
+            )
+
+            # Get telemetry collector if available
+            collector: TelemetryCollector | None = None
+            if self._run_manager is not None and candidate.run_id is not None:
+                context = await self._run_manager.get_run(candidate.run_id)
+                collector = context.telemetry_collector if context else None
+
+            error_exc: Exception | None = None
+            try:
+                # Get embeddings from LLM service
+                start_time = time.time()
+                embeddings = await self._llm_service.embed_texts(candidate.leaf_texts)
+
+                # Record telemetry if collector available
+                if collector is not None:
+                    node_embeddings: list[tuple[str, int]] = []
+                    for leaf_id, text in zip(
+                        candidate.leaf_ids, candidate.leaf_texts, strict=True
+                    ):
+                        token_count = tokenizer.count_tokens(text)
+                        node_embeddings.append((leaf_id, token_count))
+                    try:
+                        collector.record_embedding_call_v2(
+                            node_embeddings=node_embeddings,
+                            batch_size=len(candidate.leaf_ids),
+                            model=self._index_config.embedding_model,
+                            start_time=start_time,
+                        )
+                    except ValueError:
+                        # Node not tracked - skip telemetry (common for discovery)
+                        logger.debug(
+                            "embedding-worker: skipping telemetry for untracked nodes "
+                            "doc=%s (discovery embedding)",
+                            doc_id,
+                        )
+
+                # Write to vector index
+                if self._vector_index_factory is not None:
+                    from numpy.typing import NDArray
+
+                    vector_index = self._vector_index_factory(doc_id)
+                    vector_payload: list[
+                        tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
+                    ] = []
+                    for leaf_id, embedding, metadata in zip(
+                        candidate.leaf_ids,
+                        embeddings,
+                        candidate.metadata,
+                        strict=True,
+                    ):
+                        embedding_array = np.asarray(embedding, dtype=np.float64)
+                        vector_payload.append((leaf_id, embedding_array, metadata))
+                    vector_index.upsert(vector_payload)
+                    logger.debug(
+                        "embedding-worker-%d: wrote %d vectors for doc=%s",
+                        worker_id,
+                        len(vector_payload),
+                        doc_id,
+                    )
+            except Exception as exc:  # pragma: no cover - defensive logging
+                error_exc = exc
+                logger.exception(
+                    "Embedding worker failed for batch doc=%s: %s",
+                    doc_id,
+                    exc,
+                    exc_info=True,
+                )
+            finally:
+                async with self._coord_lock:
+                    current_inflight = self._embedding_inflight_counts.get(doc_id, 0)
+                    if current_inflight > 1:
+                        self._embedding_inflight_counts[doc_id] = current_inflight - 1
+                    else:
+                        self._embedding_inflight_counts.pop(doc_id, None)
+
+                    # Set idle event if both queues are empty
+                    if self._is_fully_idle():
+                        self._idle_event.set()
+
+                self._embedding_queue.task_done()
+
+            logger.debug(
+                "embedding-worker-%d: finish batch doc=%s leaves=%d error=%s",
+                worker_id,
+                doc_id,
+                len(candidate.leaf_ids),
+                error_exc.__class__.__name__ if error_exc else None,
+            )
+
+        # Drain queue on shutdown
+        while not self._embedding_queue.empty():
+            candidate = await self._embedding_queue.get()
+            async with self._coord_lock:
+                doc_id = candidate.document_id
+                current_pending = self._embedding_pending_counts.get(doc_id, 0)
+                if current_pending > 1:
+                    self._embedding_pending_counts[doc_id] = current_pending - 1
+                else:
+                    self._embedding_pending_counts.pop(doc_id, None)
+            self._embedding_queue.task_done()
 
     async def _maybe_finish_run(self, document_id: str) -> None:
         if self._run_manager is None:

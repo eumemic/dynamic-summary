@@ -516,6 +516,24 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
     def __init__(self, state: ServerState) -> None:
         self._state = state
 
+    async def _annotate_fidelity(
+        self, doc_store: DocumentStore, nodes: Sequence[object]
+    ) -> None:
+        """Compute semantic fidelity for parent nodes in telemetry."""
+        token_limit = getattr(
+            self._state.llm_service, "_embedding_batch_token_limit", 8000
+        )
+        max_items = getattr(
+            self._state.llm_service, "_provider_max_embedding_batch_size", 1000
+        )
+        await annotate_telemetry_fidelity(
+            document_store=doc_store,
+            telemetry_nodes=nodes,
+            embedder=self._state.llm_service,
+            token_limit=token_limit,
+            max_batch_items=max_items,
+        )
+
     async def RunWorkers(  # noqa: N802
         self,
         request: pb2.RunWorkersRequest,
@@ -648,7 +666,13 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         error_message = run.error or ""
         telemetry_payload = ""
         if not error_message and run.result is not None:
-            telemetry_payload = json.dumps(run.result)
+            telemetry = run.result
+            # Compute fidelity for parent nodes
+            nodes = telemetry.get("nodes")
+            if isinstance(nodes, list) and nodes:
+                doc_store = self._state.store.for_document(request.document_id)
+                await self._annotate_fidelity(doc_store, nodes)
+            telemetry_payload = json.dumps(telemetry)
 
         response = response_cls(
             complete=True,
@@ -704,29 +728,7 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
 
         nodes = telemetry.get("nodes")
         if isinstance(nodes, list) and nodes:
-            embedding_model = (
-                doc_store.get_embedding_model()
-                or self._state.index_config.embedding_model
-            )
-            vector_index = create_vector_index(
-                self._state.operational_config.vector_backend,
-                self._state.operational_config.database_url,
-                embedding_model,
-            )
-            token_limit = getattr(
-                self._state.llm_service, "_embedding_batch_token_limit", 8000
-            )
-            max_items = getattr(
-                self._state.llm_service, "_provider_max_embedding_batch_size", 1000
-            )
-            await annotate_telemetry_fidelity(
-                document_store=doc_store,
-                telemetry_nodes=nodes,
-                vector_index=vector_index,
-                embedder=self._state.llm_service,
-                token_limit=token_limit,
-                max_batch_items=max_items,
-            )
+            await self._annotate_fidelity(doc_store, nodes)
 
         response_cls = getattr(pb2, "ExportTelemetryResponse")
         response = response_cls(
