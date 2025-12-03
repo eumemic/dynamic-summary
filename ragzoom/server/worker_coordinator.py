@@ -146,6 +146,7 @@ class WorkerCoordinator:
         llm_service: SummaryBackend,
         run_manager: TelemetryRunManager | None = None,
         worker_count: int = 30,
+        embedding_worker_ratio: float = 0.5,
         vector_index_factory: Callable[[str], VectorIndex] | None = None,
     ) -> None:
         self._store = store
@@ -153,6 +154,7 @@ class WorkerCoordinator:
         self._operational_config = operational_config
         self._llm_service = llm_service
         self._worker_count = max(worker_count, 1)
+        self._embedding_worker_ratio = max(0.0, min(1.0, embedding_worker_ratio))
         self._run_manager = run_manager
         self._vector_index_factory = vector_index_factory
 
@@ -193,7 +195,7 @@ class WorkerCoordinator:
         for _ in range(self._worker_count):
             self._spawn_worker()
         # Spawn embedding workers (fewer needed - I/O bound)
-        embedding_worker_count = max(1, self._worker_count // 2)
+        embedding_worker_count = self._compute_embedding_worker_count()
         for _ in range(embedding_worker_count):
             self._spawn_embedding_worker()
         # Yield to event loop so workers can start their coroutines
@@ -411,11 +413,15 @@ class WorkerCoordinator:
                     )
                 continue
             alive.append(task)
-        embedding_worker_count = max(1, self._worker_count // 2)
+        embedding_worker_count = self._compute_embedding_worker_count()
         missing = embedding_worker_count - len(alive)
         self._embedding_workers = alive
         for _ in range(missing):
             self._spawn_embedding_worker()
+
+    def _compute_embedding_worker_count(self) -> int:
+        """Compute number of embedding workers based on ratio."""
+        return max(1, int(self._worker_count * self._embedding_worker_ratio))
 
     def _ensure_workers(self) -> None:
         if self._shutdown.is_set():
@@ -1197,7 +1203,11 @@ class WorkerCoordinator:
                         )
                     except ValueError:
                         # Node not tracked - skip telemetry (common for discovery)
-                        pass
+                        logger.debug(
+                            "embedding-worker: skipping telemetry for untracked nodes "
+                            "doc=%s (discovery embedding)",
+                            doc_id,
+                        )
 
                 # Write to vector index
                 if self._vector_index_factory is not None:
