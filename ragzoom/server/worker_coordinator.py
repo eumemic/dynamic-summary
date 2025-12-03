@@ -196,6 +196,8 @@ class WorkerCoordinator:
         embedding_worker_count = max(1, self._worker_count // 2)
         for _ in range(embedding_worker_count):
             self._spawn_embedding_worker()
+        # Yield to event loop so workers can start their coroutines
+        await asyncio.sleep(0)
 
     async def shutdown(self) -> None:
         self._shutdown.set()
