@@ -562,6 +562,96 @@ class PostgresNodeRepository(BaseRepository):
 
     # jscpd:ignore-end
 
+    _SQL_RECENT_LEAVES_BEFORE = text(
+        """
+        SELECT * FROM (
+            SELECT *,
+                SUM(token_count) OVER (
+                    ORDER BY span_end DESC
+                    ROWS UNBOUNDED PRECEDING
+                ) as cumsum
+            FROM tree_nodes
+            WHERE height = 0 AND document_id = :doc_id AND span_end <= :before_span_end
+        ) sub
+        WHERE cumsum - token_count < :budget
+        ORDER BY span_start ASC
+    """
+    )
+
+    def get_recent_leaves_within_budget_before(
+        self, document_id: str, token_budget: int, before_span_end: int
+    ) -> list[TreeNode]:
+        """Get most recent leaves (by span_end) that fit within token budget, counting back from a position.
+
+        Args:
+            document_id: Document to query
+            token_budget: Maximum total tokens to return
+            before_span_end: Only consider leaves with span_end <= this value
+
+        Returns:
+            Leaves in span order (ascending) within the budget, counting back from before_span_end.
+        """
+        if token_budget <= 0:
+            return []
+
+        with self.SessionLocal() as session:
+            params: dict[str, object] = {
+                "budget": token_budget,
+                "doc_id": document_id,
+                "before_span_end": before_span_end,
+            }
+            rows = session.execute(self._SQL_RECENT_LEAVES_BEFORE, params).fetchall()
+            if not rows:
+                return []
+
+            node_ids = [row.id for row in rows]
+            nodes = self.get_nodes(node_ids)
+            nodes.sort(key=lambda n: n.span_start)
+            return nodes
+
+    def get_leaf_at_span_position(
+        self, document_id: str, position: int
+    ) -> TreeNode | None:
+        """Get the leaf node containing the given character position.
+
+        Args:
+            document_id: Document to query
+            position: Character position to find
+
+        Returns:
+            The leaf node where span_start <= position < span_end, or None if not found.
+        """
+        with self.SessionLocal() as session:
+            node = (
+                session.query(PostgresTreeNode)
+                .filter(PostgresTreeNode.document_id == document_id)
+                .filter(PostgresTreeNode.height == 0)
+                .filter(PostgresTreeNode.span_start <= position)
+                .filter(PostgresTreeNode.span_end > position)
+                .first()
+            )
+            if not node:
+                return None
+            self._force_load_and_detach(session, node)
+            return node
+
+    def get_document_span_end(self, document_id: str) -> int | None:
+        """Get the span_end of the rightmost leaf (document length).
+
+        Args:
+            document_id: Document to query
+
+        Returns:
+            The maximum span_end value, or None if document has no nodes.
+        """
+        with self.SessionLocal() as session:
+            result = (
+                session.query(func.max(PostgresTreeNode.span_end))
+                .filter(PostgresTreeNode.document_id == document_id)
+                .scalar()
+            )
+            return int(result) if result is not None else None
+
     def delete_nodes(
         self,
         node_ids: Sequence[str],
