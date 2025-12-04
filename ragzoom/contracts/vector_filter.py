@@ -38,3 +38,16 @@ class SpanEndLtFilter(VectorFilter):
     """
 
     threshold: int
+
+
+@dataclass(frozen=True, slots=True)
+class SpanOverlapsFilter(VectorFilter):
+    """Filter vectors whose span overlaps with [start, end).
+
+    A node overlaps if: node.span_start < end AND node.span_end > start
+
+    Used for windowed queries to restrict seeds to a specific document region.
+    """
+
+    start: int
+    end: int

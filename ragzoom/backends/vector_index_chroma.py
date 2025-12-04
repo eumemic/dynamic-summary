@@ -22,6 +22,7 @@ from ragzoom.backends.vector_common import (
 from ragzoom.contracts.vector_filter import (
     DocumentIdFilter,
     SpanEndLtFilter,
+    SpanOverlapsFilter,
     VectorFilter,
 )
 from ragzoom.contracts.vector_index import VectorIndex
@@ -42,6 +43,10 @@ def _filters_to_chroma_where(
                 clauses.append({"document_id": {"$eq": doc_id}})
             case SpanEndLtFilter(threshold=threshold):
                 clauses.append({"span_end": {"$lt": threshold}})
+            case SpanOverlapsFilter(start=start, end=end):
+                # Overlap: node.span_start < end AND node.span_end > start
+                clauses.append({"span_start": {"$lt": end}})
+                clauses.append({"span_end": {"$gt": start}})
             case _:
                 raise UnsupportedFilterError(type(f).__name__, "ChromaVectorIndex")
     if not clauses:
