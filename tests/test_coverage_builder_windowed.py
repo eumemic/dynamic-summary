@@ -264,10 +264,30 @@ class TestComputeWindowBounds:
         assert bounds.right_leaf_index == 2
 
     def test_edge_max_left_walks_up_left_children(self) -> None:
-        """Left edge-max walks up through left children."""
-        # Leaf at index 0 is always a left child
-        # Its parent at (1,0) is also a left child
-        # We should get edge_max at the root (max_height)
+        """Left edge-max walks up through left children (when not at doc start)."""
+        # Leaf at index 2 (even = left child)
+        # Parent at (1,1) is odd = right child -> stop here
+        # Window [200, 400) does NOT start at doc start, so edge-max applies
+        leaves = [
+            MockTreeNode(f"L{i}", "doc", i * 100, (i + 1) * 100, 0, i) for i in range(8)
+        ]
+        store = self._create_mock_store(leaves, max_height=3, doc_span_end=800)
+        builder = CoverageBuilder(store)
+
+        bounds = builder.compute_window_bounds(
+            span_start=200, span_end=400, document_id="doc"
+        )
+
+        # Left boundary at index 2 (even = left child)
+        # Parent (1,1) is odd = right child -> stop at (1,1)
+        assert bounds.left_edge_max is not None
+        assert bounds.left_edge_max.height == 1
+        assert bounds.left_edge_max.level_index == 1
+
+    def test_edge_max_left_skipped_at_document_start(self) -> None:
+        """Left edge-max is skipped when window starts at document beginning."""
+        # When the window starts at document start, we skip edge-max computation
+        # because the tree naturally covers from the beginning.
         leaves = [
             MockTreeNode("L0", "doc", 0, 100, 0, 0),
             MockTreeNode("L1", "doc", 100, 200, 0, 1),
@@ -279,9 +299,8 @@ class TestComputeWindowBounds:
             span_start=0, span_end=100, document_id="doc"
         )
 
-        # Left edge-max should be at max_height since level_index 0 is always left
-        assert bounds.left_edge_max.height == 3
-        assert bounds.left_edge_max.level_index == 0
+        # At document start, left_edge_max is None (tree naturally covers from start)
+        assert bounds.left_edge_max is None
 
     def test_edge_max_left_stops_at_right_child(self) -> None:
         """Left edge-max stops when encountering a right child."""
@@ -301,15 +320,36 @@ class TestComputeWindowBounds:
         )
 
         # Left leaf is at index 3 (odd = right child), returns itself
+        assert bounds.left_edge_max is not None
         assert bounds.left_edge_max.height == 0
         assert bounds.left_edge_max.level_index == 3
 
     def test_edge_max_right_walks_up_right_children(self) -> None:
-        """Right edge-max walks up through right children."""
-        # Leaf at index 7 is a right child
-        # Parent at (1,3) is also right child
-        # Grandparent at (2,1) is also right child
-        # Great-grandparent at (3,0) is left child -> stop at (2,1)
+        """Right edge-max walks up through right children (when not at doc end)."""
+        # Leaf at index 5 is a right child (odd)
+        # Parent at (1,2) is even = left child -> stop here
+        # Window [500, 600) does NOT extend to doc end (800), so edge-max applies
+        leaves = [
+            MockTreeNode(f"L{i}", "doc", i * 100, (i + 1) * 100, 0, i) for i in range(8)
+        ]
+        store = self._create_mock_store(leaves, max_height=5, doc_span_end=800)
+        builder = CoverageBuilder(store)
+
+        bounds = builder.compute_window_bounds(
+            span_start=500, span_end=600, document_id="doc"
+        )
+
+        # Right boundary at index 5 (odd = right child)
+        # Parent (1,2) is even = left child -> stop at (1,2)
+        assert bounds.right_edge_max is not None
+        assert bounds.right_edge_max.height == 1
+        assert bounds.right_edge_max.level_index == 2
+
+    def test_edge_max_right_skipped_at_document_end(self) -> None:
+        """Right edge-max is skipped when window extends to document end."""
+        # When the window goes to document end, we skip edge-max computation
+        # because left-balanced trees have complex right-spine relationships.
+        # The tree naturally covers to the end without needing edge-max.
         leaves = [
             MockTreeNode(f"L{i}", "doc", i * 100, (i + 1) * 100, 0, i) for i in range(8)
         ]
@@ -320,9 +360,8 @@ class TestComputeWindowBounds:
             span_start=700, span_end=800, document_id="doc"
         )
 
-        # Right edge-max should walk up: (0,7) -> (1,3) -> (2,1) -> stop at (3,0) left child
-        assert bounds.right_edge_max.height == 3
-        assert bounds.right_edge_max.level_index == 0
+        # At document end, right_edge_max is None (tree naturally covers to end)
+        assert bounds.right_edge_max is None
 
     def test_edge_max_right_stops_at_left_child(self) -> None:
         """Right edge-max stops when encountering a left child."""
@@ -339,6 +378,7 @@ class TestComputeWindowBounds:
         )
 
         # Right leaf is at index 4 (even = left child), returns itself
+        assert bounds.right_edge_max is not None
         assert bounds.right_edge_max.height == 0
         assert bounds.right_edge_max.level_index == 4
 
@@ -723,9 +763,9 @@ class TestWindowBoundsEdgeCases:
         assert bounds.actual_end == 400
         assert bounds.left_leaf_index == 0
         assert bounds.right_leaf_index == 3
-        # Both edge-max should reach max_height for full document
-        assert bounds.left_edge_max.height == 2
-        assert bounds.right_edge_max.height == 2
+        # Both edge-max are None at document boundaries (tree naturally covers)
+        assert bounds.left_edge_max is None
+        assert bounds.right_edge_max is None
 
     def test_adjacent_windows_share_boundary(self) -> None:
         """Two adjacent windows share boundary leaf."""

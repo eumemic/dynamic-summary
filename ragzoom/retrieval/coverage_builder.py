@@ -29,14 +29,19 @@ class CoverageResult:
 
 @dataclass
 class WindowBounds:
-    """Computed window boundaries aligned to leaf node spans."""
+    """Computed window boundaries aligned to leaf node spans.
+
+    Edge-max coordinates are None when at document boundaries, indicating
+    that no synthetic seed should be added for that edge (the tree naturally
+    covers to the boundary).
+    """
 
     actual_start: int
     actual_end: int
     left_leaf_index: int
     right_leaf_index: int
-    left_edge_max: TreeCoordinate
-    right_edge_max: TreeCoordinate
+    left_edge_max: TreeCoordinate | None
+    right_edge_max: TreeCoordinate | None
 
 
 class CoverageBuilder:
@@ -348,15 +353,29 @@ class CoverageBuilder:
             level_index=right_leaf.level_index,
         )
 
-        # Find edge-max: highest ancestors that stay within the window
-        # Use max_height to prevent infinite loops at document boundaries
+        # Find edge-max: highest ancestors that stay within the window.
+        # At document boundaries, set edge-max to None - the tree naturally
+        # covers to the edges without needing synthetic edge-max seeds.
         max_height = self.store.nodes.max_height()
-        left_edge_max = left_coord.highest_ancestor_on_boundary(
-            left_edge=True, max_height=max_height
-        )
-        right_edge_max = right_coord.highest_ancestor_on_boundary(
-            left_edge=False, max_height=max_height
-        )
+
+        # Left edge: None if at document start, else compute edge-max
+        left_edge_max: TreeCoordinate | None
+        if left_leaf.span_start == 0:
+            left_edge_max = None
+        else:
+            left_edge_max = left_coord.highest_ancestor_on_boundary(
+                left_edge=True, max_height=max_height
+            )
+
+        # Right edge: None if at document end, else compute edge-max
+        right_edge_max: TreeCoordinate | None
+        doc_span_end = repo.get_document_span_end(document_id)
+        if doc_span_end is not None and right_leaf.span_end >= doc_span_end:
+            right_edge_max = None
+        else:
+            right_edge_max = right_coord.highest_ancestor_on_boundary(
+                left_edge=False, max_height=max_height
+            )
 
         return WindowBounds(
             actual_start=actual_start,
@@ -484,8 +503,13 @@ class CoverageBuilder:
                 coordinates.append(c.sibling())
 
         # Add edge-max as synthetic seeds - they ensure full window coverage
-        enqueue(window_bounds.left_edge_max)
-        if window_bounds.right_edge_max != window_bounds.left_edge_max:
+        # Edge-max is None at document boundaries (tree naturally covers to boundaries)
+        if window_bounds.left_edge_max is not None:
+            enqueue(window_bounds.left_edge_max)
+        if (
+            window_bounds.right_edge_max is not None
+            and window_bounds.right_edge_max != window_bounds.left_edge_max
+        ):
             enqueue(window_bounds.right_edge_max)
 
         # Add real seeds

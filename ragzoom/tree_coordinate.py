@@ -212,13 +212,13 @@ class TreeCoordinate:
         For left_edge=True: walk up while node is a left child (shares span_start).
         For left_edge=False: walk up while node is a right child (shares span_end).
 
-        This is used to find the "edge-max" node for windowed queries - the highest
-        node that still aligns exactly with the window boundary.
+        Note: For the RIGHT edge at the document end, callers should skip this
+        computation entirely - the tree naturally covers to the end without
+        needing a synthetic edge-max node.
 
         Args:
             left_edge: If True, find ancestor sharing left boundary; else right.
             max_height: Optional maximum height to stop at (prevents infinite loop).
-                If None, stops when node no longer shares the boundary edge.
 
         Returns:
             The highest ancestor coordinate that shares the specified boundary.
