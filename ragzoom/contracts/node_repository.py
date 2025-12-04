@@ -159,3 +159,12 @@ class NodeRepository(Protocol):
 
     # Frontier tracking for contextual indexing
     def get_tree_completion_frontier(self, document_id: str | None) -> int: ...
+
+    def get_leaves_from_span_start(
+        self, document_id: str | None, span_start: int
+    ) -> list[TreeNode]:
+        """Get leaves with span_start >= given value, ordered by span_start.
+
+        Used for computing the eligible span for contextual indexing gating.
+        """
+        ...

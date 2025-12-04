@@ -355,6 +355,28 @@ class DocumentNodeRepository:
             )
         return int(getter(target_doc))
 
+    def get_leaves_from_span_start(
+        self, document_id: str | None, span_start: int
+    ) -> list[TreeNode]:
+        """Get leaves with span_start >= given value, ordered by span_start.
+
+        Used for computing the eligible span for contextual indexing gating.
+
+        Args:
+            document_id: Document to filter by (defaults to this repository's document_id)
+            span_start: Minimum span_start value (inclusive)
+
+        Returns:
+            List of leaf nodes ordered by span_start
+        """
+        target_doc = document_id or self.document_id
+        getter = getattr(self._repo, "get_leaves_from_span_start", None)
+        if not callable(getter):
+            raise NotImplementedError(
+                "Underlying repository does not support get_leaves_from_span_start"
+            )
+        return list(getter(target_doc, span_start))
+
     # jscpd:ignore-end
 
 

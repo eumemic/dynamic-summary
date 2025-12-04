@@ -766,6 +766,32 @@ class SqliteNodeRepository:
                 return 0
             return int(first_root.span_end)
 
+    def get_leaves_from_span_start(
+        self, document_id: str | None, span_start: int
+    ) -> list[TreeNode]:
+        """Get leaves with span_start >= given value, ordered by span_start.
+
+        Used for computing the eligible span for contextual indexing gating.
+
+        Args:
+            document_id: Document to filter by
+            span_start: Minimum span_start value (inclusive)
+
+        Returns:
+            List of leaf nodes ordered by span_start
+        """
+        with self.SessionLocal() as session:
+            stmt = select(SQLiteTreeNode).where(
+                SQLiteTreeNode.height == 0,  # Leaves only
+                SQLiteTreeNode.span_start >= span_start,
+            )
+            if document_id is not None:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+            stmt = stmt.order_by(SQLiteTreeNode.span_start.asc())
+
+            rows = session.execute(stmt).scalars().all()
+            return _detach_rows(session, list(rows))
+
 
 class SqliteDocumentRepository:
     def __init__(self, db: SqliteDatabaseManager):

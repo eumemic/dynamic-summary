@@ -48,6 +48,7 @@ class TestAutomaticClearing:
             embedding_batch_size=100,
             use_anti_verbatim_vaccine=True,
             processing_strategy="bottom_to_top",
+            context_lag_tokens=0,
         )
 
     @pytest.fixture

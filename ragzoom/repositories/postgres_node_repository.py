@@ -940,3 +940,31 @@ class PostgresNodeRepository(BaseRepository):
             if first_root is None:
                 return 0
             return int(first_root.span_end)
+
+    def get_leaves_from_span_start(
+        self, document_id: str | None, span_start: int
+    ) -> list[TreeNode]:
+        """Get leaves with span_start >= given value, ordered by span_start.
+
+        Used for computing the eligible span for contextual indexing gating.
+
+        Args:
+            document_id: Document to filter by
+            span_start: Minimum span_start value (inclusive)
+
+        Returns:
+            List of leaf nodes ordered by span_start
+        """
+        with self.SessionLocal() as session:
+            query = session.query(PostgresTreeNode).filter(
+                PostgresTreeNode.height == 0,  # Leaves only
+                PostgresTreeNode.span_start >= span_start,
+            )
+            if document_id is not None:
+                query = query.filter(PostgresTreeNode.document_id == document_id)
+
+            rows = query.order_by(PostgresTreeNode.span_start.asc()).all()
+            # Detach from session
+            for row in rows:
+                session.expunge(row)
+            return list(rows)

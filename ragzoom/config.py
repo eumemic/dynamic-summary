@@ -21,6 +21,7 @@ class IndexConfigDict(TypedDict):
     embedding_batch_size: int
     use_anti_verbatim_vaccine: bool
     processing_strategy: str
+    context_lag_tokens: int
 
 
 # Type for configuration values that can be primitives
@@ -154,6 +155,7 @@ class IndexConfig:
     embedding_batch_size: int
     use_anti_verbatim_vaccine: bool
     processing_strategy: str
+    context_lag_tokens: int
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -200,6 +202,7 @@ class IndexConfig:
             "processing_strategy": config_dict.get(
                 "processing_strategy", "bottom_to_top"
             ),
+            "context_lag_tokens": config_dict.get("context_lag_tokens", 0),
         }
 
         # Type-safe construction with proper field types
@@ -217,6 +220,7 @@ class IndexConfig:
                 index_config_fields["use_anti_verbatim_vaccine"]
             ),
             processing_strategy=str(index_config_fields["processing_strategy"]),
+            context_lag_tokens=int(index_config_fields["context_lag_tokens"]),
         )
 
     @classmethod
@@ -252,6 +256,7 @@ class IndexConfig:
         embedding_batch_size: int | None = None,
         use_anti_verbatim_vaccine: bool | None = None,
         processing_strategy: str | None = None,
+        context_lag_tokens: int | None = None,
     ) -> "IndexConfig":
         """Create a new IndexConfig with some fields changed."""
         from dataclasses import replace
@@ -292,6 +297,11 @@ class IndexConfig:
                 processing_strategy
                 if processing_strategy is not None
                 else self.processing_strategy
+            ),
+            context_lag_tokens=(
+                context_lag_tokens
+                if context_lag_tokens is not None
+                else self.context_lag_tokens
             ),
         )
 

@@ -181,6 +181,8 @@ class WorkerCoordinator:
         # Contextual indexing: tree completion frontier cache per document
         # The frontier is the span_end of the first root (ordered by span_start)
         self._tree_frontiers: dict[str, int] = {}
+        # Eligible span end cache - computed by walking K tokens of leaves from frontier
+        self._eligible_span_ends: dict[str, int] = {}
 
         self._coord_lock = asyncio.Lock()
         self._shutdown = asyncio.Event()
@@ -545,8 +547,10 @@ class WorkerCoordinator:
 
         Called when the tree structure changes (e.g., after appending content
         or when a summary commits that might affect the frontier).
+        Also invalidates the eligible span end cache since it depends on frontier.
         """
         self._tree_frontiers.pop(document_id, None)
+        self._eligible_span_ends.pop(document_id, None)
 
     def get_retriever(self, document_id: str) -> Retriever | None:
         """Get a retriever for context assembly during indexing.
@@ -563,6 +567,72 @@ class WorkerCoordinator:
         if self._retriever_factory is None:
             return None
         return self._retriever_factory(document_id)
+
+    def _compute_eligible_span(self, document_id: str) -> tuple[int, int]:
+        """Compute the eligible span for processing.
+
+        Walks leaves from the frontier, accumulating tokens up to K
+        (context_lag_tokens). The eligible span end is the span_end of
+        the last leaf whose cumulative tokens fit within K.
+
+        Args:
+            document_id: Document to compute eligible span for
+
+        Returns:
+            Tuple of (frontier, eligible_span_end)
+        """
+        frontier = self.get_tree_frontier(document_id)
+        k = self._index_config.context_lag_tokens
+
+        # If K is 0, no leaves beyond frontier are eligible
+        if k == 0:
+            return frontier, frontier
+
+        store = self._store.for_document(document_id)
+        leaves = store.nodes.get_leaves_from_span_start(document_id, frontier)
+
+        token_sum = 0
+        eligible_span_end = frontier
+        for leaf in leaves:
+            leaf_tokens = int(getattr(leaf, "token_count", 0))
+            if token_sum + leaf_tokens > k:
+                break
+            token_sum += leaf_tokens
+            eligible_span_end = int(getattr(leaf, "span_end", 0))
+
+        return frontier, eligible_span_end
+
+    def _get_eligible_span_end(self, document_id: str) -> int:
+        """Get the eligible span end for a document, with caching.
+
+        Args:
+            document_id: Document to get eligible span end for
+
+        Returns:
+            The span_end up to which nodes are eligible for processing
+        """
+        if document_id in self._eligible_span_ends:
+            return self._eligible_span_ends[document_id]
+
+        _, eligible_end = self._compute_eligible_span(document_id)
+        self._eligible_span_ends[document_id] = eligible_end
+        return eligible_end
+
+    def _check_contextual_readiness(self, span_end: int, document_id: str) -> bool:
+        """Check if a node is eligible for processing based on eligible span.
+
+        A node is eligible if its span_end <= eligible_span_end. Everything
+        before the eligible span end is eligible for processing.
+
+        Args:
+            span_end: The span_end of the node being checked
+            document_id: Document ID for eligible span lookup
+
+        Returns:
+            True if the node is eligible for processing, False if it should wait
+        """
+        eligible_span_end = self._get_eligible_span_end(document_id)
+        return span_end <= eligible_span_end
 
     def _candidate_key(self, candidate: ReadyParentCandidate) -> str:
         return f"{candidate.document_id}:{candidate.left_child_id}"
@@ -649,6 +719,24 @@ class WorkerCoordinator:
         deleted_ids = {node_id for node_id in deleted_node_ids if node_id}
         if not deleted_ids:
             return
+
+        # Invalidate frontier cache since tree structure is changing
+        self.invalidate_tree_frontier(document_id)
+
+        # Clear parent references for orphaned children (nodes whose parent is being deleted)
+        store = self._store.for_document(document_id)
+        orphan_updates: list[tuple[str, str | None]] = []
+        for node in store.nodes.get_all():
+            parent_id = getattr(node, "parent_id", None)
+            if parent_id is not None and parent_id in deleted_ids:
+                orphan_updates.append((node.id, None))
+        if orphan_updates:
+            store.nodes.update_parent_references_batch(orphan_updates)
+            logger.debug(
+                "workers[%s]: cleared parent_id for %d orphaned children",
+                document_id,
+                len(orphan_updates),
+            )
 
         state.tombstones.update(deleted_ids)
         for node_id in deleted_ids:
@@ -963,6 +1051,19 @@ class WorkerCoordinator:
             following = store.nodes.get(following_id)
             if following is None:
                 return False, DependencySnapshot(preceding, left, None)
+
+        # Check contextual readiness - gate on eligible span.
+        # This ensures preceding context is available when summarizing.
+        if not self._check_contextual_readiness(span_end, document_id):
+            return False, DependencySnapshot(preceding, left, following)
+
+        # Check if following sibling is outside eligible span - treat as carry-up
+        if following is not None:
+            following_span_end = int(getattr(following, "span_end", 0))
+            eligible_span_end = self._get_eligible_span_end(document_id)
+            if following_span_end > eligible_span_end:
+                # Following sibling is blocked, so this node should carry up
+                return True, DependencySnapshot(preceding, left, None)
 
         return True, DependencySnapshot(preceding, left, following)
 
@@ -1628,6 +1729,13 @@ class WorkerCoordinator:
                     span_start=span_start_final,
                     span_end=span_end_final,
                 )
+
+        # Invalidate and potentially update tree frontier if this node could affect it.
+        # A new root at span_start=0 may advance the frontier.
+        if span_start_final == 0:
+            self.invalidate_tree_frontier(candidate.document_id)
+            # Rescan document to wake up any blocked work
+            await self._scan_document(candidate.document_id)
 
         logger.debug(
             "worker: committed parent doc=%s parent=%s left=%s right=%s height=%d level=%d",
