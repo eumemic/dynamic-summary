@@ -46,7 +46,7 @@ def generate_corpus():
         # Create config with this chunk size
         config = IndexConfig(
             target_chunk_tokens=chunk_size,
-            preceding_context_tokens=0,  # No context needed
+            preceding_summary_budget_tokens=0,  # No context needed
             summary_model="gpt-5-nano",
             embedding_model="text-embedding-3-small",
             retry_threshold=0.2,

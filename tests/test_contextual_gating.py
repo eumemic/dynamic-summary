@@ -32,7 +32,7 @@ def index_config_with_lag() -> IndexConfig:
     """Create an IndexConfig with context_lag_tokens set."""
     return IndexConfig(
         target_chunk_tokens=200,
-        preceding_context_tokens=75,
+        preceding_summary_budget_tokens=2000,
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
         retry_threshold=0.2,
@@ -49,7 +49,7 @@ def index_config_no_lag() -> IndexConfig:
     """Create an IndexConfig with context_lag_tokens=0 (strictest gating)."""
     return IndexConfig(
         target_chunk_tokens=200,
-        preceding_context_tokens=75,
+        preceding_summary_budget_tokens=2000,
         embedding_model="text-embedding-3-small",
         summary_model="gpt-4o-mini",
         retry_threshold=0.2,
@@ -90,9 +90,12 @@ class TestComputeEligibleSpan:
         )
 
         # Empty document - frontier is 0, no leaves
-        frontier, eligible_end = coordinator._compute_eligible_span("doc1")
+        frontier, eligible_end, last_eligible_start = (
+            coordinator._compute_eligible_span("doc1")
+        )
         assert frontier == 0
         assert eligible_end == 0
+        assert last_eligible_start == 0
 
     def test_eligible_span_with_zero_k(
         self,
@@ -109,9 +112,12 @@ class TestComputeEligibleSpan:
             llm_service=mock_llm_service,
         )
 
-        frontier, eligible_end = coordinator._compute_eligible_span("doc1")
+        frontier, eligible_end, last_eligible_start = (
+            coordinator._compute_eligible_span("doc1")
+        )
         assert frontier == 0
         assert eligible_end == 0  # K=0 means no leaves beyond frontier are eligible
+        assert last_eligible_start == 0
 
 
 class TestCheckContextualReadiness:

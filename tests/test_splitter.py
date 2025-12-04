@@ -17,7 +17,7 @@ class TestTextSplitter:
     def test_split_basic_text(self) -> None:
         """Test basic text splitting."""
         index_config = IndexConfig.load(
-            target_chunk_tokens=50, preceding_context_tokens=25
+            target_chunk_tokens=50, preceding_summary_budget_tokens=25
         )
         splitter = TextSplitter(index_config)
 
@@ -31,7 +31,7 @@ class TestTextSplitter:
     def test_split_respects_boundaries(self) -> None:
         """Test that splitter respects sentence boundaries."""
         index_config = IndexConfig.load(
-            target_chunk_tokens=50, preceding_context_tokens=25
+            target_chunk_tokens=50, preceding_summary_budget_tokens=25
         )
         splitter = TextSplitter(index_config)
 
@@ -46,7 +46,7 @@ class TestTextSplitter:
     def test_adjacent_context(self) -> None:
         """Test getting adjacent context for chunks."""
         index_config = IndexConfig.load(
-            target_chunk_tokens=50, preceding_context_tokens=10
+            target_chunk_tokens=50, preceding_summary_budget_tokens=10
         )
         splitter = TextSplitter(index_config)
 
@@ -72,7 +72,7 @@ class TestTextSplitter:
     def test_token_counting(self) -> None:
         """Test token counting accuracy."""
         index_config = IndexConfig.load(
-            target_chunk_tokens=200, preceding_context_tokens=75
+            target_chunk_tokens=200, preceding_summary_budget_tokens=75
         )
         splitter = TextSplitter(index_config)
 
@@ -84,7 +84,7 @@ class TestTextSplitter:
     def test_empty_text(self) -> None:
         """Test handling of empty text."""
         index_config = IndexConfig.load(
-            target_chunk_tokens=200, preceding_context_tokens=75
+            target_chunk_tokens=200, preceding_summary_budget_tokens=75
         )
         splitter = TextSplitter(index_config)
 
@@ -96,7 +96,7 @@ class TestTextSplitter:
         """Single chunk rebuild must preserve trailing whitespace and padding."""
 
         index_config = IndexConfig.load(
-            target_chunk_tokens=512, preceding_context_tokens=32
+            target_chunk_tokens=512, preceding_summary_budget_tokens=32
         )
         splitter = TextSplitter(index_config)
 
@@ -109,7 +109,7 @@ class TestTextSplitter:
     def test_sequential_chunks(self) -> None:
         """Test that chunks are sequential without overlap."""
         index_config = IndexConfig.load(
-            target_chunk_tokens=50, preceding_context_tokens=25
+            target_chunk_tokens=50, preceding_summary_budget_tokens=25
         )
         splitter = TextSplitter(index_config)
 

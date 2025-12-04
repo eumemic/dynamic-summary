@@ -53,7 +53,6 @@ class SummaryWorkflowConfig:
     """Snapshot of configuration needed for the summary workflow."""
 
     summary_model: str
-    preceding_context_tokens: int
     use_anti_verbatim_vaccine: bool
     max_retries: int
     retry_threshold: float
@@ -117,7 +116,6 @@ def prepare_summary_inputs(
     prev_context: str | None,
     left_token_count: int | None,
     right_token_count: int | None,
-    preceding_context_tokens: int,
     use_anti_verbatim_vaccine: bool,
 ) -> SummaryPreparation:
     """Return prepared prompt messages and token counts for summarization."""
@@ -136,15 +134,6 @@ def prepare_summary_inputs(
         if right_text:
             input_text_tokens += tokenizer.count_tokens(right_text)
 
-    trimmed_prev: str | None = None
-    if prev_context and preceding_context_tokens > 0:
-        prev_tokens = tokenizer.encode(prev_context)
-        if len(prev_tokens) > preceding_context_tokens:
-            context_tokens = prev_tokens[-preceding_context_tokens:]
-            trimmed_prev = tokenizer.decode(context_tokens)
-        else:
-            trimmed_prev = prev_context
-
     target_words = tokens_to_words(target_tokens)
     instruction = (
         "You will be given a piece of content to summarize. You are to summarize ONLY the content "
@@ -156,9 +145,9 @@ def prepare_summary_inputs(
     )
 
     prompt_parts: list[str] = [instruction]
-    if prev_context and preceding_context_tokens > 0 and trimmed_prev:
+    if prev_context:
         prompt_parts.append(
-            f"\n<PRECEDING_TEXT>\n...{trimmed_prev.strip()}\n</PRECEDING_TEXT>"
+            f"\n<PRECEDING_TEXT>\n...{prev_context.strip()}\n</PRECEDING_TEXT>"
         )
     prompt_parts.append(f"\n<SUMMARIZE_TEXT>\n{combined_text}\n</SUMMARIZE_TEXT>")
 
@@ -370,7 +359,6 @@ async def run_summary_workflow(
         prev_context=prev_context,
         left_token_count=left_token_count,
         right_token_count=right_token_count,
-        preceding_context_tokens=config.preceding_context_tokens,
         use_anti_verbatim_vaccine=config.use_anti_verbatim_vaccine,
     )
 
@@ -472,7 +460,6 @@ async def run_summary_from_config(
 
     config_snapshot = SummaryWorkflowConfig(
         summary_model=index_config.summary_model,
-        preceding_context_tokens=index_config.preceding_context_tokens,
         use_anti_verbatim_vaccine=index_config.use_anti_verbatim_vaccine,
         max_retries=index_config.max_retries,
         retry_threshold=index_config.retry_threshold,

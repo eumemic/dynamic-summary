@@ -577,7 +577,7 @@ class WorkerCoordinator:
             return None
         return self._retriever_factory(document_id)
 
-    def _compute_eligible_span(self, document_id: str) -> tuple[int, int]:
+    def _compute_eligible_span(self, document_id: str) -> tuple[int, int, int]:
         """Compute the eligible span for processing.
 
         Walks leaves from the frontier, accumulating tokens up to K
@@ -588,28 +588,34 @@ class WorkerCoordinator:
             document_id: Document to compute eligible span for
 
         Returns:
-            Tuple of (frontier, eligible_span_end)
+            Tuple of (frontier, eligible_span_end, last_eligible_span_start)
+            - frontier: span_end of first root (where tree is complete)
+            - eligible_span_end: span_end of last eligible leaf
+            - last_eligible_span_start: span_start of last eligible leaf
+              (used to derive verbatim budget: last_eligible_span_start - frontier)
         """
         frontier = self.get_tree_frontier(document_id)
         k = self._index_config.context_lag_tokens
 
         # If K is 0, no leaves beyond frontier are eligible
         if k == 0:
-            return frontier, frontier
+            return frontier, frontier, frontier
 
         store = self._store.for_document(document_id)
         leaves = store.nodes.get_leaves_from_span_start(document_id, frontier)
 
         token_sum = 0
         eligible_span_end = frontier
+        last_eligible_span_start = frontier
         for leaf in leaves:
             leaf_tokens = int(getattr(leaf, "token_count", 0))
             if token_sum + leaf_tokens > k:
                 break
             token_sum += leaf_tokens
+            last_eligible_span_start = int(getattr(leaf, "span_start", 0))
             eligible_span_end = int(getattr(leaf, "span_end", 0))
 
-        return frontier, eligible_span_end
+        return frontier, eligible_span_end, last_eligible_span_start
 
     def _get_eligible_span_end(self, document_id: str) -> int:
         """Get the eligible span end for a document, with caching.
@@ -623,7 +629,7 @@ class WorkerCoordinator:
         if document_id in self._eligible_span_ends:
             return self._eligible_span_ends[document_id]
 
-        _, eligible_end = self._compute_eligible_span(document_id)
+        _, eligible_end, _ = self._compute_eligible_span(document_id)
         self._eligible_span_ends[document_id] = eligible_end
         return eligible_end
 
@@ -1624,11 +1630,19 @@ class WorkerCoordinator:
         if span_start_final > 0:
             retriever = self.get_retriever(candidate.document_id)
             if retriever is not None:
+                # Compute derived verbatim budget from eligible span
+                # This is: last_eligible_span_start - frontier
+                frontier, _, last_eligible_span_start = self._compute_eligible_span(
+                    candidate.document_id
+                )
+                verbatim_budget = max(0, last_eligible_span_start - frontier)
+
                 preceding_context = await retriever.retrieve_for_context(
                     query_text=summary,
                     span_end_limit=span_start_final,
-                    budget_tokens=self._index_config.preceding_context_tokens,
+                    budget_tokens=self._index_config.preceding_summary_budget_tokens,
                     document_id=candidate.document_id,
+                    recent_verbatim_token_budget=verbatim_budget,
                 )
                 if preceding_context == "":
                     preceding_context = None

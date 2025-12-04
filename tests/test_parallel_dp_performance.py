@@ -57,7 +57,7 @@ class TestParallelDPPerformance:
     ):
         index_config = IndexConfig.load(
             target_chunk_tokens=200,
-            preceding_context_tokens=25,
+            preceding_summary_budget_tokens=25,
         )
         query_config = QueryConfig(budget_tokens=2000)
         vector_index = RecordingVectorIndex()

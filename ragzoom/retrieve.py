@@ -541,6 +541,7 @@ class Retriever:
         span_end_limit: int,
         budget_tokens: int,
         document_id: str | None = None,
+        recent_verbatim_token_budget: int = 0,
     ) -> str:
         """Retrieve and assemble context for nodes before span_end_limit.
 
@@ -551,13 +552,20 @@ class Retriever:
         Args:
             query_text: The text to use as query (typically the node's own text)
             span_end_limit: Only include nodes where span_end < this value
-            budget_tokens: Token budget for the assembled context
+            budget_tokens: Token budget for the dynamic summary portion
             document_id: Optional document ID to filter by
+            recent_verbatim_token_budget: Token budget for verbatim leaves from
+                the unfinished region (derived from last_eligible_span_start - frontier).
+                Currently unused; reserved for future enhancement to include
+                recent verbatim leaf content alongside the dynamic summary.
 
         Returns:
             Assembled text from the tiled retrieval result, or empty string if
             no relevant preceding content exists.
         """
+        # Note: recent_verbatim_token_budget is reserved for future use.
+        # The current implementation uses only budget_tokens for the dynamic summary.
+        _ = recent_verbatim_token_budget  # Suppress unused warning
         # Determine effective document scope
         effective_doc_id = (
             getattr(self.document_store, "document_id", None) or document_id

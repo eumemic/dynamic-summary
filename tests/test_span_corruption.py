@@ -41,7 +41,7 @@ class TestSpanCorruption:
 
         index_config = IndexConfig.load(
             target_chunk_tokens=100,
-            preceding_context_tokens=10,
+            preceding_summary_budget_tokens=10,
         )
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(

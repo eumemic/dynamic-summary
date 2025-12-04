@@ -42,7 +42,7 @@ class TestCoverageTreeCompletenessSQLite:
     ) -> tuple[IndexConfig, DocumentStore, Retriever, DynamicTilingGenerator]:
         """Set up a system with a tree that will produce incomplete coverage."""
         index_config = IndexConfig.load(
-            target_chunk_tokens=100, preceding_context_tokens=50
+            target_chunk_tokens=100, preceding_summary_budget_tokens=50
         )
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))

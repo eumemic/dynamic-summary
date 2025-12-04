@@ -1306,7 +1306,7 @@ def config(examples: bool, output_file: str | None) -> None:
             json.dumps(
                 {
                     "target_chunk_tokens": 300,
-                    "preceding_context_tokens": 100,
+                    "preceding_summary_budget_tokens": 100,
                     "embedding_model": "text-embedding-3-large",
                     "retry_threshold": 0.15,
                     "max_retries": 2,
@@ -1364,7 +1364,7 @@ def config(examples: bool, output_file: str | None) -> None:
         # Create a sample config file
         sample_config = {
             "target_chunk_tokens": 200,
-            "preceding_context_tokens": 75,
+            "preceding_summary_budget_tokens": 75,
             "embedding_model": "text-embedding-3-small",
             "retry_threshold": 0.2,
             "max_retries": 0,

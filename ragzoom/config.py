@@ -13,7 +13,7 @@ class IndexConfigDict(TypedDict):
     """Type definition for IndexConfig dictionary representation."""
 
     target_chunk_tokens: int
-    preceding_context_tokens: int
+    preceding_summary_budget_tokens: int
     summary_model: str
     embedding_model: str
     retry_threshold: float
@@ -147,7 +147,7 @@ class IndexConfig:
     """
 
     target_chunk_tokens: int
-    preceding_context_tokens: int
+    preceding_summary_budget_tokens: int
     summary_model: str
     embedding_model: str
     retry_threshold: float
@@ -190,7 +190,9 @@ class IndexConfig:
         # Extract only the fields that IndexConfig expects
         index_config_fields = {
             "target_chunk_tokens": config_dict["target_chunk_tokens"],
-            "preceding_context_tokens": config_dict["preceding_context_tokens"],
+            "preceding_summary_budget_tokens": config_dict[
+                "preceding_summary_budget_tokens"
+            ],
             "summary_model": config_dict["summary_model"],
             "embedding_model": config_dict["embedding_model"],
             "retry_threshold": config_dict["retry_threshold"],
@@ -208,8 +210,8 @@ class IndexConfig:
         # Type-safe construction with proper field types
         return cls(
             target_chunk_tokens=int(index_config_fields["target_chunk_tokens"]),
-            preceding_context_tokens=int(
-                index_config_fields["preceding_context_tokens"]
+            preceding_summary_budget_tokens=int(
+                index_config_fields["preceding_summary_budget_tokens"]
             ),
             summary_model=str(index_config_fields["summary_model"]),
             embedding_model=str(index_config_fields["embedding_model"]),
@@ -248,7 +250,7 @@ class IndexConfig:
     def replace(
         self,
         target_chunk_tokens: int | None = None,
-        preceding_context_tokens: int | None = None,
+        preceding_summary_budget_tokens: int | None = None,
         summary_model: str | None = None,
         embedding_model: str | None = None,
         retry_threshold: float | None = None,
@@ -268,10 +270,10 @@ class IndexConfig:
                 if target_chunk_tokens is not None
                 else self.target_chunk_tokens
             ),
-            preceding_context_tokens=(
-                preceding_context_tokens
-                if preceding_context_tokens is not None
-                else self.preceding_context_tokens
+            preceding_summary_budget_tokens=(
+                preceding_summary_budget_tokens
+                if preceding_summary_budget_tokens is not None
+                else self.preceding_summary_budget_tokens
             ),
             summary_model=(
                 summary_model if summary_model is not None else self.summary_model

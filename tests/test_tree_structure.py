@@ -337,7 +337,6 @@ class TestIndexingCreatesValidTrees:
         document_id = "tree-validation"
         config = base_config.index_config.replace(
             target_chunk_tokens=20,
-            preceding_context_tokens=5,
             embedding_batch_size=2,
         )
         _configure_runtime(indexer_runtime_harness, config)
@@ -365,7 +364,7 @@ class TestIndexingCreatesValidTrees:
     ) -> None:
         document_id = "tree-validation-toggle"
         config = base_config.index_config.replace(
-            target_chunk_tokens=25, preceding_context_tokens=5
+            target_chunk_tokens=25,
         )
         _configure_runtime(indexer_runtime_harness, config)
 

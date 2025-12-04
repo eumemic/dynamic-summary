@@ -69,7 +69,7 @@ class TestIntegration:
 
         index_config = IndexConfig.load(
             target_chunk_tokens=50,
-            preceding_context_tokens=25,
+            preceding_summary_budget_tokens=25,
         )
         query_config = QueryConfig(budget_tokens=500)
         vector_index = RecordingVectorIndex()
@@ -123,7 +123,7 @@ class TestIntegration:
 
         index_config = IndexConfig.load(
             target_chunk_tokens=50,
-            preceding_context_tokens=25,
+            preceding_summary_budget_tokens=25,
         )
         vector_index = RecordingVectorIndex()
         self._bind_vector_index(indexer_runtime_harness, vector_index)
@@ -166,7 +166,7 @@ class TestIntegration:
 
         index_config = IndexConfig.load(
             target_chunk_tokens=50,
-            preceding_context_tokens=25,
+            preceding_summary_budget_tokens=25,
         )
         query_config = QueryConfig(budget_tokens=500)
         vector_index = RecordingVectorIndex()
@@ -217,7 +217,7 @@ class TestIntegration:
 
         index_config = IndexConfig.load(
             target_chunk_tokens=50,
-            preceding_context_tokens=25,
+            preceding_summary_budget_tokens=25,
         )
         query_config = QueryConfig(budget_tokens=500)
         vector_index = RecordingVectorIndex()
@@ -263,7 +263,7 @@ class TestIntegration:
 
         index_config = IndexConfig.load(
             target_chunk_tokens=50,
-            preceding_context_tokens=25,
+            preceding_summary_budget_tokens=25,
         )
         query_config = QueryConfig(budget_tokens=500)
         vector_index = RecordingVectorIndex()

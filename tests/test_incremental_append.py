@@ -264,7 +264,6 @@ class TestIncrementalAppend:
     ) -> None:
         config = base_config.index_config.replace(
             target_chunk_tokens=32,
-            preceding_context_tokens=0,
             embedding_batch_size=4,
         )
 
@@ -340,7 +339,6 @@ class TestIncrementalAppend:
     ) -> None:
         config = base_config.index_config.replace(
             target_chunk_tokens=32,
-            preceding_context_tokens=0,
             embedding_batch_size=4,
         )
 

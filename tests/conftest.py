@@ -71,8 +71,8 @@ class BackwardCompatibilityConfig:
         return self.index_config.target_chunk_tokens
 
     @property
-    def prev_context_tokens(self) -> int:
-        return self.index_config.preceding_context_tokens
+    def preceding_summary_budget_tokens(self) -> int:
+        return self.index_config.preceding_summary_budget_tokens
 
     @property
     def budget_tokens(self) -> int:
@@ -240,7 +240,7 @@ def base_config() -> BackwardCompatibilityConfig:
     """Create base configuration for tests."""
     index_config = IndexConfig.load(
         target_chunk_tokens=50,
-        preceding_context_tokens=25,
+        preceding_summary_budget_tokens=25,
     )
     query_config = QueryConfig(
         budget_tokens=1000,
@@ -270,7 +270,7 @@ def config_factory() -> (
 
     def _create_config(
         target_chunk_tokens: int = 50,
-        preceding_context_tokens: int = 25,
+        preceding_summary_budget_tokens: int = 25,
         budget_tokens: int = 1000,
         openai_api_key: str = "test-key",
         database_url: str | None = None,
@@ -283,7 +283,7 @@ def config_factory() -> (
 
         index_config = IndexConfig.load(
             target_chunk_tokens=target_chunk_tokens,
-            preceding_context_tokens=preceding_context_tokens,
+            preceding_summary_budget_tokens=preceding_summary_budget_tokens,
         )
         query_config = QueryConfig(
             budget_tokens=budget_tokens,

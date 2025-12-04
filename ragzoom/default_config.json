@@ -1,6 +1,6 @@
 {
   "target_chunk_tokens": 200,
-  "preceding_context_tokens": 75,
+  "preceding_summary_budget_tokens": 2000,
   "summary_model": "gpt-5-nano",
   "embedding_model": "text-embedding-3-small",
   "retry_threshold": 0.2,
