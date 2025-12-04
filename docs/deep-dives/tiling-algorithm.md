@@ -173,7 +173,7 @@ Summaries that capture most of their children's relevance are prioritized for ro
 
 ## Verbatim Budget
 
-The `recent_verbatim_token_budget` feature allows including recent content (rightmost leaves) without summarization. This is useful for conversation logs where the most recent messages should appear verbatim.
+The `recent_verbatim_token_budget` feature reserves a portion of the total `budget_tokens` for including recent content (rightmost leaves) without summarization. This is a **carve-out** from the total budget, not an addition. For example, with `budget_tokens=4000` and `recent_verbatim_token_budget=1000`, the verbatim leaves consume up to 1000 tokens from the 4000 total. This is useful for conversation logs where the most recent messages should appear verbatim.
 
 ### How It Works
 

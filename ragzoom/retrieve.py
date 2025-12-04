@@ -201,10 +201,23 @@ class Retriever:
         if telemetry_collector:
             telemetry_collector.record_metric("seeds_requested", num_seeds)
 
+        # Validate verbatim budget doesn't exceed total budget (early fail-fast)
+        total_budget = (
+            budget_tokens
+            if budget_tokens is not None
+            else self.query_config.budget_tokens
+        )
+        if recent_verbatim_budget is not None and recent_verbatim_budget > total_budget:
+            raise ValueError(
+                f"recent_verbatim_budget ({recent_verbatim_budget}) cannot exceed "
+                f"budget_tokens ({total_budget})"
+            )
+
         # Pre-select verbatim leaves to establish horizon for seed filtering
         # Seeds should only come from the non-verbatim region (before the horizon)
         pinned_ids: set[str] = set()
         verbatim_horizon: int | None = None
+        verbatim_tokens_used: int = 0
         if recent_verbatim_budget and recent_verbatim_budget > 0:
             # For windowed queries, count back from actual_end instead of document end
             if (
@@ -223,6 +236,7 @@ class Retriever:
                     )
                 )
             pinned_ids = {leaf.id for leaf in verbatim_leaves}
+            verbatim_tokens_used = sum(leaf.token_count for leaf in verbatim_leaves)
             if verbatim_leaves:
                 # Horizon = start of verbatim region (earliest span_start among verbatim)
                 # Leaves are returned sorted by span_start, so first one is the horizon
@@ -388,13 +402,8 @@ class Retriever:
         selected_ids = [nid for nid in selected_ids if nid in nodes]
 
         # Phase 6: Extract tiling using DP/greedy algorithm
-        # Combined budget = base + verbatim (pinned nodes are in coverage, can't be rolled up)
-        base_budget = (
-            budget_tokens
-            if budget_tokens is not None
-            else self.query_config.budget_tokens
-        )
-        final_budget = base_budget + (recent_verbatim_budget or 0)
+        # Subtract verbatim tokens from total budget - they're already reserved
+        final_budget = total_budget - verbatim_tokens_used
 
         # Choose tiling strategy
         tiling_strategy = self.query_config.tiling_strategy
@@ -414,11 +423,11 @@ class Retriever:
             )
         elif self.async_dp_generator is not None:
             dp_result = await self.async_dp_generator.find_optimal_tiling_over_roots(
-                root_ids, final_budget, scores, nodes, pinned_ids=pinned_ids
+                root_ids, final_budget, scores, nodes
             )
         else:
             dp_result = self.dp_generator.find_optimal_tiling_over_roots(
-                root_ids, final_budget, scores, nodes, pinned_ids=pinned_ids
+                root_ids, final_budget, scores, nodes
             )
         if telemetry_collector:
             telemetry_collector.end_phase("dp")

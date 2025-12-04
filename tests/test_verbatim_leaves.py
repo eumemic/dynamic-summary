@@ -9,6 +9,8 @@ pinned via the transient pinning mechanism.
 from collections.abc import Mapping
 from unittest.mock import MagicMock
 
+import pytest
+
 from ragzoom.config import QueryConfig
 from ragzoom.dynamic_tiling import DPResult
 from ragzoom.retrieval.verbatim_selector import select_verbatim_leaves
@@ -440,20 +442,34 @@ class TestVerbatimTilingInvariant:
 class TestVerbatimBudgetIntegration:
     """Test that verbatim budget is correctly integrated with tiling."""
 
-    def test_tiling_uses_combined_budget(self) -> None:
-        """Tiling should use combined budget (base + verbatim).
+    def test_tiling_uses_remaining_budget_after_verbatim(self) -> None:
+        """Tiling should receive total_budget minus verbatim tokens used.
 
-        Since pinned verbatim leaves are in coverage and cannot be rolled up,
-        the tiling budget must include both base and verbatim portions.
+        The verbatim budget is carved out from the total - tiling gets the remainder.
         """
         from unittest.mock import patch
 
         from ragzoom.retrieve import Retriever
 
+        # Create mock verbatim leaves with known token counts
+        mock_verbatim_leaf1 = MagicMock()
+        mock_verbatim_leaf1.id = "verbatim1"
+        mock_verbatim_leaf1.token_count = 200
+        mock_verbatim_leaf1.span_start = 900
+        mock_verbatim_leaf2 = MagicMock()
+        mock_verbatim_leaf2.id = "verbatim2"
+        mock_verbatim_leaf2.token_count = 150
+        mock_verbatim_leaf2.span_start = 950
+        verbatim_leaves = [mock_verbatim_leaf1, mock_verbatim_leaf2]
+        verbatim_tokens = 350  # 200 + 150
+
         # Create minimal mocks for retriever construction
         mock_query_config = QueryConfig(budget_tokens=2000)
         mock_doc_store = MagicMock()
         mock_doc_store.nodes.get_leaves.return_value = []
+        mock_doc_store.nodes.get_recent_leaves_within_budget.return_value = (
+            verbatim_leaves
+        )
         mock_embedding_service = MagicMock()
         mock_embedding_service.get_query_embedding.return_value = [0.1] * 1536
         mock_budget_planner = MagicMock()
@@ -514,23 +530,21 @@ class TestVerbatimBudgetIntegration:
             mock_scoring_service_class.return_value = mock_scoring_service
 
             # Run retrieval with verbatim budget
-            base_budget = 1000
+            total_budget = 1000
             verbatim_budget = 500
 
             retriever.retrieve(
                 "test query",
-                budget_tokens=base_budget,
+                budget_tokens=total_budget,
                 recent_verbatim_budget=verbatim_budget,
             )
 
-        # Tiling should receive combined budget (base + verbatim) since pinned
-        # leaves are included in coverage and can't be rolled up
+        # Tiling should receive total_budget - verbatim_tokens_used
         assert len(captured_budgets) == 1, "Tiling generator was not called"
-        expected_budget = base_budget + verbatim_budget
+        expected_budget = total_budget - verbatim_tokens
         assert captured_budgets[0] == expected_budget, (
-            f"Expected combined budget {expected_budget}, got {captured_budgets[0]}. "
-            f"Tiling should use base_budget + verbatim_budget since pinned leaves "
-            f"are in coverage and budget must account for them."
+            f"Expected remaining budget {expected_budget}, got {captured_budgets[0]}. "
+            f"Tiling should receive total_budget - verbatim_tokens_used."
         )
 
     def test_seeds_filtered_to_exclude_verbatim_region(self) -> None:
@@ -644,3 +658,35 @@ class TestVerbatimBudgetIntegration:
             f"Expected horizon=100 (span_start of leftmost verbatim leaf l3), "
             f"got {span_filter.threshold}"
         )
+
+    def test_verbatim_budget_exceeds_total_raises(self) -> None:
+        """ValueError is raised when recent_verbatim_budget > budget_tokens."""
+        from ragzoom.retrieve import Retriever
+
+        # Create minimal mocks for retriever construction
+        mock_query_config = QueryConfig(budget_tokens=2000)
+        mock_doc_store = MagicMock()
+        mock_doc_store.nodes.get_leaves.return_value = []
+        mock_doc_store.nodes.get_recent_leaves_within_budget.return_value = []
+        mock_embedding_service = MagicMock()
+        mock_embedding_service.get_query_embedding.return_value = [0.1] * 1536
+        mock_budget_planner = MagicMock()
+        mock_budget_planner.calculate_conservative_num_seeds.return_value = 1
+        mock_vector_index = MagicMock()
+        mock_vector_index.search_similar.return_value = []
+
+        retriever = Retriever(
+            mock_query_config,
+            mock_doc_store,
+            mock_embedding_service,
+            mock_budget_planner,
+            mock_vector_index,
+        )
+
+        # Verbatim budget exceeds total - should raise
+        with pytest.raises(ValueError, match="cannot exceed budget_tokens"):
+            retriever.retrieve(
+                "test query",
+                budget_tokens=1000,
+                recent_verbatim_budget=1500,  # Exceeds budget_tokens
+            )
