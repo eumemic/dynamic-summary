@@ -378,6 +378,10 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
             else None
         )
 
+        # Extract window bounds from request (span_end=0 treated as unset)
+        span_start = request.span_start
+        span_end = request.span_end if request.span_end > 0 else None
+
         # Use telemetry-enabled retrieval if profiling requested
         query_telemetry = None
         if request.profile:
@@ -395,6 +399,8 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
                 budget_tokens=budget,
                 document_id=request.document_id,
                 recent_verbatim_budget=recent_verbatim_budget,
+                span_start=span_start,
+                span_end=span_end,
             )
 
         assembler = Assembler(document_store)
@@ -497,6 +503,8 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
                 seed_count=retrieval_result.seed_count,
                 verbatim_count=retrieval_result.verbatim_count,
                 telemetry=telemetry_proto,
+                actual_start=retrieval_result.actual_start,
+                actual_end=retrieval_result.actual_end or 0,
             )
         return pb2.ExecuteQueryResponse(
             summary=summary_text,
@@ -509,6 +517,8 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
             query_id=query_id,
             seed_count=retrieval_result.seed_count,
             verbatim_count=retrieval_result.verbatim_count,
+            actual_start=retrieval_result.actual_start,
+            actual_end=retrieval_result.actual_end or 0,
         )
 
 

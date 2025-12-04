@@ -255,6 +255,8 @@ class GrpcRagzoomClient:
         tiling_strategy: str | None,
         recent_verbatim_token_budget: int | None = None,
         profile: bool = False,
+        span_start: int = 0,
+        span_end: int | None = None,
     ) -> ExecuteQueryOutput:
         request = pb2.ExecuteQueryRequest(
             query=query,
@@ -268,7 +270,10 @@ class GrpcRagzoomClient:
             tiling_strategy=tiling_strategy or "",
             recent_verbatim_token_budget=recent_verbatim_token_budget or 0,
             profile=profile,
+            span_start=span_start,
         )
+        if span_end is not None:
+            request.span_end = span_end
         try:
             response = self._retrieval.ExecuteQuery(request, timeout=self._timeout)
         except grpc.RpcError as error:  # pragma: no cover

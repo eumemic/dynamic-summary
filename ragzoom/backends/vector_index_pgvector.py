@@ -23,6 +23,7 @@ from ragzoom.backends.vector_common import (
 from ragzoom.contracts.vector_filter import (
     DocumentIdFilter,
     SpanEndLtFilter,
+    SpanOverlapsFilter,
     VectorFilter,
 )
 from ragzoom.contracts.vector_index import VectorIndex
@@ -84,6 +85,12 @@ class PgVectorIndexAdapter(VectorIndex):
                     case SpanEndLtFilter(threshold=threshold):
                         where_clauses.append("span_end < :span_end_lt")
                         params["span_end_lt"] = threshold
+                    case SpanOverlapsFilter(start=start, end=end):
+                        # Overlap: node.span_start < end AND node.span_end > start
+                        where_clauses.append("span_start < :span_overlaps_end")
+                        where_clauses.append("span_end > :span_overlaps_start")
+                        params["span_overlaps_start"] = start
+                        params["span_overlaps_end"] = end
                     case _:
                         raise UnsupportedFilterError(type(f).__name__, "PgVectorIndex")
 

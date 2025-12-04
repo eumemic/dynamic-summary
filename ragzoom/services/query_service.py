@@ -33,6 +33,8 @@ class QueryResult:
     query_id: str
     seed_count: int = 0
     verbatim_count: int = 0
+    actual_start: int = 0
+    actual_end: int | None = None
 
 
 class QueryService:
@@ -123,8 +125,11 @@ class QueryService:
             query_id=query_id,
             seed_count=retrieval_result.seed_count,
             verbatim_count=retrieval_result.verbatim_count,
+            actual_start=retrieval_result.actual_start,
+            actual_end=retrieval_result.actual_end,
         )
 
+    # jscpd:ignore-start - sync/async method pair (legitimate duplication pattern)
     def execute_query(
         self,
         query_text: str,
@@ -132,6 +137,8 @@ class QueryService:
         num_seeds: int | None = None,
         token_budget: int | None = None,
         recent_verbatim_budget: int | None = None,
+        span_start: int = 0,
+        span_end: int | None = None,
     ) -> QueryResult:
         """Execute a query and return assembled result.
 
@@ -141,6 +148,8 @@ class QueryService:
             num_seeds: Optional override for number of seed nodes
             token_budget: Optional override for token budget
             recent_verbatim_budget: Token budget for recent leaves to include verbatim
+            span_start: Start of document window (character position, default: 0)
+            span_end: End of document window (default: document end)
 
         Returns:
             QueryResult with summary and statistics
@@ -153,6 +162,8 @@ class QueryService:
             document_id=document_id,
             num_seeds=num_seeds,
             recent_verbatim_budget=recent_verbatim_budget,
+            span_start=span_start,
+            span_end=span_end,
         )
 
         return self._build_query_result(
@@ -171,6 +182,8 @@ class QueryService:
         num_seeds: int | None = None,
         token_budget: int | None = None,
         recent_verbatim_budget: int | None = None,
+        span_start: int = 0,
+        span_end: int | None = None,
     ) -> QueryResult:
         """Execute a query asynchronously.
 
@@ -180,6 +193,8 @@ class QueryService:
             num_seeds: Optional override for number of seed nodes
             token_budget: Optional override for token budget
             recent_verbatim_budget: Token budget for recent leaves to include verbatim
+            span_start: Start of document window (character position, default: 0)
+            span_end: End of document window (default: document end)
 
         Returns:
             QueryResult with summary and statistics
@@ -192,6 +207,8 @@ class QueryService:
             budget_tokens=components.budget,
             document_id=document_id,
             recent_verbatim_budget=recent_verbatim_budget,
+            span_start=span_start,
+            span_end=span_end,
         )
 
         return self._build_query_result(
@@ -202,6 +219,8 @@ class QueryService:
             components.budget,
             num_seeds,
         )
+
+    # jscpd:ignore-end
 
     def update_config(
         self,
