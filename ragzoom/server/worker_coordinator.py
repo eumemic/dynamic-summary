@@ -1619,6 +1619,20 @@ class WorkerCoordinator:
 
         preceding_node_id_final = getattr(left_final, "preceding_neighbor_id", None)
 
+        # Retrieve contextual information from preceding tree for this node
+        preceding_context: str | None = None
+        if span_start_final > 0:
+            retriever = self.get_retriever(candidate.document_id)
+            if retriever is not None:
+                preceding_context = await retriever.retrieve_for_context(
+                    query_text=summary,
+                    span_end_limit=span_start_final,
+                    budget_tokens=self._index_config.preceding_context_tokens,
+                    document_id=candidate.document_id,
+                )
+                if preceding_context == "":
+                    preceding_context = None
+
         with store.transaction() as session:
             if self._is_cancelled(candidate.document_id):
                 logger.debug(
@@ -1697,6 +1711,7 @@ class WorkerCoordinator:
                 "preceding_neighbor_id": preceding_parent_id,
                 "following_neighbor_id": following_parent_id,
                 "level_index": parent_level_index,
+                "preceding_context": preceding_context,
             }
 
             neighbors_update: list[tuple[str, str | None, str | None]] = [

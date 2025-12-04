@@ -84,6 +84,8 @@ class SqliteNodeRepository:
                     "following_neighbor_id": data.get("following_neighbor_id"),
                     "height": data["height"],
                     "level_index": data["level_index"],
+                    "preceding_context": data.get("preceding_context"),
+                    "preceding_context_summary": data.get("preceding_context_summary"),
                 }
                 for data in nodes_data
             ]
@@ -139,6 +141,8 @@ class SqliteNodeRepository:
                     following_neighbor_id=data.get("following_neighbor_id"),
                     height=data["height"],
                     level_index=data["level_index"],
+                    preceding_context=data.get("preceding_context"),
+                    preceding_context_summary=data.get("preceding_context_summary"),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=[SQLiteTreeNode.id],
@@ -154,6 +158,8 @@ class SqliteNodeRepository:
                         "preceding_neighbor_id": stmt.excluded.preceding_neighbor_id,
                         "following_neighbor_id": stmt.excluded.following_neighbor_id,
                         "level_index": stmt.excluded.level_index,
+                        "preceding_context": stmt.excluded.preceding_context,
+                        "preceding_context_summary": stmt.excluded.preceding_context_summary,
                     },
                 )
                 session.execute(stmt)

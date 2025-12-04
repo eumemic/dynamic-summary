@@ -44,6 +44,10 @@ class NodeDataDict(TypedDict, total=False):
     preceding_neighbor_id: str | None
     following_neighbor_id: str | None
 
+    # Contextual indexing fields
+    preceding_context: str | None
+    preceding_context_summary: str | None
+
 
 try:  # Optional typing import; not required at runtime
     from typing import TYPE_CHECKING

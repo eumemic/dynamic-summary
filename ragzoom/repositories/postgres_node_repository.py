@@ -175,6 +175,8 @@ class PostgresNodeRepository(BaseRepository):
                     following_neighbor_id=data.get("following_neighbor_id"),
                     height=data["height"],
                     level_index=data["level_index"],
+                    preceding_context=data.get("preceding_context"),
+                    preceding_context_summary=data.get("preceding_context_summary"),
                 )
                 nodes_pg.append(node)
                 out.append(node)
@@ -228,8 +230,10 @@ class PostgresNodeRepository(BaseRepository):
                 token_count,
                 height,
                 preceding_neighbor_id,
-                following_neighbor_id
-                , level_index
+                following_neighbor_id,
+                level_index,
+                preceding_context,
+                preceding_context_summary
             ) VALUES (
                 :id,
                 :text,
@@ -243,7 +247,9 @@ class PostgresNodeRepository(BaseRepository):
                 :height,
                 :preceding_neighbor_id,
                 :following_neighbor_id,
-                :level_index
+                :level_index,
+                :preceding_context,
+                :preceding_context_summary
             )
             ON CONFLICT (id) DO UPDATE SET
                 text = EXCLUDED.text,
@@ -256,7 +262,9 @@ class PostgresNodeRepository(BaseRepository):
                 token_count = EXCLUDED.token_count,
                 preceding_neighbor_id = EXCLUDED.preceding_neighbor_id,
                 following_neighbor_id = EXCLUDED.following_neighbor_id,
-                level_index = EXCLUDED.level_index
+                level_index = EXCLUDED.level_index,
+                preceding_context = EXCLUDED.preceding_context,
+                preceding_context_summary = EXCLUDED.preceding_context_summary
             """
         )
 
@@ -279,6 +287,8 @@ class PostgresNodeRepository(BaseRepository):
                     "preceding_neighbor_id": data.get("preceding_neighbor_id"),
                     "following_neighbor_id": data.get("following_neighbor_id"),
                     "level_index": data["level_index"],
+                    "preceding_context": data.get("preceding_context"),
+                    "preceding_context_summary": data.get("preceding_context_summary"),
                 }
                 db_session.execute(insert_sql, params)
                 self.cache_manager.invalidate(node_id)
