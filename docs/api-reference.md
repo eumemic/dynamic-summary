@@ -86,7 +86,7 @@ ragzoom query <query_text> [OPTIONS]
 - `--num-seeds` - Number of seed nodes to retrieve
 - `--token-budget` - Token budget for summary
 - `--tiling-strategy` - Algorithm for tiling: `dp` (dynamic programming, default) or `greedy`
-- `--recent-verbatim-token-budget` - Token budget for verbatim recent content (most recent leaves included without summarization)
+- `--recent-verbatim-token-budget` - Portion of `--token-budget` reserved for verbatim recent content (carved out from total, not added). Most recent leaves are included without summarization
 - `--debug` - Show debug information and tree visualization
 - `--viz-width` - Tree visualization width (defaults to terminal width)
 - `--viz-coords` - Coordinate system: `source-chars` or `output-tokens` (default: output-tokens)
