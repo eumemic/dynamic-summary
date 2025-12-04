@@ -766,6 +766,7 @@ class SqliteNodeRepository:
                 return 0
             return int(first_root.span_end)
 
+    # jscpd:ignore-start - sync/async variant of PostgresNodeRepository
     def get_leaves_from_span_start(
         self, document_id: str | None, span_start: int
     ) -> list[TreeNode]:
@@ -791,6 +792,8 @@ class SqliteNodeRepository:
 
             rows = session.execute(stmt).scalars().all()
             return _detach_rows(session, list(rows))
+
+    # jscpd:ignore-end
 
 
 class SqliteDocumentRepository:
