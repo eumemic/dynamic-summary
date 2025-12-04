@@ -10,6 +10,7 @@ from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_filter import (
     DocumentIdFilter,
     SpanEndLtFilter,
+    SpanOverlapsFilter,
     VectorFilter,
 )
 from ragzoom.dynamic_tiling import DynamicTilingGenerator
@@ -42,6 +43,8 @@ class RetrievalResult:
     nodes: dict[str, "TreeNode"] | None = None
     seed_count: int = 0
     verbatim_count: int = 0
+    actual_start: int = 0
+    actual_end: int | None = None
 
 
 class Retriever:
@@ -99,6 +102,8 @@ class Retriever:
         document_id: str | None = None,
         recent_verbatim_budget: int | None = None,
         telemetry_collector: TelemetryCollector | None = None,
+        span_start: int = 0,
+        span_end: int | None = None,
     ) -> RetrievalResult:
         """Async retrieval method with MMR diversity.
 
@@ -108,11 +113,16 @@ class Retriever:
             budget_tokens: Token budget for the final summary
             document_id: Optional document ID to filter by
             recent_verbatim_budget: Token budget for recent leaves to include verbatim
+            span_start: Start of document window (character position, default 0)
+            span_end: End of document window (default: document end)
 
         Supports three modes:
         1. Budget only: Calculate conservative num_seeds to guarantee no overflow
         2. Budget + num_seeds: Use num_seeds but drop nodes if needed for budget
         3. num_seeds only: Just use num_seeds, no budget enforcement
+
+        When span_start/span_end are specified, the tiling covers exactly the
+        minimal span [actual_start, actual_end) that contains the requested window.
         """
         # Start telemetry if collector is provided
         if telemetry_collector:
@@ -122,6 +132,53 @@ class Retriever:
         effective_doc_id = (
             getattr(self.document_store, "document_id", None) or document_id
         )
+
+        # Compute window bounds if windowed query
+        from ragzoom.retrieval.coverage_builder import WindowBounds
+
+        window_bounds: WindowBounds | None = None
+        actual_start = 0
+        actual_end: int | None = None
+
+        # Get document span end for defaults and validation
+        nodes_wrapper = getattr(self.document_store, "nodes", None)
+        repo = getattr(nodes_wrapper, "_repo", None) if nodes_wrapper else None
+        doc_span_end: int | None = None
+        if repo is not None and effective_doc_id:
+            doc_span_end = repo.get_document_span_end(effective_doc_id)
+
+        # Resolve span_end default
+        resolved_span_end = span_end if span_end is not None else doc_span_end
+
+        # Check if we have a windowed query (not default full document)
+        # Note: isinstance checks guard against mocked repos in tests
+        is_windowed = span_start > 0 or (
+            isinstance(resolved_span_end, int)
+            and isinstance(doc_span_end, int)
+            and resolved_span_end < doc_span_end
+        )
+
+        if is_windowed and effective_doc_id and resolved_span_end is not None:
+            # Validate window bounds
+            if span_start >= resolved_span_end:
+                raise ValueError(
+                    f"span_start ({span_start}) must be less than span_end ({resolved_span_end})"
+                )
+            if doc_span_end is not None and span_start >= doc_span_end:
+                raise ValueError(
+                    f"span_start ({span_start}) exceeds document length ({doc_span_end})"
+                )
+
+            # Compute window bounds
+            doc_coverage_builder = CoverageBuilder(self.document_store)
+            window_bounds = doc_coverage_builder.compute_window_bounds(
+                span_start, resolved_span_end, effective_doc_id
+            )
+            actual_start = window_bounds.actual_start
+            actual_end = window_bounds.actual_end
+        else:
+            # Full document query - actual_start remains 0
+            actual_end = doc_span_end
 
         # Determine which mode we're in
         if budget_tokens is not None and num_seeds is None:
@@ -149,9 +206,22 @@ class Retriever:
         pinned_ids: set[str] = set()
         verbatim_horizon: int | None = None
         if recent_verbatim_budget and recent_verbatim_budget > 0:
-            verbatim_leaves = self.document_store.nodes.get_recent_leaves_within_budget(
-                recent_verbatim_budget
-            )
+            # For windowed queries, count back from actual_end instead of document end
+            if (
+                is_windowed
+                and actual_end is not None
+                and repo is not None
+                and effective_doc_id
+            ):
+                verbatim_leaves = repo.get_recent_leaves_within_budget_before(
+                    effective_doc_id, recent_verbatim_budget, actual_end
+                )
+            else:
+                verbatim_leaves = (
+                    self.document_store.nodes.get_recent_leaves_within_budget(
+                        recent_verbatim_budget
+                    )
+                )
             pinned_ids = {leaf.id for leaf in verbatim_leaves}
             if verbatim_leaves:
                 # Horizon = start of verbatim region (earliest span_start among verbatim)
@@ -180,6 +250,8 @@ class Retriever:
             filters.append(DocumentIdFilter(effective_doc_id))
         if verbatim_horizon is not None:
             filters.append(SpanEndLtFilter(verbatim_horizon))
+        if is_windowed and actual_end is not None:
+            filters.append(SpanOverlapsFilter(actual_start, actual_end))
         raw_candidates = self.vector_index.search_similar(
             query_embedding,
             k_candidates,
@@ -255,9 +327,17 @@ class Retriever:
             if node_id in seed_meta_all
         }
         doc_coverage_builder = CoverageBuilder(self.document_store)
-        coverage_result = doc_coverage_builder.build_complete_coverage(
-            selected_ids, seed_metadata=seed_metadata, pinned_ids=pinned_ids
-        )
+        if window_bounds is not None:
+            coverage_result = doc_coverage_builder.build_windowed_coverage(
+                selected_ids,
+                window_bounds,
+                seed_metadata=seed_metadata,
+                pinned_ids=pinned_ids,
+            )
+        else:
+            coverage_result = doc_coverage_builder.build_complete_coverage(
+                selected_ids, seed_metadata=seed_metadata, pinned_ids=pinned_ids
+            )
         coverage_map = coverage_result.coverage_map
         if telemetry_collector:
             telemetry_collector.end_phase("coverage_map")
@@ -376,6 +456,8 @@ class Retriever:
             nodes=nodes,
             seed_count=seed_count,
             verbatim_count=verbatim_count,
+            actual_start=actual_start,
+            actual_end=actual_end,
         )
 
     # jscpd:ignore-start - Sync wrapper for async method (legitimate duplication pattern)
@@ -386,6 +468,8 @@ class Retriever:
         budget_tokens: int | None = None,
         document_id: str | None = None,
         recent_verbatim_budget: int | None = None,
+        span_start: int = 0,
+        span_end: int | None = None,
     ) -> RetrievalResult:
         """Synchronous wrapper for retrieve_async.
 
@@ -395,6 +479,8 @@ class Retriever:
             budget_tokens: Token budget for the final summary
             document_id: Optional document ID to filter by
             recent_verbatim_budget: Token budget for recent leaves to include verbatim
+            span_start: Start of document window (character position, default 0)
+            span_end: End of document window (default: document end)
 
         Creates a new event loop if needed to run the async version.
         For async contexts, use retrieve_async directly.
@@ -402,7 +488,13 @@ class Retriever:
         # jscpd:ignore-end
         return asyncio.run(
             self.retrieve_async(
-                query, num_seeds, budget_tokens, document_id, recent_verbatim_budget
+                query,
+                num_seeds,
+                budget_tokens,
+                document_id,
+                recent_verbatim_budget,
+                span_start=span_start,
+                span_end=span_end,
             )
         )
 

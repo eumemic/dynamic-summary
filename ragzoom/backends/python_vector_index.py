@@ -237,6 +237,21 @@ class PythonVectorIndex:
                 mask &= np.array(
                     [self._meta[i].span_end < threshold for i in self._ids], dtype=bool
                 )
+            # Filter by span_start < threshold (for window overlap: node starts before window end)
+            span_start_lt = where.get("span_start_lt")
+            if span_start_lt is not None and isinstance(span_start_lt, int | float):
+                threshold = int(span_start_lt)
+                mask &= np.array(
+                    [self._meta[i].span_start < threshold for i in self._ids],
+                    dtype=bool,
+                )
+            # Filter by span_end > threshold (for window overlap: node ends after window start)
+            span_end_gt = where.get("span_end_gt")
+            if span_end_gt is not None and isinstance(span_end_gt, int | float):
+                threshold = int(span_end_gt)
+                mask &= np.array(
+                    [self._meta[i].span_end > threshold for i in self._ids], dtype=bool
+                )
             if mask is not None and not mask.any():
                 return []
         if mask is not None:

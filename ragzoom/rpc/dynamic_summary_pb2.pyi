@@ -131,6 +131,8 @@ class ExecuteQueryRequest:
     tiling_strategy: str
     recent_verbatim_token_budget: int
     profile: bool
+    span_start: int
+    span_end: int
 
     def __init__(
         self,
@@ -146,6 +148,8 @@ class ExecuteQueryRequest:
         tiling_strategy: str = ...,
         recent_verbatim_token_budget: int = ...,
         profile: bool = ...,
+        span_start: int = ...,
+        span_end: int = ...,
     ) -> None: ...
 
 class QueryTelemetry:
@@ -199,6 +203,8 @@ class ExecuteQueryResponse:
     seed_count: int
     verbatim_count: int
     telemetry: QueryTelemetry
+    actual_start: int
+    actual_end: int
 
     def __init__(
         self,
@@ -214,6 +220,8 @@ class ExecuteQueryResponse:
         seed_count: int = ...,
         verbatim_count: int = ...,
         telemetry: QueryTelemetry = ...,
+        actual_start: int = ...,
+        actual_end: int = ...,
     ) -> None: ...
 
 class RunWorkersRequest:

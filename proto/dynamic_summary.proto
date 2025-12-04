@@ -79,6 +79,8 @@ message ExecuteQueryRequest {
   string tiling_strategy = 9;
   int32 recent_verbatim_token_budget = 10;
   bool profile = 11;
+  int32 span_start = 12;
+  optional int32 span_end = 13;
 }
 
 message QueryTelemetry {
@@ -117,6 +119,8 @@ message ExecuteQueryResponse {
   int32 seed_count = 9;
   int32 verbatim_count = 10;
   QueryTelemetry telemetry = 11;
+  int32 actual_start = 12;
+  optional int32 actual_end = 13;
 }
 
 enum WorkerRunMode {

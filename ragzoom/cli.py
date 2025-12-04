@@ -781,6 +781,18 @@ def validate(
     help="Token budget for recent content to include verbatim (most recent first)",
 )
 @click.option(
+    "--span-start",
+    type=int,
+    default=0,
+    help="Start of document window (character position, default: 0)",
+)
+@click.option(
+    "--span-end",
+    type=int,
+    default=None,
+    help="End of document window (character position, default: document end)",
+)
+@click.option(
     "--debug",
     is_flag=True,
     help="Show debug information including retrieval statistics",
@@ -823,6 +835,8 @@ def query(
     token_budget: int | None,
     embedding_model: str | None,
     recent_verbatim_token_budget: int | None,
+    span_start: int,
+    span_end: int | None,
     debug: bool,
     viz_width: int | None,
     viz_coords: str,
@@ -873,6 +887,8 @@ def query(
                 tiling_strategy=query_config.tiling_strategy,
                 recent_verbatim_token_budget=recent_verbatim_token_budget,
                 profile=profile,
+                span_start=span_start,
+                span_end=span_end,
             )
 
         query_result = response.query_result

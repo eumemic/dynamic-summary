@@ -22,6 +22,7 @@ from ragzoom.backends.vector_common import (
 from ragzoom.contracts.vector_filter import (
     DocumentIdFilter,
     SpanEndLtFilter,
+    SpanOverlapsFilter,
     VectorFilter,
 )
 from ragzoom.contracts.vector_index import VectorIndex
@@ -42,6 +43,10 @@ def _filters_to_where(
                 where["document_id"] = doc_id
             case SpanEndLtFilter(threshold=threshold):
                 where["span_end_lt"] = threshold
+            case SpanOverlapsFilter(start=start, end=end):
+                # Overlap: node.span_start < end AND node.span_end > start
+                where["span_start_lt"] = end
+                where["span_end_gt"] = start
             case _:
                 raise UnsupportedFilterError(type(f).__name__, "PythonVectorIndex")
     return where if where else None
