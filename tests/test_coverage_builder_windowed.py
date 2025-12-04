@@ -2,8 +2,10 @@
 
 Tests cover:
 - compute_window_bounds: window boundary computation and edge-max discovery
-- _filter_window_coordinates: coordinate filtering for window bounds
 - build_windowed_coverage: full windowed coverage construction
+
+Note: Window coordinate filtering is tested via TreeCoordinate.is_within_leaf_range
+in test_tree_coordinate.py and through integration tests in TestBuildWindowedCoverage.
 """
 
 from __future__ import annotations
@@ -36,131 +38,6 @@ class MockTreeNode:
     left_child_id: str | None = None
     right_child_id: str | None = None
     text: str = "test content"
-
-
-class TestFilterWindowCoordinates:
-    """Tests for _filter_window_coordinates method."""
-
-    @pytest.fixture
-    def coverage_builder(self) -> CoverageBuilder:
-        """Create a CoverageBuilder with a mock store."""
-        mock_store = MagicMock()
-        return CoverageBuilder(mock_store)
-
-    def test_filters_coordinates_outside_left_boundary(
-        self, coverage_builder: CoverageBuilder
-    ) -> None:
-        """Coordinates spanning outside left boundary are filtered out."""
-        coords = [
-            TreeCoordinate(
-                "doc", height=0, level_index=0
-            ),  # spans leaf 0, outside [2,5]
-            TreeCoordinate("doc", height=0, level_index=2),  # spans leaf 2, inside
-            TreeCoordinate("doc", height=0, level_index=5),  # spans leaf 5, inside
-        ]
-
-        filtered = coverage_builder._filter_window_coordinates(
-            coords, left_leaf_index=2, right_leaf_index=5
-        )
-
-        assert len(filtered) == 2
-        level_indices = {c.level_index for c in filtered}
-        assert 0 not in level_indices
-        assert 2 in level_indices
-        assert 5 in level_indices
-
-    def test_filters_coordinates_outside_right_boundary(
-        self, coverage_builder: CoverageBuilder
-    ) -> None:
-        """Coordinates spanning outside right boundary are filtered out."""
-        coords = [
-            TreeCoordinate("doc", height=0, level_index=3),  # inside [2,5]
-            TreeCoordinate("doc", height=0, level_index=6),  # outside [2,5]
-            TreeCoordinate("doc", height=0, level_index=7),  # outside [2,5]
-        ]
-
-        filtered = coverage_builder._filter_window_coordinates(
-            coords, left_leaf_index=2, right_leaf_index=5
-        )
-
-        assert len(filtered) == 1
-        assert filtered[0].level_index == 3
-
-    def test_filters_parent_spanning_beyond_window(
-        self, coverage_builder: CoverageBuilder
-    ) -> None:
-        """Parent nodes extending beyond window are filtered."""
-        # Height 1 node at level_index=0 spans leaves 0-1, outside window [2,5]
-        # Height 1 node at level_index=1 spans leaves 2-3, inside window [2,5]
-        coords = [
-            TreeCoordinate("doc", height=1, level_index=0),  # spans 0-1, outside
-            TreeCoordinate("doc", height=1, level_index=1),  # spans 2-3, inside
-            TreeCoordinate("doc", height=1, level_index=2),  # spans 4-5, inside
-        ]
-
-        filtered = coverage_builder._filter_window_coordinates(
-            coords, left_leaf_index=2, right_leaf_index=5
-        )
-
-        assert len(filtered) == 2
-        level_indices = {c.level_index for c in filtered}
-        assert 0 not in level_indices
-        assert 1 in level_indices
-        assert 2 in level_indices
-
-    def test_large_node_spanning_entire_window_rejected(
-        self, coverage_builder: CoverageBuilder
-    ) -> None:
-        """A node larger than the window is rejected if it extends beyond."""
-        # Height 3 node at level_index=0 spans leaves 0-7
-        # Window is [2,5], so this node spans beyond on both sides
-        coords = [
-            TreeCoordinate("doc", height=3, level_index=0),  # spans 0-7, outside
-        ]
-
-        filtered = coverage_builder._filter_window_coordinates(
-            coords, left_leaf_index=2, right_leaf_index=5
-        )
-
-        assert len(filtered) == 0
-
-    def test_node_exactly_matching_window_accepted(
-        self, coverage_builder: CoverageBuilder
-    ) -> None:
-        """Node exactly matching window boundaries is accepted."""
-        # Height 2, level_index=0 spans leaves 0-3 (4 leaves)
-        # Window [0,3] exactly matches
-        coords = [TreeCoordinate("doc", height=2, level_index=0)]
-
-        filtered = coverage_builder._filter_window_coordinates(
-            coords, left_leaf_index=0, right_leaf_index=3
-        )
-
-        assert len(filtered) == 1
-        assert filtered[0].height == 2
-        assert filtered[0].level_index == 0
-
-    def test_preserves_order(self, coverage_builder: CoverageBuilder) -> None:
-        """Filtered coordinates preserve input order."""
-        coords = [
-            TreeCoordinate("doc", height=0, level_index=5),
-            TreeCoordinate("doc", height=0, level_index=3),
-            TreeCoordinate("doc", height=0, level_index=4),
-        ]
-
-        filtered = coverage_builder._filter_window_coordinates(
-            coords, left_leaf_index=2, right_leaf_index=6
-        )
-
-        assert len(filtered) == 3
-        assert [c.level_index for c in filtered] == [5, 3, 4]
-
-    def test_empty_input_returns_empty(self, coverage_builder: CoverageBuilder) -> None:
-        """Empty coordinate list returns empty result."""
-        filtered = coverage_builder._filter_window_coordinates(
-            [], left_leaf_index=0, right_leaf_index=10
-        )
-        assert filtered == []
 
 
 class TestComputeWindowBounds:

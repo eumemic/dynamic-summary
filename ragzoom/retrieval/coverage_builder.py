@@ -163,13 +163,34 @@ class CoverageBuilder:
         seed_metadata: Mapping[str, MetaDict] | None = None,
         *,
         pinned_ids: set[str] | None = None,
+        window_bounds: WindowBounds | None = None,
     ) -> tuple[dict[str, bool], dict[str, TreeNode]]:
+        """Build coverage by computing coordinate closure for seeds.
+
+        This is the core coverage algorithm. It:
+        1. Extracts coordinates from seed metadata or fetches missing seeds
+        2. Adds synthetic seeds (roots for full-doc, edge-max for windowed)
+        3. Computes ancestor/sibling coordinates for all seeds
+        4. Optionally filters by window bounds
+        5. Fetches nodes for all coordinates
+
+        Args:
+            selected_ids: Node IDs to include in coverage (seeds)
+            seed_metadata: Optional metadata for seeds (for coordinate extraction)
+            pinned_ids: Node IDs that are pinned (their ancestors are excluded)
+            window_bounds: If provided, restricts coverage to the window and uses
+                edge-max instead of roots as synthetic seeds.
+
+        Returns:
+            Tuple of (coverage_map, nodes dict).
+        """
         coverage_map: dict[str, bool] = {}
         nodes: dict[str, TreeNode] = {}
 
-        document_default = getattr(self.store, "document_id", None)
+        document_id = getattr(self.store, "document_id", None)
         meta_map = seed_metadata or {}
 
+        # Extract coordinates from metadata where available
         meta_seed_coords: dict[str, TreeCoordinate] = {}
         missing_seed_ids: list[str] = []
         for node_id in selected_ids:
@@ -182,7 +203,7 @@ class CoverageBuilder:
             ):
                 missing_seed_ids.append(node_id)
                 continue
-            coord_doc = str(meta.get("document_id", "")) or document_default
+            coord_doc = str(meta.get("document_id", "")) or document_id
             if coord_doc is None:
                 missing_seed_ids.append(node_id)
                 continue
@@ -193,6 +214,7 @@ class CoverageBuilder:
             )
             meta_seed_coords[node_id] = coord
 
+        # Fetch nodes for seeds without metadata coordinates
         try:
             existing_nodes = (
                 self.store.nodes.get_nodes(missing_seed_ids) if missing_seed_ids else []
@@ -229,6 +251,7 @@ class CoverageBuilder:
                 coordinates.append(c)
                 coordinates.append(c.sibling())
 
+        # Enqueue real seeds
         for node in existing_nodes:
             node_coord = coord_for_node(node)
             if node_coord is not None:
@@ -237,31 +260,41 @@ class CoverageBuilder:
         for coord in meta_seed_coords.values():
             enqueue(coord)
 
-        # Add document roots to pool - they'll be filtered if ancestors of pinned nodes
-        try:
-            root_nodes = self.store.nodes.get_root_nodes()
-            for root in root_nodes:
-                root_coord = TreeCoordinate(
-                    document_id=getattr(root, "document_id", None),
-                    height=getattr(root, "height", 0),
-                    level_index=getattr(root, "level_index", 0),
+        # Add synthetic seeds based on mode
+        if window_bounds is not None:
+            # Windowed: add edge-max coordinates (ensure full window coverage)
+            # Edge-max is None at document boundaries (tree naturally covers)
+            if window_bounds.left_edge_max is not None:
+                enqueue(window_bounds.left_edge_max)
+            if (
+                window_bounds.right_edge_max is not None
+                and window_bounds.right_edge_max != window_bounds.left_edge_max
+            ):
+                enqueue(window_bounds.right_edge_max)
+        else:
+            # Full document: add root nodes
+            try:
+                root_nodes = self.store.nodes.get_root_nodes()
+                for root in root_nodes:
+                    root_coord = TreeCoordinate(
+                        document_id=getattr(root, "document_id", None),
+                        height=getattr(root, "height", 0),
+                        level_index=getattr(root, "level_index", 0),
+                    )
+                    coordinates.append(root_coord)
+            except Exception as exc:
+                handle_graceful_error(
+                    exc, "Failed to get root nodes for coverage", default=None
                 )
-                coordinates.append(root_coord)
-        except Exception as exc:
-            handle_graceful_error(
-                exc, "Failed to get root nodes for coverage", default=None
-            )
 
         unique_coords = TreeCoordinate.unique(coordinates)
 
         # Filter out ancestors of pinned nodes - they become roots of their own trees
         if pinned_ids:
             pinned_coords: list[TreeCoordinate] = []
-            # Collect pinned node coordinates from metadata
             for pinned_id in pinned_ids:
                 if pinned_id in meta_seed_coords:
                     pinned_coords.append(meta_seed_coords[pinned_id])
-            # Collect pinned node coordinates from fetched nodes
             for node in existing_nodes:
                 if node.id in pinned_ids:
                     node_coord = coord_for_node(node)
@@ -271,6 +304,17 @@ class CoverageBuilder:
                 unique_coords, pinned_coords, max_height
             )
 
+        # Filter coordinates outside window bounds
+        if window_bounds is not None:
+            unique_coords = [
+                c
+                for c in unique_coords
+                if c.is_within_leaf_range(
+                    window_bounds.left_leaf_index, window_bounds.right_leaf_index
+                )
+            ]
+
+        # Fetch nodes for all coordinates
         coordinate_tuples = [coord.as_tuple() for coord in unique_coords]
 
         if coordinate_tuples:
@@ -278,6 +322,7 @@ class CoverageBuilder:
             for node in fetched:
                 register(node)
 
+        # Fallback fetch for seeds that weren't found via coordinates
         missing_after_coord = [
             node_id for node_id in meta_seed_coords if node_id not in coverage_map
         ]
@@ -289,7 +334,15 @@ class CoverageBuilder:
                     exc, "Failed to fetch fallback nodes for coverage", default=[]
                 )
             for node in fallback_nodes:
-                register(node)
+                # For windowed queries, only include if within window
+                if window_bounds is not None:
+                    if (
+                        node.span_start >= window_bounds.actual_start
+                        and node.span_end <= window_bounds.actual_end
+                    ):
+                        register(node)
+                else:
+                    register(node)
 
         return coverage_map, nodes
 
@@ -386,28 +439,6 @@ class CoverageBuilder:
             right_edge_max=right_edge_max,
         )
 
-    def _filter_window_coordinates(
-        self,
-        coords: list[TreeCoordinate],
-        left_leaf_index: int,
-        right_leaf_index: int,
-    ) -> list[TreeCoordinate]:
-        """Remove coordinates outside the window bounds.
-
-        Args:
-            coords: List of coordinates to filter
-            left_leaf_index: Left boundary leaf level_index
-            right_leaf_index: Right boundary leaf level_index
-
-        Returns:
-            Coordinates whose leaf span is within [left_leaf_index, right_leaf_index].
-        """
-        return [
-            c
-            for c in coords
-            if c.is_within_leaf_range(left_leaf_index, right_leaf_index)
-        ]
-
     def build_windowed_coverage(
         self,
         selected_ids: list[str],
@@ -433,143 +464,10 @@ class CoverageBuilder:
         Returns:
             CoverageResult with coverage_map and nodes within the window.
         """
-        # jscpd:ignore-start - windowed coverage mirrors _build_coverage_internal
-        # but has critical differences (edge-max instead of roots, window filtering)
-        coverage_map: dict[str, bool] = {}
-        nodes: dict[str, TreeNode] = {}
-
-        document_id = getattr(self.store, "document_id", None)
-        meta_map = seed_metadata or {}
-
-        meta_seed_coords: dict[str, TreeCoordinate] = {}
-        missing_seed_ids: list[str] = []
-        for node_id in selected_ids:
-            meta = meta_map.get(node_id)
-            if (
-                not meta
-                or meta.get("coord_version") != 1
-                or "height" not in meta
-                or "level_index" not in meta
-            ):
-                missing_seed_ids.append(node_id)
-                continue
-            coord_doc = str(meta.get("document_id", "")) or document_id
-            if coord_doc is None:
-                missing_seed_ids.append(node_id)
-                continue
-            coord = TreeCoordinate(
-                document_id=coord_doc,
-                height=coerce_int(meta.get("height", 0)),
-                level_index=coerce_int(meta.get("level_index", 0)),
-            )
-            meta_seed_coords[node_id] = coord
-
-        try:
-            existing_nodes = (
-                self.store.nodes.get_nodes(missing_seed_ids) if missing_seed_ids else []
-            )
-        except Exception as exc:
-            existing_nodes = handle_graceful_error(
-                exc, "Failed to fetch nodes for coverage seeds", default=[]
-            )
-
-        def register(node: TreeNode) -> None:
-            coverage_map[node.id] = True
-            nodes.setdefault(node.id, node)
-
-        def coord_for_node(node: TreeNode) -> TreeCoordinate | None:
-            raw_index = getattr(node, "level_index", None)
-            if raw_index is None:
-                return None
-            return TreeCoordinate(
-                document_id=getattr(node, "document_id", None),
-                height=coerce_int(getattr(node, "height", 0)),
-                level_index=coerce_int(raw_index),
-            )
-
-        for node in existing_nodes:
-            register(node)
-
-        # Compute ancestors up to max_height for sibling discovery
-        max_height = self.store.nodes.max_height()
-
-        coordinates: list[TreeCoordinate] = []
-
-        def enqueue(coord: TreeCoordinate) -> None:
-            coords = [coord]
-            coords.extend(coord.ancestors(include_self=False, stop_height=max_height))
-            for c in coords:
-                coordinates.append(c)
-                coordinates.append(c.sibling())
-
-        # Add edge-max as synthetic seeds - they ensure full window coverage
-        # Edge-max is None at document boundaries (tree naturally covers to boundaries)
-        if window_bounds.left_edge_max is not None:
-            enqueue(window_bounds.left_edge_max)
-        if (
-            window_bounds.right_edge_max is not None
-            and window_bounds.right_edge_max != window_bounds.left_edge_max
-        ):
-            enqueue(window_bounds.right_edge_max)
-
-        # Add real seeds
-        for node in existing_nodes:
-            node_coord = coord_for_node(node)
-            if node_coord is not None:
-                enqueue(node_coord)
-
-        for coord in meta_seed_coords.values():
-            enqueue(coord)
-
-        unique_coords = TreeCoordinate.unique(coordinates)
-
-        # Filter out ancestors of pinned nodes - they become roots of their own trees
-        if pinned_ids:
-            pinned_coords: list[TreeCoordinate] = []
-            for pinned_id in pinned_ids:
-                if pinned_id in meta_seed_coords:
-                    pinned_coords.append(meta_seed_coords[pinned_id])
-            for node in existing_nodes:
-                if node.id in pinned_ids:
-                    node_coord = coord_for_node(node)
-                    if node_coord is not None:
-                        pinned_coords.append(node_coord)
-            unique_coords = self._filter_pinned_ancestors(
-                unique_coords, pinned_coords, max_height
-            )
-
-        # Filter out coordinates outside the window
-        unique_coords = self._filter_window_coordinates(
-            unique_coords,
-            window_bounds.left_leaf_index,
-            window_bounds.right_leaf_index,
+        coverage_map, nodes = self._build_coordinate_closure(
+            selected_ids,
+            seed_metadata,
+            pinned_ids=pinned_ids,
+            window_bounds=window_bounds,
         )
-
-        coordinate_tuples = [coord.as_tuple() for coord in unique_coords]
-
-        if coordinate_tuples:
-            fetched = self.store.nodes.get_by_height_levels(coordinate_tuples)
-            for node in fetched:
-                register(node)
-
-        # Fallback fetch for seeds that weren't found via coordinates
-        missing_after_coord = [
-            node_id for node_id in meta_seed_coords if node_id not in coverage_map
-        ]
-        if missing_after_coord:
-            try:
-                fallback_nodes = self.store.nodes.get_nodes(missing_after_coord)
-            except Exception as exc:
-                fallback_nodes = handle_graceful_error(
-                    exc, "Failed to fetch fallback nodes for coverage", default=[]
-                )
-            for node in fallback_nodes:
-                # Only include if within window
-                if (
-                    node.span_start >= window_bounds.actual_start
-                    and node.span_end <= window_bounds.actual_end
-                ):
-                    register(node)
-        # jscpd:ignore-end
-
         return CoverageResult(coverage_map=coverage_map, nodes=nodes)
