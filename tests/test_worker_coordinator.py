@@ -910,6 +910,9 @@ async def test_worker_coordinator_preserves_preceding_parent_links(
     # Restore to avoid side-effects for later tests
     WorkerCoordinator._process_candidate = orig_process  # type: ignore[method-assign]
 
+    # Shutdown coordinator to clean up worker tasks
+    await coordinator.shutdown()
+
     left_node = store.nodes.get("leaf-0")
     right_node = store.nodes.get("leaf-2")
 

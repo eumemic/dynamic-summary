@@ -177,6 +177,8 @@ class WorkerCoordinator:
         self._embedding_queue: asyncio.Queue[EmbeddingCandidate] = asyncio.Queue()
         self._embedding_pending_counts: defaultdict[str, int] = defaultdict(int)
         self._embedding_inflight_counts: defaultdict[str, int] = defaultdict(int)
+        # Track leaf IDs pending embedding to prevent duplicate discovery
+        self._embedding_pending_leaf_ids: set[str] = set()
 
         # Contextual indexing: tree completion frontier cache per document
         # The frontier is the span_end of the first root (ordered by span_start)
@@ -338,7 +340,13 @@ class WorkerCoordinator:
         existing_vectors = vector_index.get_vectors(leaf_ids)
         existing_ids = {v.id for v in existing_vectors}
 
-        missing_leaves = [leaf for leaf in leaves if leaf.id not in existing_ids]
+        # Filter out leaves that are already in vector index or pending embedding
+        missing_leaves = [
+            leaf
+            for leaf in leaves
+            if leaf.id not in existing_ids
+            and leaf.id not in self._embedding_pending_leaf_ids
+        ]
         if not missing_leaves:
             return [], [], []
 
@@ -381,6 +389,7 @@ class WorkerCoordinator:
 
         async with self._coord_lock:
             self._embedding_pending_counts[document_id] += 1
+            self._embedding_pending_leaf_ids.update(leaf_ids)
             self._idle_event.clear()
 
         await self._embedding_queue.put(candidate)
@@ -658,6 +667,11 @@ class WorkerCoordinator:
     ) -> None:
         if self._is_cancelled(document_id):
             return
+
+        # Invalidate eligible span cache - tree structure may have changed since last scan.
+        # This ensures gating checks use fresh frontier and leaf data.
+        self._eligible_span_ends.pop(document_id, None)
+
         async with self._doc_lock(document_id):
             if deleted_node_ids:
                 await self._handle_deleted_nodes(document_id, state, deleted_node_ids)
@@ -1405,6 +1419,11 @@ class WorkerCoordinator:
                         self._embedding_inflight_counts[doc_id] = current_inflight - 1
                     else:
                         self._embedding_inflight_counts.pop(doc_id, None)
+
+                    # Remove processed leaf IDs from pending set
+                    self._embedding_pending_leaf_ids.difference_update(
+                        candidate.leaf_ids
+                    )
 
                     # Set idle event if both queues are empty
                     if self._is_fully_idle():
