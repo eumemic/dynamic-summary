@@ -188,6 +188,80 @@ class TreeCoordinate:
             current_depth += 1
 
     # ------------------------------------------------------------------
+    # Window / boundary helpers
+    # ------------------------------------------------------------------
+    def is_left_child(self) -> bool:
+        """Return True if this coordinate represents a left child.
+
+        Left children have even level_index and share span_start with their parent.
+        """
+        return self.level_index % 2 == 0
+
+    def is_right_child(self) -> bool:
+        """Return True if this coordinate represents a right child.
+
+        Right children have odd level_index and share span_end with their parent.
+        """
+        return self.level_index % 2 == 1
+
+    def highest_ancestor_on_boundary(
+        self, *, left_edge: bool, max_height: int | None = None
+    ) -> TreeCoordinate:
+        """Find the highest ancestor that shares the same boundary edge.
+
+        For left_edge=True: walk up while node is a left child (shares span_start).
+        For left_edge=False: walk up while node is a right child (shares span_end).
+
+        Note: For the RIGHT edge at the document end, callers should skip this
+        computation entirely - the tree naturally covers to the end without
+        needing a synthetic edge-max node.
+
+        Args:
+            left_edge: If True, find ancestor sharing left boundary; else right.
+            max_height: Optional maximum height to stop at (prevents infinite loop).
+
+        Returns:
+            The highest ancestor coordinate that shares the specified boundary.
+            May return self if this node doesn't share the boundary with its parent.
+        """
+        current = self
+        while True:
+            # Stop if we've reached max height
+            if max_height is not None and current.height >= max_height:
+                break
+            # Check if we should continue based on edge alignment
+            if left_edge and not current.is_left_child():
+                break
+            if not left_edge and not current.is_right_child():
+                break
+            current = current.parent()
+        return current
+
+    def leaf_span(self) -> tuple[int, int]:
+        """Return the range of leaf-level indices covered by this coordinate.
+
+        Returns:
+            Tuple of (left_leaf_idx, right_leaf_idx) where left is inclusive
+            and right is the last covered leaf index (inclusive).
+        """
+        left_leaf = self.level_index << self.height
+        right_leaf = ((self.level_index + 1) << self.height) - 1
+        return left_leaf, right_leaf
+
+    def is_within_leaf_range(self, left_leaf_idx: int, right_leaf_idx: int) -> bool:
+        """Check if this coordinate's leaf span is within [left, right].
+
+        Args:
+            left_leaf_idx: Minimum allowed leaf index (inclusive).
+            right_leaf_idx: Maximum allowed leaf index (inclusive).
+
+        Returns:
+            True if all leaves covered by this coordinate fall within the range.
+        """
+        my_left, my_right = self.leaf_span()
+        return my_left >= left_leaf_idx and my_right <= right_leaf_idx
+
+    # ------------------------------------------------------------------
     # Conversions / utilities
     # ------------------------------------------------------------------
     def as_tuple(self) -> tuple[int, int]:

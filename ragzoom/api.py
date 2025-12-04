@@ -306,6 +306,12 @@ class QueryRequest(BaseModel):  # type: ignore[explicit-any]
     document_id: str = Field(description="Document ID to query within")
     num_seeds: int | None = Field(None, description="Override max nodes to retrieve")
     token_budget: int | None = Field(None, description="Override token budget")
+    span_start: int = Field(
+        0, description="Start of document window (character position)"
+    )
+    span_end: int | None = Field(
+        None, description="End of document window (default: document end)"
+    )
 
 
 # Pydantic BaseModel inherits from type containing Any, required for serialization
@@ -319,6 +325,8 @@ class QueryResponse(BaseModel):  # type: ignore[explicit-any]
     nodes_retrieved: int
     tiling_size: int
     query_id: str
+    actual_start: int = Field(description="Computed window start (aligned to leaf)")
+    actual_end: int | None = Field(description="Computed window end (aligned to leaf)")
 
 
 class QueryListItem(BaseModel):  # type: ignore[explicit-any]
@@ -830,6 +838,8 @@ async def query(
         request.document_id,
         num_seeds=request.num_seeds,
         token_budget=request.token_budget,
+        span_start=request.span_start,
+        span_end=request.span_end,
     )
 
     return QueryResponse(
@@ -838,6 +848,8 @@ async def query(
         nodes_retrieved=result.nodes_retrieved,
         tiling_size=result.tiling_size,
         query_id=result.query_id,
+        actual_start=result.actual_start,
+        actual_end=result.actual_end,
     )
     # Error handling is now done by middleware
 
