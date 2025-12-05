@@ -2,9 +2,10 @@
 
 The gating logic ensures nodes are only processed when preceding context is available.
 Key concepts:
-- eligible_span_end: computed by walking leaves from frontier, accumulating up to K tokens
-- Nodes with span_end <= eligible_span_end are eligible for processing
-- Following siblings outside eligible span trigger carry-up behavior
+- Dynamic summary frontier: computed by summing root tokens until exceeding budget B
+- eligible_span_start: computed by walking leaves from frontier, accumulating up to K tokens
+- Left children with span_start <= eligible_span_start are eligible for building parents
+- No sibling eligibility checks - if left is eligible, proceed with both siblings
 """
 
 from __future__ import annotations
@@ -130,7 +131,7 @@ class TestCheckContextualReadiness:
         operational_config: OperationalConfig,
         mock_llm_service: MagicMock,
     ) -> None:
-        """Nodes at or before eligible_span_end are ready."""
+        """Left children at or before eligible_span_start are ready."""
         coordinator = WorkerCoordinator(
             store=storage_backend,
             index_config=index_config_with_lag,
@@ -138,8 +139,8 @@ class TestCheckContextualReadiness:
             llm_service=mock_llm_service,
         )
 
-        # With empty document, frontier=0, eligible_end=0
-        # Node with span_end=0 should be ready
+        # With empty document, frontier=0, eligible_span_start=0
+        # Left child with span_start=0 should be ready
         assert coordinator._check_contextual_readiness(0, "doc1") is True
 
     def test_node_beyond_eligible_span_is_blocked(
@@ -149,7 +150,7 @@ class TestCheckContextualReadiness:
         operational_config: OperationalConfig,
         mock_llm_service: MagicMock,
     ) -> None:
-        """Nodes with span_end > eligible_span_end are blocked."""
+        """Left children with span_start > eligible_span_start are blocked."""
         coordinator = WorkerCoordinator(
             store=storage_backend,
             index_config=index_config_no_lag,  # K=0
@@ -157,8 +158,8 @@ class TestCheckContextualReadiness:
             llm_service=mock_llm_service,
         )
 
-        # With K=0 and empty document, eligible_span_end=0
-        # Node with span_end=100 should be blocked
+        # With K=0 and empty document, eligible_span_start=0
+        # Left child with span_start=100 should be blocked
         assert coordinator._check_contextual_readiness(100, "doc1") is False
 
 
@@ -181,11 +182,11 @@ class TestEligibleSpanCaching:
         )
 
         # First call computes and caches
-        result1 = coordinator._get_eligible_span_end("doc1")
+        result1 = coordinator._get_eligible_span_start("doc1")
         assert "doc1" in coordinator._eligible_span_ends
 
         # Second call uses cache
-        result2 = coordinator._get_eligible_span_end("doc1")
+        result2 = coordinator._get_eligible_span_start("doc1")
         assert result1 == result2
 
     def test_frontier_invalidation_clears_eligible_span_cache(
@@ -204,8 +205,8 @@ class TestEligibleSpanCaching:
         )
 
         # Populate caches
-        coordinator._get_eligible_span_end("doc1")
-        coordinator.get_tree_frontier("doc1")
+        coordinator._get_eligible_span_start("doc1")
+        coordinator.compute_dynamic_summary_frontier("doc1")
 
         assert "doc1" in coordinator._eligible_span_ends
         assert "doc1" in coordinator._tree_frontiers
@@ -237,6 +238,6 @@ class TestGatingIntegration:
         )
 
         assert hasattr(coordinator, "_compute_eligible_span")
-        assert hasattr(coordinator, "_get_eligible_span_end")
+        assert hasattr(coordinator, "_get_eligible_span_start")
         assert hasattr(coordinator, "_check_contextual_readiness")
         assert coordinator._index_config.context_lag_tokens == 0

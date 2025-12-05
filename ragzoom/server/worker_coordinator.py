@@ -529,25 +529,41 @@ class WorkerCoordinator:
     # ------------------------------------------------------------------
     # Contextual indexing: tree frontier tracking
     # ------------------------------------------------------------------
-    def get_tree_frontier(self, document_id: str) -> int:
-        """Get the tree completion frontier for a document.
+    def compute_dynamic_summary_frontier(self, document_id: str) -> int:
+        """Compute the dynamic summary frontier for a document.
 
-        Uses in-memory cache if available, otherwise queries the database.
-        The frontier is the span_end of the first root node (ordered by span_start),
-        indicating how far the summary tree is complete from the start.
+        Walks roots left-to-right (ordered by span_start), summing their token
+        counts until the sum exceeds the preceding_summary_budget. The frontier
+        is the span_end of the last root that fits within the budget.
+
+        This guarantees we can generate a complete dynamic summary of [0, frontier)
+        using just the root nodes that fit in the budget.
 
         Args:
-            document_id: Document to get frontier for
+            document_id: Document to compute frontier for
 
         Returns:
-            span_end of first root, or 0 if no roots exist
+            span_end of rightmost root fitting in budget, or 0 if none
         """
         if document_id in self._tree_frontiers:
             return self._tree_frontiers[document_id]
 
-        # Cache miss - query the database
+        budget = self._index_config.preceding_summary_budget_tokens
         store = self._store.for_document(document_id)
-        frontier = store.nodes.get_tree_completion_frontier(document_id)
+        roots = store.nodes.get_root_nodes(document_id)
+
+        # Sort roots by span_start (left-to-right order)
+        roots_sorted = sorted(roots, key=lambda r: int(getattr(r, "span_start", 0)))
+
+        token_sum = 0
+        frontier = 0
+        for root in roots_sorted:
+            root_tokens = int(getattr(root, "token_count", 0))
+            if token_sum + root_tokens > budget:
+                break
+            token_sum += root_tokens
+            frontier = int(getattr(root, "span_end", 0))
+
         self._tree_frontiers[document_id] = frontier
         return frontier
 
@@ -594,7 +610,7 @@ class WorkerCoordinator:
             - last_eligible_span_start: span_start of last eligible leaf
               (used to derive verbatim budget: last_eligible_span_start - frontier)
         """
-        frontier = self.get_tree_frontier(document_id)
+        frontier = self.compute_dynamic_summary_frontier(document_id)
         k = self._index_config.context_lag_tokens
 
         # If K is 0, no leaves beyond frontier are eligible
@@ -617,37 +633,40 @@ class WorkerCoordinator:
 
         return frontier, eligible_span_end, last_eligible_span_start
 
-    def _get_eligible_span_end(self, document_id: str) -> int:
-        """Get the eligible span end for a document, with caching.
+    def _get_eligible_span_start(self, document_id: str) -> int:
+        """Get the eligible span start threshold for a document, with caching.
+
+        Returns the span_start of the last eligible leaf. A left child is
+        eligible for building a parent if left.span_start <= this value.
 
         Args:
-            document_id: Document to get eligible span end for
+            document_id: Document to get eligible span threshold for
 
         Returns:
-            The span_end up to which nodes are eligible for processing
+            The span_start threshold: nodes with span_start <= this are eligible
         """
         if document_id in self._eligible_span_ends:
             return self._eligible_span_ends[document_id]
 
-        _, eligible_end, _ = self._compute_eligible_span(document_id)
-        self._eligible_span_ends[document_id] = eligible_end
-        return eligible_end
+        _, _, last_eligible_span_start = self._compute_eligible_span(document_id)
+        self._eligible_span_ends[document_id] = last_eligible_span_start
+        return last_eligible_span_start
 
-    def _check_contextual_readiness(self, span_end: int, document_id: str) -> bool:
-        """Check if a node is eligible for processing based on eligible span.
+    def _check_contextual_readiness(self, span_start: int, document_id: str) -> bool:
+        """Check if a left child is eligible for building a parent.
 
-        A node is eligible if its span_end <= eligible_span_end. Everything
-        before the eligible span end is eligible for processing.
+        A left child is eligible if its span_start <= eligible_span_start.
+        This ensures we can provide preceding context for the summarization.
 
         Args:
-            span_end: The span_end of the node being checked
+            span_start: The span_start of the left child being checked
             document_id: Document ID for eligible span lookup
 
         Returns:
-            True if the node is eligible for processing, False if it should wait
+            True if the left child is eligible for building a parent
         """
-        eligible_span_end = self._get_eligible_span_end(document_id)
-        return span_end <= eligible_span_end
+        eligible_span_start = self._get_eligible_span_start(document_id)
+        return span_start <= eligible_span_start
 
     def _candidate_key(self, candidate: ReadyParentCandidate) -> str:
         return f"{candidate.document_id}:{candidate.left_child_id}"
@@ -1072,18 +1091,11 @@ class WorkerCoordinator:
             if following is None:
                 return False, DependencySnapshot(preceding, left, None)
 
-        # Check contextual readiness - gate on eligible span.
-        # This ensures preceding context is available when summarizing.
-        if not self._check_contextual_readiness(span_end, document_id):
+        # Gating: check if left child's span_start is within eligible span.
+        # A left child is eligible if span_start <= eligible_span_start.
+        # No sibling eligibility check - if left is eligible, proceed with both.
+        if not self._check_contextual_readiness(span_start, document_id):
             return False, DependencySnapshot(preceding, left, following)
-
-        # Check if following sibling is outside eligible span - treat as carry-up
-        if following is not None:
-            following_span_end = int(getattr(following, "span_end", 0))
-            eligible_span_end = self._get_eligible_span_end(document_id)
-            if following_span_end > eligible_span_end:
-                # Following sibling is blocked, so this node should carry up
-                return True, DependencySnapshot(preceding, left, None)
 
         return True, DependencySnapshot(preceding, left, following)
 
@@ -1778,12 +1790,15 @@ class WorkerCoordinator:
                     span_end=span_end_final,
                 )
 
-        # Invalidate and potentially update tree frontier if this node could affect it.
-        # A new root at span_start=0 may advance the frontier.
-        if span_start_final == 0:
-            self.invalidate_tree_frontier(candidate.document_id)
-            # Rescan document to wake up any blocked work
-            await self._scan_document(candidate.document_id)
+        # Always invalidate eligible span cache and rescan after any summary node
+        # is committed. This is necessary because:
+        # 1. The frontier advances when the first root's chain grows
+        # 2. Blocked candidates (span_end > eligible_span_end) need to be retried
+        # 3. We can't predict which nodes are on the critical path to the first root
+        # Without this, gating creates a deadlock: blocked work waits for frontier
+        # to advance, but frontier can't advance without completing blocked work.
+        self.invalidate_tree_frontier(candidate.document_id)
+        await self._scan_document(candidate.document_id)
 
         logger.debug(
             "worker: committed parent doc=%s parent=%s left=%s right=%s height=%d level=%d",
