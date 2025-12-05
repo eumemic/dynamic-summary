@@ -117,9 +117,17 @@ def validate_document(
 
     findings.extend(_leaf_chunk_size(snapshot, target_chunk_tokens, chunk_tolerance))
     findings.extend(
-        _vector_index_consistency(snapshot, vector_index) if vector_index else []
+        _vector_index_consistency(snapshot, vector_index, require_complete)
+        if vector_index
+        else []
     )
-    findings.extend(_completeness_check(snapshot, require_complete=require_complete))
+    findings.extend(
+        _completeness_check(
+            snapshot,
+            require_complete=require_complete,
+            vector_index=vector_index,
+        )
+    )
     if telemetry is not None:
         findings.extend(_telemetry_consistency(snapshot, telemetry))
 
@@ -712,40 +720,19 @@ def _leaf_chunk_size(
 
 
 def _vector_index_consistency(
-    snapshot: DocumentSnapshot, vector_index: VectorIndex
+    snapshot: DocumentSnapshot, vector_index: VectorIndex, require_complete: bool
 ) -> list[ValidationFinding]:
+    """Check vector index consistency.
+
+    Note: Missing embeddings are NOT checked here. When --complete is passed,
+    missing embeddings are checked by _completeness_check. This function only
+    checks for orphan vectors (vectors with no matching node).
+    """
     findings: list[ValidationFinding] = []
-    # Only leaf nodes (height == 0) should have embeddings.
-    # Summary nodes (height > 0) derive their scores from bottom-up propagation.
-    leaf_ids = [leaf.id for leaf in snapshot.leaves]
-    batch_size = 256
+    # Suppress unused parameter warning - kept for API consistency
+    _ = require_complete
 
-    for start in range(0, len(leaf_ids), batch_size):
-        chunk = leaf_ids[start : start + batch_size]
-        try:
-            vectors = vector_index.get_vectors(chunk)
-        except Exception as exc:  # pragma: no cover - defensive
-            for node_id in chunk:
-                findings.append(
-                    ValidationFinding(
-                        code="vector.fetch_error",
-                        message=f"Failed to fetch vector for {node_id}: {exc}",
-                        node_id=node_id,
-                    )
-                )
-            continue
-
-        returned = {vec.id for vec in vectors}
-        for node_id in chunk:
-            if node_id not in returned:
-                findings.append(
-                    ValidationFinding(
-                        code="vector.missing",
-                        message=f"Embedding missing for leaf node {node_id}",
-                        node_id=node_id,
-                    )
-                )
-
+    # Check for orphan vectors (vectors with no matching node)
     extra_ids = _vector_index_ids(vector_index)
     if extra_ids is not None:
         for vec_id in extra_ids:
@@ -834,33 +821,98 @@ def _per_tree_leaf_depth(snapshot: DocumentSnapshot) -> list[ValidationFinding]:
 
 
 def _completeness_check(
-    snapshot: DocumentSnapshot, *, require_complete: bool
+    snapshot: DocumentSnapshot,
+    *,
+    require_complete: bool,
+    vector_index: VectorIndex | None = None,
 ) -> list[ValidationFinding]:
+    """Check forest completeness when require_complete is True.
+
+    Forest completeness means:
+    1. Every adjacent pair of nodes at the same height has a parent.
+       (L with even level_index, R with odd level_index where L.level_index + 1 = R.level_index)
+    2. All leaves have embeddings in the vector index.
+
+    This replaces the old single-root requirement, allowing forests as valid quiescent states.
+    """
     if not require_complete:
         return []
 
-    parentless = snapshot.parentless
-    if len(parentless) != 1:
-        return [
-            ValidationFinding(
-                code="tree.multiple_roots",
-                message=f"Expected single root, found {len(parentless)} parentless nodes",
-            )
-        ]
+    findings: list[ValidationFinding] = []
 
-    root = parentless[0]
-    leaves = sorted(snapshot.leaves, key=lambda node: node.span_start)
-    if leaves:
-        final_span = leaves[-1].span_end
-        if root.span_start != 0 or root.span_end != final_span:
-            return [
-                ValidationFinding(
-                    code="tree.root_span",
-                    message=(
-                        f"Root span [{root.span_start}, {root.span_end}) "
-                        f"does not cover leaves ending at {final_span}"
-                    ),
-                    node_id=root.id,
+    # Group nodes by height
+    by_height: dict[int, dict[int, TreeNode]] = defaultdict(dict)
+    for node in snapshot.nodes:
+        height = int(getattr(node, "height", 0))
+        level_index = getattr(node, "level_index", None)
+        if level_index is not None:
+            by_height[height][int(level_index)] = node
+
+    # Check that adjacent pairs have parents
+    for height, nodes_by_index in by_height.items():
+        level_indices = sorted(nodes_by_index.keys())
+        for level_index in level_indices:
+            # Only check left children (even level_index)
+            if level_index % 2 != 0:
+                continue
+
+            left = nodes_by_index.get(level_index)
+            right = nodes_by_index.get(level_index + 1)
+
+            if left is None:
+                continue
+
+            # If there's a right sibling, both should have the same parent
+            if right is not None:
+                left_parent = getattr(left, "parent_id", None)
+                right_parent = getattr(right, "parent_id", None)
+
+                if left_parent is None and right_parent is None:
+                    findings.append(
+                        ValidationFinding(
+                            code="forest.unpaired_siblings",
+                            message=(
+                                f"Adjacent siblings at height {height} "
+                                f"(level_index {level_index}, {level_index + 1}) "
+                                f"have no parent"
+                            ),
+                            node_id=left.id,
+                        )
+                    )
+                elif left_parent != right_parent:
+                    findings.append(
+                        ValidationFinding(
+                            code="forest.parent_mismatch",
+                            message=(
+                                f"Adjacent siblings at height {height} "
+                                f"have different parents: {left_parent} vs {right_parent}"
+                            ),
+                            node_id=left.id,
+                        )
+                    )
+
+    # Check all leaves have embeddings (only when --complete)
+    if vector_index is not None:
+        leaf_ids = [leaf.id for leaf in snapshot.leaves]
+        if leaf_ids:
+            try:
+                vectors = vector_index.get_vectors(leaf_ids)
+                returned_ids = {vec.id for vec in vectors}
+                for leaf_id in leaf_ids:
+                    if leaf_id not in returned_ids:
+                        findings.append(
+                            ValidationFinding(
+                                code="forest.missing_embedding",
+                                message=f"Leaf {leaf_id} has no embedding",
+                                node_id=leaf_id,
+                            )
+                        )
+            except Exception as exc:
+                findings.append(
+                    ValidationFinding(
+                        code="forest.embedding_check_failed",
+                        message=f"Failed to check embeddings: {exc}",
+                    )
                 )
-            ]
-    return []
+
+    return findings

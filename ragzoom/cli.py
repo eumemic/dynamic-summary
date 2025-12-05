@@ -670,7 +670,7 @@ def telemetry_export(document_id: str, output: str, server_address: str | None) 
 @click.option(
     "--complete",
     is_flag=True,
-    help="Require the document tree to be fully summarized (single root).",
+    help="Require forest completeness: all sibling pairs have parents, all leaves have embeddings.",
 )
 @click.option(
     "--telemetry-file",
