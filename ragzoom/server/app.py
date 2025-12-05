@@ -24,6 +24,9 @@ class ServerOptions:
     config_path: str | None = None
     collect_telemetry: bool = False
     telemetry_dir: str | None = None
+    # Config overrides (take precedence over config file)
+    preceding_summary_budget_tokens: int | None = None
+    context_lag_tokens: int | None = None
 
 
 def build_state(options: ServerOptions) -> ServerState:
@@ -31,6 +34,17 @@ def build_state(options: ServerOptions) -> ServerState:
 
     config_path = Path(options.config_path) if options.config_path else None
     index_cfg = IndexConfig.load(config_path=config_path)
+
+    # Apply CLI overrides if provided
+    if (
+        options.preceding_summary_budget_tokens is not None
+        or options.context_lag_tokens is not None
+    ):
+        index_cfg = index_cfg.replace(
+            preceding_summary_budget_tokens=options.preceding_summary_budget_tokens,
+            context_lag_tokens=options.context_lag_tokens,
+        )
+
     query_cfg = QueryConfig()
     operational_cfg = OperationalConfig()
 

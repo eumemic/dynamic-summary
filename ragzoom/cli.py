@@ -1426,6 +1426,18 @@ def server() -> None:
     type=click.Path(file_okay=False, path_type=Path),
     help="Directory to store telemetry events (defaults near data dir)",
 )
+@click.option(
+    "--preceding-summary-budget",
+    "preceding_summary_budget_tokens",
+    type=int,
+    help="Override preceding_summary_budget_tokens (default: 2000)",
+)
+@click.option(
+    "--context-lag",
+    "context_lag_tokens",
+    type=int,
+    help="Override context_lag_tokens (default: 2000)",
+)
 def start_server(
     host: str,
     port: int,
@@ -1433,6 +1445,8 @@ def start_server(
     debug: bool,
     collect_telemetry: bool,
     telemetry_dir: Path | None,
+    preceding_summary_budget_tokens: int | None,
+    context_lag_tokens: int | None,
 ) -> None:
     """Start the RagZoom gRPC server."""
 
@@ -1443,6 +1457,8 @@ def start_server(
         config_path=str(config_path) if config_path else None,
         collect_telemetry=collect_telemetry,
         telemetry_dir=str(telemetry_dir) if telemetry_dir else None,
+        preceding_summary_budget_tokens=preceding_summary_budget_tokens,
+        context_lag_tokens=context_lag_tokens,
     )
     run_server(options)
 
