@@ -162,3 +162,98 @@ async def test_indexing_engine_limits_embedding_text() -> None:
         f"This is the production bug - context_prefix + leaf_text is not being limited. "
         f"Leaf had {leaf_tokens} tokens, context had {context_tokens} tokens."
     )
+
+
+@pytest.mark.asyncio
+async def test_embed_leaf_records_telemetry() -> None:
+    """Test that _embed_leaf records embedding telemetry with timing.
+
+    Regression test for bug where leaf node embeddings were generated but
+    no telemetry was recorded, causing missing embedding data in telemetry.json.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from ragzoom.server.indexing_engine import (
+        DocumentContext,
+        EmbeddingJob,
+        IndexingEngine,
+    )
+    from ragzoom.telemetry_collection import TelemetryCollector
+
+    # Create mocks
+    mock_store = MagicMock()
+    mock_doc_store = MagicMock()
+    mock_store.for_document.return_value = mock_doc_store
+
+    # Create a leaf with some text
+    leaf_text = "This is a test leaf with some text content."
+    mock_leaf = MagicMock()
+    mock_leaf.text = leaf_text
+    mock_leaf.id = "test-leaf-id"
+    mock_leaf.span_start = 0  # First leaf, no context retrieval
+    mock_leaf.span_end = 100
+    mock_doc_store.nodes.get.return_value = mock_leaf
+
+    # Create config
+    config = IndexConfig.load()
+
+    # Create mock LLM service
+    mock_llm_service = MagicMock()
+
+    async def mock_embed_texts(texts: list[str]) -> list[list[float]]:
+        return [[0.1] * 1536 for _ in texts]
+
+    mock_llm_service.embed_texts = mock_embed_texts
+
+    # Create telemetry collector and pre-register the leaf node
+    telemetry = TelemetryCollector(
+        document_id="test-doc",
+        source_tokens=100,
+        config=config,
+    )
+    telemetry.track_node_created(
+        node_id="test-leaf-id",
+        height=0,
+        span=(0, 100),
+    )
+
+    # Create engine with document context containing telemetry
+    engine = IndexingEngine(
+        store=mock_store,
+        llm_service=mock_llm_service,
+        index_config=config,
+        openai_client=AsyncMock(),
+    )
+
+    # Set up document context with telemetry collector
+    engine._document_contexts["test-doc"] = DocumentContext(
+        telemetry_collector=telemetry
+    )
+
+    # Run _embed_leaf
+    with patch.object(engine, "_get_vector_index", return_value=None):
+        job = EmbeddingJob(document_id="test-doc", leaf_id="test-leaf-id")
+        await engine._embed_leaf(job)
+
+    # Verify telemetry was recorded
+    node_telemetry = telemetry.node_telemetry.get("test-leaf-id")
+    assert node_telemetry is not None, "Node telemetry should exist"
+    assert node_telemetry.embedding is not None, (
+        "Embedding telemetry should be recorded. "
+        "This is the regression - _embed_leaf should call record_embedding_call_v2."
+    )
+
+    # Verify embedding timing was captured
+    assert node_telemetry.embedding.start_time > 0, "start_time should be set"
+    assert node_telemetry.embedding.end_time > 0, "end_time should be set"
+    assert (
+        node_telemetry.embedding.end_time >= node_telemetry.embedding.start_time
+    ), "end_time should be >= start_time"
+
+    # Verify other embedding fields
+    assert node_telemetry.embedding.text_tokens > 0, "text_tokens should be > 0"
+    assert node_telemetry.embedding.batch_size == 1, "batch_size should be 1"
+    assert node_telemetry.embedding.batch_position == 0, "batch_position should be 0"
+    assert (
+        node_telemetry.embedding.model == config.embedding_model
+    ), f"model should be {config.embedding_model}"

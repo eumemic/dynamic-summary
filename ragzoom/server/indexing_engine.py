@@ -521,6 +521,10 @@ class IndexingEngine:
         3. Generate embedding with context prefix
         4. Write to vector index
         """
+        import time
+
+        from ragzoom.utils.tokenization import tokenizer
+
         store = self._store.for_document(job.document_id)
         leaf = store.nodes.get(job.leaf_id)
         if leaf is None:
@@ -542,6 +546,10 @@ class IndexingEngine:
 
         span_start = int(getattr(leaf, "span_start", 0))
         span_end = int(getattr(leaf, "span_end", 0))
+
+        # Get telemetry collector for this document
+        ctx = self._document_contexts.get(job.document_id)
+        telemetry = ctx.telemetry_collector if ctx else None
 
         # Retrieve preceding context if not at document start
         preceding_context: str | None = None
@@ -566,6 +574,8 @@ class IndexingEngine:
         # This prevents the ValueError that occurs when context + leaf exceeds the limit
         text_to_embed = self._build_embedding_text(leaf_text, context_prefix)
 
+        # Record embedding start time for telemetry
+        embed_start_time = time.time()
         embeddings = await self._llm_service.embed_texts([text_to_embed])
         if not embeddings:
             logger.error(
@@ -574,6 +584,16 @@ class IndexingEngine:
                 job.leaf_id,
             )
             return
+
+        # Record embedding telemetry
+        if telemetry is not None:
+            text_tokens = tokenizer.count_tokens(text_to_embed)
+            telemetry.record_embedding_call_v2(
+                node_embeddings=[(job.leaf_id, text_tokens)],
+                batch_size=1,
+                model=self._index_config.embedding_model,
+                start_time=embed_start_time,
+            )
 
         # Write to vector index
         vector_index = self._get_vector_index()
