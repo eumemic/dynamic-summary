@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import Mock, patch
+
 import pytest
 
 from ragzoom.config import IndexConfig
@@ -11,6 +15,14 @@ from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.models import PostgresTreeNode as ORMTreeNode
 from ragzoom.splitter import TextSplitter
 from tests.conftest import BackwardCompatibilityConfig, IndexerRuntimeHarness
+
+
+def _mock_sync_embeddings_create(**kwargs: object) -> Mock:
+    """Mock for sync OpenAI client embeddings used by EmbeddingService."""
+    input_texts = cast(list[str] | str, kwargs.get("input", []))
+    if isinstance(input_texts, str):
+        input_texts = [input_texts]
+    return Mock(data=[SimpleNamespace(embedding=[0.1] * 1536) for _ in input_texts])
 
 
 def _configure_runtime(harness: IndexerRuntimeHarness, config: IndexConfig) -> None:
@@ -93,12 +105,16 @@ class TestFollowingNeighbor:
         await indexer_runtime_harness.clear(document_id)
 
         test_doc = "First chunk. Second chunk. Third chunk. Fourth chunk."
-        await indexer_runtime_harness.append(
-            document_id,
-            test_doc,
-            replace_existing=True,
-            file_path="test.txt",
-        )
+        engine_client = indexer_runtime_harness.indexing_engine._openai_client
+        with patch.object(
+            engine_client.embeddings, "create", new=_mock_sync_embeddings_create
+        ):
+            await indexer_runtime_harness.append(
+                document_id,
+                test_doc,
+                replace_existing=True,
+                file_path="test.txt",
+            )
 
         doc_store = indexer_runtime_harness.runtime._store.for_document(document_id)
         leaf_nodes = [node for node in doc_store.nodes.get_all() if node.height == 0]
@@ -133,12 +149,16 @@ class TestFollowingNeighbor:
         await indexer_runtime_harness.clear(document_id)
 
         test_doc = " ".join([f"Chunk {i}." for i in range(8)])
-        await indexer_runtime_harness.append(
-            document_id,
-            test_doc,
-            replace_existing=True,
-            file_path="test.txt",
-        )
+        engine_client = indexer_runtime_harness.indexing_engine._openai_client
+        with patch.object(
+            engine_client.embeddings, "create", new=_mock_sync_embeddings_create
+        ):
+            await indexer_runtime_harness.append(
+                document_id,
+                test_doc,
+                replace_existing=True,
+                file_path="test.txt",
+            )
 
         doc_store = indexer_runtime_harness.runtime._store.for_document(document_id)
         nodes_by_height: dict[int, list[TreeNode]] = {}

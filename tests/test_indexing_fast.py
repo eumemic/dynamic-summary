@@ -1,5 +1,6 @@
 """Backend-agnostic fast indexing tests using storage backend."""
 
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import Mock, patch
 
@@ -7,6 +8,14 @@ import pytest
 
 from ragzoom.contracts.storage_backend import StorageBackend
 from tests.conftest import IndexerRuntimeHarness
+
+
+def _mock_sync_embeddings_create(**kwargs: object) -> Mock:
+    """Mock for sync OpenAI client embeddings used by EmbeddingService."""
+    input_texts = cast(list[str] | str, kwargs.get("input", []))
+    if isinstance(input_texts, str):
+        input_texts = [input_texts]
+    return Mock(data=[SimpleNamespace(embedding=[0.1] * 1536) for _ in input_texts])
 
 
 class TestIndexingFast:
@@ -28,13 +37,18 @@ class TestIndexingFast:
         test_document = "\n\n".join(test_doc_parts)
         doc_length = len(test_document)
 
-        await indexer_runtime_harness.append(
-            "test-doc",
-            test_document,
-            replace_existing=True,
-            file_path="test-doc.txt",
-            await_idle=False,
-        )
+        # Mock the sync OpenAI client used by IndexingEngine for context retrieval
+        engine_client = indexer_runtime_harness.indexing_engine._openai_client
+        with patch.object(
+            engine_client.embeddings, "create", new=_mock_sync_embeddings_create
+        ):
+            await indexer_runtime_harness.append(
+                "test-doc",
+                test_document,
+                replace_existing=True,
+                file_path="test-doc.txt",
+                await_idle=True,  # Must wait within mock scope for embedding jobs
+            )
 
         doc_store = storage_backend.for_document("test-doc")
         leaf_nodes = [node for node in doc_store.nodes.get_all() if node.height == 0]
@@ -115,15 +129,19 @@ class TestIndexingFast:
                 input_texts = [input_texts]
             texts_per_call.append(len(input_texts))
 
-            from types import SimpleNamespace
-
             return Mock(
                 data=[SimpleNamespace(embedding=[0.1] * 1536) for _ in input_texts]
             )
 
         llm_client = indexer_runtime_harness.llm_service.client
+        engine_client = indexer_runtime_harness.indexing_engine._openai_client
 
-        with patch.object(llm_client.embeddings, "create", new=mock_embeddings_create):
+        with (
+            patch.object(llm_client.embeddings, "create", new=mock_embeddings_create),
+            patch.object(
+                engine_client.embeddings, "create", new=_mock_sync_embeddings_create
+            ),
+        ):
             await indexer_runtime_harness.append(
                 "test-doc",
                 test_document,
