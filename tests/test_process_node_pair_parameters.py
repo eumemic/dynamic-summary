@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -13,6 +13,25 @@ from tests.conftest import IndexerRuntimeHarness
 from tests.vector_index_stubs import RecordingVectorIndex
 
 
+def _create_mock_sync_openai_client() -> MagicMock:
+    """Create a mock sync OpenAI client for IndexingEngine's retriever."""
+    mock_client = MagicMock()
+
+    def sync_mock_embeddings(*args: object, **kwargs: object) -> object:
+        from typing import cast
+
+        input_texts = cast(list[str] | str, kwargs.get("input", []))
+        if isinstance(input_texts, str):
+            input_texts = [input_texts]
+        embedding_value = [0.1] * 1536
+        return MagicMock(
+            data=[MagicMock(embedding=embedding_value) for _ in input_texts]
+        )
+
+    mock_client.embeddings.create = sync_mock_embeddings
+    return mock_client
+
+
 def _configure_runtime(
     harness: IndexerRuntimeHarness,
     config: IndexConfig,
@@ -21,12 +40,14 @@ def _configure_runtime(
     harness.runtime._index_config = config
     harness.runtime._append_executor._config = config
     harness.runtime._append_executor._splitter = TextSplitter(config)
-    harness.worker_coordinator._index_config = config
+    harness.indexing_engine._index_config = config
     harness.llm_service.config = config
     harness.telemetry_manager._index_config = config
     vector_factory = lambda _model: vector_index  # noqa: E731
     harness.runtime._vector_index_factory = vector_factory
-    harness.worker_coordinator._vector_index_factory = vector_factory
+    harness.indexing_engine._vector_index_factory = vector_factory
+    # Mock the sync OpenAI client used by IndexingEngine's retriever
+    harness.indexing_engine._openai_client = _create_mock_sync_openai_client()
 
 
 def _document_text(chunks: int) -> str:

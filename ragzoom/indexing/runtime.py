@@ -14,8 +14,8 @@ from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.server.append_executor import AppendExecutor, AppendOutcome
+from ragzoom.server.indexing_engine import IndexingEngine, IndexingStatus
 from ragzoom.server.run_manager import IndexRunContext, TelemetryRunManager
-from ragzoom.server.worker_coordinator import WorkerCoordinator, WorkerStatus
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.utils.tokenization import tokenizer
 
@@ -78,14 +78,14 @@ class IndexerRuntime:
         store: StorageBackend,
         index_config: IndexConfig,
         append_executor: AppendExecutor,
-        worker_coordinator: WorkerCoordinator,
+        indexing_engine: IndexingEngine,
         telemetry_manager: TelemetryRunManager | None,
         vector_index_factory: VectorIndexFactory,
     ) -> None:
         self._store = store
         self._index_config = index_config
         self._append_executor = append_executor
-        self._worker_coordinator = worker_coordinator
+        self._indexing_engine = indexing_engine
         self._telemetry_manager = telemetry_manager
         self._vector_index_factory = vector_index_factory
 
@@ -112,20 +112,22 @@ class IndexerRuntime:
         listeners = self._listeners.get(document_id)
         if not listeners:
             return
-        status = await self._worker_coordinator.status()
+        status = await self._indexing_engine.status()
         event = self._build_progress_event(status, document_id)
         if event is not None:
             self._dispatch_progress(document_id, event)
 
     def _build_progress_event(
-        self, status: WorkerStatus, document_id: str, *, error: str | None = None
+        self, status: IndexingStatus, document_id: str, *, error: str | None = None
     ) -> ProgressEvent | None:
-        pending = status.pending_by_document.get(document_id, 0)
-        inflight = status.inflight_by_document.get(document_id, 0)
+        # New status model: in_flight (no pending queue)
+        inflight = status.in_flight_by_document.get(document_id, 0)
         completed = status.completed_by_document.get(document_id, 0)
-        total = pending + inflight + completed
+        pending = 0  # No explicit queue in new model
+        total = inflight + completed
+
         stage: Literal["update", "complete"]
-        if pending == 0 and inflight == 0:
+        if inflight == 0:
             stage = "complete"
         else:
             stage = "update"
@@ -187,7 +189,7 @@ class IndexerRuntime:
                     break
 
                 try:
-                    status = await self._worker_coordinator.status()
+                    status = await self._indexing_engine.status()
                 except Exception:  # pragma: no cover - defensive logging
                     logger.exception("Failed to poll worker status for progress loop")
                 else:
@@ -397,24 +399,13 @@ class DocumentIndexSession:
                         total_leaves=outcome.total_leaves,
                     )
 
-            if run_context is not None:
-                await self._runtime._worker_coordinator.attach_run(run_context)
-
-            # Queue embedding work for new leaves (async, like summaries)
-            if outcome and outcome.new_leaf_ids:
-                await self._runtime._worker_coordinator.enqueue_embedding(
-                    document_id=self._document_id,
-                    leaf_ids=outcome.new_leaf_ids,
-                    leaf_texts=outcome.leaf_texts,
-                    metadata=outcome.leaf_metadata,
-                    run_id=run_context.run_id if run_context else None,
-                )
-
-            await self._runtime._worker_coordinator.enqueue_document(
+            # Trigger indexing work - engine discovers leaves and sibling pairs
+            telemetry_collector = (
+                run_context.telemetry_collector if run_context else None
+            )
+            await self._runtime._indexing_engine.trigger_work(
                 self._document_id,
-                deleted_node_ids=outcome.deleted_node_ids if outcome else None,
-                new_root_ids=outcome.new_leaf_ids if outcome else None,
-                run_context=run_context,
+                telemetry_collector=telemetry_collector,
             )
 
             await self._runtime._emit_status(self._document_id)
@@ -429,15 +420,10 @@ class DocumentIndexSession:
                     await telemetry_manager.complete_run(
                         run_context.run_id, error=str(exc)
                     )
-                with suppress(Exception):
-                    await self._runtime._worker_coordinator.detach_run(
-                        self._document_id,
-                        run_context.run_id,
-                    )
             raise
 
     async def clear(self) -> ClearedDocumentResult:
-        await self._runtime._worker_coordinator.cancel_document(self._document_id)
+        await self._runtime._indexing_engine.cancel_document(self._document_id)
 
         store = self._runtime._store
         lock_cm = self._lock_document(store)

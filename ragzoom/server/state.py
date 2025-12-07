@@ -7,13 +7,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
+from openai import OpenAI
+
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.indexing import IndexerRuntime
 from ragzoom.query_log import QueryLog
 from ragzoom.server.append_executor import AppendExecutor
+from ragzoom.server.indexing_engine import IndexingEngine
 from ragzoom.server.run_manager import TelemetryRunManager
-from ragzoom.server.worker_coordinator import WorkerCoordinator
 from ragzoom.services.llm_service import LLMService
 from ragzoom.services.query_service import QueryService
 from ragzoom.store import create_store_with_docker
@@ -36,7 +38,7 @@ class ServerState:
     telemetry_run_manager: TelemetryRunManager
     telemetry_log: DocumentTelemetryLog | None
     append_executor: AppendExecutor
-    worker_coordinator: WorkerCoordinator
+    indexing_engine: IndexingEngine
     index_runtime: IndexerRuntime
 
     @classmethod
@@ -81,19 +83,29 @@ class ServerState:
             operational_cfg.database_url,
             model,
         )
-        worker_coordinator = WorkerCoordinator(
+        openai_client = OpenAI(
+            api_key=operational_cfg.openai_api_key.get_secret_value()
+        )
+
+        # Callback to complete telemetry runs when indexing finishes
+        async def on_document_idle(document_id: str) -> None:
+            run_context = await telemetry_run_manager.latest_for_document(document_id)
+            if run_context is not None and run_context.status == "in_progress":
+                await telemetry_run_manager.complete_run(run_context.run_id, error=None)
+
+        indexing_engine = IndexingEngine(
             store=store,
-            index_config=index_cfg,
-            operational_config=operational_cfg,
             llm_service=llm_service,
-            run_manager=telemetry_run_manager,
+            index_config=index_cfg,
+            openai_client=openai_client,
             vector_index_factory=vector_factory,
+            on_document_idle=on_document_idle,
         )
         index_runtime = IndexerRuntime(
             store=store,
             index_config=index_cfg,
             append_executor=append_executor,
-            worker_coordinator=worker_coordinator,
+            indexing_engine=indexing_engine,
             telemetry_manager=telemetry_run_manager,
             vector_index_factory=vector_factory,
         )
@@ -109,7 +121,7 @@ class ServerState:
             telemetry_run_manager=telemetry_run_manager,
             telemetry_log=telemetry_log,
             append_executor=append_executor,
-            worker_coordinator=worker_coordinator,
+            indexing_engine=indexing_engine,
             index_runtime=index_runtime,
         )
 

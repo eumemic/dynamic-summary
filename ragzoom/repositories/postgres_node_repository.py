@@ -425,8 +425,10 @@ class PostgresNodeRepository(BaseRepository):
         """Return all nodes whose parent is null, optionally filtered by document."""
 
         with self.SessionLocal() as session:
-            query = session.query(PostgresTreeNode).filter(
-                PostgresTreeNode.parent_id.is_(None)
+            query = (
+                session.query(PostgresTreeNode)
+                .filter(PostgresTreeNode.parent_id.is_(None))
+                .order_by(PostgresTreeNode.span_start)
             )
             if document_id is not None:
                 query = query.filter(PostgresTreeNode.document_id == document_id)

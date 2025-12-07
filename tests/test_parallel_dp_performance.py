@@ -34,7 +34,7 @@ class TestParallelDPPerformance:
     ) -> None:
         vector_factory = lambda _model_id: vector_index  # noqa: E731
         harness.runtime._vector_index_factory = vector_factory
-        harness.worker_coordinator._vector_index_factory = vector_factory
+        harness.indexing_engine._vector_index_factory = vector_factory
 
     @staticmethod
     async def _index_document(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TypedDict, cast
+from unittest.mock import MagicMock
 
 import numpy as np
 from numpy.typing import NDArray
@@ -80,9 +81,21 @@ def configure_runtime(harness: IndexerRuntimeHarness, config: IndexConfig) -> No
     harness.runtime._index_config = config
     harness.runtime._append_executor._config = config
     harness.runtime._append_executor._splitter = TextSplitter(config)
-    harness.worker_coordinator._index_config = config
+    harness.indexing_engine._index_config = config
     harness.llm_service.config = config
     harness.telemetry_manager._index_config = config
+
+    # Mock the sync OpenAI client used by IndexingEngine's retriever
+    mock_sync_client = MagicMock()
+
+    def sync_mock_embeddings(*args: object, **kwargs: object) -> object:
+        input_texts = cast(list[str] | str, kwargs.get("input", []))
+        if isinstance(input_texts, str):
+            input_texts = [input_texts]
+        return MagicMock(data=[MagicMock(embedding=[0.1] * 1536) for _ in input_texts])
+
+    mock_sync_client.embeddings.create = sync_mock_embeddings
+    harness.indexing_engine._openai_client = mock_sync_client
 
 
 def add_nodes(store: DocumentStore, nodes: list[NodePayload]) -> None:

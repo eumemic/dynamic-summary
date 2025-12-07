@@ -311,7 +311,11 @@ class SqliteNodeRepository:
 
     def get_root_nodes(self, document_id: str | None = None) -> list[TreeNode]:
         with self.SessionLocal() as session:
-            stmt = select(SQLiteTreeNode).where(SQLiteTreeNode.parent_id.is_(None))
+            stmt = (
+                select(SQLiteTreeNode)
+                .where(SQLiteTreeNode.parent_id.is_(None))
+                .order_by(SQLiteTreeNode.span_start)
+            )
             if document_id is not None:
                 stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
             rows = session.execute(stmt).scalars().all()

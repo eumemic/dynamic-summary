@@ -34,12 +34,12 @@ def _configure_runtime(
     harness.runtime._append_executor._splitter = (
         harness.runtime._append_executor._splitter.__class__(config)
     )
-    harness.worker_coordinator._index_config = config
+    harness.indexing_engine._index_config = config
     harness.llm_service.config = config
     harness.telemetry_manager._index_config = config
     vector_factory = lambda _model: vector_index  # noqa: E731
     harness.runtime._vector_index_factory = vector_factory
-    harness.worker_coordinator._vector_index_factory = vector_factory
+    harness.indexing_engine._vector_index_factory = vector_factory
 
 
 def create_test_reporter(config: IndexConfig) -> TelemetryCollector:

@@ -32,12 +32,12 @@ def _configure_runtime(
     harness.runtime._append_executor._splitter = (
         harness.runtime._append_executor._splitter.__class__(config)
     )
-    harness.worker_coordinator._index_config = config
+    harness.indexing_engine._index_config = config
     harness.llm_service.config = config
     harness.telemetry_manager._index_config = config
     vector_factory = lambda _model: vector_index  # noqa: E731
     harness.runtime._vector_index_factory = vector_factory
-    harness.worker_coordinator._vector_index_factory = vector_factory
+    harness.indexing_engine._vector_index_factory = vector_factory
 
 
 class TestTelemetryDataStructures:
@@ -481,6 +481,23 @@ class TestTelemetryIntegration:
         mock_async_client.chat.completions.create = telemetry_chat_async
 
         indexer_runtime_harness.llm_service.client = mock_async_client
+
+        # Also mock the sync OpenAI client used by IndexingEngine's retriever
+        mock_sync_client = MagicMock()
+
+        def sync_mock_embeddings(*args: object, **kwargs: object) -> object:
+            from typing import cast
+
+            input_texts = cast(list[str] | str, kwargs.get("input", []))
+            if isinstance(input_texts, str):
+                input_texts = [input_texts]
+            embedding_value = [0.1] * 1536
+            return MagicMock(
+                data=[MagicMock(embedding=embedding_value) for _ in input_texts]
+            )
+
+        mock_sync_client.embeddings.create = sync_mock_embeddings
+        indexer_runtime_harness.indexing_engine._openai_client = mock_sync_client
 
         document_id = "telemetry-test"
         storage_backend.clear_document(document_id)

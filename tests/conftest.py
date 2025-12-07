@@ -24,6 +24,7 @@ from ragzoom.indexing.runtime import ClearedDocumentResult, IndexerRuntime
 from ragzoom.progress import configure_progress, get_progress_config
 from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
 from ragzoom.server.append_executor import AppendExecutor
+from ragzoom.server.indexing_engine import IndexingEngine
 from ragzoom.server.run_manager import TelemetryRunManager
 from ragzoom.server.servicers import (
     GrpcServerProto,
@@ -33,7 +34,6 @@ from ragzoom.server.servicers import (
     shutdown_gracefully,
 )
 from ragzoom.server.state import ServerState
-from ragzoom.server.worker_coordinator import WorkerCoordinator
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.services.llm_service import LLMService
 from ragzoom.store import create_store
@@ -79,12 +79,12 @@ class BackwardCompatibilityConfig:
         return self.query_config.budget_tokens
 
 
-@dataclass(slots=True)
+@dataclass
 class IndexerRuntimeHarness:
     """Convenience wrapper exposing async helpers around IndexerRuntime."""
 
     runtime: IndexerRuntime
-    worker_coordinator: WorkerCoordinator
+    indexing_engine: IndexingEngine
     llm_service: LLMService
     telemetry_manager: TelemetryRunManager
 
@@ -105,17 +105,24 @@ class IndexerRuntimeHarness:
             collect_telemetry=collect_telemetry,
         )
         if await_idle:
-            await self.worker_coordinator.wait_until_idle(document_id)
+            await self.indexing_engine.wait_until_idle(document_id)
         return result
 
     async def clear(self, document_id: str) -> ClearedDocumentResult:
         session = self.runtime.get_session(document_id)
         result = await session.clear()
-        await self.worker_coordinator.wait_until_idle(document_id)
+        await self.indexing_engine.wait_until_idle(document_id)
         return result
 
     async def wait_for_idle(self, document_id: str | None = None) -> None:
-        await self.worker_coordinator.wait_until_idle(document_id)
+        await self.indexing_engine.wait_until_idle(document_id)
+        # Complete any active telemetry runs for this document now that indexing is done
+        if document_id is not None:
+            run_context = await self.telemetry_manager.latest_for_document(document_id)
+            if run_context is not None and run_context.status == "in_progress":
+                await self.telemetry_manager.complete_run(
+                    run_context.run_id, error=None
+                )
 
 
 # Set default API key for tests if not already set
@@ -448,32 +455,31 @@ async def indexer_runtime_harness(
         ) or index_config.embedding_model
         return _index_for_model(model)
 
-    worker_coordinator = WorkerCoordinator(
+    from openai import OpenAI
+
+    openai_client = OpenAI(
+        api_key=operational_template.openai_api_key.get_secret_value()
+    )
+    indexing_engine = IndexingEngine(
         store=storage_backend,
-        index_config=index_config,
-        operational_config=operational_template.replace(
-            database_url=default_database_url,
-            vector_backend=default_vector_backend,
-        ),
         llm_service=llm_service,
-        run_manager=telemetry_manager,
-        worker_count=4,
+        index_config=index_config,
+        openai_client=openai_client,
         vector_index_factory=_index_for_model,
     )
-    await worker_coordinator.start()
 
     runtime = IndexerRuntime(
         store=storage_backend,
         index_config=index_config,
         append_executor=append_executor,
-        worker_coordinator=worker_coordinator,
+        indexing_engine=indexing_engine,
         telemetry_manager=telemetry_manager,
         vector_index_factory=_index_for_model,
     )
 
     harness = IndexerRuntimeHarness(
         runtime=runtime,
-        worker_coordinator=worker_coordinator,
+        indexing_engine=indexing_engine,
         llm_service=llm_service,
         telemetry_manager=telemetry_manager,
     )
@@ -483,7 +489,7 @@ async def indexer_runtime_harness(
     finally:
         try:
             await asyncio.wait_for(
-                asyncio.shield(worker_coordinator.wait_until_idle()),
+                asyncio.shield(indexing_engine.wait_until_idle()),
                 timeout=30.0,
             )
         except asyncio.TimeoutError:
@@ -499,7 +505,7 @@ async def indexer_runtime_harness(
                 "IndexerRuntimeHarness teardown: wait_until_idle failed", exc_info=exc
             )
         try:
-            await asyncio.shield(worker_coordinator.shutdown())
+            await asyncio.shield(indexing_engine.shutdown())
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.exception(
                 "IndexerRuntimeHarness teardown: shutdown failed", exc_info=exc
@@ -753,6 +759,7 @@ async def grpc_test_environment(
 
     monkeypatch.setattr("openai.OpenAI", _StubOpenAI, raising=False)
     monkeypatch.setattr("ragzoom.server.servicers.OpenAI", _StubOpenAI, raising=False)
+    monkeypatch.setattr("ragzoom.server.state.OpenAI", _StubOpenAI, raising=False)
     monkeypatch.setattr(
         "ragzoom.retrieval.embedding_service.OpenAI", _StubOpenAI, raising=False
     )
@@ -776,7 +783,7 @@ async def grpc_test_environment(
     pb2_grpc.add_WorkerServiceServicer_to_server(WorkerServicer(state), server)
 
     port = server.add_insecure_port("127.0.0.1:0")
-    await state.worker_coordinator.start()
+    # IndexingEngine doesn't require explicit start
     await server.start()
 
     address = f"127.0.0.1:{port}"
@@ -785,13 +792,11 @@ async def grpc_test_environment(
         yield address, state
     finally:
         try:
-            await asyncio.wait_for(
-                state.worker_coordinator.wait_until_idle(), timeout=5
-            )
+            await asyncio.wait_for(state.indexing_engine.wait_until_idle(), timeout=5)
         except Exception:
             pass
         await shutdown_gracefully(cast(GrpcServerProto, server))
-        await state.worker_coordinator.shutdown()
+        await state.indexing_engine.shutdown()
         state.store.close()
 
 

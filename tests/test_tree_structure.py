@@ -59,7 +59,7 @@ def _configure_runtime(harness: IndexerRuntimeHarness, config: IndexConfig) -> N
     harness.runtime._index_config = config
     harness.runtime._append_executor._config = config
     harness.runtime._append_executor._splitter = TextSplitter(config)
-    harness.worker_coordinator._index_config = config
+    harness.indexing_engine._index_config = config
     harness.llm_service.config = config
     harness.telemetry_manager._index_config = config
 
