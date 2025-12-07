@@ -578,8 +578,8 @@ class Retriever:
         if num_seeds == 0:
             return ""
 
-        # Get query embedding from the node's text
-        query_embedding = self.embedding_service.get_query_embedding(
+        # Get query embedding from the node's text (async for concurrency)
+        query_embedding = await self.embedding_service.get_query_embedding_async(
             query_text, effective_doc_id
         )
 

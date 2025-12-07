@@ -917,6 +917,7 @@ class IndexingEngine:
             self._openai_client,
             document_store,
             self._index_config.embedding_model,
+            async_client=self._llm_service.client,
         )
         budget_planner = BudgetPlanner(
             document_store,
