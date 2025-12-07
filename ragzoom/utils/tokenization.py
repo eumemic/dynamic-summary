@@ -77,6 +77,33 @@ class TokenizerUtil:
         """
         return self.encoder.decode(tokens)
 
+    def truncate_to_token_limit(
+        self, text: str, max_tokens: int, from_end: bool = True
+    ) -> str:
+        """Truncate text to fit within a token limit.
+
+        Args:
+            text: Text to truncate
+            max_tokens: Maximum number of tokens allowed
+            from_end: If True, keep the end of the text (truncate from start).
+                     If False, keep the start of the text (truncate from end).
+
+        Returns:
+            Truncated text that fits within the token limit
+        """
+        tokens = self.encode(text)
+        if len(tokens) <= max_tokens:
+            return text
+
+        if from_end:
+            # Keep the last max_tokens tokens (truncate from start)
+            truncated_tokens = tokens[-max_tokens:]
+        else:
+            # Keep the first max_tokens tokens (truncate from end)
+            truncated_tokens = tokens[:max_tokens]
+
+        return self.decode(truncated_tokens)
+
 
 # Global instance for convenience
 tokenizer = TokenizerUtil()
