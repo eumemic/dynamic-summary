@@ -781,33 +781,15 @@ class IndexingEngine:
                 span=(span_start, span_end),
             )
 
-        # Get preceding neighbor's text for context during summarization
-        prev_context: str | None = None
-        preceding_neighbor_id = getattr(left, "preceding_neighbor_id", None)
-        if preceding_neighbor_id is not None:
-            preceding = store.nodes.get(preceding_neighbor_id)
-            if preceding is not None and preceding.text:
-                prev_context = preceding.text
-
-        # Generate summary
-        summary, _retry_count, summary_tokens = await self._llm_service._summarize_text(
-            left_text,
-            right_text,
-            self._index_config.target_chunk_tokens,
-            parent_id=parent_id,
-            reporter=telemetry,
-            prev_context=prev_context,
-            left_token_count=left_tokens,
-            right_token_count=right_tokens,
-        )
-
-        # Retrieve preceding context for embedding (uses summary as query)
+        # Retrieve preceding context BEFORE summarization
+        # Uses combined children text as query since we don't have a summary yet
         preceding_context: str | None = None
         if span_start > 0:
             retriever = self._create_retriever(job.document_id)
             if retriever is not None:
+                query_text = f"{left_text}\n{right_text}"
                 preceding_context = await retriever.retrieve_for_context(
-                    query_text=summary,
+                    query_text=query_text,
                     span_end_limit=span_start,
                     budget_tokens=self._index_config.preceding_summary_budget_tokens,
                     document_id=job.document_id,
@@ -815,6 +797,18 @@ class IndexingEngine:
                 )
                 if preceding_context == "":
                     preceding_context = None
+
+        # Generate summary with preceding context
+        summary, _retry_count, summary_tokens = await self._llm_service._summarize_text(
+            left_text,
+            right_text,
+            self._index_config.target_chunk_tokens,
+            parent_id=parent_id,
+            reporter=telemetry,
+            prev_context=preceding_context,
+            left_token_count=left_tokens,
+            right_token_count=right_tokens,
+        )
 
         # Determine neighbor IDs at parent level
         preceding_parent_id: str | None = None

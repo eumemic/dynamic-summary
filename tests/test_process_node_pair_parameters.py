@@ -32,6 +32,25 @@ def _create_mock_sync_openai_client() -> MagicMock:
     return mock_client
 
 
+def _create_mock_async_openai_client() -> AsyncMock:
+    """Create a mock async OpenAI client for IndexingEngine's retriever."""
+    mock_client = AsyncMock()
+
+    async def async_mock_embeddings(*args: object, **kwargs: object) -> object:
+        from typing import cast
+
+        input_texts = cast(list[str] | str, kwargs.get("input", []))
+        if isinstance(input_texts, str):
+            input_texts = [input_texts]
+        embedding_value = [0.1] * 1536
+        return MagicMock(
+            data=[MagicMock(embedding=embedding_value) for _ in input_texts]
+        )
+
+    mock_client.embeddings.create = async_mock_embeddings
+    return mock_client
+
+
 def _configure_runtime(
     harness: IndexerRuntimeHarness,
     config: IndexConfig,
@@ -84,7 +103,7 @@ async def test_worker_coordinator_passes_token_counts(
 
     embed_mock = AsyncMock(side_effect=embed_side_effect)
 
-    indexer_runtime_harness.llm_service.client = AsyncMock()
+    indexer_runtime_harness.llm_service.client = _create_mock_async_openai_client()
     with (
         patch.object(
             indexer_runtime_harness.llm_service,
@@ -145,7 +164,7 @@ async def test_prev_context_present_when_preceding_neighbor_exists(
 
     embed_mock = AsyncMock(side_effect=embed_side_effect)
 
-    indexer_runtime_harness.llm_service.client = AsyncMock()
+    indexer_runtime_harness.llm_service.client = _create_mock_async_openai_client()
     with (
         patch.object(
             indexer_runtime_harness.llm_service,
