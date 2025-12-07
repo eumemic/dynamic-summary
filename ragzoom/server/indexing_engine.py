@@ -324,10 +324,20 @@ class IndexingEngine:
             # Acquire lock to add job
             async with self._lock:
                 if job is None:
+                    # Check if there are any active jobs for this document
+                    # Only fire idle callback when no work in progress
+                    has_active_jobs = any(
+                        j.document_id == document_id for j in self._active_jobs
+                    )
+
+                    if has_active_jobs:
+                        # Jobs still running - they'll re-trigger when done
+                        return
+
                     self._active_documents.discard(document_id)
                     self._notify_state_change()
 
-                    # Fire callback outside lock
+                    # Fire callback outside lock - document is truly idle
                     if self._on_document_idle is not None:
                         asyncio.create_task(self._safe_on_document_idle(document_id))
                     return
@@ -552,10 +562,10 @@ class IndexingEngine:
         # For now, we'll use the raw context or empty string
         context_prefix = preceding_context or ""
 
-        # Generate embedding with context
-        text_to_embed = (
-            f"{context_prefix}\n{leaf_text}" if context_prefix else leaf_text
-        )
+        # Limit text_to_embed to stay within embedding token limit (8000)
+        # This prevents the ValueError that occurs when context + leaf exceeds the limit
+        text_to_embed = self._build_embedding_text(leaf_text, context_prefix)
+
         embeddings = await self._llm_service.embed_texts([text_to_embed])
         if not embeddings:
             logger.error(
@@ -584,6 +594,67 @@ class IndexingEngine:
                 job.document_id,
                 job.leaf_id,
             )
+
+    def _build_embedding_text(
+        self, leaf_text: str, context_prefix: str, token_limit: int = 8000
+    ) -> str:
+        """Build text for embedding, ensuring it stays within token limit.
+
+        The embedding model (text-embedding-3-small) has an 8000 token limit.
+        When context_prefix + leaf_text would exceed this, we truncate the
+        context_prefix to make room for the leaf_text.
+
+        Args:
+            leaf_text: The leaf node's text (required, not truncated)
+            context_prefix: Retrieved preceding context (may be truncated)
+            token_limit: Maximum tokens for the combined text (default 8000)
+
+        Returns:
+            Combined text within token limit
+        """
+        from ragzoom.utils.tokenization import tokenizer
+
+        if not context_prefix:
+            return leaf_text
+
+        leaf_tokens = tokenizer.count_tokens(leaf_text)
+
+        # If leaf alone exceeds limit, just return it (will fail at embed time)
+        if leaf_tokens >= token_limit:
+            logger.warning(
+                "embed: leaf text (%d tokens) exceeds embedding limit (%d)",
+                leaf_tokens,
+                token_limit,
+            )
+            return leaf_text
+
+        # Calculate available budget for context (minus 1 for newline separator)
+        context_budget = token_limit - leaf_tokens - 1
+
+        if context_budget <= 0:
+            return leaf_text
+
+        # Check if context fits within budget
+        context_tokens = tokenizer.count_tokens(context_prefix)
+        if context_tokens <= context_budget:
+            return f"{context_prefix}\n{leaf_text}"
+
+        # Truncate context to fit within budget
+        # Truncate from the beginning since earlier context is less relevant
+        truncated_context = tokenizer.truncate_to_token_limit(
+            context_prefix, context_budget, from_end=False
+        )
+
+        if not truncated_context or not truncated_context.strip():
+            return leaf_text
+
+        logger.debug(
+            "embed: truncated context from %d to %d tokens (leaf=%d)",
+            context_tokens,
+            tokenizer.count_tokens(truncated_context),
+            leaf_tokens,
+        )
+        return f"{truncated_context}\n{leaf_text}"
 
     async def _summarize_pair(self, job: SummaryJob) -> None:
         """Summarize a sibling pair into a parent node.
