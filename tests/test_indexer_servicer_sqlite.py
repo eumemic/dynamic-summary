@@ -84,6 +84,7 @@ class StubIndexingEngine:
             in_flight=0,
             in_flight_by_document={},
             completed_by_document={},
+            expected_total_by_document={},
         )
 
     async def shutdown(self) -> None:

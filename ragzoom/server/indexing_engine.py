@@ -48,6 +48,27 @@ OnDocumentIdleCallback = Callable[[str], "Awaitable[None]"]
 logger = logging.getLogger(__name__)
 
 
+def _expected_total_from_leaf_count(n: int) -> int:
+    """Calculate expected total jobs for N leaves.
+
+    For N leaves building a binary tree:
+    - N embedding jobs (one per leaf)
+    - N - popcount(N) summary jobs (where popcount = count of 1-bits)
+
+    The popcount accounts for forests: odd leaf counts at any level
+    leave unpaired roots, reducing the summary count.
+
+    Examples:
+        - 8 leaves (0b1000): 8 + (8-1) = 15 jobs → 1 root
+        - 7 leaves (0b111):  7 + (7-3) = 11 jobs → 3 roots
+        - 5 leaves (0b101):  5 + (5-2) = 8 jobs  → 2 roots
+    """
+    if n <= 0:
+        return 0
+    popcount = bin(n).count("1")
+    return 2 * n - popcount
+
+
 # ---------------------------------------------------------------------------
 # Job types
 # ---------------------------------------------------------------------------
@@ -105,6 +126,7 @@ class IndexingStatus:
     in_flight: int
     in_flight_by_document: dict[str, int]
     completed_by_document: dict[str, int]
+    expected_total_by_document: dict[str, int]
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +144,8 @@ class DocumentContext:
     cancelled: bool = False
     # Track permanently failed jobs to avoid infinite retry loops
     failed_job_ids: set[IndexingJob] | None = None
+    # Expected total jobs for progress tracking (set at append time)
+    expected_total_jobs: int = 0
 
     def mark_failed(self, job: IndexingJob) -> None:
         """Mark a job as permanently failed."""
@@ -204,11 +228,17 @@ class IndexingEngine:
             document_id: Document to index
             telemetry_collector: Optional collector for timing/metrics
         """
+        # Count leaves to calculate expected total work
+        store = self._store.for_document(document_id)
+        leaf_count = sum(1 for n in store.nodes.get_all() if n.height == 0)
+        expected_total = _expected_total_from_leaf_count(leaf_count)
+
         async with self._lock:
             # Create or update document context
             if document_id not in self._document_contexts:
                 self._document_contexts[document_id] = DocumentContext(
-                    telemetry_collector=telemetry_collector
+                    telemetry_collector=telemetry_collector,
+                    expected_total_jobs=expected_total,
                 )
             else:
                 ctx = self._document_contexts[document_id]
@@ -216,6 +246,7 @@ class IndexingEngine:
                     ctx.telemetry_collector = telemetry_collector
                 ctx.cancelled = False
                 ctx.completed_jobs = 0
+                ctx.expected_total_jobs = expected_total
 
             self._active_documents.add(document_id)
             self._idle_event.clear()
@@ -276,14 +307,18 @@ class IndexingEngine:
                 )
 
             completed_by_doc: dict[str, int] = {}
+            expected_total_by_doc: dict[str, int] = {}
             for doc_id, ctx in self._document_contexts.items():
                 if ctx.completed_jobs > 0:
                     completed_by_doc[doc_id] = ctx.completed_jobs
+                if ctx.expected_total_jobs > 0:
+                    expected_total_by_doc[doc_id] = ctx.expected_total_jobs
 
             return IndexingStatus(
                 in_flight=len(self._active_jobs),
                 in_flight_by_document=in_flight_by_doc,
                 completed_by_document=completed_by_doc,
+                expected_total_by_document=expected_total_by_doc,
             )
 
     async def shutdown(self) -> None:

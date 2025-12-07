@@ -572,22 +572,21 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
             status = await self._state.indexing_engine.status()
             message = self._format_status(status)
             idle = status.in_flight == 0
-            # New model has no pending queue - work discovered on demand
-            empty_pending: dict[str, int] = {}
             doc_ids = set(status.in_flight_by_document)
             doc_ids.update(status.completed_by_document)
+            doc_ids.update(status.expected_total_by_document)
             document_progress = []
             for doc_id in sorted(doc_ids):
                 totals = DocumentProgressTotals.from_status_dicts(
                     doc_id,
-                    empty_pending,
                     status.in_flight_by_document,
                     status.completed_by_document,
+                    status.expected_total_by_document,
                 )
                 document_progress.append(
                     pb2.WorkerDocumentProgress(
                         document_id=doc_id,
-                        pending=totals.pending,
+                        pending=0,  # No pending queue in new model
                         inflight=totals.inflight,
                         completed=totals.completed,
                         total=totals.total,
@@ -854,7 +853,6 @@ async def serve(state: ServerState, *, host: str, port: int) -> None:
 
 async def _render_indexing_progress(engine: IndexingEngine) -> None:
     display = WorkerProgressDisplay(focus_documents=None)
-    empty_pending: dict[str, int] = {}
     try:
         while True:
             status = await engine.status()
@@ -872,9 +870,9 @@ async def _render_indexing_progress(engine: IndexingEngine) -> None:
             documents = {
                 doc_id: DocumentProgressTotals.from_status_dicts(
                     doc_id,
-                    empty_pending,
                     status.in_flight_by_document,
                     status.completed_by_document,
+                    status.expected_total_by_document,
                 )
                 for doc_id in sorted(active_doc_ids)
             }

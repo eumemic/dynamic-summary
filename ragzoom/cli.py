@@ -112,7 +112,6 @@ def _display_worker_snapshots(
             last_snapshot = snapshot
             documents = {
                 doc_id: DocumentProgressTotals(
-                    pending=progress.pending,
                     inflight=progress.inflight,
                     completed=progress.completed,
                     total=progress.total,

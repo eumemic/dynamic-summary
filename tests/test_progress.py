@@ -197,8 +197,8 @@ class TestWorkerProgressDisplay:
         )
 
         documents = {
-            "docA": DocumentProgressTotals(pending=3, inflight=1, completed=2, total=6),
-            "docB": DocumentProgressTotals(pending=5, inflight=0, completed=0, total=5),
+            "docA": DocumentProgressTotals(inflight=1, completed=2, total=6),
+            "docB": DocumentProgressTotals(inflight=0, completed=0, total=5),
         }
 
         display.update(queue_depth=8, inflight=1, documents=documents, message="status")
@@ -213,9 +213,7 @@ class TestWorkerProgressDisplay:
             queue_depth=0,
             inflight=0,
             documents={
-                "docA": DocumentProgressTotals(
-                    pending=0, inflight=0, completed=6, total=6
-                )
+                "docA": DocumentProgressTotals(inflight=0, completed=6, total=6)
             },
             message=None,
         )
