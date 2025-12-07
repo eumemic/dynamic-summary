@@ -28,7 +28,7 @@ When `--validate` is enabled during indexing, the following checks are performed
    - No gaps between sibling nodes
    - Spans must be valid (start < end)
    - No wraparound spans (span_end < span_start)
-   - Tree is properly balanced (left-balanced binary tree)
+   - Tree is a forest of perfect binary trees
 
 4. **Summary Validation**
    - All non-leaf nodes have summaries

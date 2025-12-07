@@ -449,7 +449,7 @@ def build_ascii_tree(
                     if label:
                         mid_pos = (start_pos + end_pos) // 2
                         label_spans.append((mid_pos, label, True))
-            # Internal node (has at least a left child - tree is left-balanced)
+            # Internal node (has children - in perfect binary tree, both or neither)
             elif node.left_child_id:
                 # For atomic nodes, internal nodes are either fully selected or not
                 char_priority = (

@@ -106,7 +106,8 @@ def validate_document(
         _parent_child_relationships,
         _neighbor_consistency,
         _level_neighbor_chains,
-        _left_balanced,
+        _perfect_binary_trees,
+        _node_coordinates,
         _parent_span_union,
         _per_tree_leaf_depth,
     ]
@@ -617,21 +618,154 @@ def _level_neighbor_chains(snapshot: DocumentSnapshot) -> list[ValidationFinding
     return findings
 
 
-def _left_balanced(snapshot: DocumentSnapshot) -> list[ValidationFinding]:
+def _perfect_binary_trees(snapshot: DocumentSnapshot) -> list[ValidationFinding]:
+    """Validate that every tree in the forest is a perfect binary tree.
+
+    In a perfect binary tree:
+    - Every internal node has exactly 2 children (both left and right)
+    - Leaves have no children
+    """
     findings: list[ValidationFinding] = []
     for node in snapshot.nodes:
-        if getattr(node, "right_child_id", None) and not getattr(
-            node, "left_child_id", None
-        ):
+        has_left = node.left_child_id is not None
+        has_right = node.right_child_id is not None
+
+        if has_left != has_right:
+            # One child but not both - violates perfect binary tree
+            if has_left:
+                findings.append(
+                    ValidationFinding(
+                        code="tree.left_only",
+                        message=(
+                            f"Node {node.id} has only a left child, "
+                            "violating perfect binary tree invariant"
+                        ),
+                        node_id=node.id,
+                    )
+                )
+            else:
+                findings.append(
+                    ValidationFinding(
+                        code="tree.right_only",
+                        message=(
+                            f"Node {node.id} has only a right child, "
+                            "violating perfect binary tree invariant"
+                        ),
+                        node_id=node.id,
+                    )
+                )
+    return findings
+
+
+def _node_coordinates(snapshot: DocumentSnapshot) -> list[ValidationFinding]:
+    """Validate that node coordinates (height, level_index) are correct.
+
+    Coordinate invariants:
+    - height: 0 for leaves, parent.height = child.height + 1
+    - level_index: Left child has even index, right child = left + 1,
+                   parent.level_index = left_child.level_index // 2
+    """
+    lookup = snapshot.node_lookup
+    findings: list[ValidationFinding] = []
+
+    for node in snapshot.nodes:
+        height = node.height
+        level_index = node.level_index
+
+        # Check leaf height
+        is_leaf = node.left_child_id is None and node.right_child_id is None
+        if is_leaf and height != 0:
             findings.append(
                 ValidationFinding(
-                    code="tree.right_without_left",
-                    message=(
-                        f"Node {node.id} has a right child but no left child, violating left-balanced invariant"
-                    ),
+                    code="coord.leaf_height",
+                    message=f"Leaf node has height {height}, expected 0",
                     node_id=node.id,
                 )
             )
+
+        # Check parent-child height relationship
+        if node.left_child_id:
+            left_child = lookup.get(node.left_child_id)
+            if left_child and height != left_child.height + 1:
+                findings.append(
+                    ValidationFinding(
+                        code="coord.height_mismatch",
+                        message=(
+                            f"Node height {height} != left child height {left_child.height} + 1"
+                        ),
+                        node_id=node.id,
+                    )
+                )
+
+            # Check level_index relationship: parent = left_child // 2
+            if left_child:
+                expected_parent_index = left_child.level_index // 2
+                if level_index != expected_parent_index:
+                    findings.append(
+                        ValidationFinding(
+                            code="coord.level_index_mismatch",
+                            message=(
+                                f"Node level_index {level_index} != "
+                                f"left_child.level_index // 2 ({left_child.level_index} // 2 = {expected_parent_index})"
+                            ),
+                            node_id=node.id,
+                        )
+                    )
+
+                # Left child should have even level_index
+                if left_child.level_index % 2 != 0:
+                    findings.append(
+                        ValidationFinding(
+                            code="coord.left_child_odd",
+                            message=(
+                                f"Left child {left_child.id} has odd level_index {left_child.level_index}"
+                            ),
+                            node_id=node.id,
+                        )
+                    )
+
+        if node.right_child_id:
+            right_child = lookup.get(node.right_child_id)
+            if right_child and height != right_child.height + 1:
+                findings.append(
+                    ValidationFinding(
+                        code="coord.height_mismatch",
+                        message=(
+                            f"Node height {height} != right child height {right_child.height} + 1"
+                        ),
+                        node_id=node.id,
+                    )
+                )
+
+            # Right child should have odd level_index
+            if right_child and right_child.level_index % 2 != 1:
+                findings.append(
+                    ValidationFinding(
+                        code="coord.right_child_even",
+                        message=(
+                            f"Right child {right_child.id} has even level_index {right_child.level_index}"
+                        ),
+                        node_id=node.id,
+                    )
+                )
+
+        # Check sibling relationship: right = left + 1
+        if node.left_child_id and node.right_child_id:
+            left_child = lookup.get(node.left_child_id)
+            right_child = lookup.get(node.right_child_id)
+            if left_child and right_child:
+                if right_child.level_index != left_child.level_index + 1:
+                    findings.append(
+                        ValidationFinding(
+                            code="coord.sibling_index",
+                            message=(
+                                f"Right child level_index {right_child.level_index} != "
+                                f"left child level_index {left_child.level_index} + 1"
+                            ),
+                            node_id=node.id,
+                        )
+                    )
+
     return findings
 
 

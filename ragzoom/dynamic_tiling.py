@@ -317,7 +317,7 @@ class DynamicTilingGenerator(BaseDynamicTilingGenerator):
         node_relevance = scores.get(node.id, 0.0)
         node_quality = node_relevance * node_cost
 
-        # Check if this is a leaf node (no left child = leaf due to left-balanced property)
+        # Check if this is a leaf node (no left child = leaf in perfect binary tree)
         is_leaf = node.left_child_id not in self._nodes
 
         # For leaf nodes, we can only use the whole node
@@ -510,7 +510,7 @@ class AsyncDynamicTilingGenerator(BaseDynamicTilingGenerator):
         node_relevance = scores.get(node.id, 0.0)
         node_quality = node_relevance * node_cost
 
-        # Check if this is a leaf node (no left child = leaf due to left-balanced property)
+        # Check if this is a leaf node (no left child = leaf in perfect binary tree)
         is_leaf = node.left_child_id not in self._nodes
 
         # For leaf nodes, we can only use the whole node

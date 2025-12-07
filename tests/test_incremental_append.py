@@ -226,31 +226,39 @@ def _collect_leaf_depths(doc_store: DocumentStore) -> list[int]:
     return depths
 
 
-def _assert_left_balanced(doc_store: DocumentStore) -> None:
+def _assert_perfect_binary_trees(doc_store: DocumentStore) -> None:
+    """Assert that the forest consists of perfect binary trees.
+
+    In a perfect binary tree:
+    - Every internal node has exactly 2 children
+    - All children at same height
+    """
     nodes = {node.id: node for node in doc_store.nodes.get_all()}
 
     for node in nodes.values():
         left_id = node.left_child_id
         right_id = node.right_child_id
 
+        # Leaf nodes have no children
         if not left_id and not right_id:
             continue
 
+        # Internal nodes must have exactly 2 children
         left = nodes.get(left_id) if left_id else None
         right = nodes.get(right_id) if right_id else None
 
-        if right is None:
-            assert left is not None
-            assert int(node.height) == int(left.height) + 1
-            continue
+        assert (
+            left is not None and right is not None
+        ), f"Node {node.id} has only one child - violates perfect binary tree"
 
-        assert left is not None
         left_height = int(left.height)
         right_height = int(right.height)
 
-        assert left_height >= right_height
-        assert left_height - right_height <= 1
-        assert int(node.height) == max(left_height, right_height) + 1
+        # Both children should have same height in a perfect binary tree
+        assert (
+            left_height == right_height
+        ), f"Node {node.id} children have different heights: {left_height} vs {right_height}"
+        assert int(node.height) == left_height + 1
 
 
 class TestIncrementalAppend:

@@ -225,7 +225,7 @@ class TestComputeWindowBounds:
     def test_edge_max_right_skipped_at_document_end(self) -> None:
         """Right edge-max is skipped when window extends to document end."""
         # When the window goes to document end, we skip edge-max computation
-        # because left-balanced trees have complex right-spine relationships.
+        # because forest boundaries have complex relationships.
         # The tree naturally covers to the end without needing edge-max.
         leaves = [
             MockTreeNode(f"L{i}", "doc", i * 100, (i + 1) * 100, 0, i) for i in range(8)

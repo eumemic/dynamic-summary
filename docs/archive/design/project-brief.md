@@ -15,7 +15,7 @@ Build an **incremental, hierarchical RAG** memory that returns **one chronologic
 ```text
 A. Index-build  (append-only)
    1. Split source into leaf chunks (≈ L tokens, boundary-aware splitter).
-   2. Build left-balanced binary tree; summarise parent when both children exist.
+   2. Build forest of perfect binary trees; summarise parent when both children exist.
    3. Embed every node (leaf + internal)  → 1 vector DB.
 
 B. Runtime   (per query)

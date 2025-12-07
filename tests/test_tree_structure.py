@@ -14,7 +14,7 @@ from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
 from ragzoom.splitter import TextSplitter
-from ragzoom.validate import set_validation_enabled, validate_tree_is_left_balanced
+from ragzoom.validate import set_validation_enabled, validate_perfect_binary_trees
 from tests.conftest import BackwardCompatibilityConfig, IndexerRuntimeHarness
 
 
@@ -65,7 +65,7 @@ def _configure_runtime(harness: IndexerRuntimeHarness, config: IndexConfig) -> N
 
 
 class TestTreeValidation:
-    """Unit tests for left-balanced validation on manually constructed trees."""
+    """Unit tests for perfect binary tree validation on manually constructed trees."""
 
     def test_full_tree_passes_validation(self, doc_store: DocumentStore) -> None:
         nodes: list[NodePayload] = [
@@ -164,9 +164,10 @@ class TestTreeValidation:
                 ("P2", "root"),
             ]
         )
-        assert validate_tree_is_left_balanced(doc_store) is None
+        assert validate_perfect_binary_trees(doc_store) is None
 
-    def test_single_left_child_tree(self, doc_store: DocumentStore) -> None:
+    def test_left_only_child_fails_validation(self, doc_store: DocumentStore) -> None:
+        """A node with only a left child violates perfect binary tree invariant."""
         nodes: list[NodePayload] = [
             NodePayload(
                 node_id="L1",
@@ -225,7 +226,7 @@ class TestTreeValidation:
                 token_count=2,
                 level_index=1,
                 left_child_id="L3",
-                right_child_id=None,
+                right_child_id=None,  # Only left child - violates perfect binary tree
             ),
             NodePayload(
                 node_id="root",
@@ -251,7 +252,8 @@ class TestTreeValidation:
                 ("P2", "root"),
             ]
         )
-        assert validate_tree_is_left_balanced(doc_store) is None
+        result = validate_perfect_binary_trees(doc_store)
+        assert result is not None and "only a left child" in result
 
     def test_invalid_child_reference_fails(self, doc_store: DocumentStore) -> None:
         _add_nodes(
@@ -272,7 +274,7 @@ class TestTreeValidation:
                 )
             ],
         )
-        result = validate_tree_is_left_balanced(doc_store)
+        result = validate_perfect_binary_trees(doc_store)
         assert result is not None and "non-existent" in result
 
     def test_right_child_without_left_child_fails(
@@ -319,13 +321,15 @@ class TestTreeValidation:
         ]
         _add_nodes(doc_store, nodes)
         doc_store.nodes.update_parent_references_batch([("L1", "P1"), ("P1", "root")])
-        result = validate_tree_is_left_balanced(doc_store)
-        assert result is not None and "right child" in result
+        result = validate_perfect_binary_trees(doc_store)
+        # Tree has nodes with single children (root has only right, P1 has only left)
+        # Validation catches one of them
+        assert result is not None and "not a perfect binary tree" in result
 
 
 @pytest.mark.usefixtures("sqlite_backend")
 class TestIndexingCreatesValidTrees:
-    """Ensure runtime indexing produces left-balanced trees."""
+    """Ensure runtime indexing produces perfect binary trees."""
 
     @pytest.mark.asyncio
     async def test_indexing_produces_valid_tree(
@@ -353,7 +357,7 @@ class TestIndexingCreatesValidTrees:
         )
 
         doc_store = indexer_runtime_harness.runtime._store.for_document(document_id)
-        assert validate_tree_is_left_balanced(doc_store) is None
+        assert validate_perfect_binary_trees(doc_store) is None
 
     @pytest.mark.asyncio
     async def test_validation_toggle_during_indexing(
@@ -385,4 +389,4 @@ class TestIndexingCreatesValidTrees:
             set_validation_enabled(False)
 
         doc_store = indexer_runtime_harness.runtime._store.for_document(document_id)
-        assert validate_tree_is_left_balanced(doc_store) is None
+        assert validate_perfect_binary_trees(doc_store) is None

@@ -374,18 +374,18 @@ def validate_tiling(
     return None  # Valid tiling
 
 
-def validate_tree_is_left_balanced(doc_store: DocumentStore) -> str | None:
-    """Validate that the indexed tree is left-balanced.
+def validate_perfect_binary_trees(doc_store: DocumentStore) -> str | None:
+    """Validate that the forest consists of perfect binary trees.
 
-    A left-balanced tree means internal nodes have either:
-    1. Only a left child (no right child), or
-    2. Both left and right children
+    In a perfect binary tree:
+    - Every internal node has exactly 2 children (both left and right)
+    - Leaves have no children
 
-    No node can have only a right child without a left child.
+    This is the defining property of a perfect binary tree.
     """
 
-    def check_balance(nodes: Sequence[TreeNode]) -> str | None:
-        # A single-node tree is valid
+    def check_perfect(nodes: Sequence[TreeNode]) -> str | None:
+        # A single-node tree is valid (it's a leaf)
         if len(nodes) == 1:
             node = nodes[0]
             if node.left_child_id is not None or node.right_child_id is not None:
@@ -400,12 +400,18 @@ def validate_tree_is_left_balanced(doc_store: DocumentStore) -> str | None:
             has_left = node.left_child_id is not None
             has_right = node.right_child_id is not None
 
-            # Check invalid state: right child without left child
-            if has_right and not has_left:
-                return (
-                    f"Tree is not left-balanced: node {node.id} has a right child but no left child. "
-                    f"In a left-balanced tree, nodes must have a left child before having a right child."
-                )
+            # Check perfect binary tree invariant: either both children or neither
+            if has_left != has_right:
+                if has_left:
+                    return (
+                        f"Tree is not a perfect binary tree: node {node.id} has only a left child. "
+                        f"Internal nodes must have exactly 2 children."
+                    )
+                else:
+                    return (
+                        f"Tree is not a perfect binary tree: node {node.id} has only a right child. "
+                        f"Internal nodes must have exactly 2 children."
+                    )
 
             # Verify child references are valid
             if has_left and node.left_child_id not in node_ids:
@@ -414,9 +420,9 @@ def validate_tree_is_left_balanced(doc_store: DocumentStore) -> str | None:
             if has_right and node.right_child_id not in node_ids:
                 return f"Invalid tree: node {node.id} references non-existent right child {node.right_child_id}"
 
-        return None  # Tree is left-balanced
+        return None  # Forest of perfect binary trees
 
-    return _validate_with_nodes(doc_store, check_balance)
+    return _validate_with_nodes(doc_store, check_perfect)
 
 
 def validate_equal_leaf_depth(doc_store: DocumentStore) -> str | None:
