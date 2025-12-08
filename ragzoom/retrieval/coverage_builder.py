@@ -287,21 +287,20 @@ class CoverageBuilder:
                 exc, "Failed to get root nodes for coverage", default=None
             )
 
-        # Add edge-max for interior window boundaries (not at document edges)
+        # Add edge-max as synthetic seeds for interior window boundaries.
+        # Edge-max nodes are enqueued (not just appended) so their ancestors'
+        # siblings fill any gap between the window edge and actual seeds.
+        # At document boundaries, edge-max is skipped - seeds' ancestors
+        # naturally cover to position 0 or doc_end.
         if window_bounds is not None:
-            # Edge-max ensures coverage at window edges when no seeds are nearby.
-            # At document boundaries, edge-max is skipped - seeds' ancestors
-            # naturally cover to position 0 or doc_end.
             if not window_bounds.at_doc_start:
-                coordinates.append(window_bounds.left_edge_max)
-                coordinates.append(window_bounds.left_edge_max.sibling())
+                enqueue(window_bounds.left_edge_max)
 
             if (
                 window_bounds.right_edge_max != window_bounds.left_edge_max
                 and not window_bounds.at_doc_end
             ):
-                coordinates.append(window_bounds.right_edge_max)
-                coordinates.append(window_bounds.right_edge_max.sibling())
+                enqueue(window_bounds.right_edge_max)
 
         unique_coords = TreeCoordinate.unique(coordinates)
 

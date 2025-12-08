@@ -1029,3 +1029,109 @@ class TestWindowedCoverageBugs:
             "Q4567 should be filtered because it covers leaves 4-7 but "
             "window ends at leaf 5."
         )
+
+    def test_edge_max_enqueued_fills_gap_between_edge_and_seed(self) -> None:
+        """Edge-max must be enqueued (not just appended) to fill gaps.
+
+        When a seed is far from the window edge, there's a gap between
+        the edge-max coverage and the seed coverage. This gap is filled
+        by siblings of edge-max's ancestors.
+
+        Example:
+        - Window covers leaves 2-15
+        - Seed at leaf 12
+        - Left edge-max at leaf 2 (or small ancestor)
+
+        Seed's ancestors/siblings:
+        - H1 [12,13], sibling [14,15]
+        - H2 [12,15], sibling [8,11]
+        - H3 [8,15], sibling [0,7] <- filtered (extends past leaf 2)
+
+        Without enqueuing edge-max, leaves 3-7 have no coverage!
+
+        With enqueuing edge-max (leaf 2):
+        - H1 [2,3], sibling [0,1] <- filtered
+        - H2 [0,3], sibling [4,7] <- ancestor filtered, sibling KEPT!
+        - H3 [0,7], sibling [8,15] <- ancestor filtered, sibling KEPT!
+
+        The siblings [4,7] and [8,15] fill the gap.
+        """
+        # 16 leaves, window covers leaves 2-15
+        nodes: dict[str, MockTreeNode] = {}
+
+        # Create leaves 0-15
+        for i in range(16):
+            nodes[f"L{i}"] = MockTreeNode(f"L{i}", "doc", i * 100, (i + 1) * 100, 0, i)
+
+        # Height 1: pairs [0,1], [2,3], [4,5], [6,7], [8,9], [10,11], [12,13], [14,15]
+        for i in range(8):
+            start_leaf = i * 2
+            nodes[f"H1_{i}"] = MockTreeNode(
+                f"H1_{i}", "doc", start_leaf * 100, (start_leaf + 2) * 100, 1, i
+            )
+
+        # Height 2: quads [0-3], [4-7], [8-11], [12-15]
+        for i in range(4):
+            start_leaf = i * 4
+            nodes[f"H2_{i}"] = MockTreeNode(
+                f"H2_{i}", "doc", start_leaf * 100, (start_leaf + 4) * 100, 2, i
+            )
+
+        # Height 3: octets [0-7], [8-15]
+        for i in range(2):
+            start_leaf = i * 8
+            nodes[f"H3_{i}"] = MockTreeNode(
+                f"H3_{i}", "doc", start_leaf * 100, (start_leaf + 8) * 100, 3, i
+            )
+
+        # Height 4: root [0-15]
+        nodes["root"] = MockTreeNode("root", "doc", 0, 1600, 4, 0)
+
+        store = self._create_mock_store_with_nodes(nodes, max_height=4)
+        builder = CoverageBuilder(store)
+
+        # Window covers leaves 2-15 (not at doc start, at doc end)
+        # Left boundary at leaf 2: edge-max is H1_1 [2,3] at (1, 1)
+        #   - leaf 2's parent is H1_1 (1, 1) covering [2,3]
+        #   - H1_1's parent is H2_0 (2, 0) covering [0,3] - extends past window!
+        #   - So edge-max stops at (1, 1)
+        window_bounds = WindowBounds(
+            actual_start=200,
+            actual_end=1600,
+            left_leaf_index=2,
+            right_leaf_index=15,
+            left_edge_max=TreeCoordinate("doc", height=1, level_index=1),  # H1_1 [2,3]
+            right_edge_max=TreeCoordinate(
+                "doc", height=1, level_index=7
+            ),  # H1_7 [14,15]
+            at_doc_start=False,
+            at_doc_end=True,
+        )
+
+        # Seed at leaf 12 - far from left edge
+        result = builder.build_windowed_coverage(
+            selected_ids=["L12"],
+            window_bounds=window_bounds,
+        )
+
+        # Seed L12 should be in coverage
+        assert "L12" in result.coverage_map
+
+        # Edge-max H1_1 [2,3] should be in coverage
+        assert "H1_1" in result.coverage_map, "Edge-max H1_1 should be in coverage"
+
+        # KEY ASSERTION: H2_1 [4,7] should be in coverage
+        # This is the sibling of edge-max's ancestor H2_0 [0,3]
+        # H2_0 gets filtered (extends to leaf 0), but H2_1 is within window
+        # This only works if edge-max is ENQUEUED (not just appended)
+        assert "H2_1" in result.coverage_map, (
+            "H2_1 [4,7] should be in coverage to fill gap between edge-max and seed. "
+            "Edge-max must be enqueued (not just appended) so that siblings of its "
+            "ancestors are added. H2_1 is the sibling of H2_0 (edge-max's ancestor)."
+        )
+
+        # H3_1 [8,15] should also be in coverage (sibling of H3_0)
+        assert "H3_1" in result.coverage_map, (
+            "H3_1 [8,15] should be in coverage. It's the sibling of H3_0 "
+            "(ancestor of edge-max that gets filtered)."
+        )
