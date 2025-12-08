@@ -7,6 +7,7 @@ for tests and development.
 
 from __future__ import annotations
 
+import struct
 from collections.abc import Sequence
 from typing import cast
 
@@ -311,6 +312,35 @@ class SqliteNodeRepository:
                 update(SQLiteTreeNode)
                 .where(SQLiteTreeNode.id == node_id)
                 .values(preceding_context_summary=summary)
+            )
+            session.commit()
+            self.cache_manager.invalidate(node_id)
+
+    def update_embedding(
+        self,
+        node_id: str,
+        embedding: list[float] | NDArray[np.float64] | None,
+    ) -> None:
+        """Update the embedding field for a node.
+
+        The embedding is stored as packed float32 bytes for efficiency.
+        1536 dimensions * 4 bytes = 6144 bytes for text-embedding-3-small.
+        """
+        embedding_bytes: bytes | None = None
+        if embedding is not None:
+            # Convert to list if numpy array
+            if hasattr(embedding, "tolist"):
+                embedding_list = embedding.tolist()
+            else:
+                embedding_list = list(embedding)
+            # Pack as float32 for storage efficiency
+            embedding_bytes = struct.pack(f"{len(embedding_list)}f", *embedding_list)
+
+        with self.SessionLocal() as session:
+            session.execute(
+                update(SQLiteTreeNode)
+                .where(SQLiteTreeNode.id == node_id)
+                .values(embedding=embedding_bytes)
             )
             session.commit()
             self.cache_manager.invalidate(node_id)

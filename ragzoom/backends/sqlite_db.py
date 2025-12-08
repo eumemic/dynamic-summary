@@ -146,6 +146,13 @@ class SqliteDatabaseManager:
                     )
                 except Exception:
                     pass
+                # Add embedding column for storing vector on leaf nodes
+                try:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE tree_nodes ADD COLUMN embedding BLOB"
+                    )
+                except Exception:
+                    pass
         except Exception:
             # Columns already dropped or table newly created; ignore
             pass

@@ -177,6 +177,17 @@ class NodeRepository(Protocol):
         """Update the preceding_context_summary field for a node."""
         ...
 
+    def update_embedding(
+        self,
+        node_id: str,
+        embedding: list[float] | NDArray[np.float64] | None,
+    ) -> None:
+        """Update the embedding field for a node.
+
+        The embedding is stored as packed float32 bytes for efficiency.
+        """
+        ...
+
     # Frontier tracking for contextual indexing
     def get_tree_completion_frontier(self, document_id: str | None) -> int: ...
 

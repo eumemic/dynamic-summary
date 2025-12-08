@@ -711,10 +711,13 @@ class IndexingEngine:
                 start_time=embed_start_time,
             )
 
-        # Write to vector index
+        # Store embedding on the node for algorithmic access
+        embedding_array = np.asarray(embeddings[0], dtype=np.float64)
+        store.nodes._repo.update_embedding(job.leaf_id, embedding_array)
+
+        # Write to vector index for similarity search
         vector_index = self._get_vector_index()
         if vector_index is not None:
-            embedding_array = np.asarray(embeddings[0], dtype=np.float64)
             metadata: dict[str, object] = {
                 "node_id": job.leaf_id,
                 "document_id": job.document_id,

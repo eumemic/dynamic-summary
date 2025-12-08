@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import struct
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -63,6 +64,7 @@ class PostgresNodeRepository(BaseRepository):
             node.level_index,
             node.preceding_context,
             node.preceding_context_summary,
+            node.embedding,
         )
         session.expunge(node)
 
@@ -381,6 +383,34 @@ class PostgresNodeRepository(BaseRepository):
                 update(PostgresTreeNode)
                 .where(PostgresTreeNode.id == node_id)
                 .values(preceding_context_summary=summary)
+            )
+            self.cache_manager.invalidate(node_id)
+
+    def update_embedding(
+        self,
+        node_id: str,
+        embedding: list[float] | NDArray[np.float64] | None,
+    ) -> None:
+        """Update the embedding field for a node.
+
+        The embedding is stored as packed float32 bytes for efficiency.
+        1536 dimensions * 4 bytes = 6144 bytes for text-embedding-3-small.
+        """
+        embedding_bytes: bytes | None = None
+        if embedding is not None:
+            # Convert to list if numpy array
+            if hasattr(embedding, "tolist"):
+                embedding_list = embedding.tolist()
+            else:
+                embedding_list = list(embedding)
+            # Pack as float32 for storage efficiency
+            embedding_bytes = struct.pack(f"{len(embedding_list)}f", *embedding_list)
+
+        with self._session_scope() as db_session:
+            db_session.execute(
+                update(PostgresTreeNode)
+                .where(PostgresTreeNode.id == node_id)
+                .values(embedding=embedding_bytes)
             )
             self.cache_manager.invalidate(node_id)
 

@@ -43,6 +43,9 @@ class TreeNode(Protocol):
     preceding_context: str | None
     preceding_context_summary: str | None
 
+    # Embedding vector (stored as packed float32 bytes, or None if not yet embedded)
+    embedding: bytes | None
+
     # Optional helpers many implementations already provide
     def is_leaf(self) -> bool: ...  # pragma: no cover - protocol signature
     def is_root(self) -> bool: ...  # pragma: no cover - protocol signature
