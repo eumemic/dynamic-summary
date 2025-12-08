@@ -419,7 +419,8 @@ class TestBuildWindowedCoverage:
 
         # No seeds from vector search - only edge-max nodes
         # Window covers leaves 1-2 (span [100, 300))
-        result = builder.build_windowed_coverage([], "doc", 100, 300)
+        window_bounds = builder.compute_window_bounds(100, 300, "doc")
+        result = builder.build_windowed_coverage([], window_bounds)
 
         # Should include nodes related to edge-max coordinates
         # Edge-max at (0,1) and (0,2) should bring in their ancestors and siblings
@@ -440,7 +441,8 @@ class TestBuildWindowedCoverage:
         builder = CoverageBuilder(store)
 
         # Window covers leaves 1-2 only (span [100, 300))
-        result = builder.build_windowed_coverage([], "doc", 100, 300)
+        window_bounds = builder.compute_window_bounds(100, 300, "doc")
+        result = builder.build_windowed_coverage([], window_bounds)
 
         # Nodes outside window should not be in coverage
         # L0 (index 0) is outside window [1,2]
@@ -467,7 +469,8 @@ class TestBuildWindowedCoverage:
         builder = CoverageBuilder(store)
 
         # L1 is a seed, window covers all leaves [0, 400)
-        result = builder.build_windowed_coverage(["L1"], "doc", 0, 400)
+        window_bounds = builder.compute_window_bounds(0, 400, "doc")
+        result = builder.build_windowed_coverage(["L1"], window_bounds)
 
         # L1 should be in coverage
         assert "L1" in result.coverage_map
@@ -488,8 +491,9 @@ class TestBuildWindowedCoverage:
         builder = CoverageBuilder(store)
 
         # L0 is pinned and also a seed, window covers all leaves [0, 400)
+        window_bounds = builder.compute_window_bounds(0, 400, "doc")
         result = builder.build_windowed_coverage(
-            ["L0"], "doc", 0, 400, pinned_ids={"L0"}
+            ["L0"], window_bounds, pinned_ids={"L0"}
         )
 
         # L0 should be in coverage
@@ -504,7 +508,8 @@ class TestBuildWindowedCoverage:
         store = self._create_mock_store_with_nodes(nodes, max_height=1)
         builder = CoverageBuilder(store)
 
-        result = builder.build_windowed_coverage([], "doc", 100, 300)
+        window_bounds = builder.compute_window_bounds(100, 300, "doc")
+        result = builder.build_windowed_coverage([], window_bounds)
 
         # Result should have both coverage_map and nodes
         assert hasattr(result, "coverage_map")
@@ -541,8 +546,9 @@ class TestBuildWindowedCoverage:
         # Fallback fetch returns L0
         store.nodes.get_nodes = MagicMock(return_value=[nodes["L0"]])
 
+        window_bounds = builder.compute_window_bounds(100, 200, "doc")
         result = builder.build_windowed_coverage(
-            ["L0"], "doc", 100, 200, seed_metadata=seed_metadata  # L0 is outside window
+            ["L0"], window_bounds, seed_metadata=seed_metadata  # L0 is outside window
         )
 
         # L0 should NOT be in coverage because its span [0,100) is outside
@@ -765,7 +771,8 @@ class TestWindowedCoverageBugs:
         builder = CoverageBuilder(store)
 
         # No seeds - only pinned nodes should appear (window covers all leaves [0, 400))
-        result = builder.build_windowed_coverage([], "doc", 0, 400)
+        window_bounds = builder.compute_window_bounds(0, 400, "doc")
+        result = builder.build_windowed_coverage([], window_bounds)
 
         # L1 (pinned node) should be in coverage
         assert "L1" in result.coverage_map, (
@@ -793,7 +800,8 @@ class TestWindowedCoverageBugs:
         builder = CoverageBuilder(store)
 
         # No seeds - coverage should include root via edge-max (full document window)
-        result = builder.build_windowed_coverage([], "doc", 0, 400)
+        window_bounds = builder.compute_window_bounds(0, 400, "doc")
+        result = builder.build_windowed_coverage([], window_bounds)
 
         # Root should be in coverage via edge-max
         assert "root" in result.coverage_map, (
@@ -840,7 +848,8 @@ class TestWindowedCoverageBugs:
 
         # No seeds, window covers leaves 0-3 (first half of document)
         # Edge-max climbs to Q0123 (2, 0) which covers exactly leaves 0-3
-        result = builder.build_windowed_coverage([], "doc", 0, 400)
+        window_bounds = builder.compute_window_bounds(0, 400, "doc")
+        result = builder.build_windowed_coverage([], window_bounds)
 
         # Q0123 is added as edge-max, covering leaves 0-3 (exactly the window).
         # Its sibling Q4567 covers leaves 4-7, which is outside window and filtered.
@@ -878,7 +887,8 @@ class TestWindowedCoverageBugs:
         builder = CoverageBuilder(store)
 
         # Window covers only leaves 2-3 [200, 400)
-        result = builder.build_windowed_coverage([], "doc", 200, 400)
+        window_bounds = builder.compute_window_bounds(200, 400, "doc")
+        result = builder.build_windowed_coverage([], window_bounds)
 
         # L0 (pinned) is at [0, 100), window is [200, 400)
         # L0 should be filtered out
@@ -918,7 +928,8 @@ class TestWindowedCoverageBugs:
         builder = CoverageBuilder(store)
 
         # Window covers leaves 2-5 (middle of document, neither at doc start nor doc end)
-        result = builder.build_windowed_coverage([], "doc", 200, 600)
+        window_bounds = builder.compute_window_bounds(200, 600, "doc")
+        result = builder.build_windowed_coverage([], window_bounds)
 
         # Root covers leaves 0-7, window is 2-5
         # is_within_leaf_range(2, 5): root.leaf_span() = (0, 7)
@@ -1005,7 +1016,8 @@ class TestWindowedCoverageBugs:
         # Seed at leaf 12 - far from left edge
         # Window covers leaves 2-15 (not at doc start, at doc end)
         # Left edge-max is H1_1 [2,3] - can't climb higher without exceeding window
-        result = builder.build_windowed_coverage(["L12"], "doc", 200, 1600)
+        window_bounds = builder.compute_window_bounds(200, 1600, "doc")
+        result = builder.build_windowed_coverage(["L12"], window_bounds)
 
         # Seed L12 should be in coverage
         assert "L12" in result.coverage_map

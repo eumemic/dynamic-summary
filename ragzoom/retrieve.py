@@ -334,13 +334,11 @@ class Retriever:
             if node_id in seed_meta_all
         }
         doc_coverage_builder = CoverageBuilder(self.document_store)
-        if not effective_doc_id:
-            raise ValueError("Cannot build coverage: no document_id available")
+        if window_bounds is None:
+            raise ValueError("Cannot build coverage: window_bounds not computed")
         coverage_result = doc_coverage_builder.build_windowed_coverage(
             selected_ids,
-            effective_doc_id,
-            span_start if span_start > 0 else None,
-            resolved_span_end,
+            window_bounds,
             seed_metadata=seed_metadata,
             pinned_ids=pinned_ids,
         )

@@ -103,9 +103,19 @@ class CoverageBuilder:
         if document_id is None:
             raise ValueError("Cannot build complete coverage: no document_id on store")
 
+        # Get document span end for full-document window
+        nodes_wrapper = getattr(self.store, "nodes", None)
+        repo = getattr(nodes_wrapper, "_repo", None) if nodes_wrapper else None
+        if repo is None:
+            raise ValueError("Cannot build complete coverage: no repository")
+        doc_span_end = repo.get_document_span_end(document_id)
+        if doc_span_end is None:
+            raise ValueError(f"Cannot determine document span end for {document_id}")
+
+        window_bounds = self.compute_window_bounds(0, doc_span_end, document_id)
         return self.build_windowed_coverage(
             selected_ids,
-            document_id,
+            window_bounds,
             seed_metadata=seed_metadata,
             pinned_ids=pinned_ids,
         )
@@ -436,9 +446,7 @@ class CoverageBuilder:
     def build_windowed_coverage(
         self,
         selected_ids: list[str],
-        document_id: str,
-        span_start: int | None = None,
-        span_end: int | None = None,
+        window_bounds: WindowBounds,
         *,
         seed_metadata: Mapping[str, MetaDict] | None = None,
         pinned_ids: set[str] | None = None,
@@ -446,47 +454,21 @@ class CoverageBuilder:
         """Build coverage for a document window.
 
         This method:
-        1. Resolves span defaults (0 for start, doc_span_end for end)
-        2. Computes window bounds from span
-        3. Adds edge-max nodes as synthetic seeds to ensure full window coverage
-        4. Computes ancestor/sibling coordinates for all seeds
-        5. Filters coordinates outside the window
-        6. Fetches remaining nodes
-        7. Adds pinned nodes from store (filtered by window bounds)
+        1. Adds edge-max nodes as synthetic seeds to ensure full window coverage
+        2. Computes ancestor/sibling coordinates for all seeds
+        3. Filters coordinates outside the window
+        4. Fetches remaining nodes
+        5. Adds pinned nodes from store (filtered by window bounds)
 
         Args:
             selected_ids: Node IDs from vector search (seeds within window)
-            document_id: Document to build coverage for
-            span_start: Start of window in character positions (default: 0)
-            span_end: End of window in character positions (default: document end)
+            window_bounds: Pre-computed window boundaries from compute_window_bounds()
             seed_metadata: Optional metadata for seeds (for coordinate extraction)
             pinned_ids: Node IDs that are pinned (verbatim leaves)
 
         Returns:
             CoverageResult with coverage_map and nodes within the window.
         """
-        # Resolve span defaults
-        resolved_start = span_start if span_start is not None else 0
-
-        if span_end is None:
-            nodes_wrapper = getattr(self.store, "nodes", None)
-            repo = getattr(nodes_wrapper, "_repo", None) if nodes_wrapper else None
-            if repo is None:
-                raise ValueError("Cannot determine document span end: no repository")
-            doc_span_end = repo.get_document_span_end(document_id)
-            if doc_span_end is None:
-                raise ValueError(
-                    f"Cannot determine document span end for {document_id}"
-                )
-            resolved_end = doc_span_end
-        else:
-            resolved_end = span_end
-
-        # Compute window bounds
-        window_bounds = self.compute_window_bounds(
-            resolved_start, resolved_end, document_id
-        )
-
         coverage_map, nodes = self._build_coordinate_closure(
             selected_ids,
             seed_metadata,
