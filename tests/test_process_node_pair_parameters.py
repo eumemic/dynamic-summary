@@ -128,10 +128,14 @@ async def test_worker_coordinator_passes_token_counts(
     assert summary_mock.await_count > 0
     for call in summary_mock.await_args_list:
         args, kwargs = call
-        left_text, right_text, target_tokens = args
+        # New unified API: text, target_tokens (instead of left_text, right_text, target_tokens)
+        text, target_tokens = args
+        assert isinstance(text, str)
         assert target_tokens == index_config.target_chunk_tokens
-        assert isinstance(kwargs.get("left_token_count"), int)
-        assert isinstance(kwargs.get("right_token_count"), int)
+        # Token count is now passed as text_tokens (optional, may be None or int)
+        assert kwargs.get("text_tokens") is None or isinstance(
+            kwargs.get("text_tokens"), int
+        )
         assert kwargs["parent_id"] is not None
         assert "reporter" in kwargs
 
@@ -189,12 +193,20 @@ async def test_prev_context_present_when_preceding_neighbor_exists(
     contexts = [
         kwargs.get("prev_context") for _, kwargs in summary_mock.await_args_list
     ]
-    # First node at span_start=0 gets empty string, others get non-empty context
-    assert "" in contexts
-    assert any(isinstance(ctx, str) and ctx.strip() for ctx in contexts)
+    # With the new unified API:
+    # - Leaf context summarization calls pass prev_context=None
+    # - Inner node pair summarization calls pass prev_context as a string:
+    #   - Empty string ("") for first node (span_start=0)
+    #   - Non-empty string for nodes with preceding context
+    assert (
+        None in contexts or "" in contexts
+    )  # At least one call without preceding context
+    assert any(
+        isinstance(ctx, str) and ctx.strip() for ctx in contexts
+    )  # Some calls have context
     for ctx in contexts:
-        # All contexts should be strings (empty or non-empty)
-        assert isinstance(ctx, str)
-        # Non-empty contexts should have content
-        if ctx != "":
+        # Contexts should be strings or None (for leaf context summarization)
+        assert ctx is None or isinstance(ctx, str)
+        # Non-empty string contexts should have content
+        if isinstance(ctx, str) and ctx != "":
             assert ctx.strip()

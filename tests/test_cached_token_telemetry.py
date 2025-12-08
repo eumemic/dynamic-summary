@@ -138,10 +138,10 @@ async def test_cached_tokens_recorded_in_telemetry(
 
     with patched_tokenizers(encode):
         await indexer_runtime_harness.llm_service._summarize_text(
-            left_text="Test content that needs to be long enough to trigger summarization"
-            * 2,
-            right_text="More content that also needs to be sufficiently long" * 2,
-            target_tokens=100,
+            "Test content that needs to be long enough to trigger summarization" * 2
+            + " "
+            + "More content that also needs to be sufficiently long" * 2,
+            100,
             parent_id="test_node",
             reporter=reporter,
         )
@@ -194,10 +194,10 @@ async def test_backward_compatibility_without_cached_tokens(
 
     with patched_tokenizers(encode):
         await indexer_runtime_harness.llm_service._summarize_text(
-            left_text="Test content that needs to be long enough to trigger summarization"
-            * 2,
-            right_text="More content that also needs to be sufficiently long" * 2,
-            target_tokens=100,
+            "Test content that needs to be long enough to trigger summarization" * 2
+            + " "
+            + "More content that also needs to be sufficiently long" * 2,
+            100,
             parent_id="test_node",
             reporter=reporter,
         )
@@ -248,10 +248,10 @@ async def test_cached_tokens_across_multiple_retries(
 
     with patched_tokenizers(lambda text: [0] * len(text)):
         await indexer_runtime_harness.llm_service._summarize_text(
-            left_text="Test content that needs to be long enough to trigger summarization"
-            * 2,
-            right_text="More content that also needs to be sufficiently long" * 2,
-            target_tokens=100,
+            "Test content that needs to be long enough to trigger summarization" * 2
+            + " "
+            + "More content that also needs to be sufficiently long" * 2,
+            100,
             parent_id="test_node",
             reporter=reporter,
         )
@@ -298,9 +298,8 @@ async def test_passthrough_summary_has_no_cached_tokens(
 
     with patched_tokenizers(lambda _text: [0] * 50, lambda _text: 50):
         await indexer_runtime_harness.llm_service._summarize_text(
-            left_text="Short",
-            right_text="Text",
-            target_tokens=100,
+            "Short Text",
+            100,
             parent_id="test_node",
             reporter=reporter,
         )
@@ -346,9 +345,8 @@ async def test_cached_tokens_with_high_cache_rate(
 
     with patched_tokenizers(lambda text: [0] * len(text)):
         await indexer_runtime_harness.llm_service._summarize_text(
-            left_text="Long content " * 50,
-            right_text="More content " * 50,
-            target_tokens=100,
+            "Long content " * 50 + " " + "More content " * 50,
+            100,
             parent_id="test_node",
             reporter=reporter,
         )

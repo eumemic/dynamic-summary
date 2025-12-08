@@ -640,6 +640,7 @@ class IndexingEngine:
         # Extract tiling IDs and assemble context text
         tiling_ids: list[str] = []
         context_prefix = ""
+        tiling_tokens = 0
         if (
             context_result is not None
             and context_result.tiling
@@ -651,6 +652,11 @@ class IndexingEngine:
                 for nid in tiling_ids
                 if nid in context_result.nodes
             )
+            tiling_tokens = sum(
+                context_result.nodes[nid].token_count
+                for nid in tiling_ids
+                if nid in context_result.nodes
+            )
 
         # Store preceding_context as JSON array of node IDs on the leaf node
         import json
@@ -659,9 +665,30 @@ class IndexingEngine:
         preceding_context_json = json.dumps(tiling_ids)
         store.nodes._repo.update_preceding_context(job.leaf_id, preceding_context_json)
 
-        # Limit text_to_embed to stay within embedding token limit (8000)
-        # This prevents the ValueError that occurs when context + leaf exceeds the limit
-        text_to_embed = self._build_embedding_text(leaf_text, context_prefix)
+        # Summarize preceding context if present, then build embedding text
+        context_summary = ""
+        if context_prefix:
+            # Generate a summary of the preceding context (target: target_chunk_tokens)
+            context_summary, _retry_count, _summary_tokens = (
+                await self._llm_service._summarize_text(
+                    context_prefix,
+                    self._index_config.target_chunk_tokens,
+                    parent_id=job.leaf_id,
+                    reporter=telemetry,
+                    prev_context=None,
+                    text_tokens=tiling_tokens,
+                )
+            )
+            # Store the summary in the database
+            store.nodes._repo.update_preceding_context_summary(
+                job.leaf_id, context_summary
+            )
+
+        # Build embedding text: summary + leaf (no truncation needed)
+        if context_summary:
+            text_to_embed = f"{context_summary}\n{leaf_text}"
+        else:
+            text_to_embed = leaf_text
 
         # Record embedding start time for telemetry
         embed_start_time = time.time()
@@ -894,15 +921,19 @@ class IndexingEngine:
         preceding_context_json = json.dumps(tiling_ids)
 
         # Generate summary with preceding context
+        combined_text = f"{left_text} {right_text}".strip()
+        combined_tokens = (
+            left_tokens + right_tokens
+            if left_tokens is not None and right_tokens is not None
+            else None
+        )
         summary, _retry_count, summary_tokens = await self._llm_service._summarize_text(
-            left_text,
-            right_text,
+            combined_text,
             self._index_config.target_chunk_tokens,
             parent_id=parent_id,
             reporter=telemetry,
             prev_context=context_text,
-            left_token_count=left_tokens,
-            right_token_count=right_tokens,
+            text_tokens=combined_tokens,
         )
 
         # Determine neighbor IDs at parent level

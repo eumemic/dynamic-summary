@@ -169,6 +169,14 @@ class NodeRepository(Protocol):
         """Update the preceding_context field for a node."""
         ...
 
+    def update_preceding_context_summary(
+        self,
+        node_id: str,
+        summary: str | None,
+    ) -> None:
+        """Update the preceding_context_summary field for a node."""
+        ...
+
     # Frontier tracking for contextual indexing
     def get_tree_completion_frontier(self, document_id: str | None) -> int: ...
 

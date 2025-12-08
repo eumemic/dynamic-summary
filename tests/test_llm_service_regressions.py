@@ -127,9 +127,8 @@ async def test_mark_accepted_attempt_is_called() -> None:
     with patch.object(llm_service.client.chat.completions, "create", new=mock_create):
         with patched_tokenizers():
             summary, retry_count, token_count = await llm_service._summarize_text(
-                left_text="Test left text " * 10,
-                right_text="Test right text " * 10,
-                target_tokens=100,
+                "Test left text " * 10 + " " + "Test right text " * 10,
+                100,
                 parent_id="test_node",
                 reporter=reporter,
             )
@@ -237,9 +236,8 @@ async def test_retry_selection_uses_proper_logic() -> None:
     with patch.object(llm_service.client.chat.completions, "create", new=mock_create):
         with patched_tokenizers():
             summary, retry_count, token_count = await llm_service._summarize_text(
-                left_text="Test " * 50,
-                right_text="Text " * 50,
-                target_tokens=100,
+                "Test " * 50 + " " + "Text " * 50,
+                100,
                 parent_id="test_node",
             )
 

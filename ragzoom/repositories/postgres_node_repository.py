@@ -370,6 +370,20 @@ class PostgresNodeRepository(BaseRepository):
             )
             self.cache_manager.invalidate(node_id)
 
+    def update_preceding_context_summary(
+        self,
+        node_id: str,
+        summary: str | None,
+    ) -> None:
+        """Update the preceding_context_summary field for a node."""
+        with self._session_scope() as db_session:
+            db_session.execute(
+                update(PostgresTreeNode)
+                .where(PostgresTreeNode.id == node_id)
+                .values(preceding_context_summary=summary)
+            )
+            self.cache_manager.invalidate(node_id)
+
     def get_node(self, node_id: str) -> TreeNode | None:
         """Get a node by ID.
 

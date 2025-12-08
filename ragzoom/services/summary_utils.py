@@ -25,12 +25,10 @@ SummaryTelemetryRecorder = Callable[[UsageInfo, int, int, float], Awaitable[None
 
 
 class SummaryRequest(TypedDict):
-    left_text: str
-    right_text: str
+    text: str
     target_tokens: int
     prev_context: str | None
-    left_token_count: int | None
-    right_token_count: int | None
+    text_tokens: int | None
     parent_id: str | None
     reporter: TelemetryCollector | None
 
@@ -110,29 +108,22 @@ def append_retry_prompt(
 
 def prepare_summary_inputs(
     *,
-    left_text: str,
-    right_text: str,
+    text: str,
     target_tokens: int,
-    prev_context: str | None,
-    left_token_count: int | None,
-    right_token_count: int | None,
-    use_anti_verbatim_vaccine: bool,
+    prev_context: str | None = None,
+    text_tokens: int | None = None,
+    use_anti_verbatim_vaccine: bool = False,
 ) -> SummaryPreparation:
     """Return prepared prompt messages and token counts for summarization."""
 
-    combined_text = f"{left_text} {right_text}".strip()
+    combined_text = text.strip()
 
-    if left_token_count is not None and right_token_count is not None:
-        combined_tokens = left_token_count + right_token_count
+    if text_tokens is not None:
+        combined_tokens = text_tokens
     else:
         combined_tokens = tokenizer.count_tokens(combined_text)
 
-    if left_token_count is not None and right_token_count is not None:
-        input_text_tokens = left_token_count + right_token_count
-    else:
-        input_text_tokens = tokenizer.count_tokens(left_text)
-        if right_text:
-            input_text_tokens += tokenizer.count_tokens(right_text)
+    input_text_tokens = combined_tokens
 
     target_words = tokens_to_words(target_tokens)
     instruction = (
@@ -339,26 +330,22 @@ async def retry_summary_correction(
 
 async def run_summary_workflow(
     *,
-    left_text: str,
-    right_text: str,
+    text: str,
     target_tokens: int,
-    prev_context: str | None,
-    left_token_count: int | None,
-    right_token_count: int | None,
-    parent_id: str | None,
-    reporter: TelemetryCollector | None,
+    prev_context: str | None = None,
+    text_tokens: int | None = None,
+    parent_id: str | None = None,
+    reporter: TelemetryCollector | None = None,
     config: SummaryWorkflowConfig,
     call_summary: SummaryCall,
 ) -> tuple[str, int, int]:
     """Execute the full summary workflow with retries and telemetry."""
 
     preparation = prepare_summary_inputs(
-        left_text=left_text,
-        right_text=right_text,
+        text=text,
         target_tokens=target_tokens,
         prev_context=prev_context,
-        left_token_count=left_token_count,
-        right_token_count=right_token_count,
+        text_tokens=text_tokens,
         use_anti_verbatim_vaccine=config.use_anti_verbatim_vaccine,
     )
 
@@ -446,14 +433,12 @@ async def run_summary_workflow(
 async def run_summary_from_config(
     *,
     index_config: IndexConfig,
-    left_text: str,
-    right_text: str,
+    text: str,
     target_tokens: int,
-    prev_context: str | None,
-    left_token_count: int | None,
-    right_token_count: int | None,
-    parent_id: str | None,
-    reporter: TelemetryCollector | None,
+    prev_context: str | None = None,
+    text_tokens: int | None = None,
+    parent_id: str | None = None,
+    reporter: TelemetryCollector | None = None,
     call_summary: SummaryCall,
 ) -> tuple[str, int, int]:
     """Convenience wrapper building workflow config from IndexConfig."""
@@ -466,12 +451,10 @@ async def run_summary_from_config(
     )
 
     return await run_summary_workflow(
-        left_text=left_text,
-        right_text=right_text,
+        text=text,
         target_tokens=target_tokens,
         prev_context=prev_context,
-        left_token_count=left_token_count,
-        right_token_count=right_token_count,
+        text_tokens=text_tokens,
         parent_id=parent_id,
         reporter=reporter,
         config=config_snapshot,
@@ -489,12 +472,10 @@ async def run_summary_request(
 
     return await run_summary_from_config(
         index_config=index_config,
-        left_text=request["left_text"],
-        right_text=request["right_text"],
+        text=request["text"],
         target_tokens=request["target_tokens"],
         prev_context=request["prev_context"],
-        left_token_count=request["left_token_count"],
-        right_token_count=request["right_token_count"],
+        text_tokens=request["text_tokens"],
         parent_id=request["parent_id"],
         reporter=request["reporter"],
         call_summary=call_summary,

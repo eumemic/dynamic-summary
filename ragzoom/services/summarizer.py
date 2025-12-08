@@ -62,23 +62,19 @@ class Summarizer:
 
     async def summarize(
         self,
-        left_text: str,
-        right_text: str,
+        text: str,
         target_tokens: int,
         *,
         prev_context: str | None = None,
         parent_id: str | None = None,
         reporter: TelemetryCollector | None = None,
-        left_token_count: int | None = None,
-        right_token_count: int | None = None,
+        text_tokens: int | None = None,
     ) -> tuple[str, int, int]:
         request_kwargs: summary_utils.SummaryRequest = {
-            "left_text": left_text,
-            "right_text": right_text,
+            "text": text,
             "target_tokens": target_tokens,
             "prev_context": prev_context,
-            "left_token_count": left_token_count,
-            "right_token_count": right_token_count,
+            "text_tokens": text_tokens,
             "parent_id": parent_id,
             "reporter": reporter,
         }

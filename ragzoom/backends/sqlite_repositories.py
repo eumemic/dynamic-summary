@@ -300,6 +300,21 @@ class SqliteNodeRepository:
             session.commit()
             self.cache_manager.invalidate(node_id)
 
+    def update_preceding_context_summary(
+        self,
+        node_id: str,
+        summary: str | None,
+    ) -> None:
+        """Update the preceding_context_summary field for a node."""
+        with self.SessionLocal() as session:
+            session.execute(
+                update(SQLiteTreeNode)
+                .where(SQLiteTreeNode.id == node_id)
+                .values(preceding_context_summary=summary)
+            )
+            session.commit()
+            self.cache_manager.invalidate(node_id)
+
     # --- Read ---
     def get_node(self, node_id: str) -> TreeNode | None:
         with self.SessionLocal() as session:

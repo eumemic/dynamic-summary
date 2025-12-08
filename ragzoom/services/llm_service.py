@@ -360,27 +360,22 @@ class LLMService:
 
     async def _summarize_text(
         self,
-        left_text: str,
-        right_text: str,
+        text: str,
         target_tokens: int,
         *,
         parent_id: str | None = None,
         reporter: TelemetryCollector | None = None,
         prev_context: str | None = None,
-        left_token_count: int | None = None,
-        right_token_count: int | None = None,
+        text_tokens: int | None = None,
     ) -> tuple[str, int, int]:
-        """Summarize combined text to approximately the target token count."""
-        normalized_parent = parent_id
+        """Summarize text to approximately the target token count."""
         summary_request: summary_utils.SummaryRequest = {
-            "left_text": left_text,
-            "right_text": right_text,
+            "text": text,
             "target_tokens": target_tokens,
             "prev_context": prev_context,
-            "parent_id": normalized_parent,
+            "parent_id": parent_id,
             "reporter": reporter,
-            "left_token_count": left_token_count,
-            "right_token_count": right_token_count,
+            "text_tokens": text_tokens,
         }
 
         return await summary_utils.run_summary_request(
