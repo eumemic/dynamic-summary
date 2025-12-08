@@ -307,6 +307,10 @@ class TestVerbatimTilingInvariant:
         mock_doc_store.nodes.get_nodes.return_value = list(all_nodes.values())
         mock_doc_store.nodes.get_node.side_effect = lambda nid: all_nodes.get(nid)
         mock_doc_store.nodes.get_all.return_value = list(all_nodes.values())
+        # Provide mock repo with get_document_span_end for window bounds computation
+        mock_repo = MagicMock()
+        mock_repo.get_document_span_end.return_value = 1000
+        mock_doc_store.nodes._repo = mock_repo
 
         mock_embedding_service = MagicMock()
         mock_embedding_service.get_query_embedding.return_value = [0.1] * 1536
@@ -363,7 +367,10 @@ class TestVerbatimTilingInvariant:
             mock_coverage.coverage_map = {"root": True}
             mock_coverage.nodes = {"root": root}
             mock_coverage_builder = MagicMock()
-            mock_coverage_builder.build_complete_coverage.return_value = mock_coverage
+            mock_coverage_builder.build_windowed_coverage.return_value = mock_coverage
+            mock_coverage_builder.compute_window_bounds.return_value = MagicMock(
+                actual_start=0, actual_end=200
+            )
             mock_coverage_class.return_value = mock_coverage_builder
 
             mock_scoring = MagicMock()
@@ -454,6 +461,10 @@ class TestVerbatimBudgetIntegration:
         mock_query_config = QueryConfig(budget_tokens=2000)
         mock_doc_store = MagicMock()
         mock_doc_store.nodes.get_leaves.return_value = []
+        # Provide mock repo with get_document_span_end for window bounds computation
+        mock_repo = MagicMock()
+        mock_repo.get_document_span_end.return_value = 200
+        mock_doc_store.nodes._repo = mock_repo
         mock_embedding_service = MagicMock()
         mock_embedding_service.get_query_embedding.return_value = [0.1] * 1536
         mock_budget_planner = MagicMock()
@@ -503,8 +514,11 @@ class TestVerbatimBudgetIntegration:
             mock_coverage_result.coverage_map = {"node1": True}
             mock_coverage_result.nodes = {"node1": mock_root_node}
             mock_coverage_builder = MagicMock()
-            mock_coverage_builder.build_complete_coverage.return_value = (
+            mock_coverage_builder.build_windowed_coverage.return_value = (
                 mock_coverage_result
+            )
+            mock_coverage_builder.compute_window_bounds.return_value = MagicMock(
+                actual_start=0, actual_end=200
             )
             mock_coverage_builder_class.return_value = mock_coverage_builder
 
@@ -562,6 +576,10 @@ class TestVerbatimBudgetIntegration:
         mock_doc_store.nodes.get_recent_leaves_within_budget.return_value = (
             verbatim_leaves
         )
+        # Provide mock repo with get_document_span_end for window bounds computation
+        mock_repo = MagicMock()
+        mock_repo.get_document_span_end.return_value = 200
+        mock_doc_store.nodes._repo = mock_repo
         mock_embedding_service = MagicMock()
         mock_embedding_service.get_query_embedding.return_value = [0.1] * 1536
         mock_budget_planner = MagicMock()
@@ -610,7 +628,10 @@ class TestVerbatimBudgetIntegration:
             mock_coverage.coverage_map = {"root": True}
             mock_coverage.nodes = {"root": mock_root_node}
             mock_coverage_builder = MagicMock()
-            mock_coverage_builder.build_complete_coverage.return_value = mock_coverage
+            mock_coverage_builder.build_windowed_coverage.return_value = mock_coverage
+            mock_coverage_builder.compute_window_bounds.return_value = MagicMock(
+                actual_start=0, actual_end=200
+            )
             mock_coverage_class.return_value = mock_coverage_builder
 
             mock_scoring = MagicMock()
