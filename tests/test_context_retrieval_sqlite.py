@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
 from ragzoom.config import OperationalConfig, QueryConfig, SecretStr
 from ragzoom.contracts.node_repository import NodeDataDict
-from ragzoom.contracts.vector_filter import SpanEndLtFilter, VectorFilter
+from ragzoom.contracts.vector_filter import SpanOverlapsFilter, VectorFilter
 from ragzoom.document_store import DocumentStore
 from ragzoom.vector_api import Vector
 
@@ -169,15 +169,15 @@ class TestContextRetrieval:
         ) -> list[Vector]:
             import numpy as _np
 
-            # Extract span limit from filters
-            span_limit = 100  # Default
+            # Extract span window from filters
+            window_start, window_end = 0, 100  # Default
             if filters:
                 for f in filters:
-                    if isinstance(f, SpanEndLtFilter):
-                        span_limit = f.threshold
+                    if isinstance(f, SpanOverlapsFilter):
+                        window_start, window_end = f.start, f.end
                         break
 
-            # Return nodes that are before the span limit
+            # Return nodes that overlap with the window
             results: list[Vector] = []
             node_data = [
                 ("L1", 0, 25, "P1"),
@@ -186,7 +186,8 @@ class TestContextRetrieval:
             ]
 
             for node_id, span_start, span_end, parent_id in node_data:
-                if span_end < span_limit:
+                # SpanOverlapsFilter: span_start < end AND span_end > start
+                if span_start < window_end and span_end > window_start:
                     results.append(
                         Vector(
                             id=node_id,
@@ -265,7 +266,7 @@ class TestContextRetrieval:
         setup_tree_with_vectors: tuple[DocumentStore, Retriever],
         sqlite_backend: SQLiteStorageBackend,
     ) -> None:
-        """Test that SpanEndLtFilter is properly applied."""
+        """Test that SpanOverlapsFilter is properly applied with window [0, span_end_limit)."""
         doc_store, retriever = setup_tree_with_vectors
 
         captured_filters: list[VectorFilter] = []
@@ -312,7 +313,10 @@ class TestContextRetrieval:
             )
         )
 
-        # Verify SpanEndLtFilter was applied with correct threshold
-        span_filters = [f for f in captured_filters if isinstance(f, SpanEndLtFilter)]
+        # Verify SpanOverlapsFilter was applied with window [0, 50)
+        span_filters = [
+            f for f in captured_filters if isinstance(f, SpanOverlapsFilter)
+        ]
         assert len(span_filters) == 1
-        assert span_filters[0].threshold == 50
+        assert span_filters[0].start == 0
+        assert span_filters[0].end == 50

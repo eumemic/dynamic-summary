@@ -299,8 +299,8 @@ class Retriever:
                 # Leaves are returned sorted by span_start, so first one is the horizon
                 verbatim_horizon = verbatim_leaves[0].span_start
 
-        # Phase 1: Get query embedding
-        query_embedding = self.embedding_service.get_query_embedding(
+        # Phase 1: Get query embedding (async to avoid blocking event loop)
+        query_embedding = await self.embedding_service.get_query_embedding_async(
             query, effective_doc_id
         )
         if telemetry_collector:
@@ -549,132 +549,41 @@ class Retriever:
         existing tree using the node's own text as the query, returning assembled
         text from the semantically relevant preceding content.
 
+        This is a thin wrapper around retrieve_async that returns just the
+        assembled text string.
+
         Args:
             query_text: The text to use as query (typically the node's own text)
-            span_end_limit: Only include nodes where span_end < this value
+            span_end_limit: Only include nodes where span_end <= this value
             budget_tokens: Token budget for the dynamic summary portion
             document_id: Optional document ID to filter by
-            recent_verbatim_token_budget: Token budget for verbatim leaves from
-                the unfinished region (derived from last_eligible_span_start - frontier).
-                Currently unused; reserved for future enhancement to include
-                recent verbatim leaf content alongside the dynamic summary.
+            recent_verbatim_token_budget: Token budget for verbatim leaves
 
         Returns:
             Assembled text from the tiled retrieval result, or empty string if
             no relevant preceding content exists.
         """
-        # Note: recent_verbatim_token_budget is reserved for future use.
-        # The current implementation uses only budget_tokens for the dynamic summary.
-        _ = recent_verbatim_token_budget  # Suppress unused warning
-        # Determine effective document scope
-        effective_doc_id = (
-            getattr(self.document_store, "document_id", None) or document_id
-        )
-
-        # Calculate conservative num_seeds for the budget
-        num_seeds = self.budget_planner.calculate_conservative_num_seeds(
-            budget_tokens, effective_doc_id
-        )
-        if num_seeds == 0:
+        # Edge case: no preceding content at document start
+        if span_end_limit <= 0:
             return ""
 
-        # Get query embedding from the node's text (async for concurrency)
-        query_embedding = await self.embedding_service.get_query_embedding_async(
-            query_text, effective_doc_id
+        result = await self.retrieve_async(
+            query=query_text,
+            budget_tokens=budget_tokens,
+            document_id=document_id,
+            span_start=0,
+            span_end=span_end_limit,
+            recent_verbatim_budget=recent_verbatim_token_budget,
         )
-
-        # Build filters: document scope + span_end < limit
-        filters: list[VectorFilter] = [SpanEndLtFilter(span_end_limit)]
-        if effective_doc_id:
-            filters.append(DocumentIdFilter(effective_doc_id))
-
-        # Search for candidates from preceding tree only
-        k_candidates = int(num_seeds * self.query_config.mmr_k_multiplier)
-        raw_candidates = self.vector_index.search_similar(
-            query_embedding,
-            k_candidates,
-            filters,
-        )
-
-        if not raw_candidates:
-            return ""
-
-        # Filter out stale vectors
-        vec_candidates = self._filter_stale_vectors(raw_candidates)
-
-        if not vec_candidates:
-            return ""
-
-        # Apply MMR selection
-        from ragzoom.retrieval import mmr
-
-        selected_ids = mmr.select_diverse(
-            query_embedding,
-            vec_candidates,
-            num_seeds,
-            self.query_config.mmr_lambda,
-        )
-
-        if not selected_ids:
-            return ""
-
-        # Build coverage map
-        seed_meta_all = {v.id: v.meta for v in vec_candidates}
-        seed_metadata = {
-            node_id: seed_meta_all[node_id]
-            for node_id in selected_ids
-            if node_id in seed_meta_all
-        }
-        from ragzoom.retrieval import CoverageBuilder
-
-        doc_coverage_builder = CoverageBuilder(self.document_store)
-        coverage_result = doc_coverage_builder.build_complete_coverage(
-            selected_ids, seed_metadata=seed_metadata
-        )
-        coverage_map = coverage_result.coverage_map
-
-        # Build scores map
-        candidates = self._build_candidates_for_scoring(query_embedding, vec_candidates)
-        doc_scoring_service = ScoringService(self.document_store, self.vector_index)
-        scores = doc_scoring_service.compute_scores(
-            query_embedding, coverage_map, candidates, nodes=coverage_result.nodes
-        )
-
-        # Load all nodes in coverage map
-        nodes = self._load_coverage_nodes(coverage_map, coverage_result.nodes)
-
-        # Find root nodes
-        root_ids = self._find_coverage_root_ids(nodes)
-
-        if not root_ids:
-            return ""
-
-        root_ids.sort(
-            key=lambda node_id: (
-                int(getattr(nodes[node_id], "span_start", 0)),
-                node_id,
-            )
-        )
-
-        # Generate tiling using greedy algorithm
-        dp_result = self.greedy_generator.find_optimal_tiling_over_roots(
-            root_ids, budget_tokens, scores, nodes
-        )
-        tiling_ids = list(dp_result.tiling.node_ids)
-
-        if not tiling_ids:
-            return ""
-
-        # Ensure all tiling nodes are loaded
-        missing_in_nodes = [nid for nid in tiling_ids if nid not in nodes]
-        if missing_in_nodes:
-            loaded_more = self.document_store.nodes.get_nodes(missing_in_nodes)
-            for n in loaded_more:
-                nodes[n.id] = n
 
         # Assemble text from tiling
+        if not result.tiling or not result.nodes:
+            return ""
+
         texts = [
-            nodes[nid].text for nid in tiling_ids if nid in nodes and nodes[nid].text
+            result.nodes[nid].text
+            for nid in result.tiling
+            if nid in result.nodes and result.nodes[nid].text
         ]
         return "\n\n".join(texts)
 

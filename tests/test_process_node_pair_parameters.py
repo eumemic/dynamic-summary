@@ -189,8 +189,12 @@ async def test_prev_context_present_when_preceding_neighbor_exists(
     contexts = [
         kwargs.get("prev_context") for _, kwargs in summary_mock.await_args_list
     ]
-    assert None in contexts
+    # First node at span_start=0 gets empty string, others get non-empty context
+    assert "" in contexts
     assert any(isinstance(ctx, str) and ctx.strip() for ctx in contexts)
     for ctx in contexts:
-        if ctx is not None:
-            assert isinstance(ctx, str) and ctx.strip()
+        # All contexts should be strings (empty or non-empty)
+        assert isinstance(ctx, str)
+        # Non-empty contexts should have content
+        if ctx != "":
+            assert ctx.strip()
