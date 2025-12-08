@@ -568,6 +568,8 @@ class IndexingEngine:
                 job.document_id,
                 job.leaf_id,
             )
+            # Still set preceding_context to empty string for consistency
+            store.nodes._repo.update_preceding_context(job.leaf_id, "")
             return
 
         leaf_text = leaf.text or ""
@@ -577,6 +579,8 @@ class IndexingEngine:
                 job.document_id,
                 job.leaf_id,
             )
+            # Still set preceding_context to empty string for consistency
+            store.nodes._repo.update_preceding_context(job.leaf_id, "")
             return
 
         span_start = int(getattr(leaf, "span_start", 0))
@@ -586,20 +590,31 @@ class IndexingEngine:
         ctx = self._document_contexts.get(job.document_id)
         telemetry = ctx.telemetry_collector if ctx else None
 
-        # Retrieve preceding context if not at document start
-        preceding_context: str | None = None
+        # Retrieve preceding context
+        # Nodes at span_start=0 get empty string, others get retrieved context
+        preceding_context: str = ""
         if span_start > 0:
             retriever = self._create_retriever(job.document_id)
             if retriever is not None:
-                preceding_context = await retriever.retrieve_for_context(
-                    query_text=leaf_text,
-                    span_end_limit=span_start,
-                    budget_tokens=self._index_config.preceding_summary_budget_tokens,
-                    document_id=job.document_id,
-                    recent_verbatim_token_budget=0,
-                )
-                if preceding_context == "":
-                    preceding_context = None
+                try:
+                    preceding_context = await retriever.retrieve_for_context(
+                        query_text=leaf_text,
+                        span_end_limit=span_start,
+                        budget_tokens=self._index_config.preceding_summary_budget_tokens,
+                        document_id=job.document_id,
+                        recent_verbatim_token_budget=0,
+                    )
+                except Exception:
+                    logger.exception(
+                        "embed: failed to retrieve context doc=%s leaf=%s",
+                        job.document_id,
+                        job.leaf_id,
+                    )
+                    # preceding_context stays as empty string
+
+        # Store preceding_context on the leaf node - always runs even if retrieval failed
+        store = self._store.for_document(job.document_id)
+        store.nodes._repo.update_preceding_context(job.leaf_id, preceding_context)
 
         # TODO: Summarize context into prefix using LLM
         # For now, we'll use the raw context or empty string
@@ -783,7 +798,8 @@ class IndexingEngine:
 
         # Retrieve preceding context BEFORE summarization
         # Uses combined children text as query since we don't have a summary yet
-        preceding_context: str | None = None
+        # Nodes at span_start=0 get empty string, others get retrieved context
+        preceding_context: str = ""
         if span_start > 0:
             retriever = self._create_retriever(job.document_id)
             if retriever is not None:
@@ -795,8 +811,6 @@ class IndexingEngine:
                     document_id=job.document_id,
                     recent_verbatim_token_budget=0,
                 )
-                if preceding_context == "":
-                    preceding_context = None
 
         # Generate summary with preceding context
         summary, _retry_count, summary_tokens = await self._llm_service._summarize_text(
