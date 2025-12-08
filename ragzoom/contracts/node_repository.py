@@ -161,6 +161,14 @@ class NodeRepository(Protocol):
         session: Session | None = None,
     ) -> None: ...
 
+    def update_preceding_context(
+        self,
+        node_id: str,
+        preceding_context: str | None,
+    ) -> None:
+        """Update the preceding_context field for a node."""
+        ...
+
     # Frontier tracking for contextual indexing
     def get_tree_completion_frontier(self, document_id: str | None) -> int: ...
 
