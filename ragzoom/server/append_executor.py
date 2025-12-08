@@ -15,8 +15,6 @@ from typing import TYPE_CHECKING
 from ragzoom.config import IndexConfig
 from ragzoom.contracts.embedding_model import EmbeddingProvider
 from ragzoom.contracts.node_repository import NodeDataDict
-from ragzoom.contracts.tree_node import TreeNode
-from ragzoom.contracts.vector_index import VectorIndex
 from ragzoom.document_store import DocumentStore
 from ragzoom.splitter import TextSplitter
 from ragzoom.telemetry_collection import TelemetryCollector
@@ -72,35 +70,34 @@ class AppendExecutor:
         self,
         *,
         store: DocumentStore,
-        vector_index: VectorIndex,
         document_id: str,
         new_text: str,
         reporter: TelemetryCollector | None = None,
         run_context: IndexRunContext | None = None,
         telemetry_manager: TelemetryRunManager | None = None,
     ) -> AppendOutcome:
+        """Append new text as new leaf nodes without modifying existing leaves.
+
+        This is an append-only operation: existing leaves are never deleted or
+        modified. New leaves are created starting from the span_end of the
+        rightmost existing leaf.
+        """
         if not new_text:
             raise ValueError("append requires non-empty text")
 
         right_leaf = store.nodes.get_rightmost_leaf_for_document(document_id)
         logger.debug(
-            "append[%s]: starting append (new_text_chars=%d, replace_leaf=%s)",
+            "append[%s]: starting append (new_text_chars=%d, has_existing=%s)",
             document_id,
             len(new_text),
             bool(right_leaf),
         )
-        tail_start = int(right_leaf.span_start) if right_leaf else 0
-        preceding_neighbor = (
-            getattr(right_leaf, "preceding_neighbor_id", None) if right_leaf else None
-        )
-        following_neighbor = (
-            getattr(right_leaf, "following_neighbor_id", None) if right_leaf else None
-        )
 
-        existing_tail_text = right_leaf.text or "" if right_leaf else ""
-        combined_text = existing_tail_text + new_text
-        if not combined_text:
-            raise ValueError("append produced no text to index")
+        # New leaves start where the existing content ends
+        span_start = int(right_leaf.span_end) if right_leaf else 0
+        start_level_index = (
+            int(getattr(right_leaf, "level_index", 0)) + 1 if right_leaf else 0
+        )
 
         split_start_time = time.time()
 
@@ -113,38 +110,34 @@ class AppendExecutor:
                 run_context,
                 event="chunk_split_started",
                 new_text_chars=len(new_text),
-                existing_tail_chars=len(existing_tail_text),
-                combined_chars=len(combined_text),
+                existing_tail_chars=0,
+                combined_chars=len(new_text),
             )
 
         if reporter is not None:
             reporter.record_chunk_split_start(
                 start_time=split_start_time,
                 new_text_chars=len(new_text),
-                existing_tail_chars=len(existing_tail_text),
-                combined_chars=len(combined_text),
+                existing_tail_chars=0,
+                combined_chars=len(new_text),
             )
 
-        chunks = self._splitter.split_text(combined_text)
+        # Split only the new text - don't touch existing content
+        chunks = self._splitter.split_text(new_text)
         if not chunks:
             raise ValueError("splitter returned no chunks for append")
 
         leaf_specs = self._build_leaf_specs(
             chunks,
-            tail_start=tail_start,
-            first_leaf_id=right_leaf.id if right_leaf else None,
-            preceding_neighbor_id=preceding_neighbor,
-            following_neighbor_id=following_neighbor,
-            start_level_index=(
-                int(getattr(right_leaf, "level_index", 0)) if right_leaf else 0
-            ),
+            span_start=span_start,
+            preceding_neighbor_id=right_leaf.id if right_leaf else None,
+            start_level_index=start_level_index,
         )
         logger.debug(
-            "append[%s]: prepared %d leaf specs (tail_start=%d, first_leaf=%s)",
+            "append[%s]: prepared %d leaf specs (span_start=%d)",
             document_id,
             len(leaf_specs),
-            tail_start,
-            right_leaf.id if right_leaf else None,
+            span_start,
         )
 
         split_end_time = time.time()
@@ -178,8 +171,6 @@ class AppendExecutor:
                     span=(leaf.span_start, leaf.span_end),
                 )
 
-        deleted_node_ids = self._collect_deletion_ids(store, right_leaf)
-
         payload: list[NodeDataDict] = []
         for leaf in leaf_specs:
             payload.append(
@@ -200,35 +191,39 @@ class AppendExecutor:
                 }
             )
 
-        neighbor_updates = self._build_neighbor_updates(
-            store,
-            leaf_specs,
-            preceding_neighbor,
-            following_neighbor,
-        )
+        # Update neighbor links: existing rightmost leaf -> first new leaf
+        neighbor_updates: list[tuple[str, str | None, str | None]] = []
+        if right_leaf is not None:
+            neighbor_updates.append(
+                (
+                    right_leaf.id,
+                    getattr(right_leaf, "preceding_neighbor_id", None),
+                    leaf_specs[0].node_id,
+                )
+            )
+        for leaf in leaf_specs:
+            neighbor_updates.append(
+                (
+                    leaf.node_id,
+                    leaf.preceding_neighbor_id,
+                    leaf.following_neighbor_id,
+                )
+            )
 
         with store.transaction() as session:
-            if deleted_node_ids:
-                store.nodes.delete_nodes(deleted_node_ids, session=session)
             store.nodes.add_batch(payload, session=session)
             if neighbor_updates:
                 store.nodes.update_neighbors_batch(neighbor_updates, session=session)
 
-            # Clean up vectors for deleted nodes
-            if deleted_node_ids:
-                self._delete_vectors(vector_index, deleted_node_ids)
-
         logger.debug(
-            "append[%s]: wrote %d leaves (deleted=%d) span=(%d,%d)",
+            "append[%s]: wrote %d leaves span=(%d,%d)",
             document_id,
             len(leaf_specs),
-            len(deleted_node_ids),
             leaf_specs[0].span_start,
             leaf_specs[-1].span_end,
         )
 
-        affected_nodes = set(deleted_node_ids)
-        affected_nodes.update(leaf.node_id for leaf in leaf_specs)
+        affected_nodes = {leaf.node_id for leaf in leaf_specs}
         store.tree.clear_depth_cache(list(affected_nodes))
 
         total_leaves = store.nodes.leaf_count()
@@ -275,7 +270,7 @@ class AppendExecutor:
             appended_span_start=leaf_specs[0].span_start,
             appended_span_end=appended_span_end,
             new_leaf_ids=[leaf.node_id for leaf in leaf_specs],
-            deleted_node_ids=deleted_node_ids,
+            deleted_node_ids=[],
             total_leaves=total_leaves,
             leaf_texts=[leaf.text for leaf in leaf_specs],
             leaf_metadata=leaf_metadata,
@@ -285,21 +280,21 @@ class AppendExecutor:
         self,
         chunks: Sequence[str],
         *,
-        tail_start: int,
-        first_leaf_id: str | None,
+        span_start: int,
         preceding_neighbor_id: str | None,
-        following_neighbor_id: str | None,
         start_level_index: int,
     ) -> list[LeafSpec]:
+        """Build leaf specs for new chunks starting at span_start."""
         specs: list[LeafSpec] = []
-        span_cursor = tail_start
+        span_cursor = span_start
 
         for index, chunk in enumerate(chunks):
-            node_id = (
-                first_leaf_id if index == 0 and first_leaf_id else str(uuid.uuid4())
-            )
+            node_id = str(uuid.uuid4())
             span_end = span_cursor + len(chunk)
             token_count = tokenizer.count_tokens(chunk)
+
+            # Neighbor links: chain leaves together, first links to preceding_neighbor_id
+            prev_id = specs[index - 1].node_id if index > 0 else preceding_neighbor_id
 
             specs.append(
                 LeafSpec(
@@ -308,125 +303,27 @@ class AppendExecutor:
                     span_start=span_cursor,
                     span_end=span_end,
                     token_count=token_count,
-                    preceding_neighbor_id=None,
-                    following_neighbor_id=None,
+                    preceding_neighbor_id=prev_id,
+                    following_neighbor_id=None,  # Set in second pass
                     level_index=start_level_index + index,
                 )
             )
             span_cursor = span_end
 
-        for idx, leaf in enumerate(specs):
-            prev_id = specs[idx - 1].node_id if idx > 0 else preceding_neighbor_id
-            next_id = (
-                specs[idx + 1].node_id
-                if idx + 1 < len(specs)
-                else following_neighbor_id
-            )
+        # Set following_neighbor_id links
+        for idx in range(len(specs) - 1):
             specs[idx] = LeafSpec(
-                node_id=leaf.node_id,
-                text=leaf.text,
-                span_start=leaf.span_start,
-                span_end=leaf.span_end,
-                token_count=leaf.token_count,
-                preceding_neighbor_id=prev_id,
-                following_neighbor_id=next_id,
-                level_index=leaf.level_index,
+                node_id=specs[idx].node_id,
+                text=specs[idx].text,
+                span_start=specs[idx].span_start,
+                span_end=specs[idx].span_end,
+                token_count=specs[idx].token_count,
+                preceding_neighbor_id=specs[idx].preceding_neighbor_id,
+                following_neighbor_id=specs[idx + 1].node_id,
+                level_index=specs[idx].level_index,
             )
 
         return specs
-
-    def _collect_deletion_ids(
-        self,
-        store: DocumentStore,
-        right_leaf: TreeNode | None,
-    ) -> list[str]:
-        if right_leaf is None:
-            return []
-        to_delete: list[str] = []
-        current: TreeNode | None = right_leaf
-        visited: set[str] = set()
-        while current is not None and current.id not in visited:
-            visited.add(current.id)
-            to_delete.append(current.id)
-            parent_id = getattr(current, "parent_id", None)
-            if not parent_id:
-                inferred_parent = self._infer_structural_parent(store, current)
-                if inferred_parent is None:
-                    break
-                current = inferred_parent
-                continue
-            current = store.nodes.get(parent_id)
-        return to_delete
-
-    def _infer_structural_parent(
-        self, store: DocumentStore, node: TreeNode
-    ) -> TreeNode | None:
-        """Infer the parent by structural metadata when parent_id is missing."""
-
-        level_index = int(getattr(node, "level_index", 0))
-        height = int(getattr(node, "height", 0))
-        parent_height = height + 1
-        if parent_height <= height:
-            return None
-
-        parent_level_index = level_index // 2
-        inferred = store.nodes.get_by_height_and_level(
-            height=parent_height, level_index=parent_level_index
-        )
-        if inferred is None:
-            return None
-        if getattr(inferred, "document_id", None) != getattr(node, "document_id", None):
-            return None
-        if inferred.id == node.id:
-            return None
-        return inferred
-
-    def _build_neighbor_updates(
-        self,
-        store: DocumentStore,
-        leaves: Sequence[LeafSpec],
-        preceding_neighbor: str | None,
-        following_neighbor: str | None,
-    ) -> list[tuple[str, str | None, str | None]]:
-        updates: list[tuple[str, str | None, str | None]] = []
-        if preceding_neighbor:
-            prev_node = store.nodes.get(preceding_neighbor)
-            if prev_node is not None:
-                updates.append(
-                    (
-                        preceding_neighbor,
-                        getattr(prev_node, "preceding_neighbor_id", None),
-                        leaves[0].node_id,
-                    )
-                )
-        if following_neighbor:
-            next_node = store.nodes.get(following_neighbor)
-            if next_node is not None:
-                updates.append(
-                    (
-                        following_neighbor,
-                        leaves[-1].node_id,
-                        getattr(next_node, "following_neighbor_id", None),
-                    )
-                )
-        for leaf in leaves:
-            updates.append(
-                (
-                    leaf.node_id,
-                    leaf.preceding_neighbor_id,
-                    leaf.following_neighbor_id,
-                )
-            )
-        return updates
-
-    @staticmethod
-    def _delete_vectors(vector_index: VectorIndex, node_ids: Sequence[str]) -> None:
-        if not node_ids:
-            return
-        try:
-            vector_index.delete(ids=list(node_ids))
-        except Exception:  # pragma: no cover - defensive logging
-            logger.exception("Failed to delete vectors during append")
 
 
 if TYPE_CHECKING:

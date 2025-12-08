@@ -350,10 +350,8 @@ class DocumentIndexSession:
                         replace_existing=replace_existing,
                     )
 
-                vector_index = self._runtime._vector_index_factory(embedding_model)
                 outcome = await self._runtime._append_executor.append(
                     store=document_store,
-                    vector_index=vector_index,
                     document_id=self._document_id,
                     new_text=text,
                     reporter=run_context.telemetry_collector if run_context else None,

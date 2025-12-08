@@ -24,7 +24,6 @@ class StubAppendExecutor:
         self.calls: list[
             tuple[
                 DocumentStore,
-                VectorIndex,
                 str,
                 str,
                 object | None,
@@ -37,7 +36,6 @@ class StubAppendExecutor:
         self,
         *,
         store: DocumentStore,
-        vector_index: VectorIndex,
         document_id: str,
         new_text: str,
         reporter: object | None = None,
@@ -47,7 +45,6 @@ class StubAppendExecutor:
         self.calls.append(
             (
                 store,
-                vector_index,
                 document_id,
                 new_text,
                 reporter,
@@ -189,8 +186,8 @@ async def test_append_text_uses_append_executor() -> None:
 
         assert append_executor.calls, "Append executor was not invoked"
         call = append_executor.calls[0]
-        assert call[2] == "doc"
-        assert call[3] == "hello world"
+        assert call[1] == "doc"
+        assert call[2] == "hello world"
 
         assert backend.get_document_by_id("doc") is not None
         assert indexing_engine.triggered == ["doc"]
