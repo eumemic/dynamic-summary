@@ -34,6 +34,9 @@ class WindowBounds:
     Edge-max coordinates are the highest ancestors of the boundary leaves
     that stay entirely within the window. They ensure full coverage of the
     window edges even when no seeds are present there.
+
+    At document boundaries (start or end), edge-max is not needed because
+    seeds' ancestors naturally cover to position 0 or doc_end.
     """
 
     actual_start: int
@@ -42,6 +45,8 @@ class WindowBounds:
     right_leaf_index: int
     left_edge_max: TreeCoordinate
     right_edge_max: TreeCoordinate
+    at_doc_start: bool = False
+    at_doc_end: bool = False
 
 
 class CoverageBuilder:
@@ -265,33 +270,38 @@ class CoverageBuilder:
         for coord in meta_seed_coords.values():
             enqueue(coord)
 
-        # Add synthetic seeds based on mode
+        # Add roots - document may be a forest, so we need all roots even if
+        # some trees have no seeds. Roots are fetched (not computed) because
+        # different trees in the forest may have different heights.
+        try:
+            root_nodes = self.store.nodes.get_root_nodes()
+            for root in root_nodes:
+                root_coord = TreeCoordinate(
+                    document_id=getattr(root, "document_id", None),
+                    height=getattr(root, "height", 0),
+                    level_index=getattr(root, "level_index", 0),
+                )
+                coordinates.append(root_coord)
+        except Exception as exc:
+            handle_graceful_error(
+                exc, "Failed to get root nodes for coverage", default=None
+            )
+
+        # Add edge-max for interior window boundaries (not at document edges)
         if window_bounds is not None:
-            # Windowed: add edge-max coordinates (ensure full window coverage)
-            # Edge-max is computed using highest_ancestor_within_window which
-            # ensures the coordinate stays within the window bounds.
-            # Add directly to coordinates (not via enqueue) since ancestors
-            # would extend beyond the window and get filtered anyway.
-            coordinates.append(window_bounds.left_edge_max)
-            coordinates.append(window_bounds.left_edge_max.sibling())
-            if window_bounds.right_edge_max != window_bounds.left_edge_max:
+            # Edge-max ensures coverage at window edges when no seeds are nearby.
+            # At document boundaries, edge-max is skipped - seeds' ancestors
+            # naturally cover to position 0 or doc_end.
+            if not window_bounds.at_doc_start:
+                coordinates.append(window_bounds.left_edge_max)
+                coordinates.append(window_bounds.left_edge_max.sibling())
+
+            if (
+                window_bounds.right_edge_max != window_bounds.left_edge_max
+                and not window_bounds.at_doc_end
+            ):
                 coordinates.append(window_bounds.right_edge_max)
                 coordinates.append(window_bounds.right_edge_max.sibling())
-        else:
-            # Full document: add root nodes
-            try:
-                root_nodes = self.store.nodes.get_root_nodes()
-                for root in root_nodes:
-                    root_coord = TreeCoordinate(
-                        document_id=getattr(root, "document_id", None),
-                        height=getattr(root, "height", 0),
-                        level_index=getattr(root, "level_index", 0),
-                    )
-                    coordinates.append(root_coord)
-            except Exception as exc:
-                handle_graceful_error(
-                    exc, "Failed to get root nodes for coverage", default=None
-                )
 
         unique_coords = TreeCoordinate.unique(coordinates)
 
@@ -412,26 +422,36 @@ class CoverageBuilder:
             level_index=right_leaf.level_index,
         )
 
-        # Find edge-max: highest ancestors that stay within the window.
-        # Use highest_ancestor_within_window which stops climbing if the
-        # ancestor would extend beyond the OTHER edge of the window.
+        # Find edge-max: highest ancestors that ensure full coverage at window edges.
+        # At document boundaries (start or end), there's nothing beyond to cover,
+        # so edge-max is just the boundary leaf itself. For interior boundaries,
+        # climb as high as possible while staying within window bounds.
         max_height = self.store.nodes.max_height()
+        doc_span_end = repo.get_document_span_end(document_id)
 
-        # Left edge-max: highest ancestor of left leaf that stays within window
-        left_edge_max = left_coord.highest_ancestor_within_window(
-            left_edge=True,
-            left_leaf_idx=left_leaf.level_index,
-            right_leaf_idx=right_leaf.level_index,
-            max_height=max_height,
-        )
+        # Left edge: if at document start, no edge-max needed
+        at_doc_start = left_leaf.span_start == 0
+        if at_doc_start:
+            left_edge_max = left_coord
+        else:
+            left_edge_max = left_coord.highest_ancestor_within_window(
+                left_edge=True,
+                left_leaf_idx=left_leaf.level_index,
+                right_leaf_idx=right_leaf.level_index,
+                max_height=max_height,
+            )
 
-        # Right edge-max: highest ancestor of right leaf that stays within window
-        right_edge_max = right_coord.highest_ancestor_within_window(
-            left_edge=False,
-            left_leaf_idx=left_leaf.level_index,
-            right_leaf_idx=right_leaf.level_index,
-            max_height=max_height,
-        )
+        # Right edge: if at document end, no edge-max needed
+        at_doc_end = doc_span_end is not None and right_leaf.span_end >= doc_span_end
+        if at_doc_end:
+            right_edge_max = right_coord
+        else:
+            right_edge_max = right_coord.highest_ancestor_within_window(
+                left_edge=False,
+                left_leaf_idx=left_leaf.level_index,
+                right_leaf_idx=right_leaf.level_index,
+                max_height=max_height,
+            )
 
         return WindowBounds(
             actual_start=actual_start,
@@ -440,6 +460,8 @@ class CoverageBuilder:
             right_leaf_index=right_leaf.level_index,
             left_edge_max=left_edge_max,
             right_edge_max=right_edge_max,
+            at_doc_start=at_doc_start,
+            at_doc_end=at_doc_end,
         )
 
     def build_windowed_coverage(
