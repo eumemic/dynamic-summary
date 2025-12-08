@@ -129,6 +129,7 @@ def validate_document(
             vector_index=vector_index,
         )
     )
+    findings.extend(_preceding_context_check(snapshot))
     if telemetry is not None:
         findings.extend(_telemetry_consistency(snapshot, telemetry))
 
@@ -1048,5 +1049,81 @@ def _completeness_check(
                         message=f"Failed to check embeddings: {exc}",
                     )
                 )
+
+    # Check preceding_context for leaves (only when --complete)
+    # Inner nodes are checked separately by _preceding_context_check
+    for node in snapshot.leaves:
+        span_start = int(getattr(node, "span_start", 0))
+        preceding_context = getattr(node, "preceding_context", None)
+
+        if preceding_context is None:
+            findings.append(
+                ValidationFinding(
+                    code="forest.missing_preceding_context",
+                    message=(
+                        f"Leaf (span_start={span_start}) has no preceding_context"
+                    ),
+                    node_id=node.id,
+                )
+            )
+        elif span_start > 0 and preceding_context == "":
+            findings.append(
+                ValidationFinding(
+                    code="forest.empty_preceding_context",
+                    message=(
+                        f"Leaf (span_start={span_start}) has empty preceding_context "
+                        f"but span_start > 0"
+                    ),
+                    node_id=node.id,
+                )
+            )
+
+    return findings
+
+
+def _preceding_context_check(
+    snapshot: DocumentSnapshot,
+) -> list[ValidationFinding]:
+    """Check that all inner nodes have preceding_context set.
+
+    Inner nodes (height > 0) must always have preceding_context:
+    - Nodes with span_start=0 should have empty string ""
+    - Nodes with span_start>0 should have non-empty preceding_context
+
+    This is always checked, not just when --complete is passed.
+    Leaf nodes are checked separately by _completeness_check when --complete.
+    """
+    findings: list[ValidationFinding] = []
+
+    for node in snapshot.nodes:
+        height = int(getattr(node, "height", 0))
+        if height == 0:
+            continue  # Skip leaves - checked by _completeness_check
+
+        span_start = int(getattr(node, "span_start", 0))
+        preceding_context = getattr(node, "preceding_context", None)
+
+        if preceding_context is None:
+            findings.append(
+                ValidationFinding(
+                    code="forest.missing_preceding_context",
+                    message=(
+                        f"Inner node at height {height} (span_start={span_start}) "
+                        f"has no preceding_context"
+                    ),
+                    node_id=node.id,
+                )
+            )
+        elif span_start > 0 and preceding_context == "":
+            findings.append(
+                ValidationFinding(
+                    code="forest.empty_preceding_context",
+                    message=(
+                        f"Inner node at height {height} (span_start={span_start}) "
+                        f"has empty preceding_context but span_start > 0"
+                    ),
+                    node_id=node.id,
+                )
+            )
 
     return findings

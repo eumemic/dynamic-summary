@@ -44,6 +44,9 @@ def _add_leaf(
         height=0,
         level_index=level_index,
     )
+    # Set preceding_context: empty for span_start=0, placeholder for others
+    preceding_context = "" if start == 0 else "preceding context"
+    store.nodes._repo.update_preceding_context(node_id, preceding_context)
 
 
 def _add_parent(
@@ -69,6 +72,9 @@ def _add_parent(
         height=height,
         level_index=level_index,
     )
+    # Set preceding_context: empty for span_start=0, placeholder for others
+    preceding_context = "" if start == 0 else "preceding context"
+    store.nodes._repo.update_preceding_context(node_id, preceding_context)
 
 
 def _build_two_leaf_tree(store: DocumentStore, document_id: str) -> None:
