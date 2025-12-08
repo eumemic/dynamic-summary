@@ -211,6 +211,155 @@ class TestLeafSpan:
         assert right == 7
 
 
+class TestHighestAncestorWithinWindow:
+    """Tests for edge-max computation that respects window boundaries.
+
+    Unlike highest_ancestor_on_boundary which only checks edge alignment,
+    this method also checks that climbing doesn't extend beyond the OTHER
+    edge of the window.
+
+    Tree structure for reference (8 leaves):
+    Height 0: [0] [1] [2] [3] [4] [5] [6] [7]   (leaves)
+    Height 1:  [0,1]  [2,3]  [4,5]  [6,7]       (indices 0,1,2,3)
+    Height 2:    [0-3]      [4-7]              (indices 0,1)
+    Height 3:        [0-7]                     (index 0 = root)
+    """
+
+    # --- Edge alignment tests (same as highest_ancestor_on_boundary) ---
+
+    def test_left_edge_stops_at_right_child(self) -> None:
+        """Leaf at odd index (right child) stops immediately."""
+        leaf = TreeCoordinate("doc", height=0, level_index=5)
+        result = leaf.highest_ancestor_within_window(
+            left_edge=True, left_leaf_idx=0, right_leaf_idx=7, max_height=10
+        )
+        assert result == leaf
+
+    def test_left_edge_walks_up_left_children(self) -> None:
+        """Left edge climbs through left children until hitting right child."""
+        # Leaf 4 → (1,2) → (2,1) stops at (2,1) because 1 is odd
+        leaf = TreeCoordinate("doc", height=0, level_index=4)
+        result = leaf.highest_ancestor_within_window(
+            left_edge=True, left_leaf_idx=0, right_leaf_idx=7, max_height=10
+        )
+        assert result.height == 2
+        assert result.level_index == 1
+
+    def test_right_edge_stops_at_left_child(self) -> None:
+        """Leaf at even index (left child) stops immediately."""
+        leaf = TreeCoordinate("doc", height=0, level_index=4)
+        result = leaf.highest_ancestor_within_window(
+            left_edge=False, left_leaf_idx=0, right_leaf_idx=7, max_height=10
+        )
+        assert result == leaf
+
+    def test_right_edge_walks_up_right_children(self) -> None:
+        """Right edge climbs through right children in full document window."""
+        # Leaf 7 → (1,3) → (2,1) → (3,0) stops at (3,0) because 0 is even
+        leaf = TreeCoordinate("doc", height=0, level_index=7)
+        result = leaf.highest_ancestor_within_window(
+            left_edge=False, left_leaf_idx=0, right_leaf_idx=7, max_height=10
+        )
+        assert result.height == 3
+        assert result.level_index == 0
+
+    # --- Window boundary constraint tests (NEW behavior) ---
+
+    def test_left_edge_stopped_by_right_boundary(self) -> None:
+        """Left edge stops when parent would exceed right boundary."""
+        # Leaf 0 in window [0,3]: climbs to (2,0) which spans [0,3]
+        # Next parent (3,0) spans [0,7] which exceeds right_leaf_idx=3
+        leaf = TreeCoordinate("doc", height=0, level_index=0)
+        result = leaf.highest_ancestor_within_window(
+            left_edge=True, left_leaf_idx=0, right_leaf_idx=3, max_height=10
+        )
+        assert result.height == 2
+        assert result.level_index == 0
+
+    def test_right_edge_stopped_by_left_boundary(self) -> None:
+        """Right edge stops when parent would exceed left boundary."""
+        # Leaf 7 in window [4,7]: climbs to (2,1) which spans [4,7]
+        # Next parent (3,0) spans [0,7] which is below left_leaf_idx=4
+        leaf = TreeCoordinate("doc", height=0, level_index=7)
+        result = leaf.highest_ancestor_within_window(
+            left_edge=False, left_leaf_idx=4, right_leaf_idx=7, max_height=10
+        )
+        assert result.height == 2
+        assert result.level_index == 1
+
+    def test_narrow_window_limits_climbing(self) -> None:
+        """Narrow window stops climbing early due to boundary check."""
+        # Leaf 2 in window [2,5]: climbs to (1,1) which spans [2,3]
+        # Stops at (1,1) because 1 is odd (right child), not boundary
+        leaf = TreeCoordinate("doc", height=0, level_index=2)
+        result = leaf.highest_ancestor_within_window(
+            left_edge=True, left_leaf_idx=2, right_leaf_idx=5, max_height=10
+        )
+        assert result.height == 1
+        assert result.level_index == 1
+
+    # --- Full document window tests ---
+
+    def test_left_edge_climbs_to_root_full_doc(self) -> None:
+        """Left edge climbs to root when window is full document."""
+        leaf = TreeCoordinate("doc", height=0, level_index=0)
+        result = leaf.highest_ancestor_within_window(
+            left_edge=True, left_leaf_idx=0, right_leaf_idx=7, max_height=3
+        )
+        assert result.height == 3
+        assert result.level_index == 0
+
+    # --- Single leaf window tests ---
+
+    def test_single_leaf_window_cannot_climb(self) -> None:
+        """Single leaf window prevents climbing beyond self."""
+        # Leaf 2 in window [2,2]: parent (1,1) spans [2,3] > 2
+        leaf = TreeCoordinate("doc", height=0, level_index=2)
+        result = leaf.highest_ancestor_within_window(
+            left_edge=True, left_leaf_idx=2, right_leaf_idx=2, max_height=10
+        )
+        assert result == leaf
+
+    # --- Max height constraint tests ---
+
+    def test_max_height_stops_climbing(self) -> None:
+        """Max height constraint stops climbing before boundary check."""
+        leaf = TreeCoordinate("doc", height=0, level_index=0)
+        result = leaf.highest_ancestor_within_window(
+            left_edge=True, left_leaf_idx=0, right_leaf_idx=7, max_height=2
+        )
+        assert result.height == 2
+        assert result.level_index == 0
+
+    # --- Both edges converge tests ---
+
+    def test_both_edges_same_ancestor(self) -> None:
+        """Both edges of narrow window converge to same ancestor."""
+        # Window [0,1]: both leaf 0 (left) and leaf 1 (right) → (1,0)
+        left_result = TreeCoordinate("doc", 0, 0).highest_ancestor_within_window(
+            left_edge=True, left_leaf_idx=0, right_leaf_idx=1, max_height=10
+        )
+        right_result = TreeCoordinate("doc", 0, 1).highest_ancestor_within_window(
+            left_edge=False, left_leaf_idx=0, right_leaf_idx=1, max_height=10
+        )
+        assert left_result.height == 1 and left_result.level_index == 0
+        assert right_result.height == 1 and right_result.level_index == 0
+        assert left_result == right_result
+
+    def test_neither_edge_can_climb(self) -> None:
+        """Window where both boundary leaves are wrong child type."""
+        # Window [3,4]: leaf 3 is right child, leaf 4 is left child
+        left_result = TreeCoordinate("doc", 0, 3).highest_ancestor_within_window(
+            left_edge=True, left_leaf_idx=3, right_leaf_idx=4, max_height=10
+        )
+        right_result = TreeCoordinate("doc", 0, 4).highest_ancestor_within_window(
+            left_edge=False, left_leaf_idx=3, right_leaf_idx=4, max_height=10
+        )
+        # Both return themselves - can't climb at all
+        assert left_result.height == 0 and left_result.level_index == 3
+        assert right_result.height == 0 and right_result.level_index == 4
+
+
 class TestIsWithinLeafRange:
     """Tests for coordinate window filtering."""
 
