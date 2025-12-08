@@ -56,6 +56,7 @@ matplotlib.rcParams["font.size"] = DEFAULT_FONT_SIZE
 
 # Color constants for visualization consistency
 EMBEDDINGS_COLOR = "#9333ea"  # Purple for embeddings
+RETRIEVAL_COLOR = "#06b6d4"  # Cyan for retrieval (distinct from all warm colors)
 ATTEMPT_COLORS = [
     "#2563eb",  # Blue for initial attempt
     "#10b981",  # Green for retry 1
@@ -1831,6 +1832,28 @@ class TelemetryVisualizer:
                     )
                     ax.add_patch(rect)
 
+            # Draw retrieval bar if present (orange, zorder between summary and embed)
+            retrieval_data = node.get("retrieval")
+            if retrieval_data:
+                ret_start = _to_float(retrieval_data.get("start_time"))
+                ret_end = _to_float(retrieval_data.get("end_time"))
+                if ret_start is not None and ret_end is not None:
+                    baseline, min_time = self._calculate_timeline_baseline(
+                        indexing_start_time, min_time, ret_start
+                    )
+                    rect = Rectangle(
+                        (span_start, ret_start - baseline),
+                        max(1, span_end - span_start - gap),
+                        ret_end - ret_start,
+                        facecolor=RETRIEVAL_COLOR,
+                        edgecolor="none",
+                        linewidth=0,
+                        alpha=0.7,
+                        zorder=1.5,  # Between summaries (1) and embeddings (2)
+                    )
+                    ax.add_patch(rect)
+                    max_time = max(max_time, ret_end)
+
             # Skip leaf nodes for summary processing - they don't have summaries
             if node["height"] == 0:
                 if node_start_time is None:
@@ -2012,6 +2035,13 @@ class TelemetryVisualizer:
             if has_embeddings:
                 legend_elements.append(
                     Patch(facecolor=EMBEDDINGS_COLOR, label="Embeddings", alpha=0.9)
+                )
+
+            # Check if any nodes have retrieval data to show
+            has_retrieval = any(node.get("retrieval") for node in nodes)
+            if has_retrieval:
+                legend_elements.append(
+                    Patch(facecolor=RETRIEVAL_COLOR, label="Retrieval", alpha=0.7)
                 )
 
             # Add summary attempt colors

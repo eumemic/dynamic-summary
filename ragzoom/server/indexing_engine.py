@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -46,16 +47,6 @@ VectorIndexFactory = Callable[[str], "VectorIndex"]
 OnDocumentIdleCallback = Callable[[str], "Awaitable[None]"]
 
 logger = logging.getLogger(__name__)
-
-
-class TilingValidationError(Exception):
-    """Raised when a tiling fails validation during indexing.
-
-    This error intentionally kills the indexing process to preserve
-    the database state for debugging the retrieval bug.
-    """
-
-    pass
 
 
 def _expected_total_from_leaf_count(n: int) -> int:
@@ -607,6 +598,7 @@ class IndexingEngine:
         if span_start > 0:
             retriever = self._create_retriever(job.document_id)
             if retriever is not None:
+                retrieval_start_time = time.time()
                 try:
                     context_result = await retriever.retrieve_for_context(
                         query_text=leaf_text,
@@ -615,17 +607,6 @@ class IndexingEngine:
                         document_id=job.document_id,
                         recent_verbatim_token_budget=0,
                     )
-                    # Validate tiling covers [0, span_start) completely
-                    self._validate_tiling(
-                        context_result,
-                        span_start,
-                        job.document_id,
-                        job.leaf_id,
-                        "embed_leaf",
-                    )
-                except TilingValidationError:
-                    # Re-raise to kill indexing and preserve DB state for debugging
-                    raise
                 except Exception:
                     logger.exception(
                         "embed: failed to retrieve context doc=%s leaf=%s",
@@ -633,6 +614,28 @@ class IndexingEngine:
                         job.leaf_id,
                     )
                     # context_result stays as None
+
+                # Record retrieval telemetry
+                if telemetry is not None:
+                    tiling_count = 0
+                    tiling_tokens = 0
+                    if (
+                        context_result
+                        and context_result.tiling
+                        and context_result.nodes
+                    ):
+                        tiling_count = len(context_result.tiling)
+                        tiling_tokens = sum(
+                            context_result.nodes[nid].token_count
+                            for nid in context_result.tiling
+                            if nid in context_result.nodes
+                        )
+                    telemetry.record_retrieval_call(
+                        node_id=job.leaf_id,
+                        tiling_node_count=tiling_count,
+                        tiling_tokens=tiling_tokens,
+                        start_time=retrieval_start_time,
+                    )
 
         # Extract tiling IDs and assemble context text
         tiling_ids: list[str] = []
@@ -840,6 +843,7 @@ class IndexingEngine:
         if span_start > 0:
             retriever = self._create_retriever(job.document_id)
             if retriever is not None:
+                retrieval_start_time = time.time()
                 query_text = f"{left_text}\n{right_text}"
                 context_result = await retriever.retrieve_for_context(
                     query_text=query_text,
@@ -848,14 +852,28 @@ class IndexingEngine:
                     document_id=job.document_id,
                     recent_verbatim_token_budget=0,
                 )
-                # Validate tiling covers [0, span_start) completely
-                self._validate_tiling(
-                    context_result,
-                    span_start,
-                    job.document_id,
-                    parent_id,
-                    "summarize_pair",
-                )
+
+                # Record retrieval telemetry
+                if telemetry is not None:
+                    tiling_count = 0
+                    tiling_tokens = 0
+                    if (
+                        context_result
+                        and context_result.tiling
+                        and context_result.nodes
+                    ):
+                        tiling_count = len(context_result.tiling)
+                        tiling_tokens = sum(
+                            context_result.nodes[nid].token_count
+                            for nid in context_result.tiling
+                            if nid in context_result.nodes
+                        )
+                    telemetry.record_retrieval_call(
+                        node_id=parent_id,
+                        tiling_node_count=tiling_count,
+                        tiling_tokens=tiling_tokens,
+                        start_time=retrieval_start_time,
+                    )
 
         # Extract tiling IDs and assemble context text
         import json
@@ -969,65 +987,6 @@ class IndexingEngine:
     # -----------------------------------------------------------------------
     # Helpers
     # -----------------------------------------------------------------------
-
-    def _validate_tiling(
-        self,
-        context_result: RetrievalResult,
-        expected_end: int,
-        document_id: str,
-        node_id: str,
-        operation: str,
-    ) -> None:
-        """Validate that a tiling covers [0, expected_end) with no gaps.
-
-        Raises TilingValidationError if the tiling is incomplete or has gaps,
-        killing the indexing process to preserve database state for debugging.
-        """
-        if not context_result.tiling or not context_result.nodes:
-            raise TilingValidationError(
-                f"{operation}: Empty tiling for node {node_id} "
-                f"(expected coverage [0, {expected_end}))"
-            )
-
-        # Get nodes in tiling order and sort by span_start
-        tiling_nodes = [
-            context_result.nodes[nid]
-            for nid in context_result.tiling
-            if nid in context_result.nodes
-        ]
-        if not tiling_nodes:
-            raise TilingValidationError(
-                f"{operation}: No valid nodes in tiling for node {node_id}"
-            )
-
-        sorted_nodes = sorted(tiling_nodes, key=lambda n: n.span_start)
-
-        # Check first node starts at 0
-        first = sorted_nodes[0]
-        if first.span_start != 0:
-            raise TilingValidationError(
-                f"{operation}: Tiling does not start at 0 for node {node_id}: "
-                f"first tiling node {first.id} starts at {first.span_start}"
-            )
-
-        # Check for gaps
-        for i in range(len(sorted_nodes) - 1):
-            curr = sorted_nodes[i]
-            next_node = sorted_nodes[i + 1]
-            if curr.span_end != next_node.span_start:
-                raise TilingValidationError(
-                    f"{operation}: Gap in tiling for node {node_id}: "
-                    f"{curr.id} ends at {curr.span_end}, "
-                    f"{next_node.id} starts at {next_node.span_start}"
-                )
-
-        # Check last node ends at expected_end
-        last = sorted_nodes[-1]
-        if last.span_end != expected_end:
-            raise TilingValidationError(
-                f"{operation}: Tiling does not end at {expected_end} for node {node_id}: "
-                f"last tiling node {last.id} ends at {last.span_end}"
-            )
 
     def _create_retriever(self, document_id: str) -> Retriever | None:
         """Create a retriever for the given document."""

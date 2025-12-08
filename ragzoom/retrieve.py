@@ -563,7 +563,7 @@ class Retriever:
         Returns:
             RetrievalResult with tiling node IDs in result.tiling and nodes in result.nodes.
         """
-        # Edge case: no preceding content at document start
+        # Nothing to retrieve if span_end_limit is 0 (at document start)
         if span_end_limit <= 0:
             return RetrievalResult(
                 node_ids=[],
@@ -577,9 +577,9 @@ class Retriever:
             query=query_text,
             budget_tokens=budget_tokens,
             document_id=document_id,
+            recent_verbatim_budget=recent_verbatim_token_budget,
             span_start=0,
             span_end=span_end_limit,
-            recent_verbatim_budget=recent_verbatim_token_budget,
         )
 
     async def retrieve_with_telemetry(
