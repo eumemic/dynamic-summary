@@ -263,16 +263,16 @@ class Retriever:
             num_seeds = self.budget_planner.calculate_conservative_num_seeds(
                 budget_tokens, effective_doc_id
             )
-            logger.info(
+            logger.debug(
                 f"Budget-only mode: calculated conservative num_seeds={num_seeds} for budget={budget_tokens}"
             )
         elif budget_tokens is not None and num_seeds is not None:
-            logger.info(f"Mixed mode: num_seeds={num_seeds}, budget={budget_tokens}")
+            logger.debug(f"Mixed mode: num_seeds={num_seeds}, budget={budget_tokens}")
         elif num_seeds is None:
             num_seeds = self.budget_planner.calculate_conservative_num_seeds(
                 self.query_config.budget_tokens, effective_doc_id
             )
-            logger.info(
+            logger.debug(
                 f"Default mode: calculated conservative num_seeds={num_seeds} from budget={self.query_config.budget_tokens}"
             )
 

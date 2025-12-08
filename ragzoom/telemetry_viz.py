@@ -466,9 +466,9 @@ class TelemetryVisualizer:
         ax2 = fig.add_subplot(top_gs[1])
         self._plot_summary_scatter(telemetry, ax2, bounds=summary_bounds)
 
-        # 3. Fidelity distribution
+        # 3. Retrieval tokens (preceding context) distribution
         ax3 = fig.add_subplot(top_gs[2])
-        self._plot_fidelity_scatter(telemetry, ax3, title="Summarization Fidelity")
+        self._plot_retrieval_tokens_scatter(telemetry, ax3)
 
         # 4. Tree Construction Timeline
         ax4 = fig.add_subplot(bottom_gs[0])
@@ -656,21 +656,19 @@ class TelemetryVisualizer:
         ax2_right.set_title("Summary Compression Patterns", fontsize=12)
         ax2_right.set_ylabel("")  # Remove y-axis label
 
-        # 3. Fidelity distributions
-        ax_fidelity_left = fig.add_subplot(top_gs[2, 0])
-        ax_fidelity_right = fig.add_subplot(top_gs[2, 1], sharey=ax_fidelity_left)
+        # 3. Retrieval tokens (preceding context) distribution
+        ax_retrieval_left = fig.add_subplot(top_gs[2, 0])
+        ax_retrieval_right = fig.add_subplot(top_gs[2, 1], sharey=ax_retrieval_left)
 
-        self._plot_fidelity_scatter(
+        self._plot_retrieval_tokens_scatter(
             telemetry1,
-            ax_fidelity_left,
-            title="Summary Fidelity",
+            ax_retrieval_left,
         )
-        self._plot_fidelity_scatter(
+        self._plot_retrieval_tokens_scatter(
             telemetry2,
-            ax_fidelity_right,
-            title="Summary Fidelity",
+            ax_retrieval_right,
         )
-        ax_fidelity_right.set_ylabel("")
+        ax_retrieval_right.set_ylabel("")
 
         # 4. Tree Construction Timeline (share both axes)
         ax3_left = fig.add_subplot(bottom_gs[0, 0])
@@ -984,6 +982,119 @@ class TelemetryVisualizer:
         ax.legend(
             handles=legend_elements,
             loc="upper right",
+            fontsize=8,
+            frameon=True,
+        )
+
+    def _plot_retrieval_tokens_scatter(
+        self,
+        telemetry: TelemetryDataDict,
+        ax: Axes,
+        *,
+        title: str = "Preceding Context Tokens",
+    ) -> None:
+        """Plot retrieval tiling tokens per node over document position.
+
+        Shows how many tokens of preceding context were retrieved for each node,
+        with separate colors for leaves (height 0) and inner nodes (height > 0).
+        """
+        nodes = telemetry.get("nodes", [])
+
+        # Extract points: (span_start, tiling_tokens, height)
+        points: list[tuple[int, int, int]] = []
+        for node in nodes:
+            retrieval = node.get("retrieval")
+            if retrieval:
+                span = node.get("span")
+                span_start = span[0] if span else 0
+                tiling_tokens = retrieval.get("tiling_tokens", 0)
+                height = node.get("height", 0)
+                points.append((span_start, tiling_tokens, height))
+
+        if not points:
+            ax.text(
+                0.5,
+                0.5,
+                "No retrieval data available",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+                fontsize=10,
+                color="#6b7280",
+            )
+            ax.set_axis_off()
+            return
+
+        positions, tokens, heights = zip(*points)
+
+        # Color by node type: blue for leaves, red for inner nodes
+        colors = ["#2563eb" if h == 0 else "#dc2626" for h in heights]
+
+        ax.scatter(
+            positions,
+            tokens,
+            c=colors,
+            alpha=0.6,
+            s=22,
+            edgecolors="none",
+        )
+
+        # Show mean retrieval tokens
+        mean_tokens = statistics.fmean(tokens)
+        ax.axhline(
+            mean_tokens,
+            color="#6b7280",
+            linestyle="--",
+            linewidth=1.5,
+            label=f"Mean: {mean_tokens:.0f} tokens",
+        )
+
+        span_min, span_max = self._extract_span_range(telemetry)
+        ax.set_xlim(span_min, span_max)
+
+        text_x = (
+            span_max - (span_max - span_min) * 0.01 if span_max > span_min else span_max
+        )
+        ax.text(
+            text_x,
+            mean_tokens,
+            f"{mean_tokens:.0f}",
+            color="#6b7280",
+            fontsize=9,
+            fontweight="bold",
+            ha="right",
+            va="bottom",
+            bbox=dict(
+                boxstyle="round,pad=0.15",
+                facecolor="white",
+                edgecolor="none",
+                alpha=0.7,
+            ),
+        )
+
+        max_tokens = max(tokens) if tokens else 0
+        upper = max(100, max_tokens * 1.1)
+        ax.set_ylim(0, upper)
+        ax.set_xlabel("Document Position (characters)")
+        ax.set_ylabel("Tiling Tokens")
+        ax.set_title(title, fontsize=12)
+        ax.grid(True, alpha=0.2, axis="both")
+
+        legend_elements = [
+            Patch(facecolor="#2563eb", label="Leaf nodes", alpha=0.6),
+            Patch(facecolor="#dc2626", label="Inner nodes", alpha=0.6),
+            Line2D(
+                [0],
+                [0],
+                color="#6b7280",
+                linestyle="--",
+                linewidth=1.5,
+                label="Mean tokens",
+            ),
+        ]
+        ax.legend(
+            handles=legend_elements,
+            loc="upper left",
             fontsize=8,
             frameon=True,
         )
