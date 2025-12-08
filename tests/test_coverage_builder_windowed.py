@@ -668,14 +668,14 @@ class TestWindowBoundsEdgeCases:
         assert bounds.actual_end == 400
         assert bounds.left_leaf_index == 0
         assert bounds.right_leaf_index == 3
-        # At document boundaries, edge-max is just the boundary leaf itself -
-        # there's nothing beyond to cover, so no need to climb.
+        # For a full document window, edge-max climbs all the way to the root
+        # since nothing extends beyond the window.
         assert bounds.left_edge_max is not None
-        assert bounds.left_edge_max.height == 0
+        assert bounds.left_edge_max.height == 2  # root
         assert bounds.left_edge_max.level_index == 0
         assert bounds.right_edge_max is not None
-        assert bounds.right_edge_max.height == 0
-        assert bounds.right_edge_max.level_index == 3
+        assert bounds.right_edge_max.height == 2  # root
+        assert bounds.right_edge_max.level_index == 0
 
     def test_adjacent_windows_share_boundary(self) -> None:
         """Two adjacent windows share boundary leaf."""
@@ -1104,8 +1104,6 @@ class TestWindowedCoverageBugs:
             right_edge_max=TreeCoordinate(
                 "doc", height=1, level_index=7
             ),  # H1_7 [14,15]
-            at_doc_start=False,
-            at_doc_end=True,
         )
 
         # Seed at leaf 12 - far from left edge
