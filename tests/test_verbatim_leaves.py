@@ -307,6 +307,8 @@ class TestVerbatimTilingInvariant:
         mock_doc_store.nodes.get_nodes.return_value = list(all_nodes.values())
         mock_doc_store.nodes.get_node.side_effect = lambda nid: all_nodes.get(nid)
         mock_doc_store.nodes.get_all.return_value = list(all_nodes.values())
+        # Explicitly set _repo to None to skip window bounds computation
+        mock_doc_store.nodes._repo = None
 
         mock_embedding_service = MagicMock()
         mock_embedding_service.get_query_embedding.return_value = [0.1] * 1536
@@ -454,6 +456,8 @@ class TestVerbatimBudgetIntegration:
         mock_query_config = QueryConfig(budget_tokens=2000)
         mock_doc_store = MagicMock()
         mock_doc_store.nodes.get_leaves.return_value = []
+        # Explicitly set _repo to None to skip window bounds computation
+        mock_doc_store.nodes._repo = None
         mock_embedding_service = MagicMock()
         mock_embedding_service.get_query_embedding.return_value = [0.1] * 1536
         mock_budget_planner = MagicMock()
@@ -562,6 +566,8 @@ class TestVerbatimBudgetIntegration:
         mock_doc_store.nodes.get_recent_leaves_within_budget.return_value = (
             verbatim_leaves
         )
+        # Explicitly set _repo to None to skip window bounds computation
+        mock_doc_store.nodes._repo = None
         mock_embedding_service = MagicMock()
         mock_embedding_service.get_query_embedding.return_value = [0.1] * 1536
         mock_budget_planner = MagicMock()

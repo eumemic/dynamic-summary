@@ -169,15 +169,22 @@ class Retriever:
                     f"span_start ({span_start}) exceeds document length ({doc_span_end})"
                 )
 
-            # Compute window bounds
+            # Compute window bounds for windowed query
             doc_coverage_builder = CoverageBuilder(self.document_store)
             window_bounds = doc_coverage_builder.compute_window_bounds(
                 span_start, resolved_span_end, effective_doc_id
             )
             actual_start = window_bounds.actual_start
             actual_end = window_bounds.actual_end
+        elif effective_doc_id and doc_span_end is not None:
+            # Full document query - compute window bounds for entire document
+            doc_coverage_builder = CoverageBuilder(self.document_store)
+            window_bounds = doc_coverage_builder.compute_window_bounds(
+                0, doc_span_end, effective_doc_id
+            )
+            actual_start = window_bounds.actual_start
+            actual_end = window_bounds.actual_end
         else:
-            # Full document query - actual_start remains 0
             actual_end = doc_span_end
 
         # Determine which mode we're in
