@@ -418,7 +418,6 @@ class CoverageBuilder:
         # Find edge-max: highest ancestor of each boundary leaf that stays within
         # the window. For a full document window, this climbs all the way to the root.
         max_height = self.store.nodes.max_height()
-        doc_span_end = repo.get_document_span_end(document_id)
 
         left_edge_max = left_coord.highest_ancestor_within_window(
             left_edge=True,
