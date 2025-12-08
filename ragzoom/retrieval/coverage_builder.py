@@ -31,17 +31,17 @@ class CoverageResult:
 class WindowBounds:
     """Computed window boundaries aligned to leaf node spans.
 
-    Edge-max coordinates are None when at document boundaries, indicating
-    that no synthetic seed should be added for that edge (the tree naturally
-    covers to the boundary).
+    Edge-max coordinates are the highest ancestors of the boundary leaves
+    that stay entirely within the window. They ensure full coverage of the
+    window edges even when no seeds are present there.
     """
 
     actual_start: int
     actual_end: int
     left_leaf_index: int
     right_leaf_index: int
-    left_edge_max: TreeCoordinate | None
-    right_edge_max: TreeCoordinate | None
+    left_edge_max: TreeCoordinate
+    right_edge_max: TreeCoordinate
 
 
 class CoverageBuilder:
@@ -49,6 +49,24 @@ class CoverageBuilder:
 
     def __init__(self, store: DocumentStore):
         self.store = store
+
+    def _get_document_pinned_nodes(self) -> list[TreeNode]:
+        """Fetch pinned nodes scoped to this document.
+
+        Returns:
+            List of pinned TreeNode objects for the current document.
+        """
+        depth_max = getattr(self.store, "PIN_DEPTH_MAX", 2)
+        if hasattr(self.store, "get_pinned_nodes"):
+            return list(self.store.get_pinned_nodes(depth_max))
+        # Fallback for stores without get_pinned_nodes method
+        nodes_wrapper = getattr(self.store, "nodes", None)
+        repo = getattr(nodes_wrapper, "_repo", None)
+        document_id = getattr(self.store, "document_id", None)
+        if repo is not None and document_id is not None:
+            all_pinned = repo.get_pinned_nodes(depth_max)
+            return [n for n in all_pinned if n.document_id == document_id]
+        return []
 
     def build_complete_coverage_map(
         self,
@@ -69,7 +87,10 @@ class CoverageBuilder:
         seed_metadata: Mapping[str, MetaDict] | None = None,
         pinned_ids: set[str] | None = None,
     ) -> CoverageResult:
-        """Build coverage along with the materialised nodes needed downstream.
+        """Build coverage for the full document.
+
+        This is equivalent to build_windowed_coverage with default span bounds
+        (0 to document end).
 
         Args:
             selected_ids: Node IDs to include in coverage (seeds)
@@ -78,35 +99,26 @@ class CoverageBuilder:
                 in coverage. This makes each pinned node a root of its own tree,
                 avoiding unnecessary ancestor fetches and scoring.
         """
+        document_id = getattr(self.store, "document_id", None)
+        if document_id is None:
+            raise ValueError("Cannot build complete coverage: no document_id on store")
 
-        coverage_map, nodes = self._build_coordinate_closure(
-            selected_ids, seed_metadata, pinned_ids=pinned_ids
+        # Get document span end for full-document window
+        nodes_wrapper = getattr(self.store, "nodes", None)
+        repo = getattr(nodes_wrapper, "_repo", None) if nodes_wrapper else None
+        if repo is None:
+            raise ValueError("Cannot build complete coverage: no repository")
+        doc_span_end = repo.get_document_span_end(document_id)
+        if doc_span_end is None:
+            raise ValueError(f"Cannot determine document span end for {document_id}")
+
+        window_bounds = self.compute_window_bounds(0, doc_span_end, document_id)
+        return self.build_windowed_coverage(
+            selected_ids,
+            window_bounds,
+            seed_metadata=seed_metadata,
+            pinned_ids=pinned_ids,
         )
-
-        # Include pinned nodes scoped to this document
-        try:
-            depth_max = getattr(self.store, "PIN_DEPTH_MAX", 2)
-            if hasattr(self.store, "get_pinned_nodes"):
-                pinned_nodes = self.store.get_pinned_nodes(depth_max)
-            else:
-                pinned_nodes = []
-                nodes_wrapper = getattr(self.store, "nodes", None)
-                repo = getattr(nodes_wrapper, "_repo", None)
-                document_id = getattr(self.store, "document_id", None)
-                if repo is not None and document_id is not None:
-                    all_pinned = repo.get_pinned_nodes(depth_max)
-                    pinned_nodes = [
-                        n for n in all_pinned if n.document_id == document_id
-                    ]
-            for node in pinned_nodes:
-                coverage_map[node.id] = True
-                nodes.setdefault(node.id, node)
-        except Exception as exc:  # pragma: no cover - defensive logging
-            handle_graceful_error(
-                exc, "Failed to include pinned nodes in coverage map", default=None
-            )
-
-        return CoverageResult(coverage_map=coverage_map, nodes=nodes)
 
     def build_coverage_map(
         self,
@@ -260,32 +272,29 @@ class CoverageBuilder:
         for coord in meta_seed_coords.values():
             enqueue(coord)
 
-        # Add synthetic seeds based on mode
-        if window_bounds is not None:
-            # Windowed: add edge-max coordinates (ensure full window coverage)
-            # Edge-max is None at document boundaries (tree naturally covers)
-            if window_bounds.left_edge_max is not None:
-                enqueue(window_bounds.left_edge_max)
-            if (
-                window_bounds.right_edge_max is not None
-                and window_bounds.right_edge_max != window_bounds.left_edge_max
-            ):
-                enqueue(window_bounds.right_edge_max)
-        else:
-            # Full document: add root nodes
-            try:
-                root_nodes = self.store.nodes.get_root_nodes()
-                for root in root_nodes:
-                    root_coord = TreeCoordinate(
-                        document_id=getattr(root, "document_id", None),
-                        height=getattr(root, "height", 0),
-                        level_index=getattr(root, "level_index", 0),
-                    )
-                    coordinates.append(root_coord)
-            except Exception as exc:
-                handle_graceful_error(
-                    exc, "Failed to get root nodes for coverage", default=None
+        # Add roots - document may be a forest, so we need all roots even if
+        # some trees have no seeds. Roots are fetched (not computed) because
+        # different trees in the forest may have different heights.
+        try:
+            root_nodes = self.store.nodes.get_root_nodes()
+            for root in root_nodes:
+                root_coord = TreeCoordinate(
+                    document_id=getattr(root, "document_id", None),
+                    height=getattr(root, "height", 0),
+                    level_index=getattr(root, "level_index", 0),
                 )
+                coordinates.append(root_coord)
+        except Exception as exc:
+            handle_graceful_error(
+                exc, "Failed to get root nodes for coverage", default=None
+            )
+
+        # Add edge-max as synthetic seeds. Edge-max nodes are enqueued so their
+        # ancestors' siblings fill any gap between the window edge and actual seeds.
+        if window_bounds is not None:
+            enqueue(window_bounds.left_edge_max)
+            if window_bounds.right_edge_max != window_bounds.left_edge_max:
+                enqueue(window_bounds.right_edge_max)
 
         unique_coords = TreeCoordinate.unique(coordinates)
 
@@ -406,29 +415,23 @@ class CoverageBuilder:
             level_index=right_leaf.level_index,
         )
 
-        # Find edge-max: highest ancestors that stay within the window.
-        # At document boundaries, set edge-max to None - the tree naturally
-        # covers to the edges without needing synthetic edge-max seeds.
+        # Find edge-max: highest ancestor of each boundary leaf that stays within
+        # the window. For a full document window, this climbs all the way to the root.
         max_height = self.store.nodes.max_height()
 
-        # Left edge: None if at document start, else compute edge-max
-        left_edge_max: TreeCoordinate | None
-        if left_leaf.span_start == 0:
-            left_edge_max = None
-        else:
-            left_edge_max = left_coord.highest_ancestor_on_boundary(
-                left_edge=True, max_height=max_height
-            )
+        left_edge_max = left_coord.highest_ancestor_within_window(
+            left_edge=True,
+            left_leaf_idx=left_leaf.level_index,
+            right_leaf_idx=right_leaf.level_index,
+            max_height=max_height,
+        )
 
-        # Right edge: None if at document end, else compute edge-max
-        right_edge_max: TreeCoordinate | None
-        doc_span_end = repo.get_document_span_end(document_id)
-        if doc_span_end is not None and right_leaf.span_end >= doc_span_end:
-            right_edge_max = None
-        else:
-            right_edge_max = right_coord.highest_ancestor_on_boundary(
-                left_edge=False, max_height=max_height
-            )
+        right_edge_max = right_coord.highest_ancestor_within_window(
+            left_edge=False,
+            left_leaf_idx=left_leaf.level_index,
+            right_leaf_idx=right_leaf.level_index,
+            max_height=max_height,
+        )
 
         return WindowBounds(
             actual_start=actual_start,
@@ -454,6 +457,7 @@ class CoverageBuilder:
         2. Computes ancestor/sibling coordinates for all seeds
         3. Filters coordinates outside the window
         4. Fetches remaining nodes
+        5. Adds pinned nodes from store (filtered by window bounds)
 
         Args:
             selected_ids: Node IDs from vector search (seeds within window)
@@ -470,4 +474,20 @@ class CoverageBuilder:
             pinned_ids=pinned_ids,
             window_bounds=window_bounds,
         )
+
+        # Include pinned nodes scoped to this document, filtered by window bounds
+        try:
+            for node in self._get_document_pinned_nodes():
+                # Filter by window bounds
+                if (
+                    node.span_start >= window_bounds.actual_start
+                    and node.span_end <= window_bounds.actual_end
+                ):
+                    coverage_map[node.id] = True
+                    nodes.setdefault(node.id, node)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            handle_graceful_error(
+                exc, "Failed to include pinned nodes in coverage map", default=None
+            )
+
         return CoverageResult(coverage_map=coverage_map, nodes=nodes)
