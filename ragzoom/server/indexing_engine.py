@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from ragzoom.config import IndexConfig
     from ragzoom.contracts.storage_backend import StorageBackend
     from ragzoom.contracts.vector_index import VectorIndex
-    from ragzoom.retrieve import Retriever
+    from ragzoom.retrieve import RetrievalResult, Retriever
     from ragzoom.services.llm_service import LLMService
     from ragzoom.telemetry_collection import TelemetryCollector
 
@@ -46,6 +46,16 @@ VectorIndexFactory = Callable[[str], "VectorIndex"]
 OnDocumentIdleCallback = Callable[[str], "Awaitable[None]"]
 
 logger = logging.getLogger(__name__)
+
+
+class TilingValidationError(Exception):
+    """Raised when a tiling fails validation during indexing.
+
+    This error intentionally kills the indexing process to preserve
+    the database state for debugging the retrieval bug.
+    """
+
+    pass
 
 
 def _expected_total_from_leaf_count(n: int) -> int:
@@ -591,34 +601,60 @@ class IndexingEngine:
         telemetry = ctx.telemetry_collector if ctx else None
 
         # Retrieve preceding context
-        # Nodes at span_start=0 get empty string, others get retrieved context
-        preceding_context: str = ""
+        # Nodes at span_start=0 get empty tiling, others get retrieved context
+
+        context_result: RetrievalResult | None = None
         if span_start > 0:
             retriever = self._create_retriever(job.document_id)
             if retriever is not None:
                 try:
-                    preceding_context = await retriever.retrieve_for_context(
+                    context_result = await retriever.retrieve_for_context(
                         query_text=leaf_text,
                         span_end_limit=span_start,
                         budget_tokens=self._index_config.preceding_summary_budget_tokens,
                         document_id=job.document_id,
                         recent_verbatim_token_budget=0,
                     )
+                    # Validate tiling covers [0, span_start) completely
+                    self._validate_tiling(
+                        context_result,
+                        span_start,
+                        job.document_id,
+                        job.leaf_id,
+                        "embed_leaf",
+                    )
+                except TilingValidationError:
+                    # Re-raise to kill indexing and preserve DB state for debugging
+                    raise
                 except Exception:
                     logger.exception(
                         "embed: failed to retrieve context doc=%s leaf=%s",
                         job.document_id,
                         job.leaf_id,
                     )
-                    # preceding_context stays as empty string
+                    # context_result stays as None
 
-        # Store preceding_context on the leaf node - always runs even if retrieval failed
+        # Extract tiling IDs and assemble context text
+        tiling_ids: list[str] = []
+        context_prefix = ""
+        if (
+            context_result is not None
+            and context_result.tiling
+            and context_result.nodes
+        ):
+            tiling_ids = list(context_result.tiling)
+            context_prefix = "\n\n".join(
+                context_result.nodes[nid].text or ""
+                for nid in tiling_ids
+                if nid in context_result.nodes
+            )
+
+        # Store preceding_context as JSON array of node IDs on the leaf node
+        import json
+
         store = self._store.for_document(job.document_id)
-        store.nodes._repo.update_preceding_context(job.leaf_id, preceding_context)
-
-        # TODO: Summarize context into prefix using LLM
-        # For now, we'll use the raw context or empty string
-        context_prefix = preceding_context or ""
+        preceding_context_json = json.dumps(tiling_ids)
+        store.nodes._repo.update_preceding_context(job.leaf_id, preceding_context_json)
 
         # Limit text_to_embed to stay within embedding token limit (8000)
         # This prevents the ValueError that occurs when context + leaf exceeds the limit
@@ -798,19 +834,46 @@ class IndexingEngine:
 
         # Retrieve preceding context BEFORE summarization
         # Uses combined children text as query since we don't have a summary yet
-        # Nodes at span_start=0 get empty string, others get retrieved context
-        preceding_context: str = ""
+        # Nodes at span_start=0 get empty tiling, others get retrieved context
+
+        context_result: RetrievalResult | None = None
         if span_start > 0:
             retriever = self._create_retriever(job.document_id)
             if retriever is not None:
                 query_text = f"{left_text}\n{right_text}"
-                preceding_context = await retriever.retrieve_for_context(
+                context_result = await retriever.retrieve_for_context(
                     query_text=query_text,
                     span_end_limit=span_start,
                     budget_tokens=self._index_config.preceding_summary_budget_tokens,
                     document_id=job.document_id,
                     recent_verbatim_token_budget=0,
                 )
+                # Validate tiling covers [0, span_start) completely
+                self._validate_tiling(
+                    context_result,
+                    span_start,
+                    job.document_id,
+                    parent_id,
+                    "summarize_pair",
+                )
+
+        # Extract tiling IDs and assemble context text
+        import json
+
+        tiling_ids: list[str] = []
+        context_text = ""
+        if (
+            context_result is not None
+            and context_result.tiling
+            and context_result.nodes
+        ):
+            tiling_ids = list(context_result.tiling)
+            context_text = "\n\n".join(
+                context_result.nodes[nid].text or ""
+                for nid in tiling_ids
+                if nid in context_result.nodes
+            )
+        preceding_context_json = json.dumps(tiling_ids)
 
         # Generate summary with preceding context
         summary, _retry_count, summary_tokens = await self._llm_service._summarize_text(
@@ -819,7 +882,7 @@ class IndexingEngine:
             self._index_config.target_chunk_tokens,
             parent_id=parent_id,
             reporter=telemetry,
-            prev_context=preceding_context,
+            prev_context=context_text,
             left_token_count=left_tokens,
             right_token_count=right_tokens,
         )
@@ -858,7 +921,7 @@ class IndexingEngine:
             "preceding_neighbor_id": preceding_parent_id,
             "following_neighbor_id": following_parent_id,
             "level_index": parent_level_index,
-            "preceding_context": preceding_context,
+            "preceding_context": preceding_context_json,
         }
 
         # Commit to database - each operation auto-commits
@@ -906,6 +969,65 @@ class IndexingEngine:
     # -----------------------------------------------------------------------
     # Helpers
     # -----------------------------------------------------------------------
+
+    def _validate_tiling(
+        self,
+        context_result: RetrievalResult,
+        expected_end: int,
+        document_id: str,
+        node_id: str,
+        operation: str,
+    ) -> None:
+        """Validate that a tiling covers [0, expected_end) with no gaps.
+
+        Raises TilingValidationError if the tiling is incomplete or has gaps,
+        killing the indexing process to preserve database state for debugging.
+        """
+        if not context_result.tiling or not context_result.nodes:
+            raise TilingValidationError(
+                f"{operation}: Empty tiling for node {node_id} "
+                f"(expected coverage [0, {expected_end}))"
+            )
+
+        # Get nodes in tiling order and sort by span_start
+        tiling_nodes = [
+            context_result.nodes[nid]
+            for nid in context_result.tiling
+            if nid in context_result.nodes
+        ]
+        if not tiling_nodes:
+            raise TilingValidationError(
+                f"{operation}: No valid nodes in tiling for node {node_id}"
+            )
+
+        sorted_nodes = sorted(tiling_nodes, key=lambda n: n.span_start)
+
+        # Check first node starts at 0
+        first = sorted_nodes[0]
+        if first.span_start != 0:
+            raise TilingValidationError(
+                f"{operation}: Tiling does not start at 0 for node {node_id}: "
+                f"first tiling node {first.id} starts at {first.span_start}"
+            )
+
+        # Check for gaps
+        for i in range(len(sorted_nodes) - 1):
+            curr = sorted_nodes[i]
+            next_node = sorted_nodes[i + 1]
+            if curr.span_end != next_node.span_start:
+                raise TilingValidationError(
+                    f"{operation}: Gap in tiling for node {node_id}: "
+                    f"{curr.id} ends at {curr.span_end}, "
+                    f"{next_node.id} starts at {next_node.span_start}"
+                )
+
+        # Check last node ends at expected_end
+        last = sorted_nodes[-1]
+        if last.span_end != expected_end:
+            raise TilingValidationError(
+                f"{operation}: Tiling does not end at {expected_end} for node {node_id}: "
+                f"last tiling node {last.id} ends at {last.span_end}"
+            )
 
     def _create_retriever(self, document_id: str) -> Retriever | None:
         """Create a retriever for the given document."""

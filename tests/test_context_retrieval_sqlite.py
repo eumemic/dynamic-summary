@@ -221,10 +221,15 @@ class TestContextRetrieval:
             )
         )
 
-        # Should get assembled text from preceding nodes
-        assert result != ""
+        # Should get tiling from preceding nodes
+        assert result.tiling is not None
+        assert len(result.tiling) > 0
         # The result should contain content from nodes before span 75
-        assert "dragon" in result.lower() or "summary" in result.lower()
+        assert result.nodes is not None
+        assembled = "\n\n".join(
+            result.nodes[nid].text or "" for nid in result.tiling if nid in result.nodes
+        ).lower()
+        assert "dragon" in assembled or "summary" in assembled
 
     def test_retrieve_for_context_empty_when_no_preceding(
         self,
@@ -258,8 +263,9 @@ class TestContextRetrieval:
             )
         )
 
-        # Should return empty string
-        assert result == ""
+        # Should return empty tiling
+        assert result.tiling is not None
+        assert len(result.tiling) == 0
 
     def test_retrieve_for_context_respects_span_filter(
         self,

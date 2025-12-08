@@ -59,6 +59,7 @@ def _add_parent(
     right: str | None,
     height: int,
     level_index: int,
+    preceding_tiling_ids: list[str] | None = None,
 ) -> None:
     store.nodes.add_node(
         node_id=node_id,
@@ -72,8 +73,16 @@ def _add_parent(
         height=height,
         level_index=level_index,
     )
-    # Set preceding_context: empty for span_start=0, placeholder for others
-    preceding_context = "" if start == 0 else "preceding context"
+    # Set preceding_context as JSON array of node IDs
+    import json
+
+    if start == 0:
+        preceding_context = "[]"
+    elif preceding_tiling_ids is not None:
+        preceding_context = json.dumps(preceding_tiling_ids)
+    else:
+        # No valid tiling provided - this will fail validation
+        preceding_context = "[]"
     store.nodes._repo.update_preceding_context(node_id, preceding_context)
 
 
@@ -108,6 +117,7 @@ def _build_two_leaf_tree(store: DocumentStore, document_id: str) -> None:
         right="leaf-right",
         height=1,
         level_index=0,
+        preceding_tiling_ids=[],  # start=0, so empty tiling
     )
     store.nodes.update_parent_references_batch(
         [
@@ -177,6 +187,7 @@ def _build_four_leaf_tree(store: DocumentStore, document_id: str) -> None:
         right="leaf-1",
         height=1,
         level_index=0,
+        preceding_tiling_ids=[],  # start=0, so empty tiling
     )
     _add_parent(
         store,
@@ -187,6 +198,7 @@ def _build_four_leaf_tree(store: DocumentStore, document_id: str) -> None:
         right="leaf-3",
         height=1,
         level_index=1,
+        preceding_tiling_ids=["parent-left"],  # covers [0, 200)
     )
 
     store.nodes.update_parent_references_batch(

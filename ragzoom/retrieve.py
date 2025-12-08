@@ -546,15 +546,12 @@ class Retriever:
         budget_tokens: int,
         document_id: str | None = None,
         recent_verbatim_token_budget: int = 0,
-    ) -> str:
-        """Retrieve and assemble context for nodes before span_end_limit.
+    ) -> RetrievalResult:
+        """Retrieve tiling of nodes covering [0, span_end_limit).
 
         Used during indexing to build preceding_context for nodes. Queries the
-        existing tree using the node's own text as the query, returning assembled
-        text from the semantically relevant preceding content.
-
-        This is a thin wrapper around retrieve_async that returns just the
-        assembled text string.
+        existing tree using the node's own text as the query, returning the
+        tiling nodes that cover the preceding content.
 
         Args:
             query_text: The text to use as query (typically the node's own text)
@@ -564,14 +561,19 @@ class Retriever:
             recent_verbatim_token_budget: Token budget for verbatim leaves
 
         Returns:
-            Assembled text from the tiled retrieval result, or empty string if
-            no relevant preceding content exists.
+            RetrievalResult with tiling node IDs in result.tiling and nodes in result.nodes.
         """
         # Edge case: no preceding content at document start
         if span_end_limit <= 0:
-            return ""
+            return RetrievalResult(
+                node_ids=[],
+                scores={},
+                coverage_map={},
+                tiling=[],
+                nodes={},
+            )
 
-        result = await self.retrieve_async(
+        return await self.retrieve_async(
             query=query_text,
             budget_tokens=budget_tokens,
             document_id=document_id,
@@ -579,17 +581,6 @@ class Retriever:
             span_end=span_end_limit,
             recent_verbatim_budget=recent_verbatim_token_budget,
         )
-
-        # Assemble text from tiling
-        if not result.tiling or not result.nodes:
-            return ""
-
-        texts = [
-            result.nodes[nid].text
-            for nid in result.tiling
-            if nid in result.nodes and result.nodes[nid].text
-        ]
-        return "\n\n".join(texts)
 
     async def retrieve_with_telemetry(
         self,

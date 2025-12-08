@@ -1084,24 +1084,27 @@ def _completeness_check(
 def _preceding_context_check(
     snapshot: DocumentSnapshot,
 ) -> list[ValidationFinding]:
-    """Check that all inner nodes have preceding_context set.
+    """Check that all nodes have valid preceding_context tilings.
 
-    Inner nodes (height > 0) must always have preceding_context:
-    - Nodes with span_start=0 should have empty string ""
-    - Nodes with span_start>0 should have non-empty preceding_context
-
-    This is always checked, not just when --complete is passed.
-    Leaf nodes are checked separately by _completeness_check when --complete.
+    The preceding_context field stores a JSON array of node IDs representing
+    the tiling that covers [0, span_start). For each node with preceding_context:
+    - Parse the JSON array of node IDs
+    - Validate it's a valid tiling (no gaps between spans)
+    - Validate coverage: first node starts at 0, last node ends at span_start
     """
+    import json
+
     findings: list[ValidationFinding] = []
+    node_lookup = snapshot.node_lookup
 
     for node in snapshot.nodes:
         height = int(getattr(node, "height", 0))
-        if height == 0:
-            continue  # Skip leaves - checked by _completeness_check
-
         span_start = int(getattr(node, "span_start", 0))
         preceding_context = getattr(node, "preceding_context", None)
+
+        # Skip leaves - they're checked by _completeness_check when --complete
+        if height == 0:
+            continue
 
         if preceding_context is None:
             findings.append(
@@ -1114,7 +1117,25 @@ def _preceding_context_check(
                     node_id=node.id,
                 )
             )
-        elif span_start > 0 and preceding_context == "":
+            continue
+
+        # Nodes at span_start=0 should have empty tiling
+        if span_start == 0:
+            if preceding_context not in ("", "[]"):
+                findings.append(
+                    ValidationFinding(
+                        code="preceding_context.nonempty_at_zero",
+                        message=(
+                            f"Node at span_start=0 has non-empty preceding_context: "
+                            f"{preceding_context[:50]}..."
+                        ),
+                        node_id=node.id,
+                    )
+                )
+            continue
+
+        # Nodes at span_start>0 should have valid tiling
+        if preceding_context in ("", "[]"):
             findings.append(
                 ValidationFinding(
                     code="forest.empty_preceding_context",
@@ -1125,5 +1146,120 @@ def _preceding_context_check(
                     node_id=node.id,
                 )
             )
+            continue
+
+        # Parse JSON array of node IDs
+        try:
+            tiling_ids = json.loads(preceding_context)
+        except json.JSONDecodeError as e:
+            findings.append(
+                ValidationFinding(
+                    code="preceding_context.invalid_json",
+                    message=f"preceding_context is not valid JSON: {e}",
+                    node_id=node.id,
+                )
+            )
+            continue
+
+        if not isinstance(tiling_ids, list):
+            findings.append(
+                ValidationFinding(
+                    code="preceding_context.not_array",
+                    message=f"preceding_context is not a JSON array: {type(tiling_ids).__name__}",
+                    node_id=node.id,
+                )
+            )
+            continue
+
+        if not tiling_ids:
+            findings.append(
+                ValidationFinding(
+                    code="preceding_context.empty_array",
+                    message=(
+                        f"Node at span_start={span_start} has empty tiling array "
+                        f"but should cover [0, {span_start})"
+                    ),
+                    node_id=node.id,
+                )
+            )
+            continue
+
+        # Validate each node ID exists and collect spans
+        tiling_spans: list[tuple[str, int, int]] = []
+        for tiling_node_id in tiling_ids:
+            if not isinstance(tiling_node_id, str):
+                findings.append(
+                    ValidationFinding(
+                        code="preceding_context.invalid_id",
+                        message=f"Tiling contains non-string ID: {tiling_node_id!r}",
+                        node_id=node.id,
+                    )
+                )
+                continue
+
+            tiling_node = node_lookup.get(tiling_node_id)
+            if tiling_node is None:
+                findings.append(
+                    ValidationFinding(
+                        code="preceding_context.missing_node",
+                        message=f"Tiling references missing node: {tiling_node_id}",
+                        node_id=node.id,
+                    )
+                )
+                continue
+
+            tiling_spans.append(
+                (tiling_node_id, int(tiling_node.span_start), int(tiling_node.span_end))
+            )
+
+        if not tiling_spans:
+            continue  # Already reported errors above
+
+        # Sort by span_start
+        tiling_spans.sort(key=lambda x: x[1])
+
+        # Check first node starts at 0
+        first_id, first_start, first_end = tiling_spans[0]
+        if first_start != 0:
+            findings.append(
+                ValidationFinding(
+                    code="preceding_context.incomplete_start",
+                    message=(
+                        f"Tiling does not start at 0: first node {first_id} "
+                        f"starts at {first_start}"
+                    ),
+                    node_id=node.id,
+                )
+            )
+
+        # Check last node ends at span_start
+        last_id, last_start, last_end = tiling_spans[-1]
+        if last_end != span_start:
+            findings.append(
+                ValidationFinding(
+                    code="preceding_context.incomplete_end",
+                    message=(
+                        f"Tiling does not end at span_start={span_start}: "
+                        f"last node {last_id} ends at {last_end}"
+                    ),
+                    node_id=node.id,
+                )
+            )
+
+        # Check for gaps between spans
+        for i in range(len(tiling_spans) - 1):
+            curr_id, curr_start, curr_end = tiling_spans[i]
+            next_id, next_start, next_end = tiling_spans[i + 1]
+            if curr_end != next_start:
+                findings.append(
+                    ValidationFinding(
+                        code="preceding_context.gap",
+                        message=(
+                            f"Gap in tiling: {curr_id} ends at {curr_end}, "
+                            f"{next_id} starts at {next_start}"
+                        ),
+                        node_id=node.id,
+                    )
+                )
 
     return findings

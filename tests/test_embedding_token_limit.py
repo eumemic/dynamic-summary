@@ -129,12 +129,31 @@ async def test_indexing_engine_limits_embedding_text() -> None:
     mock_llm_service.embed_texts = capture_embed_texts
 
     # Create mock retriever that returns large context (~5000 tokens)
+    from ragzoom.retrieve import RetrievalResult
+
     large_context = "context " * 5000  # ~5000 tokens
     context_tokens = tokenizer.count_tokens(large_context)
     assert context_tokens > 4000, "Test setup: expected >4000 context tokens"
 
+    # Create a mock TreeNode for the context result
+    mock_context_node = MagicMock()
+    mock_context_node.id = "context-node"
+    mock_context_node.span_start = 0
+    mock_context_node.span_end = 1000
+    mock_context_node.height = 1
+    mock_context_node.token_count = context_tokens
+    mock_context_node.text = large_context
+
+    context_result = RetrievalResult(
+        node_ids=["context-node"],
+        scores={},
+        coverage_map={},
+        tiling=["context-node"],
+        nodes={"context-node": mock_context_node},
+    )
+
     mock_retriever = AsyncMock()
-    mock_retriever.retrieve_for_context = AsyncMock(return_value=large_context)
+    mock_retriever.retrieve_for_context = AsyncMock(return_value=context_result)
 
     # Create engine
     engine = IndexingEngine(
