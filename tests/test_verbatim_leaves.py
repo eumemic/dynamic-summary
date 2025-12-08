@@ -365,7 +365,10 @@ class TestVerbatimTilingInvariant:
             mock_coverage.coverage_map = {"root": True}
             mock_coverage.nodes = {"root": root}
             mock_coverage_builder = MagicMock()
-            mock_coverage_builder.build_complete_coverage.return_value = mock_coverage
+            mock_coverage_builder.build_windowed_coverage.return_value = mock_coverage
+            mock_coverage_builder.compute_window_bounds.return_value = MagicMock(
+                actual_start=0, actual_end=200
+            )
             mock_coverage_class.return_value = mock_coverage_builder
 
             mock_scoring = MagicMock()
@@ -507,8 +510,11 @@ class TestVerbatimBudgetIntegration:
             mock_coverage_result.coverage_map = {"node1": True}
             mock_coverage_result.nodes = {"node1": mock_root_node}
             mock_coverage_builder = MagicMock()
-            mock_coverage_builder.build_complete_coverage.return_value = (
+            mock_coverage_builder.build_windowed_coverage.return_value = (
                 mock_coverage_result
+            )
+            mock_coverage_builder.compute_window_bounds.return_value = MagicMock(
+                actual_start=0, actual_end=200
             )
             mock_coverage_builder_class.return_value = mock_coverage_builder
 
@@ -616,7 +622,10 @@ class TestVerbatimBudgetIntegration:
             mock_coverage.coverage_map = {"root": True}
             mock_coverage.nodes = {"root": mock_root_node}
             mock_coverage_builder = MagicMock()
-            mock_coverage_builder.build_complete_coverage.return_value = mock_coverage
+            mock_coverage_builder.build_windowed_coverage.return_value = mock_coverage
+            mock_coverage_builder.compute_window_bounds.return_value = MagicMock(
+                actual_start=0, actual_end=200
+            )
             mock_coverage_class.return_value = mock_coverage_builder
 
             mock_scoring = MagicMock()
