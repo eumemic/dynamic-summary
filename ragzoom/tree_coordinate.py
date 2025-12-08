@@ -237,6 +237,63 @@ class TreeCoordinate:
             current = current.parent()
         return current
 
+    def highest_ancestor_within_window(
+        self,
+        *,
+        left_edge: bool,
+        left_leaf_idx: int,
+        right_leaf_idx: int,
+        max_height: int | None = None,
+    ) -> TreeCoordinate:
+        """Find highest ancestor on boundary that stays within window.
+
+        Like highest_ancestor_on_boundary, but stops climbing if the next
+        ancestor would extend beyond the window's OTHER edge.
+
+        For left_edge=True: shares span_start with ancestor, but ancestor's
+        span_end must not exceed right_leaf_idx.
+
+        For left_edge=False: shares span_end with ancestor, but ancestor's
+        span_start must not precede left_leaf_idx.
+
+        Args:
+            left_edge: If True, find ancestor sharing left boundary; else right.
+            left_leaf_idx: Minimum allowed leaf index (inclusive).
+            right_leaf_idx: Maximum allowed leaf index (inclusive).
+            max_height: Optional maximum height to stop at.
+
+        Returns:
+            The highest ancestor that shares the boundary AND stays within
+            the window. May return self if climbing would exceed the window.
+        """
+        current = self
+        while True:
+            # Stop if we've reached max height
+            if max_height is not None and current.height >= max_height:
+                break
+
+            # Check if we should continue based on edge alignment
+            if left_edge and not current.is_left_child():
+                break
+            if not left_edge and not current.is_right_child():
+                break
+
+            # Check if parent would exceed window bounds on the OTHER edge
+            parent = current.parent()
+            parent_left, parent_right = parent.leaf_span()
+
+            if left_edge:
+                # For left edge, check if parent extends beyond right boundary
+                if parent_right > right_leaf_idx:
+                    break
+            else:
+                # For right edge, check if parent extends before left boundary
+                if parent_left < left_leaf_idx:
+                    break
+
+            current = parent
+        return current
+
     def leaf_span(self) -> tuple[int, int]:
         """Return the range of leaf-level indices covered by this coordinate.
 
