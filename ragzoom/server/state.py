@@ -50,6 +50,7 @@ class ServerState:
         operational_config: OperationalConfig | None = None,
         collect_telemetry: bool = False,
         telemetry_dir: Path | None = None,
+        max_parallelism: int | None = None,
     ) -> ServerState:
         """Instantiate server state using the provided or default configs."""
 
@@ -100,6 +101,7 @@ class ServerState:
             openai_client=openai_client,
             vector_index_factory=vector_factory,
             on_document_idle=on_document_idle,
+            max_parallelism=max_parallelism if max_parallelism is not None else 30,
         )
         index_runtime = IndexerRuntime(
             store=store,

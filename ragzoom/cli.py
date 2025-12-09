@@ -1437,6 +1437,11 @@ def server() -> None:
     type=int,
     help="Override context_lag_tokens (default: 2000)",
 )
+@click.option(
+    "--max-parallelism",
+    type=int,
+    help="Maximum concurrent indexing jobs (default: 30)",
+)
 def start_server(
     host: str,
     port: int,
@@ -1446,6 +1451,7 @@ def start_server(
     telemetry_dir: Path | None,
     preceding_summary_budget_tokens: int | None,
     context_lag_tokens: int | None,
+    max_parallelism: int | None,
 ) -> None:
     """Start the RagZoom gRPC server."""
 
@@ -1458,6 +1464,7 @@ def start_server(
         telemetry_dir=str(telemetry_dir) if telemetry_dir else None,
         preceding_summary_budget_tokens=preceding_summary_budget_tokens,
         context_lag_tokens=context_lag_tokens,
+        max_parallelism=max_parallelism,
     )
     run_server(options)
 

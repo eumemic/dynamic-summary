@@ -27,6 +27,7 @@ class ServerOptions:
     # Config overrides (take precedence over config file)
     preceding_summary_budget_tokens: int | None = None
     context_lag_tokens: int | None = None
+    max_parallelism: int | None = None
 
 
 def build_state(options: ServerOptions) -> ServerState:
@@ -56,6 +57,7 @@ def build_state(options: ServerOptions) -> ServerState:
         telemetry_dir=(
             Path(options.telemetry_dir) if options.telemetry_dir is not None else None
         ),
+        max_parallelism=options.max_parallelism,
     )
 
 
