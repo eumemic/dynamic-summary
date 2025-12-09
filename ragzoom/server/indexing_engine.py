@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import struct
 import time
 import uuid
 from collections.abc import Callable
@@ -68,6 +69,22 @@ def _expected_total_from_leaf_count(n: int) -> int:
         return 0
     popcount = bin(n).count("1")
     return 2 * n - popcount
+
+
+def _unpack_embedding(data: bytes) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
+    """Unpack embedding from packed float32 bytes to numpy array."""
+    count = len(data) // 4
+    return np.array(struct.unpack(f"{count}f", data), dtype=np.float64)
+
+
+def _average_embeddings(
+    emb1: bytes, emb2: bytes
+) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
+    """Compute average of two packed embeddings, returning numpy array."""
+    arr1 = _unpack_embedding(emb1)
+    arr2 = _unpack_embedding(emb2)
+    avg: np.ndarray[tuple[int], np.dtype[np.float64]] = (arr1 + arr2) / 2.0
+    return avg
 
 
 # ---------------------------------------------------------------------------
@@ -462,14 +479,8 @@ class IndexingEngine:
         return self._vector_index_cache[model]
 
     def _has_embedding(self, node: TreeNode, document_id: str) -> bool:
-        """Check if a leaf node already has an embedding."""
-        vector_index = self._get_vector_index()
-        if vector_index is None:
-            return False
-
-        # Check vector index for existing embedding by ID lookup
-        results = vector_index.get_vectors([node.id])
-        return len(results) > 0
+        """Check if a node already has an embedding."""
+        return node.embedding is not None
 
     def _is_eligible_pair(
         self, left: TreeNode, right: TreeNode, document_id: str
@@ -1008,6 +1019,19 @@ class IndexingEngine:
                 )
 
         store.nodes.update_neighbors_batch(neighbors_update)
+
+        # Compute parent embedding as average of children's embeddings
+        # By construction, both children have embeddings (gated by _is_eligible_pair)
+        if left.embedding is None:
+            raise RuntimeError(
+                f"Left child {left.id} missing embedding in _summarize_pair"
+            )
+        if right.embedding is None:
+            raise RuntimeError(
+                f"Right child {right.id} missing embedding in _summarize_pair"
+            )
+        parent_embedding = _average_embeddings(left.embedding, right.embedding)
+        store.nodes._repo.update_embedding(parent_id, parent_embedding)
 
         logger.debug(
             "summarize: created parent doc=%s parent=%s left=%s right=%s h=%d",
