@@ -6,6 +6,7 @@ backend. VectorIndex implementations translate native formats to this type.
 
 from __future__ import annotations
 
+import struct
 from dataclasses import dataclass
 
 import numpy as np
@@ -72,3 +73,18 @@ def vectors_matrix(vectors: list[Vector]) -> NDArray[np.float32]:
             raise ValueError("Vectors have mismatched dimensions in set")
     mat = np.vstack([v.vec for v in vectors]).astype(np.float32, copy=False)
     return mat
+
+
+def unpack_embedding(data: bytes) -> NDArray[np.float32]:
+    """Unpack embedding from packed float32 bytes to numpy array.
+
+    Embeddings are stored as contiguous float32 values. This function
+    unpacks them back into a normalized float32 numpy array.
+    """
+    count = len(data) // 4
+    arr = np.array(struct.unpack(f"{count}f", data), dtype=np.float32)
+    # Normalize (embeddings may have been averaged without renormalization)
+    n = float(np.linalg.norm(arr))
+    if n > 0:
+        arr = (arr / n).astype(np.float32, copy=False)
+    return arr

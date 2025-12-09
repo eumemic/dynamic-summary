@@ -733,9 +733,12 @@ async def grpc_test_environment(
     database_path = tmp_path / "integration.db"
     os.environ["PYTEST_CURRENT_TEST"] = "grpc-server-integration"
 
+    # 8-dim test vector used consistently across sync and async stubs
+    test_vector = [1.0] + [0.0] * 7
+
     class _StubEmbeddings:
         def __init__(self) -> None:
-            self._vector = [1.0] + [0.0] * 7
+            self._vector = test_vector
 
         def create(self, *, model: str, input: object, **_: object) -> object:
             if isinstance(input, str):
@@ -757,11 +760,68 @@ async def grpc_test_environment(
         def __init__(self, **_: object) -> None:
             self.embeddings = _StubEmbeddings()
 
+    # Async stub for LLMService (matches sync stub dimensions)
+    class _AsyncStubEmbeddings:
+        def __init__(self) -> None:
+            self._vector = test_vector
+
+        async def create(self, *, input: object, **_: object) -> object:
+            if isinstance(input, str):
+                texts = [input]
+            else:
+                texts = list(cast(Sequence[str], input))
+
+            class _Item:
+                def __init__(self, embedding: list[float]) -> None:
+                    self.embedding = embedding
+
+            class _Resp:
+                def __init__(self, items: list[_Item]) -> None:
+                    self.data = items
+
+            return _Resp([_Item(list(self._vector)) for _ in texts])
+
+    class _AsyncStubCompletions:
+        async def create(self, **_: object) -> object:
+            class _Msg:
+                content = "summary"
+
+            class _Choice:
+                message = _Msg()
+
+            class _Usage:
+                prompt_tokens = 0
+                completion_tokens = 0
+                total_tokens = 0
+                prompt_tokens_details = {"cached_tokens": 0}
+
+            class _Resp:
+                choices = [_Choice()]
+                usage = _Usage()
+
+            return _Resp()
+
+    class _AsyncStubChat:
+        completions = _AsyncStubCompletions()
+
+    class _AsyncStubClient:
+        embeddings = _AsyncStubEmbeddings()
+        chat = _AsyncStubChat()
+
+    def _stub_build_test_openai_client(_model_id: str) -> object:
+        return _AsyncStubClient()
+
     monkeypatch.setattr("openai.OpenAI", _StubOpenAI, raising=False)
     monkeypatch.setattr("ragzoom.server.servicers.OpenAI", _StubOpenAI, raising=False)
     monkeypatch.setattr("ragzoom.server.state.OpenAI", _StubOpenAI, raising=False)
     monkeypatch.setattr(
         "ragzoom.retrieval.embedding_service.OpenAI", _StubOpenAI, raising=False
+    )
+    # Patch LLMService test stub builder to use consistent 8-dim vectors
+    monkeypatch.setattr(
+        "ragzoom.services.llm_service._build_test_openai_client",
+        _stub_build_test_openai_client,
+        raising=True,
     )
 
     operational_cfg = OperationalConfig(

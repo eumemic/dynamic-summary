@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import struct
 import time
 import uuid
 from collections.abc import Callable
@@ -28,6 +27,7 @@ import numpy as np
 
 from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.vector_api import unpack_embedding
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -71,18 +71,12 @@ def _expected_total_from_leaf_count(n: int) -> int:
     return 2 * n - popcount
 
 
-def _unpack_embedding(data: bytes) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
-    """Unpack embedding from packed float32 bytes to numpy array."""
-    count = len(data) // 4
-    return np.array(struct.unpack(f"{count}f", data), dtype=np.float64)
-
-
 def _average_embeddings(
     emb1: bytes, emb2: bytes
 ) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
     """Compute average of two packed embeddings, returning numpy array."""
-    arr1 = _unpack_embedding(emb1)
-    arr2 = _unpack_embedding(emb2)
+    arr1 = unpack_embedding(emb1).astype(np.float64)
+    arr2 = unpack_embedding(emb2).astype(np.float64)
     avg: np.ndarray[tuple[int], np.dtype[np.float64]] = (arr1 + arr2) / 2.0
     return avg
 

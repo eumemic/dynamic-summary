@@ -4,7 +4,7 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from ragzoom.vector_api import ensure_normalized
+from ragzoom.vector_api import dot_similarity, ensure_normalized, unpack_embedding
 
 if TYPE_CHECKING:
     from ragzoom.contracts.tree_node import TreeNode
@@ -34,16 +34,16 @@ class ScoringService:
         candidates: list[tuple[str, float, dict[str, str | int | float | bool | None]]],
         nodes: Mapping[str, "TreeNode"] | None = None,
     ) -> dict[str, float]:
-        """Compute scores using leaf similarity + bottom-up propagation.
+        """Compute scores using pre-indexed embeddings on nodes.
 
-        For leaf nodes (seeds and their siblings), scores come from embeddings.
-        For inner nodes, scores are propagated bottom-up as avg(child_scores).
+        All nodes with embeddings get scored via dot product with query.
+        Nodes without embeddings (leaves not yet indexed) get 0.0.
 
         Args:
             query_embedding: Query embedding vector
             coverage_map: Map of node IDs in coverage
             candidates: Initial candidate nodes with pre-computed similarities
-            nodes: Tree nodes for propagation (required for bottom-up scoring)
+            nodes: Tree nodes with embeddings
 
         Returns:
             Dictionary mapping node IDs to similarity scores
@@ -51,88 +51,25 @@ class ScoringService:
         scores: dict[str, float] = {}
         qn = ensure_normalized(query_embedding)
 
-        # 1. Seeds: use pre-computed scores from candidates
-        seed_ids: set[str] = set()
-        for node_id, score, _ in candidates:
-            if node_id in coverage_map:
-                scores[node_id] = score
-                seed_ids.add(node_id)
+        if not nodes:
+            # Fallback: use pre-computed candidate scores only
+            for node_id, score, _ in candidates:
+                if node_id in coverage_map:
+                    scores[node_id] = score
+            return scores
 
-        # 2. Seed siblings: fetch embeddings
-        if nodes:
-            sibling_ids = self._get_sibling_ids(seed_ids, nodes, coverage_map)
-            if sibling_ids:
-                sibling_vecs = self.vector_index.get_vectors(list(sibling_ids))
-                for v in sibling_vecs:
-                    scores[v.id] = float(max(0.0, min(1.0, float(qn @ v.vec))))
+        # Score all nodes in coverage using their pre-indexed embeddings
+        for node_id in coverage_map:
+            node = nodes.get(node_id)
+            if node is None:
+                continue
 
-        # 3. Propagate scores bottom-up for inner nodes
-        if nodes:
-            self._propagate_scores_bottom_up(scores, nodes, coverage_map)
+            embedding = node.embedding
+            if embedding is not None:
+                node_vec = unpack_embedding(embedding)
+                scores[node_id] = dot_similarity(node_vec, qn)
+            else:
+                # Leaf not yet indexed - assign 0.0
+                scores[node_id] = 0.0
 
         return scores
-
-    def _get_sibling_ids(
-        self,
-        seed_ids: set[str],
-        nodes: Mapping[str, "TreeNode"],
-        coverage_map: Mapping[str, bool],
-    ) -> set[str]:
-        """Find siblings of seeds that need real scores.
-
-        For each seed, find its sibling (via parent) if the sibling is in coverage.
-        These siblings need embedding-based scores since they're at the same level
-        as seeds and may participate in tiling decisions.
-        """
-        sibling_ids: set[str] = set()
-        for seed_id in seed_ids:
-            seed = nodes.get(seed_id)
-            if not seed:
-                continue
-            parent_id = seed.parent_id
-            if not parent_id:
-                continue
-            parent = nodes.get(parent_id)
-            if not parent:
-                continue
-            # Find sibling
-            for child_id in (parent.left_child_id, parent.right_child_id):
-                if child_id and child_id != seed_id and child_id in coverage_map:
-                    sibling_ids.add(child_id)
-        return sibling_ids - seed_ids  # Exclude seeds already scored
-
-    def _propagate_scores_bottom_up(
-        self,
-        scores: dict[str, float],
-        nodes: Mapping[str, "TreeNode"],
-        coverage_map: Mapping[str, bool],
-    ) -> None:
-        """Propagate scores from children to parents using avg().
-
-        Process nodes by height (bottom-up) so children are scored before parents.
-        Inner nodes get avg(child_scores). Nodes with no scored children get 0.0.
-        """
-        # Get max height in coverage
-        max_height = max(
-            (n.height for n in nodes.values() if n.id in coverage_map),
-            default=0,
-        )
-
-        # Process height by height, bottom-up
-        for height in range(1, max_height + 1):
-            for node_id in coverage_map:
-                node = nodes.get(node_id)
-                if not node or node.height != height:
-                    continue
-                # Note: intentionally overwrite any existing score (ancestor-of-seed case)
-
-                # Collect children scores
-                child_scores: list[float] = []
-                for child_id in (node.left_child_id, node.right_child_id):
-                    if child_id and child_id in scores:
-                        child_scores.append(scores[child_id])
-
-                # Propagate as average of children (empty = 0.0)
-                scores[node_id] = (
-                    sum(child_scores) / len(child_scores) if child_scores else 0.0
-                )

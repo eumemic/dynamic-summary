@@ -1,15 +1,19 @@
-"""Tests for ScoringService with bottom-up score propagation."""
+"""Tests for ScoringService using pre-indexed embeddings on nodes."""
 
+import struct
 from unittest.mock import Mock
 
-import numpy as np
 import pytest
 
 from ragzoom.retrieval.scoring_service import ScoringService
-from ragzoom.vector_api import Vector
 
 # Type alias for candidates list
 CandidateList = list[tuple[str, float, dict[str, str | int | float | bool | None]]]
+
+
+def pack_embedding(vec: list[float]) -> bytes:
+    """Pack a list of floats into bytes (float32 format)."""
+    return struct.pack(f"{len(vec)}f", *vec)
 
 
 @pytest.fixture
@@ -36,369 +40,219 @@ def make_node(
     parent_id: str | None = None,
     left_child_id: str | None = None,
     right_child_id: str | None = None,
+    embedding: bytes | None = None,
 ) -> Mock:
-    """Create a mock TreeNode."""
+    """Create a mock TreeNode with optional embedding."""
     node = Mock()
     node.id = node_id
     node.height = height
     node.parent_id = parent_id
     node.left_child_id = left_child_id
     node.right_child_id = right_child_id
+    node.embedding = embedding
     return node
 
 
-class TestGetSiblingIds:
-    """Tests for _get_sibling_ids method."""
+class TestComputeScoresWithEmbeddings:
+    """Tests for compute_scores using pre-indexed node embeddings."""
 
-    def test_finds_sibling_of_seed(self, scoring_service: ScoringService) -> None:
-        """Seed's sibling (via parent) should be found."""
-        # Tree: parent -> [seed, sibling]
-        nodes = {
-            "seed": make_node("seed", height=0, parent_id="parent"),
-            "sibling": make_node("sibling", height=0, parent_id="parent"),
-            "parent": make_node(
-                "parent", height=1, left_child_id="seed", right_child_id="sibling"
-            ),
-        }
-        coverage_map = {"seed": True, "sibling": True, "parent": True}
-
-        result = scoring_service._get_sibling_ids({"seed"}, nodes, coverage_map)
-
-        assert result == {"sibling"}
-
-    def test_excludes_seeds_from_siblings(
+    def test_node_with_embedding_gets_similarity_score(
         self, scoring_service: ScoringService
     ) -> None:
-        """Seeds that are also siblings should not be returned."""
-        # Both children are seeds
+        """Node with embedding gets dot product similarity with query."""
+        # Create embedding aligned with query for high score
+        embedding = [0.6, 0.8]
         nodes = {
-            "seed1": make_node("seed1", height=0, parent_id="parent"),
-            "seed2": make_node("seed2", height=0, parent_id="parent"),
-            "parent": make_node(
-                "parent", height=1, left_child_id="seed1", right_child_id="seed2"
-            ),
+            "node1": make_node("node1", embedding=pack_embedding(embedding)),
         }
-        coverage_map = {"seed1": True, "seed2": True, "parent": True}
+        coverage_map = {"node1": True}
+        candidates: CandidateList = []
+        query = [0.6, 0.8]  # Same direction
 
-        result = scoring_service._get_sibling_ids(
-            {"seed1", "seed2"}, nodes, coverage_map
+        scores = scoring_service.compute_scores(query, coverage_map, candidates, nodes)
+
+        # Normalized vectors pointing same direction -> similarity ~1.0
+        assert scores["node1"] == pytest.approx(1.0, abs=0.01)
+
+    def test_node_without_embedding_gets_zero(
+        self, scoring_service: ScoringService
+    ) -> None:
+        """Node without embedding (not yet indexed) gets 0.0."""
+        nodes = {
+            "node1": make_node("node1", embedding=None),
+        }
+        coverage_map = {"node1": True}
+        candidates: CandidateList = []
+
+        scores = scoring_service.compute_scores(
+            [0.6, 0.8], coverage_map, candidates, nodes
         )
 
-        assert result == set()  # No siblings, both are seeds
+        assert scores["node1"] == 0.0
 
-    def test_sibling_not_in_coverage_excluded(
+    def test_orthogonal_embedding_gets_zero_score(
         self, scoring_service: ScoringService
     ) -> None:
-        """Siblings not in coverage should not be returned."""
+        """Embedding orthogonal to query gets 0.0 similarity."""
+        # Query along x-axis, embedding along y-axis
+        embedding = [0.0, 1.0]
         nodes = {
-            "seed": make_node("seed", height=0, parent_id="parent"),
-            "sibling": make_node("sibling", height=0, parent_id="parent"),
-            "parent": make_node(
-                "parent", height=1, left_child_id="seed", right_child_id="sibling"
-            ),
+            "node1": make_node("node1", embedding=pack_embedding(embedding)),
         }
-        coverage_map = {"seed": True, "parent": True}  # sibling NOT in coverage
+        coverage_map = {"node1": True}
+        candidates: CandidateList = []
+        query = [1.0, 0.0]
 
-        result = scoring_service._get_sibling_ids({"seed"}, nodes, coverage_map)
+        scores = scoring_service.compute_scores(query, coverage_map, candidates, nodes)
 
-        assert result == set()
+        assert scores["node1"] == pytest.approx(0.0, abs=0.01)
 
-    def test_seed_without_parent(self, scoring_service: ScoringService) -> None:
-        """Root seed (no parent) has no sibling."""
-        nodes = {
-            "root_seed": make_node("root_seed", height=1, parent_id=None),
-        }
-        coverage_map = {"root_seed": True}
-
-        result = scoring_service._get_sibling_ids({"root_seed"}, nodes, coverage_map)
-
-        assert result == set()
-
-    def test_multiple_seeds_find_all_siblings(
+    def test_multiple_nodes_scored_independently(
         self, scoring_service: ScoringService
     ) -> None:
-        """Multiple seeds from different parents find their respective siblings."""
+        """Each node gets its own similarity score."""
+        # High relevance embedding
+        high_emb = [0.6, 0.8]
+        # Low relevance embedding (orthogonal-ish)
+        low_emb = [0.8, -0.6]
+
         nodes = {
-            "seed1": make_node("seed1", height=0, parent_id="parent1"),
-            "sib1": make_node("sib1", height=0, parent_id="parent1"),
-            "parent1": make_node(
-                "parent1", height=1, left_child_id="seed1", right_child_id="sib1"
-            ),
-            "seed2": make_node("seed2", height=0, parent_id="parent2"),
-            "sib2": make_node("sib2", height=0, parent_id="parent2"),
-            "parent2": make_node(
-                "parent2", height=1, left_child_id="seed2", right_child_id="sib2"
-            ),
+            "high": make_node("high", embedding=pack_embedding(high_emb)),
+            "low": make_node("low", embedding=pack_embedding(low_emb)),
         }
-        coverage_map = {
-            "seed1": True,
-            "sib1": True,
-            "parent1": True,
-            "seed2": True,
-            "sib2": True,
-            "parent2": True,
-        }
+        coverage_map = {"high": True, "low": True}
+        candidates: CandidateList = []
+        query = [0.6, 0.8]
 
-        result = scoring_service._get_sibling_ids(
-            {"seed1", "seed2"}, nodes, coverage_map
-        )
+        scores = scoring_service.compute_scores(query, coverage_map, candidates, nodes)
 
-        assert result == {"sib1", "sib2"}
+        assert scores["high"] > 0.9  # High similarity
+        assert scores["low"] < 0.2  # Low similarity
 
-
-class TestPropagateScoresBottomUp:
-    """Tests for _propagate_scores_bottom_up method."""
-
-    def test_parent_gets_avg_of_children(self, scoring_service: ScoringService) -> None:
-        """Parent score = avg(left_child, right_child)."""
-        nodes = {
-            "left": make_node("left", height=0, parent_id="parent"),
-            "right": make_node("right", height=0, parent_id="parent"),
-            "parent": make_node(
-                "parent", height=1, left_child_id="left", right_child_id="right"
-            ),
-        }
-        coverage_map = {"left": True, "right": True, "parent": True}
-        scores = {"left": 0.8, "right": 0.4}
-
-        scoring_service._propagate_scores_bottom_up(scores, nodes, coverage_map)
-
-        assert scores["parent"] == pytest.approx(0.6)  # avg(0.8, 0.4)
-
-    def test_single_child_uses_child_score(
+    def test_inner_nodes_use_their_own_embeddings(
         self, scoring_service: ScoringService
     ) -> None:
-        """Parent with one child gets that child's score."""
+        """Inner nodes get scored using their pre-computed embeddings."""
+        # Parent embedding (would be avg of children, but we test it directly)
+        parent_emb = [0.7, 0.7]  # Normalized: [0.707, 0.707]
+        child_emb = [0.6, 0.8]
+
         nodes = {
-            "child": make_node("child", height=0, parent_id="parent"),
+            "child": make_node(
+                "child",
+                height=0,
+                parent_id="parent",
+                embedding=pack_embedding(child_emb),
+            ),
             "parent": make_node(
-                "parent", height=1, left_child_id="child", right_child_id=None
+                "parent",
+                height=1,
+                left_child_id="child",
+                embedding=pack_embedding(parent_emb),
             ),
         }
         coverage_map = {"child": True, "parent": True}
-        scores = {"child": 0.7}
+        candidates: CandidateList = []
+        query = [0.7, 0.7]
 
-        scoring_service._propagate_scores_bottom_up(scores, nodes, coverage_map)
+        scores = scoring_service.compute_scores(query, coverage_map, candidates, nodes)
 
-        assert scores["parent"] == pytest.approx(0.7)
+        # Parent scored using its own embedding, not propagated from child
+        assert "parent" in scores
+        assert scores["parent"] == pytest.approx(1.0, abs=0.01)
 
-    def test_no_children_in_scores_gets_zero(
+    def test_mixed_embedded_and_unembedded_nodes(
         self, scoring_service: ScoringService
     ) -> None:
-        """Parent with no scored children gets 0.0."""
+        """Tree with some embedded and some unembedded nodes."""
+        emb = [0.6, 0.8]
         nodes = {
-            "child": make_node("child", height=0, parent_id="parent"),
-            "parent": make_node(
-                "parent", height=1, left_child_id="child", right_child_id=None
-            ),
+            "embedded": make_node("embedded", embedding=pack_embedding(emb)),
+            "not_embedded": make_node("not_embedded", embedding=None),
         }
-        coverage_map = {"parent": True}  # child not in coverage
-        scores: dict[str, float] = {}  # child has no score
+        coverage_map = {"embedded": True, "not_embedded": True}
+        candidates: CandidateList = []
+        query = [0.6, 0.8]
 
-        scoring_service._propagate_scores_bottom_up(scores, nodes, coverage_map)
+        scores = scoring_service.compute_scores(query, coverage_map, candidates, nodes)
 
-        assert scores["parent"] == 0.0
-
-    def test_multi_level_propagation(self, scoring_service: ScoringService) -> None:
-        """Scores propagate through multiple levels bottom-up."""
-        #       root (h=2)
-        #      /    \
-        #   mid1    mid2 (h=1)
-        #   /  \    /  \
-        #  l1  l2  l3  l4 (h=0)
-        nodes = {
-            "l1": make_node("l1", height=0, parent_id="mid1"),
-            "l2": make_node("l2", height=0, parent_id="mid1"),
-            "l3": make_node("l3", height=0, parent_id="mid2"),
-            "l4": make_node("l4", height=0, parent_id="mid2"),
-            "mid1": make_node(
-                "mid1",
-                height=1,
-                parent_id="root",
-                left_child_id="l1",
-                right_child_id="l2",
-            ),
-            "mid2": make_node(
-                "mid2",
-                height=1,
-                parent_id="root",
-                left_child_id="l3",
-                right_child_id="l4",
-            ),
-            "root": make_node(
-                "root", height=2, left_child_id="mid1", right_child_id="mid2"
-            ),
-        }
-        coverage_map = {k: True for k in nodes}
-        scores = {"l1": 1.0, "l2": 0.5, "l3": 0.8, "l4": 0.2}
-
-        scoring_service._propagate_scores_bottom_up(scores, nodes, coverage_map)
-
-        assert scores["mid1"] == pytest.approx(0.75)  # avg(1.0, 0.5)
-        assert scores["mid2"] == pytest.approx(0.5)  # avg(0.8, 0.2)
-        assert scores["root"] == pytest.approx(0.625)  # avg(0.75, 0.5)
-
-    def test_ancestor_seed_score_overwritten(
-        self, scoring_service: ScoringService
-    ) -> None:
-        """Seed at inner node has score overwritten by propagation."""
-        nodes = {
-            "child": make_node("child", height=0, parent_id="parent"),
-            "parent": make_node(
-                "parent", height=1, left_child_id="child", right_child_id=None
-            ),
-        }
-        coverage_map = {"child": True, "parent": True}
-        # parent is a seed with its own score
-        scores = {"child": 0.6, "parent": 0.9}
-
-        scoring_service._propagate_scores_bottom_up(scores, nodes, coverage_map)
-
-        # parent's seed score should be overwritten with propagated score
-        assert scores["parent"] == pytest.approx(0.6)
+        assert scores["embedded"] > 0.9
+        assert scores["not_embedded"] == 0.0
 
 
-class TestComputeScoresIntegration:
-    """Integration tests for compute_scores with bottom-up propagation."""
+class TestComputeScoresFallback:
+    """Tests for fallback behavior when nodes are not provided."""
 
-    def test_seeds_get_candidate_scores(
+    def test_without_nodes_uses_candidate_scores(
         self, mock_store: Mock, mock_vector_index: Mock
     ) -> None:
-        """Seeds use scores from candidates list."""
-        service = ScoringService(mock_store, mock_vector_index)
-        mock_vector_index.get_vectors.return_value = []
-
-        nodes = {
-            "seed": make_node("seed", height=0),
-        }
-        coverage_map = {"seed": True}
-        candidates: CandidateList = [("seed", 0.85, {})]
-
-        scores = service.compute_scores([0.1, 0.2], coverage_map, candidates, nodes)
-
-        assert scores["seed"] == 0.85
-
-    def test_siblings_get_embedding_scores(
-        self, mock_store: Mock, mock_vector_index: Mock
-    ) -> None:
-        """Siblings of seeds get scores from embedding fetch."""
-        # Sibling embedding will dot to ~0.5 with normalized query
-        sibling_vec = np.array([0.6, 0.8], dtype=np.float32)
-        sibling_vec = sibling_vec / np.linalg.norm(sibling_vec)
-
-        mock_vector_index.get_vectors.return_value = [
-            Vector("sibling", sibling_vec, {}, "model", 2)
-        ]
-
+        """Without nodes dict, falls back to candidate scores only."""
         service = ScoringService(mock_store, mock_vector_index)
 
-        nodes = {
-            "seed": make_node("seed", height=0, parent_id="parent"),
-            "sibling": make_node("sibling", height=0, parent_id="parent"),
-            "parent": make_node(
-                "parent", height=1, left_child_id="seed", right_child_id="sibling"
-            ),
-        }
-        coverage_map = {"seed": True, "sibling": True, "parent": True}
-        candidates: CandidateList = [("seed", 0.9, {})]
-
-        query_vec = [0.6, 0.8]  # Same direction as sibling
-        scores = service.compute_scores(query_vec, coverage_map, candidates, nodes)
-
-        assert scores["sibling"] == pytest.approx(1.0, abs=0.01)
-        mock_vector_index.get_vectors.assert_called_once_with(["sibling"])
-
-    def test_inner_nodes_get_propagated_scores(
-        self, mock_store: Mock, mock_vector_index: Mock
-    ) -> None:
-        """Inner nodes get avg of children's scores."""
-        mock_vector_index.get_vectors.return_value = []
-
-        service = ScoringService(mock_store, mock_vector_index)
-
-        nodes = {
-            "seed1": make_node("seed1", height=0, parent_id="parent"),
-            "seed2": make_node("seed2", height=0, parent_id="parent"),
-            "parent": make_node(
-                "parent", height=1, left_child_id="seed1", right_child_id="seed2"
-            ),
-        }
-        coverage_map = {"seed1": True, "seed2": True, "parent": True}
-        candidates: CandidateList = [("seed1", 0.8, {}), ("seed2", 0.4, {})]
-
-        scores = service.compute_scores([0.1, 0.2], coverage_map, candidates, nodes)
-
-        assert scores["parent"] == pytest.approx(0.6)
-
-    def test_ancestor_sibling_gets_zero(
-        self, mock_store: Mock, mock_vector_index: Mock
-    ) -> None:
-        """Ancestor's sibling with no scored children gets 0.0."""
-        mock_vector_index.get_vectors.return_value = []
-
-        service = ScoringService(mock_store, mock_vector_index)
-
-        #       root (h=2)
-        #      /    \
-        #   left    right (h=1) <- ancestor sibling, no seeds below
-        #   /  \
-        # seed  sib (h=0)
-        nodes = {
-            "seed": make_node("seed", height=0, parent_id="left"),
-            "sib": make_node("sib", height=0, parent_id="left"),
-            "left": make_node(
-                "left",
-                height=1,
-                parent_id="root",
-                left_child_id="seed",
-                right_child_id="sib",
-            ),
-            "right": make_node(
-                "right",
-                height=1,
-                parent_id="root",
-                left_child_id=None,
-                right_child_id=None,
-            ),
-            "root": make_node(
-                "root", height=2, left_child_id="left", right_child_id="right"
-            ),
-        }
-        # right subtree has no children in coverage (only the inner node)
-        coverage_map = {
-            "seed": True,
-            "sib": True,
-            "left": True,
-            "right": True,
-            "root": True,
-        }
-        candidates: CandidateList = [("seed", 0.8, {})]
-
-        # sib is fetched but has no vector
-        mock_vector_index.get_vectors.return_value = []
-
-        scores = service.compute_scores([0.1, 0.2], coverage_map, candidates, nodes)
-
-        # right has no children in scores -> 0.0
-        assert scores["right"] == 0.0
-        # left gets avg of seed (0.8) and sib (not scored -> not in child_scores)
-        # Actually sib won't be in scores since get_vectors returned empty
-        # So left = avg(0.8) = 0.8
-        assert scores["left"] == pytest.approx(0.8)
-        # root = avg(0.8, 0.0) = 0.4
-        assert scores["root"] == pytest.approx(0.4)
-
-    def test_without_nodes_returns_seed_scores_only(
-        self, mock_store: Mock, mock_vector_index: Mock
-    ) -> None:
-        """Without nodes dict, only seeds get scores (no propagation)."""
-        service = ScoringService(mock_store, mock_vector_index)
-
-        coverage_map = {"seed": True, "other": True}
-        candidates: CandidateList = [("seed", 0.75, {})]
+        coverage_map = {"seed1": True, "seed2": True, "other": True}
+        candidates: CandidateList = [("seed1", 0.75, {}), ("seed2", 0.5, {})]
 
         scores = service.compute_scores(
             [0.1, 0.2], coverage_map, candidates, nodes=None
         )
 
-        assert scores == {"seed": 0.75}
+        assert scores == {"seed1": 0.75, "seed2": 0.5}
+
+    def test_candidate_not_in_coverage_excluded(
+        self, mock_store: Mock, mock_vector_index: Mock
+    ) -> None:
+        """Candidates not in coverage are excluded from scores."""
+        service = ScoringService(mock_store, mock_vector_index)
+
+        coverage_map = {"in_coverage": True}
+        candidates: CandidateList = [
+            ("in_coverage", 0.8, {}),
+            ("not_in_coverage", 0.9, {}),
+        ]
+
+        scores = service.compute_scores(
+            [0.1, 0.2], coverage_map, candidates, nodes=None
+        )
+
+        assert "in_coverage" in scores
+        assert "not_in_coverage" not in scores
+
+
+class TestComputeScoresNormalization:
+    """Tests for embedding normalization during scoring."""
+
+    def test_unnormalized_embedding_normalized_before_scoring(
+        self, scoring_service: ScoringService
+    ) -> None:
+        """Embeddings are normalized before computing similarity."""
+        # Unnormalized embedding (magnitude != 1)
+        unnorm_emb = [3.0, 4.0]  # Magnitude 5
+        nodes = {
+            "node1": make_node("node1", embedding=pack_embedding(unnorm_emb)),
+        }
+        coverage_map = {"node1": True}
+        candidates: CandidateList = []
+        query = [0.6, 0.8]  # Same direction as [3,4] normalized
+
+        scores = scoring_service.compute_scores(query, coverage_map, candidates, nodes)
+
+        # After normalization, [3,4] -> [0.6, 0.8], same as query
+        assert scores["node1"] == pytest.approx(1.0, abs=0.01)
+
+    def test_averaged_embedding_renormalized(
+        self, scoring_service: ScoringService
+    ) -> None:
+        """Parent embeddings (averages) are renormalized correctly."""
+        # Simulate a parent embedding that's an average (may not be normalized)
+        # avg([1,0], [0,1]) = [0.5, 0.5], magnitude = 0.707
+        avg_emb = [0.5, 0.5]
+        nodes = {
+            "parent": make_node("parent", height=1, embedding=pack_embedding(avg_emb)),
+        }
+        coverage_map = {"parent": True}
+        candidates: CandidateList = []
+        query = [0.707, 0.707]  # Same direction as [0.5, 0.5] normalized
+
+        scores = scoring_service.compute_scores(query, coverage_map, candidates, nodes)
+
+        assert scores["parent"] == pytest.approx(1.0, abs=0.01)
