@@ -2036,6 +2036,70 @@ class TelemetryVisualizer:
                 )
                 legend.get_frame().set_alpha(0.85)
                 legend.get_frame().set_facecolor("white")
+
+            # Add average duration stats overlay in upper right
+            embed_durations: list[float] = []
+            retrieval_durations: list[float] = []
+            summary_durations: list[float] = []
+
+            for node in nodes:
+                # Embedding durations
+                embedding = node.get("embedding")
+                if embedding:
+                    embed_start = _to_float(embedding.get("start_time"))
+                    embed_end = _to_float(embedding.get("end_time"))
+                    if embed_start is not None and embed_end is not None:
+                        embed_durations.append(embed_end - embed_start)
+
+                # Retrieval durations
+                retrieval_data = node.get("retrieval")
+                if retrieval_data:
+                    ret_start = _to_float(retrieval_data.get("start_time"))
+                    ret_end = _to_float(retrieval_data.get("end_time"))
+                    if ret_start is not None and ret_end is not None:
+                        retrieval_durations.append(ret_end - ret_start)
+
+                # Summary durations (total across all attempts per node)
+                attempts = node.get("summary_attempts", [])
+                if attempts:
+                    node_summary_duration = 0.0
+                    for attempt in attempts:
+                        start_time = _to_float(attempt.get("start_time"))
+                        end_time = _to_float(attempt.get("end_time"))
+                        if start_time is not None and end_time is not None:
+                            node_summary_duration += end_time - start_time
+                    if node_summary_duration > 0:
+                        summary_durations.append(node_summary_duration)
+
+            # Build stats text
+            stats_lines: list[str] = []
+            if embed_durations:
+                avg_embed = sum(embed_durations) / len(embed_durations)
+                stats_lines.append(f"Embed: {avg_embed:.3f}s avg")
+            if retrieval_durations:
+                avg_retrieval = sum(retrieval_durations) / len(retrieval_durations)
+                stats_lines.append(f"Retrieval: {avg_retrieval:.3f}s avg")
+            if summary_durations:
+                avg_summary = sum(summary_durations) / len(summary_durations)
+                stats_lines.append(f"Summary: {avg_summary:.3f}s avg")
+
+            if stats_lines:
+                stats_text = "\n".join(stats_lines)
+                ax.text(
+                    0.99,
+                    0.01,
+                    stats_text,
+                    transform=ax.transAxes,
+                    fontsize=8,
+                    verticalalignment="bottom",
+                    horizontalalignment="right",
+                    bbox={
+                        "boxstyle": "round,pad=0.3",
+                        "facecolor": "white",
+                        "alpha": 0.85,
+                        "edgecolor": "gray",
+                    },
+                )
         else:
             # No valid data to plot
             ax.text(
