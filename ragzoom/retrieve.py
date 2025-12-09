@@ -175,6 +175,7 @@ class Retriever:
         telemetry_collector: TelemetryCollector | None = None,
         span_start: int = 0,
         span_end: int | None = None,
+        query_embedding: list[float] | None = None,
     ) -> RetrievalResult:
         """Async retrieval method with MMR diversity.
 
@@ -186,6 +187,9 @@ class Retriever:
             recent_verbatim_budget: Token budget for recent leaves to include verbatim
             span_start: Start of document window (character position, default 0)
             span_end: End of document window (default: document end)
+            query_embedding: Pre-computed query embedding. If provided, skips the
+                embedding API call. Used during indexing for inner nodes where the
+                parent embedding (avg of children) is already available.
 
         Supports three modes:
         1. Budget only: Calculate conservative num_seeds to guarantee no overflow
@@ -306,10 +310,11 @@ class Retriever:
                 # Leaves are returned sorted by span_start, so first one is the horizon
                 verbatim_horizon = verbatim_leaves[0].span_start
 
-        # Phase 1: Get query embedding (async to avoid blocking event loop)
-        query_embedding = await self.embedding_service.get_query_embedding_async(
-            query, effective_doc_id
-        )
+        # Phase 1: Get query embedding (skip if pre-computed embedding provided)
+        if query_embedding is None:
+            query_embedding = await self.embedding_service.get_query_embedding_async(
+                query, effective_doc_id
+            )
         if telemetry_collector:
             telemetry_collector.end_phase("embedding")
             telemetry_collector.start_phase()
@@ -546,6 +551,7 @@ class Retriever:
         budget_tokens: int,
         document_id: str | None = None,
         recent_verbatim_token_budget: int = 0,
+        query_embedding: list[float] | None = None,
     ) -> RetrievalResult:
         """Retrieve tiling of nodes covering [0, span_end_limit).
 
@@ -559,6 +565,9 @@ class Retriever:
             budget_tokens: Token budget for the dynamic summary portion
             document_id: Optional document ID to filter by
             recent_verbatim_token_budget: Token budget for verbatim leaves
+            query_embedding: Pre-computed query embedding. If provided, skips the
+                embedding API call. Used for inner nodes where the parent embedding
+                (avg of children) is already available.
 
         Returns:
             RetrievalResult with tiling node IDs in result.tiling and nodes in result.nodes.
@@ -580,6 +589,7 @@ class Retriever:
             recent_verbatim_budget=recent_verbatim_token_budget,
             span_start=0,
             span_end=span_end_limit,
+            query_embedding=query_embedding,
         )
 
     async def retrieve_with_telemetry(

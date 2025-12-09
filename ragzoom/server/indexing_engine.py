@@ -870,8 +870,20 @@ class IndexingEngine:
                 span=(span_start, span_end),
             )
 
+        # Compute parent embedding early - used for retrieval query
+        # By construction, both children have embeddings (gated by _is_eligible_pair)
+        if left.embedding is None:
+            raise RuntimeError(
+                f"Left child {left.id} missing embedding in _summarize_pair"
+            )
+        if right.embedding is None:
+            raise RuntimeError(
+                f"Right child {right.id} missing embedding in _summarize_pair"
+            )
+        parent_embedding = _average_embeddings(left.embedding, right.embedding)
+
         # Retrieve preceding context BEFORE summarization
-        # Uses combined children text as query since we don't have a summary yet
+        # Uses pre-computed parent embedding as query to skip embedding API call
         # Nodes at span_start=0 get empty tiling, others get retrieved context
 
         context_result: RetrievalResult | None = None
@@ -880,12 +892,15 @@ class IndexingEngine:
             if retriever is not None:
                 retrieval_start_time = time.time()
                 query_text = f"{left_text}\n{right_text}"
+                # Convert parent embedding to list[float] for retrieval
+                parent_embedding_list = parent_embedding.tolist()
                 context_result = await retriever.retrieve_for_context(
                     query_text=query_text,
                     span_end_limit=span_start,
                     budget_tokens=self._index_config.preceding_summary_budget_tokens,
                     document_id=job.document_id,
                     recent_verbatim_token_budget=0,
+                    query_embedding=parent_embedding_list,
                 )
 
                 # Record retrieval telemetry
@@ -1014,17 +1029,7 @@ class IndexingEngine:
 
         store.nodes.update_neighbors_batch(neighbors_update)
 
-        # Compute parent embedding as average of children's embeddings
-        # By construction, both children have embeddings (gated by _is_eligible_pair)
-        if left.embedding is None:
-            raise RuntimeError(
-                f"Left child {left.id} missing embedding in _summarize_pair"
-            )
-        if right.embedding is None:
-            raise RuntimeError(
-                f"Right child {right.id} missing embedding in _summarize_pair"
-            )
-        parent_embedding = _average_embeddings(left.embedding, right.embedding)
+        # Store parent embedding (computed early for retrieval query optimization)
         store.nodes._repo.update_embedding(parent_id, parent_embedding)
 
         logger.debug(
