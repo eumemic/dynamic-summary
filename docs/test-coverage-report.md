@@ -13,7 +13,7 @@ This analysis identifies test coverage gaps across the RagZoom codebase to prior
 ### ✅ Excellent Coverage (90%+)
 - **ragzoom/assemble.py**: 96% - Assembly logic well-tested
 - **ragzoom/progress.py**: 94% - Progress reporting covered
-- **ragzoom/dynamic_tiling.py**: 92% - Core DP algorithm thoroughly tested
+- **ragzoom/greedy_tiling.py**: 92% - Core tiling algorithm thoroughly tested
 
 ### ✅ Good Coverage (80-89%)
 - **ragzoom/telemetry_query.py**: 86% - Query telemetry functions

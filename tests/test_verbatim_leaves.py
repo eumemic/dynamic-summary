@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from unittest.mock import MagicMock
 
 from ragzoom.config import QueryConfig
-from ragzoom.dynamic_tiling import DPResult
+from ragzoom.greedy_tiling import TilingResult
 from ragzoom.retrieval.verbatim_selector import select_verbatim_leaves
 from ragzoom.tiling import Tiling
 
@@ -334,20 +334,20 @@ class TestVerbatimTilingInvariant:
             budget_tokens: int,
             scores: Mapping[str, float],
             nodes: object,
-        ) -> DPResult:
+        ) -> TilingResult:
             # With score boosting fix, verbatim_leaf gets score=1.0 which prevents
             # it from being rolled up in favor of parent. Check if verbatim_leaf
             # has boosted score to determine correct vs bug behavior.
             if scores.get("verbatim_leaf", 0.0) >= 1.0:
                 # Correct behavior: verbatim_leaf has max score, won't be rolled up
-                return DPResult(
+                return TilingResult(
                     Tiling(node_ids=["left", "verbatim_leaf"], relevance_tokens=50.0),
                     [],
                     50.0,
                     {},
                 )
             # Bug behavior: returns root which overlaps with verbatim_leaf
-            return DPResult(
+            return TilingResult(
                 Tiling(node_ids=["root"], relevance_tokens=50.0),
                 [],
                 50.0,
@@ -356,7 +356,7 @@ class TestVerbatimTilingInvariant:
 
         with (
             patch.object(
-                retriever.greedy_generator,
+                retriever.tiling_generator,
                 "find_optimal_tiling_over_roots",
                 side_effect=mock_tiling,
             ),
@@ -488,9 +488,9 @@ class TestVerbatimBudgetIntegration:
             budget_tokens: int,
             scores: object,
             nodes: object,
-        ) -> DPResult:
+        ) -> TilingResult:
             captured_budgets.append(budget_tokens)
-            return DPResult(Tiling.empty(), [], 0.0, {})
+            return TilingResult(Tiling.empty(), [], 0.0, {})
 
         # Create a mock root node that will be found in coverage
         mock_root_node = MagicMock()
@@ -502,7 +502,7 @@ class TestVerbatimBudgetIntegration:
         # Patch at multiple levels to ensure we reach the tiling call
         with (
             patch.object(
-                retriever.greedy_generator,
+                retriever.tiling_generator,
                 "find_optimal_tiling_over_roots",
                 side_effect=capture_tiling_call,
             ),
@@ -619,9 +619,9 @@ class TestVerbatimBudgetIntegration:
             patch("ragzoom.retrieve.CoverageBuilder") as mock_coverage_class,
             patch("ragzoom.retrieve.ScoringService") as mock_scoring_class,
             patch.object(
-                retriever.greedy_generator,
+                retriever.tiling_generator,
                 "find_optimal_tiling_over_roots",
-                return_value=DPResult(Tiling.empty(), [], 0.0, {}),
+                return_value=TilingResult(Tiling.empty(), [], 0.0, {}),
             ),
         ):
             mock_coverage = MagicMock()

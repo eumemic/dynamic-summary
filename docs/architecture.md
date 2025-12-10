@@ -49,17 +49,13 @@ The system is composed of several key modules that work together.
     - PostgresStorageBackend (for production/perf) uses PostgreSQL with pgvector for embeddings via repositories and a `DatabaseManager`.
     - All application code creates a per‑document `DocumentStore` via `store.for_document(doc_id)` to enforce strict document isolation.
 
--   **`ragzoom.dynamic_tiling.DynamicTilingGenerator`**: This is the core "brain" of the retrieval logic. It implements a dynamic programming algorithm to construct the optimal tiling. The algorithm recursively decomposes the problem, choosing at each node whether to use the parent node or recurse into children for higher detail. Budget is split proportionally based on relevance scores.
-
--   **`ragzoom.dynamic_tiling.GreedyTilingGenerator`**: An alternative tiling strategy that walks the tree top-down, making locally optimal decisions. Faster than DP with lower memory overhead, useful for very large documents. Selected via `tiling_strategy="greedy"`.
-
--   **`ragzoom.dynamic_tiling.AsyncDynamicTilingGenerator`**: An async version of the DP tiling generator that provides fork-join parallelism for independent subtree processing. When both left and right children exist, the algorithm can process them concurrently using asyncio tasks, providing 2-4x speedup on multi-core systems for trees with sufficient size. Parallelization is threshold-controlled (default: 10+ nodes) to avoid overhead on small subtrees.
+-   **`ragzoom.greedy_tiling.GreedyTilingGenerator`**: This is the core "brain" of the retrieval logic. It implements a greedy algorithm to construct the optimal tiling. Starting from all leaves (the most detailed view), it iteratively rolls up the least-relevant sibling pairs into their parent nodes until the tiling fits within the token budget. If no budget is specified, the full frontier is returned without pruning.
 
 For a comprehensive technical deep dive into the tiling algorithm, see [The Tiling Algorithm: Deep Dive](deep-dives/tiling-algorithm.md).
 
--   **`ragzoom.retrieve.Retriever`**: Orchestrates the querying process. It takes a user query, generates an embedding, and uses the `Store` to find relevant "seed" nodes via vector search. It applies MMR (Maximal Marginal Relevance) for diversity, then invokes the configured tiling generator (DP, Greedy, or async DP) to build the final tiling. Supports `recent_verbatim_token_budget` for including recent content without summarization - useful for conversation logs where the most recent messages should appear verbatim.
+-   **`ragzoom.retrieve.Retriever`**: Orchestrates the querying process. It takes a user query, generates an embedding, and uses the `Store` to find relevant "seed" nodes via vector search. It applies MMR (Maximal Marginal Relevance) for diversity, then invokes the tiling generator to build the final tiling. Supports `recent_verbatim_token_budget` for including recent content without summarization - useful for conversation logs where the most recent messages should appear verbatim.
 
--   **`ragzoom.assemble.Assembler`**: The final step in the pipeline. It takes the tiling (a list of node IDs) produced by the retriever and assembles the final summary text by concatenating the text content of each node. **STATUS: IMPLEMENTED** - Only DP-based assembly is supported; legacy assembly has been removed.
+-   **`ragzoom.assemble.Assembler`**: The final step in the pipeline. It takes the tiling (a list of node IDs) produced by the retriever and assembles the final summary text by concatenating the text content of each node.
 
 -   **`ragzoom.cli` & `ragzoom.api`**: The user-facing interfaces for interacting with the system, providing command-line and REST API access, respectively.
 
@@ -89,7 +85,7 @@ graph TD;
     C --> D(Store - PostgreSQL);
     D -- Seed Nodes --> B;
     B -- MMR Selection --> B2{Coverage Map};
-    B2 -- Root Node & Scores --> E(DynamicTilingGenerator);
+    B2 -- Root Node & Scores --> E(GreedyTilingGenerator);
     E -- Requests Nodes --> F(Store - PostgreSQL);
     F -- Node Data --> E;
     E -- Optimal Tiling --> B;
@@ -131,10 +127,9 @@ Key configuration parameters that affect system behavior:
 
 | Parameter | Default | Description | Status |
 |-----------|---------|-------------|---------|
-| `budget_tokens` | 8000 | Maximum tokens in final summary | IMPLEMENTED |
+| `budget_tokens` | None | Maximum tokens in final summary (None = no limit) | IMPLEMENTED |
 | `leaf_tokens` | 200 | Target tokens per leaf chunk | IMPLEMENTED |
 | `mmr_lambda` | 0.7 | MMR diversity vs relevance trade-off | IMPLEMENTED |
-| `tiling_strategy` | "dp" | Tiling algorithm: "dp" or "greedy" | IMPLEMENTED |
 | `recent_verbatim_token_budget` | 0 | Token budget for verbatim recent leaves | IMPLEMENTED |
 | `enable_slope_cap` | True | Limit depth differences between adjacent nodes | **NOT IMPLEMENTED** |
 | `slope_cap_size` | 1 | Maximum depth difference | **NOT IMPLEMENTED** |

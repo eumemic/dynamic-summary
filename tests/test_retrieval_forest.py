@@ -12,8 +12,7 @@ from ragzoom.config import QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
-from ragzoom.dynamic_tiling import DPResult, DynamicTilingGenerator
-from ragzoom.greedy_tiling import GreedyTilingGenerator
+from ragzoom.greedy_tiling import GreedyTilingGenerator, TilingResult
 from ragzoom.retrieval.coverage_builder import CoverageBuilder
 
 
@@ -182,12 +181,14 @@ def test_dp_accepts_multiple_roots(forest_store: DocumentStore) -> None:
     root_ids = _seed_forest(forest_store)
     nodes = {node.id: node for node in forest_store.nodes.get_all()}
 
-    dp = DynamicTilingGenerator(QueryConfig(budget_tokens=64))
+    dp = GreedyTilingGenerator(QueryConfig(budget_tokens=64))
     func = getattr(dp, "find_optimal_tiling_over_roots", None)
-    assert callable(func), "DynamicTilingGenerator must support forest root tiling"
+    assert callable(func), "GreedyTilingGenerator must support forest root tiling"
 
     solver = cast(
-        Callable[[Sequence[str], int, dict[str, float], dict[str, TreeNode]], DPResult],
+        Callable[
+            [Sequence[str], int, dict[str, float], dict[str, TreeNode]], TilingResult
+        ],
         func,
     )
     scores = {node_id: 1.0 for node_id in nodes}
@@ -197,15 +198,17 @@ def test_dp_accepts_multiple_roots(forest_store: DocumentStore) -> None:
     assert set(result.coverage_map) >= set(root_ids)
 
 
-def test_forest_budget_insufficient_returns_empty(forest_store: DocumentStore) -> None:
+def test_forest_budget_insufficient_returns_roots(forest_store: DocumentStore) -> None:
+    """When budget is too small, greedy returns the most compressed tiling (roots)."""
     root_ids = _seed_forest(forest_store)
     nodes = {node.id: node for node in forest_store.nodes.get_all()}
 
-    dp = DynamicTilingGenerator(QueryConfig(budget_tokens=10))
+    greedy = GreedyTilingGenerator(QueryConfig(budget_tokens=10))
     scores = {node_id: 1.0 for node_id in nodes}
 
-    result = dp.find_optimal_tiling_over_roots(root_ids, 10, scores, nodes)
-    assert not result.tiling.node_ids
+    result = greedy.find_optimal_tiling_over_roots(root_ids, 10, scores, nodes)
+    # Greedy returns the best tiling it can, even if over budget - in this case, the roots
+    assert set(result.tiling.node_ids) == set(root_ids)
 
 
 def test_greedy_handles_multiple_roots(forest_store: DocumentStore) -> None:
@@ -213,9 +216,7 @@ def test_greedy_handles_multiple_roots(forest_store: DocumentStore) -> None:
     nodes = {node.id: node for node in forest_store.nodes.get_all()}
     scores = {node_id: 1.0 for node_id in nodes}
 
-    greedy = GreedyTilingGenerator(
-        QueryConfig(budget_tokens=64, tiling_strategy="greedy")
-    )
+    greedy = GreedyTilingGenerator(QueryConfig(budget_tokens=64))
     result = greedy.find_optimal_tiling_over_roots(root_ids, 64, scores, nodes)
 
     assert result.tiling.node_ids

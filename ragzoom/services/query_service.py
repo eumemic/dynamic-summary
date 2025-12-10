@@ -19,7 +19,7 @@ class _QueryComponents(NamedTuple):
 
     retriever: Retriever
     assembler: Assembler
-    budget: int
+    budget: int | None
 
 
 @dataclass
@@ -108,7 +108,7 @@ class QueryService:
         document_id: str,
         retrieval_result: RetrievalResult,
         assembler: Assembler,
-        budget: int,
+        budget: int | None,
         num_seeds: int | None,
     ) -> QueryResult:
         """Build QueryResult from retrieval result."""
@@ -245,7 +245,7 @@ class QueryService:
         self,
         query_text: str,
         document_id: str,
-        budget_tokens: int,
+        budget_tokens: int | None,
         num_seeds: int | None,
         retrieval_result: RetrievalResult,
     ) -> str:
