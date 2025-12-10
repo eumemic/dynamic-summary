@@ -23,6 +23,7 @@ class IndexConfigDict(TypedDict):
     processing_strategy: str
     context_lag_tokens: int
     preceding_context_max_extraneous_detail: int
+    preceding_context_num_seeds: int | None
 
 
 # Type for configuration values that can be primitives
@@ -158,6 +159,7 @@ class IndexConfig:
     processing_strategy: str
     context_lag_tokens: int
     preceding_context_max_extraneous_detail: int
+    preceding_context_num_seeds: int | None
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -186,6 +188,14 @@ class IndexConfig:
                 f"got {self.preceding_context_max_extraneous_detail}"
             )
 
+        # Validate num_seeds if provided
+        if self.preceding_context_num_seeds is not None:
+            if self.preceding_context_num_seeds < 1:
+                raise ValueError(
+                    f"preceding_context_num_seeds must be >= 1, "
+                    f"got {self.preceding_context_num_seeds}"
+                )
+
     @classmethod
     def from_dict(cls, config_dict: dict[str, ConfigValue]) -> "IndexConfig":
         """Create IndexConfig from a dictionary (e.g., from telemetry JSON).
@@ -196,48 +206,34 @@ class IndexConfig:
         Returns:
             IndexConfig instance
         """
-        # Extract only the fields that IndexConfig expects
-        index_config_fields = {
-            "target_chunk_tokens": config_dict["target_chunk_tokens"],
-            "preceding_summary_budget_tokens": config_dict[
-                "preceding_summary_budget_tokens"
-            ],
-            "summary_model": config_dict["summary_model"],
-            "embedding_model": config_dict["embedding_model"],
-            "retry_threshold": config_dict["retry_threshold"],
-            "max_retries": config_dict["max_retries"],
-            "embedding_batch_size": config_dict["embedding_batch_size"],
-            "use_anti_verbatim_vaccine": config_dict.get(
-                "use_anti_verbatim_vaccine", True
-            ),
-            "processing_strategy": config_dict.get(
-                "processing_strategy", "bottom_to_top"
-            ),
-            "context_lag_tokens": config_dict.get("context_lag_tokens", 0),
-            "preceding_context_max_extraneous_detail": config_dict.get(
-                "preceding_context_max_extraneous_detail", 5
-            ),
-        }
+        # Handle num_seeds which can be None or int
+        raw_num_seeds = config_dict.get("preceding_context_num_seeds")
+        num_seeds: int | None = (
+            int(raw_num_seeds) if raw_num_seeds is not None else None
+        )
 
         # Type-safe construction with proper field types
         return cls(
-            target_chunk_tokens=int(index_config_fields["target_chunk_tokens"]),
+            target_chunk_tokens=int(config_dict["target_chunk_tokens"]),
             preceding_summary_budget_tokens=int(
-                index_config_fields["preceding_summary_budget_tokens"]
+                config_dict["preceding_summary_budget_tokens"]
             ),
-            summary_model=str(index_config_fields["summary_model"]),
-            embedding_model=str(index_config_fields["embedding_model"]),
-            retry_threshold=float(index_config_fields["retry_threshold"]),
-            max_retries=int(index_config_fields["max_retries"]),
-            embedding_batch_size=int(index_config_fields["embedding_batch_size"]),
+            summary_model=str(config_dict["summary_model"]),
+            embedding_model=str(config_dict["embedding_model"]),
+            retry_threshold=float(config_dict["retry_threshold"]),
+            max_retries=int(config_dict["max_retries"]),
+            embedding_batch_size=int(config_dict["embedding_batch_size"]),
             use_anti_verbatim_vaccine=bool(
-                index_config_fields["use_anti_verbatim_vaccine"]
+                config_dict.get("use_anti_verbatim_vaccine", True)
             ),
-            processing_strategy=str(index_config_fields["processing_strategy"]),
-            context_lag_tokens=int(index_config_fields["context_lag_tokens"]),
+            processing_strategy=str(
+                config_dict.get("processing_strategy", "bottom_to_top")
+            ),
+            context_lag_tokens=int(config_dict.get("context_lag_tokens", 0)),
             preceding_context_max_extraneous_detail=int(
-                index_config_fields["preceding_context_max_extraneous_detail"]
+                config_dict.get("preceding_context_max_extraneous_detail", 5)
             ),
+            preceding_context_num_seeds=num_seeds,
         )
 
     @classmethod
@@ -262,6 +258,9 @@ class IndexConfig:
         # Use from_dict to create the instance
         return cls.from_dict(config_dict)
 
+    # Sentinel for "not provided" in replace() - distinct from None which is valid
+    _NOT_PROVIDED: int = -999999
+
     def replace(
         self,
         target_chunk_tokens: int | None = None,
@@ -275,6 +274,7 @@ class IndexConfig:
         processing_strategy: str | None = None,
         context_lag_tokens: int | None = None,
         preceding_context_max_extraneous_detail: int | None = None,
+        preceding_context_num_seeds: int | None = _NOT_PROVIDED,
     ) -> "IndexConfig":
         """Create a new IndexConfig with some fields changed."""
         from dataclasses import replace
@@ -325,6 +325,11 @@ class IndexConfig:
                 preceding_context_max_extraneous_detail
                 if preceding_context_max_extraneous_detail is not None
                 else self.preceding_context_max_extraneous_detail
+            ),
+            preceding_context_num_seeds=(
+                preceding_context_num_seeds
+                if preceding_context_num_seeds != self._NOT_PROVIDED
+                else self.preceding_context_num_seeds
             ),
         )
 

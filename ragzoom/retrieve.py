@@ -552,6 +552,7 @@ class Retriever:
         document_id: str | None = None,
         recent_verbatim_token_budget: int = 0,
         query_embedding: list[float] | None = None,
+        num_seeds: int | None = None,
     ) -> RetrievalResult:
         """Retrieve tiling of nodes covering [0, span_end_limit).
 
@@ -568,6 +569,8 @@ class Retriever:
             query_embedding: Pre-computed query embedding. If provided, skips the
                 embedding API call. Used for inner nodes where the parent embedding
                 (avg of children) is already available.
+            num_seeds: Number of seed nodes for retrieval. If None, auto-calculated
+                from budget.
 
         Returns:
             RetrievalResult with tiling node IDs in result.tiling and nodes in result.nodes.
@@ -584,6 +587,7 @@ class Retriever:
 
         return await self.retrieve_async(
             query=query_text,
+            num_seeds=num_seeds,
             budget_tokens=budget_tokens,
             document_id=document_id,
             recent_verbatim_budget=recent_verbatim_token_budget,

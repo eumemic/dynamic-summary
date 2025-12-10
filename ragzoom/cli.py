@@ -1448,6 +1448,12 @@ def server() -> None:
     type=int,
     help="Max extra roots beyond minimum before gating (default: 5)",
 )
+@click.option(
+    "--preceding-context-num-seeds",
+    "preceding_context_num_seeds",
+    type=int,
+    help="Number of seeds for preceding context retrieval (default: auto)",
+)
 def start_server(
     host: str,
     port: int,
@@ -1459,6 +1465,7 @@ def start_server(
     context_lag_tokens: int | None,
     max_parallelism: int | None,
     preceding_context_max_extraneous_detail: int | None,
+    preceding_context_num_seeds: int | None,
 ) -> None:
     """Start the RagZoom gRPC server."""
 
@@ -1473,6 +1480,7 @@ def start_server(
         context_lag_tokens=context_lag_tokens,
         max_parallelism=max_parallelism,
         preceding_context_max_extraneous_detail=preceding_context_max_extraneous_detail,
+        preceding_context_num_seeds=preceding_context_num_seeds,
     )
     run_server(options)
 

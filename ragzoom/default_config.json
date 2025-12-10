@@ -8,5 +8,6 @@
   "embedding_batch_size": 100,
   "use_anti_verbatim_vaccine": true,
   "context_lag_tokens": 2000,
-  "preceding_context_max_extraneous_detail": 5
+  "preceding_context_max_extraneous_detail": 5,
+  "preceding_context_num_seeds": null
 }

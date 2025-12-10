@@ -50,6 +50,7 @@ class TestAutomaticClearing:
             processing_strategy="bottom_to_top",
             context_lag_tokens=0,
             preceding_context_max_extraneous_detail=5,
+            preceding_context_num_seeds=None,
         )
 
     @pytest.fixture
