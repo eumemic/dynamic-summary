@@ -41,42 +41,33 @@ async def test_llm_service_rejects_oversized_embedding_text() -> None:
         await llm_service.embed_texts([oversized_text])
 
 
-def test_combined_context_and_leaf_within_limit() -> None:
-    """Test that context_prefix + leaf_text can't exceed the embedding limit.
+def test_summarized_context_and_leaf_within_embedding_limit() -> None:
+    """Test that context_summary + leaf_text stays under the embedding limit.
 
-    This test validates the invariant that should hold during indexing:
-    the combined text for embedding (context + leaf) must stay under 8000 tokens.
+    The embedding text is composed of:
+    - context_summary: summary of preceding context (target: target_chunk_tokens)
+    - leaf_text: the leaf chunk itself (target: target_chunk_tokens)
 
-    Given:
-    - preceding_summary_budget_tokens controls context retrieval budget
-    - target_chunk_tokens controls leaf chunk size
-    - Combined must be <= EMBEDDING_TOKEN_LIMIT
-
-    The system should enforce that:
-    preceding_summary_budget_tokens + target_chunk_tokens + margin <= 8000
+    Note: preceding_context_budget controls how much context is retrieved for
+    summarization (sent to the LLM), NOT what gets embedded. The context is
+    summarized down to target_chunk_tokens before being prepended to the leaf.
     """
-    # Default config values
     config = IndexConfig.load()
 
-    # Calculate the maximum possible combined size
-    # Note: In practice, chunks can exceed target_chunk_tokens due to
-    # gap reconstruction in the splitter, so we need margin
-    max_context = config.preceding_summary_budget_tokens
-    max_chunk = config.target_chunk_tokens
+    # The embedding text is: context_summary (~target_chunk_tokens) + leaf (~target_chunk_tokens)
+    # With gap reconstruction, chunks can be up to ~3x target in edge cases
+    max_summary_tokens = config.target_chunk_tokens * 3  # Worst case summary
+    max_leaf_tokens = config.target_chunk_tokens * 3  # Worst case leaf
 
-    # With gap reconstruction, a chunk could be up to ~2x target in edge cases
-    # Be conservative and assume 3x for safety margin
-    worst_case_chunk = max_chunk * 3
+    combined_max = max_summary_tokens + max_leaf_tokens
 
-    combined_max = max_context + worst_case_chunk
-
-    # This assertion documents the EXPECTED invariant
-    # If this fails, it means the config allows oversized embeddings
+    # This should comfortably fit within the 8000 token embedding limit
+    # With default target_chunk_tokens=200, this is 1200 tokens max
     assert combined_max <= EMBEDDING_TOKEN_LIMIT, (
-        f"Config allows oversized embedding text: "
-        f"context ({max_context}) + worst_case_chunk ({worst_case_chunk}) = {combined_max} "
+        f"Embedding text could exceed limit: "
+        f"summary ({max_summary_tokens}) + leaf ({max_leaf_tokens}) = {combined_max} "
         f"exceeds limit ({EMBEDDING_TOKEN_LIMIT}). "
-        f"Either reduce preceding_summary_budget_tokens or enforce chunk size limits."
+        f"Reduce target_chunk_tokens."
     )
 
 
@@ -114,7 +105,7 @@ async def test_indexing_engine_limits_embedding_text() -> None:
 
     # Create config with large context budget (5000 tokens)
     # Combined would be ~10000 tokens without the fix
-    config = IndexConfig.load(preceding_summary_budget_tokens=5000)
+    config = IndexConfig.load()
 
     # Create mock LLM service
     mock_llm_service = MagicMock()

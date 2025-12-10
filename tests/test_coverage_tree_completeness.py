@@ -41,9 +41,7 @@ class TestCoverageTreeCompletenessSQLite:
         self, doc_store: DocumentStore
     ) -> tuple[IndexConfig, DocumentStore, Retriever, GreedyTilingGenerator]:
         """Set up a system with a tree that will produce incomplete coverage."""
-        index_config = IndexConfig.load(
-            target_chunk_tokens=100, preceding_summary_budget_tokens=50
-        )
+        index_config = IndexConfig.load(target_chunk_tokens=100)
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 

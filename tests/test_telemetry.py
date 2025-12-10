@@ -86,7 +86,6 @@ class TestTelemetryCollection:
         """Create test config."""
         return IndexConfig.load(
             target_chunk_tokens=100,
-            preceding_summary_budget_tokens=50,
             embedding_batch_size=2,
         )
 
@@ -441,7 +440,6 @@ class TestTelemetryIntegration:
         """Test that telemetry captures all nodes during indexing."""
         index_config = IndexConfig.load(
             target_chunk_tokens=100,
-            preceding_summary_budget_tokens=50,
             embedding_batch_size=2,
         )
 
@@ -538,7 +536,6 @@ class TestTelemetryIntegration:
         assert "config" in telemetry_data
         config = telemetry_data["config"]
         assert "target_chunk_tokens" in config
-        assert "preceding_summary_budget_tokens" in config
         assert "summary_model" in config
         assert "embedding_model" in config
 

@@ -715,7 +715,7 @@ class IndexingEngine:
                     context_result = await retriever.retrieve_for_context(
                         query_text=leaf_text,
                         span_end_limit=span_start,
-                        budget_tokens=self._index_config.preceding_summary_budget_tokens,
+                        budget_tokens=self._index_config.preceding_context_budget,
                         document_id=job.document_id,
                         recent_verbatim_token_budget=self._index_config.preceding_context_verbatim_tokens,
                         num_seeds=self._index_config.preceding_context_num_seeds,
@@ -1005,7 +1005,7 @@ class IndexingEngine:
                 context_result = await retriever.retrieve_for_context(
                     query_text=query_text,
                     span_end_limit=span_start,
-                    budget_tokens=self._index_config.preceding_summary_budget_tokens,
+                    budget_tokens=self._index_config.preceding_context_budget,
                     document_id=job.document_id,
                     recent_verbatim_token_budget=self._index_config.preceding_context_verbatim_tokens,
                     query_embedding=parent_embedding_list,
@@ -1180,7 +1180,7 @@ class IndexingEngine:
         )
 
         query_config = QueryConfig(
-            budget_tokens=self._index_config.preceding_summary_budget_tokens,
+            budget_tokens=self._index_config.preceding_context_budget,
         )
 
         return Retriever(

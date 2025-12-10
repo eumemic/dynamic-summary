@@ -25,6 +25,7 @@ class LLMModelConfigDict(TypedDict):
     output: float
     cache_discount: NotRequired[float]
     supports_temperature: NotRequired[bool]
+    context_window: int
 
 
 class ModelsConfigDict(TypedDict, total=False):
@@ -179,6 +180,26 @@ class ModelInfo:
         # supports_temperature is optional (NotRequired in TypedDict).
         # Default to True since most LLMs support temperature control.
         return bool(self._data["llms"][model].get("supports_temperature", True))
+
+    def get_context_window(self, model: str) -> int:
+        """Get the context window size for an LLM.
+
+        Args:
+            model: The LLM model name
+
+        Returns:
+            Maximum input tokens for the model
+
+        Raises:
+            ValueError: If the model is not found
+        """
+        if model not in self._data.get("llms", {}):
+            available = list(self._data.get("llms", {}).keys())
+            raise ValueError(
+                f"LLM model '{model}' not found. Available models: {available}"
+            )
+
+        return int(self._data["llms"][model]["context_window"])
 
     def is_gpt5_model(self, model: str) -> bool:
         """Check if a model is a GPT-5 variant.

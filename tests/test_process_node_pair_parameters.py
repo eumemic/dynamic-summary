@@ -82,7 +82,6 @@ async def test_worker_coordinator_passes_token_counts(
 ) -> None:
     index_config = IndexConfig.load(
         target_chunk_tokens=120,
-        preceding_summary_budget_tokens=40,
     )
     vector_index = RecordingVectorIndex()
     _configure_runtime(indexer_runtime_harness, index_config, vector_index)
@@ -147,7 +146,6 @@ async def test_prev_context_present_when_preceding_neighbor_exists(
 ) -> None:
     index_config = IndexConfig.load(
         target_chunk_tokens=90,
-        preceding_summary_budget_tokens=45,
     )
     vector_index = RecordingVectorIndex()
     _configure_runtime(indexer_runtime_harness, index_config, vector_index)

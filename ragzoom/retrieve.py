@@ -253,14 +253,19 @@ class Retriever:
             num_seeds = self.budget_planner.calculate_conservative_num_seeds(
                 effective_budget, effective_doc_id
             )
-            logger.info(
-                f"Budget-only mode: calculated conservative num_seeds={num_seeds} for budget={effective_budget}"
+            logger.debug(
+                f"Budget-only mode: calculated conservative num_seeds={num_seeds} "
+                f"for budget={effective_budget}"
             )
         elif effective_budget is not None and num_seeds is not None:
-            logger.info(f"Mixed mode: num_seeds={num_seeds}, budget={effective_budget}")
+            logger.debug(
+                f"Mixed mode: num_seeds={num_seeds}, budget={effective_budget}"
+            )
         else:
             # Seeds-only mode: num_seeds provided but no budget
-            logger.info(f"Seeds-only mode: num_seeds={num_seeds}, no budget constraint")
+            logger.debug(
+                f"Seeds-only mode: num_seeds={num_seeds}, no budget constraint"
+            )
 
         # At this point num_seeds is guaranteed to be set
         assert num_seeds is not None

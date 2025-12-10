@@ -1,6 +1,5 @@
 {
   "target_chunk_tokens": 200,
-  "preceding_summary_budget_tokens": 2000,
   "summary_model": "gpt-5-nano",
   "embedding_model": "text-embedding-3-small",
   "retry_threshold": 0.2,
@@ -9,5 +8,5 @@
   "use_anti_verbatim_vaccine": true,
   "preceding_context_verbatim_tokens": 2000,
   "preceding_context_max_extraneous_detail": 5,
-  "preceding_context_num_seeds": null
+  "preceding_context_num_seeds": 1
 }

@@ -1,7 +1,7 @@
 """Test that IndexingEngine doesn't deadlock with small budget values.
 
 This tests the fix for issue #287 where the old WorkerCoordinator would
-deadlock with small preceding_summary_budget_tokens values.
+deadlock with small preceding context budget values.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ async def test_no_deadlock_with_small_budget(
     """Test that indexing completes without deadlock even with small B and K values.
 
     This specifically tests the scenario that caused deadlock in the old
-    WorkerCoordinator when preceding_summary_budget_tokens was small (like 400).
+    WorkerCoordinator when preceding context budget was small (like 400).
 
     The system is designed to handle "forests" (multiple roots) when odd numbers
     of nodes prevent perfect pairing. This is by design - the DP and greedy
@@ -38,7 +38,6 @@ async def test_no_deadlock_with_small_budget(
     # Configure with small budget values that could trigger deadlock
     index_config = IndexConfig.load(
         target_chunk_tokens=200,
-        preceding_summary_budget_tokens=400,  # B=400 - small budget
         context_lag_tokens=400,  # K=400 - small lag
         embedding_batch_size=2,
     )

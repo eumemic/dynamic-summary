@@ -30,7 +30,6 @@ class TestWhitespaceReconstruction:
         """Provide a splitter with deterministic configuration."""
         index_config = IndexConfig.load(
             target_chunk_tokens=50,
-            preceding_summary_budget_tokens=10,
         )
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(

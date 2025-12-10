@@ -15,7 +15,7 @@ from ragzoom.server.state import ServerState
 logger = logging.getLogger(__name__)
 
 
-@dataclass(slots=True)
+@dataclass
 class ServerOptions:
     """Command-level options for starting the gRPC server."""
 
@@ -25,7 +25,6 @@ class ServerOptions:
     collect_telemetry: bool = False
     telemetry_dir: str | None = None
     # Config overrides (take precedence over config file)
-    preceding_summary_budget_tokens: int | None = None
     preceding_context_verbatim_tokens: int | None = None
     max_parallelism: int | None = None
     preceding_context_max_extraneous_detail: int | None = None
@@ -40,13 +39,11 @@ def build_state(options: ServerOptions) -> ServerState:
 
     # Apply CLI overrides if provided
     if (
-        options.preceding_summary_budget_tokens is not None
-        or options.preceding_context_verbatim_tokens is not None
+        options.preceding_context_verbatim_tokens is not None
         or options.preceding_context_max_extraneous_detail is not None
         or options.preceding_context_num_seeds is not None
     ):
         index_cfg = index_cfg.replace(
-            preceding_summary_budget_tokens=options.preceding_summary_budget_tokens,
             preceding_context_verbatim_tokens=options.preceding_context_verbatim_tokens,
             preceding_context_max_extraneous_detail=options.preceding_context_max_extraneous_detail,
             preceding_context_num_seeds=options.preceding_context_num_seeds,

@@ -13,7 +13,6 @@ class IndexConfigDict(TypedDict):
     """Type definition for IndexConfig dictionary representation."""
 
     target_chunk_tokens: int
-    preceding_summary_budget_tokens: int
     summary_model: str
     embedding_model: str
     retry_threshold: float
@@ -149,7 +148,6 @@ class IndexConfig:
     """
 
     target_chunk_tokens: int
-    preceding_summary_budget_tokens: int
     summary_model: str
     embedding_model: str
     retry_threshold: float
@@ -215,9 +213,6 @@ class IndexConfig:
         # Type-safe construction with proper field types
         return cls(
             target_chunk_tokens=int(config_dict["target_chunk_tokens"]),
-            preceding_summary_budget_tokens=int(
-                config_dict["preceding_summary_budget_tokens"]
-            ),
             summary_model=str(config_dict["summary_model"]),
             embedding_model=str(config_dict["embedding_model"]),
             retry_threshold=float(config_dict["retry_threshold"]),
@@ -266,7 +261,6 @@ class IndexConfig:
     def replace(
         self,
         target_chunk_tokens: int | None = None,
-        preceding_summary_budget_tokens: int | None = None,
         summary_model: str | None = None,
         embedding_model: str | None = None,
         retry_threshold: float | None = None,
@@ -287,11 +281,6 @@ class IndexConfig:
                 target_chunk_tokens
                 if target_chunk_tokens is not None
                 else self.target_chunk_tokens
-            ),
-            preceding_summary_budget_tokens=(
-                preceding_summary_budget_tokens
-                if preceding_summary_budget_tokens is not None
-                else self.preceding_summary_budget_tokens
             ),
             summary_model=(
                 summary_model if summary_model is not None else self.summary_model
@@ -334,6 +323,31 @@ class IndexConfig:
                 else self.preceding_context_num_seeds
             ),
         )
+
+    # Maximum budget for preceding context retrieval.
+    # Capped to prevent excessive seed calculation (budget // chunk_tokens = num_seeds).
+    # 32K is a reasonable limit that allows substantial context while keeping
+    # retrieval performant.
+    _MAX_PRECEDING_CONTEXT_BUDGET = 32000
+
+    @property
+    def preceding_context_budget(self) -> int:
+        """Get the preceding context budget derived from the summary model's context window.
+
+        The budget is calculated as the model's context window minus overhead for:
+        - The chunk being summarized (~target_chunk_tokens)
+        - The output summary (~target_chunk_tokens)
+        - System prompt and formatting (~1000 tokens)
+
+        Capped at _MAX_PRECEDING_CONTEXT_BUDGET to prevent performance issues
+        when num_seeds is calculated from budget (budget // chunk_tokens).
+        """
+        from ragzoom.model_info import ModelInfo
+
+        context_window = ModelInfo().get_context_window(self.summary_model)
+        overhead = self.target_chunk_tokens * 2 + 1000
+        uncapped = max(context_window - overhead, self.target_chunk_tokens)
+        return min(uncapped, self._MAX_PRECEDING_CONTEXT_BUDGET)
 
 
 @dataclass

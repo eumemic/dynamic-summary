@@ -1295,7 +1295,6 @@ def config(examples: bool, output_file: str | None) -> None:
             json.dumps(
                 {
                     "target_chunk_tokens": 300,
-                    "preceding_summary_budget_tokens": 100,
                     "embedding_model": "text-embedding-3-large",
                     "retry_threshold": 0.15,
                     "max_retries": 2,
@@ -1353,7 +1352,6 @@ def config(examples: bool, output_file: str | None) -> None:
         # Create a sample config file
         sample_config = {
             "target_chunk_tokens": 200,
-            "preceding_summary_budget_tokens": 75,
             "embedding_model": "text-embedding-3-small",
             "retry_threshold": 0.2,
             "max_retries": 0,
@@ -1416,12 +1414,6 @@ def server() -> None:
     help="Directory to store telemetry events (defaults near data dir)",
 )
 @click.option(
-    "--preceding-summary-budget",
-    "preceding_summary_budget_tokens",
-    type=int,
-    help="Override preceding_summary_budget_tokens (default: 2000)",
-)
-@click.option(
     "--preceding-context-verbatim-tokens",
     "preceding_context_verbatim_tokens",
     type=int,
@@ -1451,7 +1443,6 @@ def start_server(
     debug: bool,
     collect_telemetry: bool,
     telemetry_dir: Path | None,
-    preceding_summary_budget_tokens: int | None,
     preceding_context_verbatim_tokens: int | None,
     max_parallelism: int | None,
     preceding_context_max_extraneous_detail: int | None,
@@ -1466,7 +1457,6 @@ def start_server(
         config_path=str(config_path) if config_path else None,
         collect_telemetry=collect_telemetry,
         telemetry_dir=str(telemetry_dir) if telemetry_dir else None,
-        preceding_summary_budget_tokens=preceding_summary_budget_tokens,
         preceding_context_verbatim_tokens=preceding_context_verbatim_tokens,
         max_parallelism=max_parallelism,
         preceding_context_max_extraneous_detail=preceding_context_max_extraneous_detail,

@@ -493,7 +493,6 @@ Create JSON config files for reusable settings:
 ```json
 {
   "target_chunk_tokens": 300,
-  "preceding_summary_budget_tokens": 2000,
   "embedding_model": "text-embedding-3-large",
   "retry_threshold": 0.15,
   "max_retries": 2,
@@ -521,7 +520,6 @@ ragzoom index document.txt --config my-config.json --max-retries 3
 
 #### Indexing Parameters
 - `target_chunk_tokens`: Target size for leaf chunks (default: 200)
-- `preceding_summary_budget_tokens`: Token budget for dynamic context summary (default: 2000)
 - `summary_model`: Model for summarization
 - `embedding_model`: Model for embeddings (default: "text-embedding-3-small")
 - `retry_threshold`: Max deviation before retry, 0.2 = 20% (default: 0.2)

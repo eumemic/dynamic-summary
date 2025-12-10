@@ -492,7 +492,6 @@ All parameters can be set via CLI options or config files. For an overview of ho
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `target_chunk_tokens` | int | 200 | Target tokens per leaf chunk |
-| `preceding_summary_budget_tokens` | int | 2000 | Token budget for dynamic context summary |
 | `summary_model` | str | "gpt-5-nano" | Model for summarization |
 | `retry_threshold` | float | 0.2 | Retry threshold for failed operations |
 | `max_retries` | int | 3 | Maximum number of retries |
