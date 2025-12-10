@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from ragzoom.dynamic_tiling import NodeInfo
+    from ragzoom.greedy_tiling import NodeInfo
 
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
@@ -334,7 +334,7 @@ def build_ascii_tree(
 
         # Build node_infos from tiling if not provided
         if not node_infos:
-            from ragzoom.dynamic_tiling import NodeInfo
+            from ragzoom.greedy_tiling import NodeInfo
 
             node_infos = []
             for node_id in tiling:

@@ -27,20 +27,21 @@ class BudgetPlanner:
     def calculate_conservative_num_seeds(
         self, budget_tokens: int, document_id: str | None = None
     ) -> int:
-        """Calculate conservative num_seeds using efficient SQL aggregation.
+        """Calculate num_seeds based on budget and average leaf token size.
 
         Args:
             budget_tokens: Token budget for the summary
             document_id: Optional document ID for better estimation
 
         Returns:
-            Conservative number of seeds that should fit in budget
+            Number of seeds that should fit in budget
         """
         if not document_id or not self.document_store:
             logger.info(
-                f"Cross-document query: using estimated chunk size {self.default_chunk_tokens} for num_seeds calculation"
+                f"Cross-document query: using estimated chunk size "
+                f"{self.default_chunk_tokens} for num_seeds calculation"
             )
-            return max(1, int(budget_tokens // self.default_chunk_tokens))
+            return max(1, budget_tokens // self.default_chunk_tokens)
 
         # Verify document store matches the requested document
         if self.document_store.document_id != document_id:
@@ -48,7 +49,7 @@ class BudgetPlanner:
                 f"Document store is for document {self.document_store.document_id} "
                 f"but query is for document {document_id}. Using default estimation."
             )
-            return max(1, int(budget_tokens // self.default_chunk_tokens))
+            return max(1, budget_tokens // self.default_chunk_tokens)
 
         # Try to get actual statistics from document
         avg_leaf_tokens = self.document_store.get_avg_leaf_tokens()
@@ -56,11 +57,11 @@ class BudgetPlanner:
             logger.debug(
                 f"Using actual avg leaf tokens {avg_leaf_tokens} for document {document_id}"
             )
-            return max(1, int(budget_tokens // avg_leaf_tokens))
+            return max(1, budget_tokens // avg_leaf_tokens)
 
         # Fallback to default if no statistics available
         logger.info(
             f"No token statistics for document {document_id}. "
             f"Using default chunk size {self.default_chunk_tokens} for estimation"
         )
-        return max(1, int(budget_tokens // self.default_chunk_tokens))
+        return max(1, budget_tokens // self.default_chunk_tokens)

@@ -401,7 +401,6 @@ class QueryConfigDict(TypedDict):
     mmr_lambda: float
     mmr_k_multiplier: float
     embedding_model: str
-    tiling_strategy: str
 
 
 class OperationalConfigDict(TypedDict):

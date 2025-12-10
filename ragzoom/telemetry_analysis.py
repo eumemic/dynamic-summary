@@ -1634,7 +1634,7 @@ def analyze_query_telemetry(telemetry_data: dict[str, object]) -> QueryPhaseMetr
         "mmr_time": [],
         "coverage_map_time": [],
         "scoring_time": [],
-        "dp_time": [],
+        "tiling_time": [],
         "assembly_time": [],
         "total_time": [],
     }

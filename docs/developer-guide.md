@@ -403,8 +403,8 @@ Valid error handling ensures:
 | `store.py` | `test_store.py` | Database operations, caching |
 | `index.py` | `test_indexing_fast.py` | Tree building logic |
 | `retrieve.py` | `test_retrieve.py` | Query processing |
-| `dynamic_tiling.py` | `test_dp_*.py` | DP algorithm variants |
-| `assemble.py` | `test_dp_assembly.py` | Summary assembly |
+| `greedy_tiling.py` | `test_greedy_tiling.py` | Tiling algorithm |
+| `assemble.py` | `test_assemble.py` | Summary assembly |
 | `api.py` | `test_api_*.py`, `test_concurrency.py` | REST endpoints |
 
 ## 6. Performance Optimization

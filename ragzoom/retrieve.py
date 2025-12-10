@@ -13,7 +13,6 @@ from ragzoom.contracts.vector_filter import (
     SpanOverlapsFilter,
     VectorFilter,
 )
-from ragzoom.dynamic_tiling import DynamicTilingGenerator
 from ragzoom.error_handling import handle_graceful_error
 from ragzoom.greedy_tiling import GreedyTilingGenerator
 from ragzoom.retrieval import (
@@ -57,8 +56,6 @@ class Retriever:
         embedding_service: EmbeddingService,
         budget_planner: BudgetPlanner,
         vector_index: "VectorIndex",
-        use_async_dp: bool = False,
-        min_nodes_for_parallel: int = 10,
     ):
         """Initialize retriever.
 
@@ -67,32 +64,14 @@ class Retriever:
             document_store: DocumentStore instance for document-scoped operations
             embedding_service: Service for generating query embeddings
             budget_planner: Service for calculating conservative seed counts
-            use_async_dp: Whether to use async DP generator for parallelization
-            min_nodes_for_parallel: Minimum nodes in subtree to enable parallelization
+            vector_index: Vector index for similarity search
         """
         self.query_config = query_config
         self.document_store = document_store
         self.embedding_service = embedding_service
         self.budget_planner = budget_planner
-        self.use_async_dp = use_async_dp
-        # Backend-agnostic vector index
         self.vector_index = vector_index
-
-        # Type annotation for async_dp_generator
-        from ragzoom.dynamic_tiling import AsyncDynamicTilingGenerator
-
-        self.async_dp_generator: AsyncDynamicTilingGenerator | None
-
-        self.dp_generator = DynamicTilingGenerator(query_config)
-        self.greedy_generator = GreedyTilingGenerator(query_config)
-
-        # Initialize async generator if requested
-        if use_async_dp:
-            self.async_dp_generator = AsyncDynamicTilingGenerator(
-                query_config, min_nodes_for_parallel
-            )
-        else:
-            self.async_dp_generator = None
+        self.tiling_generator = GreedyTilingGenerator(query_config)
 
     async def retrieve_async(
         self,
@@ -187,23 +166,29 @@ class Retriever:
         else:
             actual_end = doc_span_end
 
+        # Validate: at least one of num_seeds or budget_tokens must be provided
+        effective_budget = budget_tokens or self.query_config.budget_tokens
+        if num_seeds is None and effective_budget is None:
+            raise ValueError(
+                "At least one of num_seeds or budget_tokens must be specified"
+            )
+
         # Determine which mode we're in
-        if budget_tokens is not None and num_seeds is None:
+        if effective_budget is not None and num_seeds is None:
             num_seeds = self.budget_planner.calculate_conservative_num_seeds(
-                budget_tokens, effective_doc_id
+                effective_budget, effective_doc_id
             )
             logger.info(
-                f"Budget-only mode: calculated conservative num_seeds={num_seeds} for budget={budget_tokens}"
+                f"Budget-only mode: calculated conservative num_seeds={num_seeds} for budget={effective_budget}"
             )
-        elif budget_tokens is not None and num_seeds is not None:
-            logger.info(f"Mixed mode: num_seeds={num_seeds}, budget={budget_tokens}")
-        elif num_seeds is None:
-            num_seeds = self.budget_planner.calculate_conservative_num_seeds(
-                self.query_config.budget_tokens, effective_doc_id
-            )
-            logger.info(
-                f"Default mode: calculated conservative num_seeds={num_seeds} from budget={self.query_config.budget_tokens}"
-            )
+        elif effective_budget is not None and num_seeds is not None:
+            logger.info(f"Mixed mode: num_seeds={num_seeds}, budget={effective_budget}")
+        else:
+            # Seeds-only mode: num_seeds provided but no budget
+            logger.info(f"Seeds-only mode: num_seeds={num_seeds}, no budget constraint")
+
+        # At this point num_seeds is guaranteed to be set
+        assert num_seeds is not None
 
         if telemetry_collector:
             telemetry_collector.record_metric("seeds_requested", num_seeds)
@@ -391,47 +376,25 @@ class Retriever:
         # Sanity: drop any selected ids that aren't present in the document store
         selected_ids = [nid for nid in selected_ids if nid in nodes]
 
-        # Phase 6: Extract tiling using DP/greedy algorithm
-        # Combined budget = base + verbatim (pinned nodes are in coverage, can't be rolled up)
-        base_budget = (
-            budget_tokens
-            if budget_tokens is not None
-            else self.query_config.budget_tokens
-        )
-        final_budget = base_budget + (recent_verbatim_budget or 0)
-
-        # Choose tiling strategy
-        tiling_strategy = self.query_config.tiling_strategy
-        if tiling_strategy == "dp":
-            import warnings
-
-            warnings.warn(
-                "tiling_strategy='dp' is deprecated and will be removed in a future version. "
-                "The greedy algorithm produces better results in practice because it doesn't "
-                "rely on heuristic budget allocation. Use tiling_strategy='greedy' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        if tiling_strategy == "greedy":
-            dp_result = self.greedy_generator.find_optimal_tiling_over_roots(
-                root_ids, final_budget, scores, nodes
-            )
-        elif self.async_dp_generator is not None:
-            dp_result = await self.async_dp_generator.find_optimal_tiling_over_roots(
-                root_ids, final_budget, scores, nodes, pinned_ids=pinned_ids
-            )
+        # Phase 6: Extract tiling using greedy algorithm
+        # If budget is specified, add verbatim budget; otherwise tiling returns full frontier
+        if effective_budget is not None:
+            final_budget: int | None = effective_budget + (recent_verbatim_budget or 0)
         else:
-            dp_result = self.dp_generator.find_optimal_tiling_over_roots(
-                root_ids, final_budget, scores, nodes, pinned_ids=pinned_ids
-            )
+            final_budget = None
+
+        # Generate tiling
+        tiling_result = self.tiling_generator.find_optimal_tiling_over_roots(
+            root_ids, final_budget, scores, nodes
+        )
         if telemetry_collector:
-            telemetry_collector.end_phase("dp")
+            telemetry_collector.end_phase("tiling")
             telemetry_collector.start_phase()
             telemetry_collector.record_metric(
-                "tiling_size", len(dp_result.tiling.node_ids)
+                "tiling_size", len(tiling_result.tiling.node_ids)
             )
 
-        tiling_ids = list(dp_result.tiling.node_ids)
+        tiling_ids = list(tiling_result.tiling.node_ids)
 
         # Ensure all tiling nodes are present in the preloaded set
         missing_in_nodes = [nid for nid in tiling_ids if nid not in nodes]
