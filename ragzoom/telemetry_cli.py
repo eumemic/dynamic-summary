@@ -764,7 +764,7 @@ def _calculate_query_phase_thresholds(
         },
         # Local compute phases: deterministic, low variance (6-sigma)
         "local": {
-            "phases": ["dp_time", "scoring_time", "assembly_time"],
+            "phases": ["tiling_time", "scoring_time", "assembly_time"],
             "k1": 4.0,
             "k2": 2.0,
         },
@@ -816,7 +816,7 @@ def _aggregate_phase_data(
         "mmr_time",
         "coverage_map_time",
         "scoring_time",
-        "dp_time",
+        "tiling_time",
         "assembly_time",
         "total_time",
     ]
@@ -939,7 +939,7 @@ def _process_query_matches(query_matches: list[tuple[Path, Path]]) -> bool:
         ("MMR", "mmr_time"),
         ("Coverage Map", "coverage_map_time"),
         ("Scoring", "scoring_time"),
-        ("DP Tiling", "dp_time"),
+        ("Tiling", "tiling_time"),
         ("Assembly", "assembly_time"),
     ]
 

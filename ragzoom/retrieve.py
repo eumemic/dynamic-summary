@@ -388,7 +388,7 @@ class Retriever:
             root_ids, final_budget, scores, nodes
         )
         if telemetry_collector:
-            telemetry_collector.end_phase("dp")
+            telemetry_collector.end_phase("tiling")
             telemetry_collector.start_phase()
             telemetry_collector.record_metric(
                 "tiling_size", len(tiling_result.tiling.node_ids)

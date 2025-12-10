@@ -472,7 +472,7 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
                 mmr_ms=query_telemetry.mmr_time * 1000,
                 coverage_map_ms=query_telemetry.coverage_map_time * 1000,
                 scoring_ms=query_telemetry.scoring_time * 1000,
-                tiling_ms=query_telemetry.dp_time * 1000,
+                tiling_ms=query_telemetry.tiling_time * 1000,
                 assembly_ms=query_telemetry.assembly_time * 1000,
                 total_ms=query_telemetry.total_time * 1000,
                 seeds_requested=query_telemetry.seeds_requested,
