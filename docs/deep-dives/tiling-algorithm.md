@@ -1,36 +1,21 @@
 # The Tiling Algorithm: Deep Dive
 
-**Last Verified**: November 2025
+**Last Verified**: December 2025
 **Implementation Status**: CORE IMPLEMENTED, Some features NOT IMPLEMENTED
 
-This document provides a comprehensive technical explanation of RagZoom's tiling algorithms, which generate summaries by selecting the right level of detail for each part of a document based on relevance.
+This document provides a comprehensive technical explanation of RagZoom's tiling algorithm, which generates summaries by selecting the right level of detail for each part of a document based on relevance.
 
 ## Table of Contents
 
-- [Tiling Strategies](#tiling-strategies)
 - [Core Concepts](#core-concepts)
-- [Dynamic Programming Algorithm](#dynamic-programming-algorithm)
-- [Greedy Algorithm](#greedy-algorithm)
+- [The Greedy Algorithm](#the-greedy-algorithm)
+- [Budget Modes](#budget-modes)
 - [Verbatim Budget](#verbatim-budget)
 - [Implementation Details](#implementation-details)
 - [What's NOT Implemented](#whats-not-implemented)
 - [Algorithm Pseudocode](#algorithm-pseudocode)
 - [Examples](#examples)
 - [Performance Characteristics](#performance-characteristics)
-
-## Tiling Strategies
-
-RagZoom supports two tiling strategies, selectable via the `tiling_strategy` configuration parameter:
-
-| Strategy | Default | Description |
-|----------|---------|-------------|
-| `greedy` | Yes | Bottom-up roll-up - fast, good quality |
-| `dp` | No | **DEPRECATED** - Dynamic programming with heuristic budget allocation |
-
-Both strategies produce valid tilings that completely cover the document without gaps or overlaps.
-
-- **Greedy (default)**: Starts with all leaves, iteratively rolls up least-valuable sibling pairs until within budget. Fast O(n log n) execution. Recommended for all use cases.
-- **DP (deprecated)**: Uses dynamic programming with memoization. While theoretically "optimal", its optimality depends on correct budget allocation across subtrees, which is a heuristic that often produces worse results than greedy in practice. Will be removed in a future version.
 
 ## Core Concepts
 
@@ -46,74 +31,29 @@ Both strategies produce valid tilings that completely cover the document without
   - Has no overlapping nodes
   - Maintains chronological order
 - **Coverage Tree**: The set of nodes considered for inclusion (n_max most relevant leaves + all ancestors)
+- **Frontier**: The starting set of nodes before pruning (typically all leaves in the coverage tree)
 
 ### Key Invariant
 
-The algorithm maintains a critical invariant: **Complete, non-overlapping coverage**. Every recursive call returns a valid tiling for its span - never partial coverage or disconnected fragments.
+The algorithm maintains a critical invariant: **Complete, non-overlapping coverage**. Every operation maintains a valid tiling for the document span - never partial coverage or disconnected fragments.
 
 This is why patterns like "Summary → Leaf A → Summary → Leaf C → Summary" are impossible. The algorithm decomposes the problem hierarchically, always producing contiguous tilings.
 
-## Dynamic Programming Algorithm (Deprecated)
+## The Greedy Algorithm
 
-> **⚠️ DEPRECATED**: The DP algorithm is deprecated because its "optimality" depends on heuristic budget allocation which often produces worse results than greedy. Use `tiling_strategy="greedy"` instead.
+RagZoom uses a greedy tiling algorithm that works **bottom-up**: it starts with all leaves (maximum detail) and iteratively rolls up sibling pairs until within budget.
 
-The DP algorithm (`tiling_strategy="dp"`) treats tiling generation as an optimization problem:
-
-> Given a tree node and token budget, find the tiling that maximizes total quality (relevance score) while staying within the budget.
-
-### Recursive Structure
-
-```
-find_optimal_tiling(node, budget):
-    if node is leaf:
-        # Leaf nodes are indivisible - include full node or nothing
-        if node_cost <= budget:
-            return [(node, None)], node.quality
-        else:
-            return [], 0.0
-    
-    # Internal node: Check if this node fits in budget
-    parent_cost = cost(node)
-    if parent_cost > budget:
-        return [], 0.0
-    
-    # Option 1: Use this node
-    parent_nodes = [node]
-    parent_quality = node.quality * parent_cost
-    
-    # Option 2: Recurse into children
-    left_budget, right_budget = split_budget_proportionally(budget, node)
-    left_nodes, left_quality = find_optimal_tiling(node.left, left_budget)
-    right_nodes, right_quality = find_optimal_tiling(node.right, right_budget)
-    
-    child_nodes = left_nodes + right_nodes
-    child_quality = left_quality + right_quality
-    
-    # Check if child solution exceeds budget due to independent subproblems
-    child_cost = sum(cost(node) for node in child_nodes)
-    
-    # Choose better option
-    if child_cost <= budget and child_quality > parent_quality:
-        return child_nodes, child_quality
-    else:
-        return parent_nodes, parent_quality
-```
-
-### Memoization
-
-Results are cached by `(node_id, budget)` to avoid recomputing subproblems, making the algorithm efficient even for large trees.
-
-## Greedy Algorithm
-
-The greedy algorithm (`tiling_strategy="greedy"`) is the default. Unlike DP which works top-down from the root, greedy works **bottom-up**: it starts with all leaves and iteratively rolls up sibling pairs until within budget.
-
-### Algorithm
+### Algorithm Overview
 
 ```python
 def find_greedy_tiling(root_ids, budget, scores, nodes):
     # Start with the full frontier (all leaves in coverage)
     frontier = build_frontier(nodes, root_ids)
     total_tokens = sum(nodes[nid].token_count for nid in frontier)
+
+    # No budget constraint: return full frontier
+    if budget is None:
+        return frontier
 
     # If already within budget, done
     if total_tokens <= budget:
@@ -156,20 +96,46 @@ priority = quality_lost / tokens_saved  # Lower = better to roll up
 
 Summaries that capture most of their children's relevance are prioritized for roll-up.
 
-### When to Use Greedy
+### Why Greedy Works Well
 
-- **Default choice**: Good balance of speed and quality
-- **Large documents**: O(n log n) heap operations
-- **Predictable behavior**: Always starts with maximum detail, coarsens as needed
+1. **Starts with maximum detail**: The frontier begins with all leaves, ensuring no relevant content is missed by premature summarization.
 
-### Trade-offs
+2. **Incremental decisions**: Each roll-up is a local decision based on actual token costs, not heuristic budget allocation.
 
-| Aspect | Greedy | DP |
-|--------|--------|-----|
-| Optimality | Locally optimal per roll-up | Globally optimal |
-| Speed | O(n log n) heap operations | O(n × b) with memoization |
-| Memory | O(n) frontier + heap | O(n × b) cache |
-| Direction | Bottom-up (leaves → root) | Top-down (root → leaves) |
+3. **No budget allocation errors**: Unlike top-down approaches that must pre-allocate budget to subtrees, greedy makes all decisions with full knowledge of token costs.
+
+4. **Predictable behavior**: Always produces the same result for the same inputs, with deterministic priority ordering.
+
+## Budget Modes
+
+The tiling algorithm supports three modes based on how `num_seeds` and `budget_tokens` are specified:
+
+### Seeds-Only Mode (`num_seeds` specified, `budget_tokens` = None)
+
+When only `num_seeds` is provided, the algorithm:
+1. Uses vector search to find the top N most relevant seed nodes
+2. Builds the coverage tree from those seeds
+3. Returns the **full frontier** without any pruning
+
+This mode is useful when you want maximum detail for a fixed number of relevant sections.
+
+### Budget-Only Mode (`budget_tokens` specified, `num_seeds` = None)
+
+When only `budget_tokens` is provided, the algorithm:
+1. Calculates a conservative `num_seeds` from the budget (based on average leaf token cost)
+2. Uses vector search to find those seed nodes
+3. Builds the coverage tree and prunes to fit the budget
+
+### Mixed Mode (both specified)
+
+When both are provided:
+1. Uses the specified `num_seeds` for vector search
+2. Builds the coverage tree
+3. Prunes to fit the specified `budget_tokens`
+
+### Validation
+
+At least one of `num_seeds` or `budget_tokens` must be specified. If neither is provided, the algorithm raises an error since there's no basis for determining how many seed nodes to retrieve.
 
 ## Verbatim Budget
 
@@ -209,49 +175,6 @@ This avoids loading all leaves for large documents - only the leaves needed to f
 
 ## Implementation Details
 
-### Budget Allocation
-
-**STATUS: IMPLEMENTED (but fundamentally flawed)**
-
-Budget is split between left and right children proportionally based on:
-
-1. **Primary**: Relevance scores of seed nodes in each subtree
-2. **Fallback**: Text length when no relevance scores available
-
-```python
-def _split_budget_proportionally(self, node, budget_tokens, scores):
-    # Get seed nodes in each subtree
-    left_seeds = [n for n in scores if n in left_subtree]
-    right_seeds = [n for n in scores if n in right_subtree]
-
-    # Calculate total scores
-    left_score = sum(scores[n] for n in left_seeds)
-    right_score = sum(scores[n] for n in right_seeds)
-
-    if left_score + right_score > 0:
-        # Split based on relevance
-        left_ratio = left_score / (left_score + right_score)
-    else:
-        # Fallback to text length
-        left_ratio = left_text_length / total_text_length
-
-    return int(budget_tokens * left_ratio), budget_tokens - int(budget_tokens * left_ratio)
-```
-
-#### Why This Is Problematic
-
-The budget allocation heuristic has fundamental issues:
-
-1. **Chicken-and-egg problem**: To know how much budget a subtree "deserves", you'd need to know its optimal tiling. But you can't compute that without knowing the budget first.
-
-2. **Relevance ≠ budget need**: A highly relevant subtree might need LESS budget if it has a great summary node. A less relevant subtree might need MORE budget if its leaves are individually valuable.
-
-3. **No reallocation**: If the left subtree only uses 50 of its allocated 100 tokens, those 50 tokens are wasted—DP cannot reallocate them to the right subtree.
-
-4. **Forest amplification**: For documents with multiple roots, budget must be pre-allocated across roots before any tiling decisions, compounding the allocation error.
-
-The greedy algorithm avoids all of these issues by starting with maximum detail and making incremental roll-up decisions based on actual token costs.
-
 ### Node Quality Calculation
 
 **STATUS: IMPLEMENTED**
@@ -259,18 +182,6 @@ The greedy algorithm avoids all of these issues by starting with maximum detail 
 - Quality = relevance score × token cost
 - Each node's full relevance score is used
 - The algorithm optimizes for total quality (relevance-weighted tokens)
-
-### Budget Overflow Handling
-
-**STATUS: IMPLEMENTED**
-
-Because left and right subproblems are solved independently, their combined cost might exceed the total budget. The algorithm handles this by:
-
-1. Computing child tilings optimistically
-2. Checking if combined cost ≤ budget
-3. If over budget, falling back to parent node
-
-This ensures the budget constraint is never violated.
 
 ### Token Cost Calculation
 
@@ -288,7 +199,7 @@ The configuration includes slope cap parameters:
 - `enable_slope_cap` (default: True)
 - `slope_cap_size` (default: 1)
 
-However, the DP algorithm does not enforce depth constraints between adjacent nodes in the tiling. The proposed two-pass approach (generate optimal tiling, then post-process for slope violations) has not been implemented.
+However, the algorithm does not enforce depth constraints between adjacent nodes in the tiling.
 
 ### Smoothing Pass
 
@@ -307,67 +218,64 @@ The v2 design documents describe a more sophisticated "mass-based" system where 
 Here's the complete pseudocode matching the actual implementation:
 
 ```python
-class DynamicTilingGenerator:
-    def __init__(self, store, config):
-        self.store = store
+class GreedyTilingGenerator:
+    def __init__(self, config):
         self.config = config
-        self._memo_cache = {}
-        self.tokenizer = tiktoken.get_encoding("cl100k_base")
-    
-    def find_optimal_tiling(self, budget_tokens, scores, document_id, coverage_map):
-        root = store.get_root_node_for_document(document_id)
-        tiling = self._find_optimal_for_span(root, budget_tokens, scores)
-        return build_result(tiling, coverage_map)
-    
-    def _find_optimal_for_span(self, node, budget, scores):
-        # Check memoization
-        key = (node.id, budget)
-        if key in self._memo_cache:
-            return self._memo_cache[key]
-        
-        # Base case: leaf node
-        if node.depth == 0:
-            if get_node_cost(node) <= budget:
-                quality = scores.get(node.id, 0.0) * get_node_cost(node)
-                result = (Tiling([node.id], quality), quality)
-            else:
-                result = ([], 0.0)  # Too expensive
-            self._memo_cache[key] = result
-            return result
-        
-        # Internal node: try both options
-        
-        # Option 1: Use this node
-        parent_cost = get_node_cost(node)
-        
-        if parent_cost <= budget:
-            parent_quality = scores.get(node.id, 0.0) * parent_cost
-            parent_tiling = Tiling([node.id], parent_quality)
-        else:
-            parent_tiling = Tiling.empty()
-            parent_quality = 0.0
-        
-        # Option 2: Recurse into children
-        if node.left and node.right:
-            left_budget, right_budget = split_budget_proportionally(node, budget, scores)
-            
-            left_tiling = _find_optimal_for_span(node.left, left_budget, scores)
-            right_tiling = _find_optimal_for_span(node.right, right_budget, scores)
-            
-            child_tiling = left_tiling + right_tiling
-            child_quality = child_tiling.relevance_tokens
-            
-            # Choose better option
-            if child_quality > parent_quality:
-                result = child_tiling
-            else:
-                result = parent_tiling
-        else:
-            # Missing children - use parent
-            result = parent_tiling
-        
-        self._memo_cache[key] = result
-        return result
+
+    def find_optimal_tiling_over_roots(
+        self,
+        root_ids: Sequence[str],
+        budget_tokens: int | None,
+        scores: Mapping[str, float],
+        nodes: Mapping[str, TreeNode],
+    ) -> TilingResult:
+        if not nodes:
+            return TilingResult.empty()
+
+        # Build frontier from leaves reachable from roots
+        frontier = build_frontier(nodes, root_ids)
+
+        # No budget constraint: return full frontier
+        if budget_tokens is None:
+            return build_result(frontier, scores, nodes)
+
+        total_tokens = sum(nodes[nid].token_count for nid in frontier)
+
+        # Already within budget: return as-is
+        if total_tokens <= budget_tokens:
+            return build_result(frontier, scores, nodes)
+
+        # Iteratively replace least-relevant sibling pairs with parent
+        frontier_set = set(frontier)
+        queue, enqueued = initialize_candidate_queue(frontier_set, nodes, scores)
+
+        while total_tokens > budget_tokens:
+            replacement = pop_next_candidate(queue, enqueued, frontier_set, nodes, scores)
+            if replacement is None:
+                break  # No more valid candidates
+
+            parent_id, left_id, right_id = replacement
+
+            # Calculate token change
+            pair_tokens = nodes[left_id].token_count
+            if right_id != left_id:
+                pair_tokens += nodes[right_id].token_count
+            parent_tokens = nodes[parent_id].token_count
+
+            # Update frontier
+            frontier_set.remove(left_id)
+            if right_id != left_id:
+                frontier_set.remove(right_id)
+            frontier_set.add(parent_id)
+            total_tokens = total_tokens - pair_tokens + parent_tokens
+
+            # Enqueue grandparent as potential new candidate
+            grandparent_id = nodes[parent_id].parent_id
+            if grandparent_id is not None:
+                enqueue_candidate(grandparent_id, queue, enqueued, frontier_set, nodes, scores)
+
+        ordered_frontier = sorted(frontier_set, key=lambda nid: nodes[nid].span_start)
+        return build_result(ordered_frontier, scores, nodes)
 ```
 
 ## Examples
@@ -388,12 +296,26 @@ Budget: 20 tokens
 ```
 
 The algorithm would:
-1. Start at root with 20 tokens
-2. Try parent option: Use root node (might be too expensive)
-3. Try child option: Allocate more budget to left (relevant) side
-4. Return: The option with higher quality score
+1. Start with frontier = [L1, L2]
+2. Calculate total tokens
+3. If over budget, consider rolling up L1+L2 into Root
+4. Since L1 has high relevance, the roll-up priority is high (much quality lost)
+5. If budget forces the roll-up, Root is returned
+6. Otherwise, [L1, L2] is returned
 
-### Example 2: Partial Relevance
+### Example 2: No Budget Constraint
+
+```
+Query with num_seeds=5 but no budget_tokens
+
+The algorithm:
+1. Finds 5 seed nodes via vector search
+2. Builds coverage tree (seeds + all ancestors)
+3. Returns full frontier without any pruning
+4. Result may be large but maximally detailed
+```
+
+### Example 3: Partial Relevance
 
 ```
 Document with 4 sections A, B, C, D
@@ -407,28 +329,26 @@ Tree structure:
    A    B      C    D
 ```
 
-With sufficient budget, the algorithm might return:
-- `AB` - Summary covering both A and B (if parent is more efficient)
-- OR it might return `A` and `B` separately (if children have higher quality)
-- Similarly for C and D
-
-The algorithm chooses the option that maximizes quality (relevance × tokens) within budget.
+With budget constraint:
+- Start with frontier [A, B, C, D]
+- If over budget, find cheapest roll-ups
+- Non-relevant A might roll up with B into AB
+- Non-relevant D might roll up with C into CD
+- Final tiling: [AB, CD] or [A, B, CD] depending on scores
 
 ## Performance Characteristics
 
-- **Time Complexity**: O(n × b) where n = number of nodes, b = distinct budget values
-- **Space Complexity**: O(n × b) for memoization cache
-- **Cache Efficiency**: High reuse for common budget values
+- **Time Complexity**: O(n log n) where n = number of nodes (heap operations)
+- **Space Complexity**: O(n) for frontier and heap
+- **Deterministic**: Same inputs always produce same outputs
 - **Practical Performance**: Fast enough for real-time queries on documents with thousands of nodes
 
 ## Future Improvements
 
-1. **Implement Slope Cap**: Add the two-pass post-processing to enforce depth constraints
+1. **Implement Slope Cap**: Add post-processing to enforce depth constraints between adjacent nodes
 2. **Add Smoothing**: Implement transition generation between nodes
-3. **Mass Propagation**: Implement the full v2 design with relevance mass flowing up the tree
-4. **Budget Hints**: Pre-compute common budget allocations for faster query time
-5. **Parallel Evaluation**: Evaluate left/right subproblems concurrently
+3. **Mass Propagation**: Implement relevance score propagation from leaves to internal nodes
 
 ## Conclusion
 
-The greedy tiling algorithm provides a solid foundation for RagZoom's hierarchical summarization. Its "correct-by-construction" approach eliminates entire classes of bugs while maintaining excellent performance. The bottom-up roll-up strategy avoids the budget allocation problems inherent in top-down approaches, producing better results in practice. While some advanced features remain unimplemented, the core algorithm successfully delivers on the primary requirements of complete coverage, relevance-based detail, and budget guarantees.
+The greedy tiling algorithm provides a solid foundation for RagZoom's hierarchical summarization. Its "correct-by-construction" approach eliminates entire classes of bugs while maintaining excellent performance. The bottom-up roll-up strategy avoids budget allocation problems inherent in top-down approaches, and the optional budget mode allows for maximum flexibility in how results are constrained.

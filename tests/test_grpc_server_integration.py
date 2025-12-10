@@ -38,7 +38,6 @@ async def test_grpc_server_lifecycle(
             debug=False,
             viz_width=80,
             use_token_coords=False,
-            tiling_strategy=None,
         )
         assert result.query_result.summary
     finally:

@@ -773,6 +773,29 @@ class DocumentStore:
         )
         return avg_tokens
 
+    def get_root_statistics(self) -> tuple[int, int] | None:
+        """Get total token count and max height of root nodes.
+
+        Returns:
+            Tuple of (total_root_tokens, max_root_height), or None if no roots
+        """
+        if not self.document_id:
+            logger.debug("No document_id provided for root statistics")
+            return None
+
+        roots = self.nodes.get_root_nodes()
+        if not roots:
+            logger.debug(f"No root nodes found for document {self.document_id}")
+            return None
+
+        total_tokens = sum(int(n.token_count) for n in roots)
+        max_height = max(int(n.height) for n in roots)
+        logger.debug(
+            f"Root statistics for {self.document_id}: "
+            f"total_tokens={total_tokens}, max_height={max_height}, roots={len(roots)}"
+        )
+        return total_tokens, max_height
+
     # Internal helper to obtain a SQLAlchemy session from either backend type
     def _open_session(self) -> AbstractContextManager[Session]:
         session_local = getattr(self._node_repo, "SessionLocal", None)

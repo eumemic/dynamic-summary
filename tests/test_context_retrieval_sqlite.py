@@ -31,7 +31,7 @@ class TestContextRetrieval:
         self, sqlite_store_factory: Callable[[str | None], DocumentStore]
     ) -> Generator[tuple[DocumentStore, Retriever], None, None]:
         """Set up a tree with nodes indexed in the vector store."""
-        query_config = QueryConfig(budget_tokens=500, tiling_strategy="greedy")
+        query_config = QueryConfig(budget_tokens=500)
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
         doc_store = sqlite_store_factory("test-doc-context")

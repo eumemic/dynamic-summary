@@ -18,7 +18,7 @@ from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_filter import VectorFilter
 from ragzoom.document_store import DocumentStore
-from ragzoom.dynamic_tiling import DPResult
+from ragzoom.greedy_tiling import TilingResult
 from ragzoom.vector_api import Vector
 
 
@@ -34,7 +34,7 @@ class TestRetrieverBugSQLite:
         index_config = IndexConfig.load(
             target_chunk_tokens=100, preceding_summary_budget_tokens=50
         )
-        query_config = QueryConfig(budget_tokens=1000, tiling_strategy="dp")
+        query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
         # Create document store
@@ -268,23 +268,22 @@ class TestRetrieverBugSQLite:
             lambda query, document_id=None: [0.3] * 1536
         )
 
-        # Patch to capture what nodes the DP algorithm receives
+        # Patch to capture what nodes the tiling algorithm receives
         captured_nodes: dict[str, TreeNode] = {}
-        original_find_optimal = retriever.dp_generator.find_optimal_tiling_over_roots
+        original_find_optimal = (
+            retriever.tiling_generator.find_optimal_tiling_over_roots
+        )
 
         def capture_and_pass_through(
             root_ids: Seq[str],
-            budget_tokens: int,
-            scores: dict[str, float],
+            budget_tokens: int | None,
+            scores: Mapping[str, float],
             nodes: Mapping[str, TreeNode],
-            pinned_ids: set[str] | None = None,
-        ) -> DPResult:
+        ) -> TilingResult:
             captured_nodes.update(nodes)
-            return original_find_optimal(
-                root_ids, budget_tokens, scores, nodes, pinned_ids
-            )
+            return original_find_optimal(root_ids, budget_tokens, scores, nodes)
 
-        retriever.dp_generator.find_optimal_tiling_over_roots = (  # type: ignore[method-assign]
+        retriever.tiling_generator.find_optimal_tiling_over_roots = (  # type: ignore[method-assign]
             capture_and_pass_through
         )
 

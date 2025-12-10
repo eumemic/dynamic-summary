@@ -18,7 +18,7 @@ from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
 
 if TYPE_CHECKING:
-    from ragzoom.dynamic_tiling import DynamicTilingGenerator
+    from ragzoom.greedy_tiling import GreedyTilingGenerator
     from ragzoom.retrieve import Retriever
 
 
@@ -39,7 +39,7 @@ class TestCoverageTreeCompletenessSQLite:
     @pytest.fixture
     def setup_incomplete_tree(
         self, doc_store: DocumentStore
-    ) -> tuple[IndexConfig, DocumentStore, Retriever, DynamicTilingGenerator]:
+    ) -> tuple[IndexConfig, DocumentStore, Retriever, GreedyTilingGenerator]:
         """Set up a system with a tree that will produce incomplete coverage."""
         index_config = IndexConfig.load(
             target_chunk_tokens=100, preceding_summary_budget_tokens=50
@@ -166,22 +166,20 @@ class TestCoverageTreeCompletenessSQLite:
             api_key=operational_config.openai_api_key.get_secret_value(),
             vector_index=vi,
         )
-        dp_generator = retriever.dp_generator
+        tiling_generator = retriever.tiling_generator
 
-        return index_config, document_store, retriever, dp_generator
+        return index_config, document_store, retriever, tiling_generator
 
     def test_partial_coverage_map_handling(
         self,
         setup_incomplete_tree: tuple[
-            IndexConfig, DocumentStore, Retriever, DynamicTilingGenerator
+            IndexConfig, DocumentStore, Retriever, GreedyTilingGenerator
         ],
     ) -> None:
-        """Test DP tiling with partial coverage maps (not all nodes included).
-
-        The underlying tree is a perfect binary tree, but the coverage map
-        (nodes selected for query) may not include all siblings.
-        """
-        index_config, document_store, retriever, dp_generator = setup_incomplete_tree
+        """Test that left-balanced trees with single children are handled correctly."""
+        index_config, document_store, retriever, tiling_generator = (
+            setup_incomplete_tree
+        )
 
         # Simulate what happens with --num-seeds 1: only L3 is selected
         # This creates a partial coverage map where P2's subtree is incomplete
@@ -217,11 +215,11 @@ class TestCoverageTreeCompletenessSQLite:
         scores = {node_id: 0.1 for node_id in nodes}  # Base score for all
         scores["L3"] = 1.0  # L3 has high relevance
 
-        result = dp_generator.find_optimal_tiling(
+        result = tiling_generator.find_optimal_tiling_over_roots(
+            root_ids=["root"],
             budget_tokens=1000,
             scores=scores,
             nodes=nodes,
-            root_id="root",
         )
 
         # The DP algorithm makes the optimal choice based on relevance and budget
@@ -231,11 +229,13 @@ class TestCoverageTreeCompletenessSQLite:
     def test_complete_coverage_tree_works(
         self,
         setup_incomplete_tree: tuple[
-            IndexConfig, DocumentStore, Retriever, DynamicTilingGenerator
+            IndexConfig, DocumentStore, Retriever, GreedyTilingGenerator
         ],
     ) -> None:
         """Test that complete coverage trees work correctly."""
-        index_config, document_store, retriever, dp_generator = setup_incomplete_tree
+        index_config, document_store, retriever, tiling_generator = (
+            setup_incomplete_tree
+        )
 
         # Create a complete coverage tree by including all nodes
         nodes = {}
@@ -245,11 +245,11 @@ class TestCoverageTreeCompletenessSQLite:
                 nodes[node_id] = node
 
         # This should work without errors
-        result = dp_generator.find_optimal_tiling(
+        result = tiling_generator.find_optimal_tiling_over_roots(
+            root_ids=["root"],
             budget_tokens=1000,
             scores={"L3": 1.0},  # L3 is most relevant
             nodes=nodes,
-            root_id="root",
         )
 
         # Should produce a valid tiling
@@ -259,11 +259,13 @@ class TestCoverageTreeCompletenessSQLite:
     def test_coverage_tree_with_siblings_included(
         self,
         setup_incomplete_tree: tuple[
-            IndexConfig, DocumentStore, Retriever, DynamicTilingGenerator
+            IndexConfig, DocumentStore, Retriever, GreedyTilingGenerator
         ],
     ) -> None:
         """Test the correct way to build coverage tree with siblings."""
-        index_config, document_store, retriever, dp_generator = setup_incomplete_tree
+        index_config, document_store, retriever, tiling_generator = (
+            setup_incomplete_tree
+        )
 
         # Start with selected node
         selected_nodes = ["L3"]
@@ -315,11 +317,11 @@ class TestCoverageTreeCompletenessSQLite:
         assert "root" in nodes
 
         # This should work without errors
-        result = dp_generator.find_optimal_tiling(
+        result = tiling_generator.find_optimal_tiling_over_roots(
+            root_ids=["root"],
             budget_tokens=1000,
             scores={"L3": 1.0},
             nodes=nodes,
-            root_id="root",
         )
 
         assert result.tiling is not None
@@ -327,11 +329,13 @@ class TestCoverageTreeCompletenessSQLite:
     def test_coverage_tree_completeness_validation(
         self,
         setup_incomplete_tree: tuple[
-            IndexConfig, DocumentStore, Retriever, DynamicTilingGenerator
+            IndexConfig, DocumentStore, Retriever, GreedyTilingGenerator
         ],
     ) -> None:
         """Test validation logic for coverage tree completeness."""
-        index_config, document_store, retriever, dp_generator = setup_incomplete_tree
+        index_config, document_store, retriever, tiling_generator = (
+            setup_incomplete_tree
+        )
 
         # Test incomplete coverage tree (missing sibling)
         incomplete_nodes = {}
@@ -344,11 +348,11 @@ class TestCoverageTreeCompletenessSQLite:
         # DP algorithm should handle this gracefully
         scores = {"L3": 1.0, "P2": 0.5, "root": 0.3}
 
-        result = dp_generator.find_optimal_tiling(
+        result = tiling_generator.find_optimal_tiling_over_roots(
+            root_ids=["root"],
             budget_tokens=1000,
             scores=scores,
             nodes=incomplete_nodes,
-            root_id="root",
         )
 
         # Should produce a valid result without errors
@@ -358,11 +362,13 @@ class TestCoverageTreeCompletenessSQLite:
     def test_single_leaf_coverage_tree(
         self,
         setup_incomplete_tree: tuple[
-            IndexConfig, DocumentStore, Retriever, DynamicTilingGenerator
+            IndexConfig, DocumentStore, Retriever, GreedyTilingGenerator
         ],
     ) -> None:
         """Test coverage tree with single leaf node and its ancestors."""
-        index_config, document_store, retriever, dp_generator = setup_incomplete_tree
+        index_config, document_store, retriever, tiling_generator = (
+            setup_incomplete_tree
+        )
 
         # Build minimal coverage tree with just one leaf and ancestors
         coverage_nodes = set()
@@ -393,11 +399,11 @@ class TestCoverageTreeCompletenessSQLite:
         # Test DP algorithm with this minimal coverage
         scores = {"L1": 1.0, "P1": 0.5, "root": 0.3}
 
-        result = dp_generator.find_optimal_tiling(
+        result = tiling_generator.find_optimal_tiling_over_roots(
+            root_ids=["root"],
             budget_tokens=1000,
             scores=scores,
             nodes=nodes,
-            root_id="root",
         )
 
         # Should handle incomplete subtree gracefully

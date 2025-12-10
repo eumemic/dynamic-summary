@@ -465,7 +465,6 @@ with GrpcRagzoomClient("localhost:50051") as client:
         debug=False,
         viz_width=120,
         use_token_coords=False,
-        tiling_strategy="dp",  # or "greedy"
         recent_verbatim_token_budget=2000,  # include recent content verbatim
     )
 
@@ -483,7 +482,7 @@ All parameters can be set via CLI options or config files. For an overview of ho
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `budget_tokens` | int | 8000 | Maximum tokens in final summary |
+| `budget_tokens` | int \| None | None | Maximum tokens in final summary (None = no limit) |
 | `mmr_lambda` | float | 0.7 | MMR diversity parameter (0=diverse, 1=relevant) |
 | `mmr_k_multiplier` | float | 2.0 | Multiplier for MMR candidate selection |
 | `embedding_model` | str | "text-embedding-3-small" | OpenAI embedding model |
@@ -504,7 +503,6 @@ All parameters can be set via CLI options or config files. For an overview of ho
 
 | Parameter | Type | Default | Description | Status |
 |-----------|------|---------|-------------|---------|
-| `tiling_strategy` | str | "dp" | Tiling algorithm: "dp" (dynamic programming) or "greedy" | IMPLEMENTED |
 | `recent_verbatim_token_budget` | int | 0 | Token budget for verbatim recent leaves (0 = disabled) | IMPLEMENTED |
 | `enable_slope_cap` | bool | True | Enable slope capping | **NOT IMPLEMENTED** |
 | `slope_cap_size` | int | 1 | Maximum depth difference | **NOT IMPLEMENTED** |

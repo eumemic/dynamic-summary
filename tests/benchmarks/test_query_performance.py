@@ -214,7 +214,7 @@ def test_query_performance(
         "mmr_time",
         "coverage_map_time",
         "scoring_time",
-        "dp_time",
+        "tiling_time",
         "assembly_time",
         "total_time",
     ]
@@ -299,7 +299,7 @@ def test_query_performance(
     print(f"  - MMR: {median_telemetry['timings']['mmr_time']:.3f}s")
     print(f"  - Coverage map: {median_telemetry['timings']['coverage_map_time']:.3f}s")
     print(f"  - Scoring: {median_telemetry['timings']['scoring_time']:.3f}s")
-    print(f"  - DP tiling: {median_telemetry['timings']['dp_time']:.3f}s")
+    print(f"  - Tiling: {median_telemetry['timings']['tiling_time']:.3f}s")
     print(f"  - Assembly: {median_telemetry['timings']['assembly_time']:.3f}s")
     print("\nResults (median run):")
     print(
@@ -382,7 +382,7 @@ def test_query_performance_comparison() -> None:
             f"{timings['total_time']:<10.3f} "
             f"{timings['embedding_time']:<10.3f} "
             f"{timings['search_time']:<10.3f} "
-            f"{timings['dp_time']:<10.3f} "
+            f"{timings['tiling_time']:<10.3f} "
             f"{efficiency:<10.2%}"
         )
 
@@ -398,7 +398,7 @@ def test_query_performance_comparison() -> None:
         "mmr_time",
         "coverage_map_time",
         "scoring_time",
-        "dp_time",
+        "tiling_time",
         "assembly_time",
     ]:
         phase_times[phase] = sum(t["timings"][phase] for t in by_config.values()) / len(

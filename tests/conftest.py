@@ -75,7 +75,7 @@ class BackwardCompatibilityConfig:
         return self.index_config.preceding_summary_budget_tokens
 
     @property
-    def budget_tokens(self) -> int:
+    def budget_tokens(self) -> int | None:
         return self.query_config.budget_tokens
 
 
