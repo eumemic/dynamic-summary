@@ -304,7 +304,7 @@ BENCHMARK_RUNS=3                # Performance test repetitions
 #### Critical Modules (90%+ Coverage Required)
 - `ragzoom/index.py` - Core indexing logic
 - `ragzoom/retrieve.py` - Query processing
-- `ragzoom/dynamic_tiling.py` - DP algorithm
+- `ragzoom/greedy_tiling.py` - Tiling algorithm
 - `ragzoom/store.py` - Data persistence
 
 #### Important Modules (80%+ Coverage Required)

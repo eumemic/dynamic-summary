@@ -183,7 +183,6 @@ def _build_retriever(
     *,
     document_id: str,
     embedding_model: str | None = None,
-    tiling_strategy: str | None = None,
 ) -> tuple[Retriever, DocumentStore]:
     resolved_embedding = embedding_model or state.query_config.embedding_model
     document_store = state.store.for_document(document_id)
@@ -200,8 +199,6 @@ def _build_retriever(
     query_config = state.query_config
     if resolved_embedding != state.query_config.embedding_model:
         query_config = query_config.replace(embedding_model=resolved_embedding)
-    if tiling_strategy is not None:
-        query_config = query_config.replace(tiling_strategy=tiling_strategy)
     retriever = Retriever(
         query_config,
         document_store,
@@ -361,15 +358,11 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
         embedding_model = (
             request.embedding_model or self._state.query_config.embedding_model
         )
-        tiling_strategy = (
-            request.tiling_strategy or self._state.query_config.tiling_strategy
-        )
 
         retriever, document_store = _build_retriever(
             self._state,
             document_id=request.document_id,
             embedding_model=embedding_model,
-            tiling_strategy=tiling_strategy,
         )
 
         recent_verbatim_budget = (
@@ -452,16 +445,18 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
                 visualization = f"Visualization error: {exc}"
 
             try:
-                # Total budget includes verbatim budget if specified
-                total_budget = budget + (recent_verbatim_budget or 0)
-                validation_error = validate_tiling(
-                    retrieval_result.tiling,
-                    document_store,
-                    budget_tokens=total_budget,
-                    preloaded_nodes=retrieval_result.nodes,
-                )
-                if validation_error:
-                    validation_warning = validation_error
+                # Only validate budget if one was specified
+                if budget is not None:
+                    # Total budget includes verbatim budget if specified
+                    total_budget = budget + (recent_verbatim_budget or 0)
+                    validation_error = validate_tiling(
+                        retrieval_result.tiling,
+                        document_store,
+                        budget_tokens=total_budget,
+                        preloaded_nodes=retrieval_result.nodes,
+                    )
+                    if validation_error:
+                        validation_warning = validation_error
             except Exception as exc:  # pragma: no cover - defensive logging
                 logger.warning("Tiling validation failed: %s", exc)
                 validation_warning = f"Validation error: {exc}"

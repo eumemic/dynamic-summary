@@ -26,7 +26,7 @@ which is included below. This file (CLAUDE.md) contains only agent-specific inst
 
 - **Design First:** Before implementing any large initiative, work with the user to create a well-thought-out design proposal, including rationale and pseudocode.
 - **Clarity Before Code:** Do not start implementing until you have a design with no major gaps or open questions. Ask the user to clarify any ambiguities.
-- **"Correct-by-Construction":** The central architectural principle of this system is to be "correct-by-construction". Avoid multi-stage, corrective pipelines that patch up errors. Design algorithms that produce a valid final state in a single, principled pass. The tiling algorithms in `ragzoom/greedy_tiling.py` and `ragzoom/dynamic_tiling.py` exemplify this approach.
+- **"Correct-by-Construction":** The central architectural principle of this system is to be "correct-by-construction". Avoid multi-stage, corrective pipelines that patch up errors. Design algorithms that produce a valid final state in a single, principled pass. The tiling algorithm in `ragzoom/greedy_tiling.py` exemplifies this approach.
 - **Design Reflects Craft:** Great design enables great code. A well-designed system makes correct implementation natural and incorrect implementation difficult. Poor design forces good developers to write bad code. Always question whether complexity in implementation signals a design problem.
 
 ### 3. Code Craftsmanship & Pride
