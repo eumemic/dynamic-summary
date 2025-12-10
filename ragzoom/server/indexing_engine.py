@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from ragzoom.config import IndexConfig
     from ragzoom.contracts.storage_backend import StorageBackend
     from ragzoom.contracts.vector_index import VectorIndex
+    from ragzoom.document_store import DocumentStore
     from ragzoom.retrieve import RetrievalResult, Retriever
     from ragzoom.services.llm_service import LLMService
     from ragzoom.telemetry_collection import TelemetryCollector
@@ -447,46 +448,35 @@ class IndexingEngine:
         1. Is not already active
         2. Has not previously failed
         3. Is either a leaf needing embedding, or an eligible sibling pair
-        4. Has sufficient preceding forest completeness (if threshold > 0)
+        4. Has span_start within the eligibility frontier
 
-        The forest completeness gating ensures that when processing node N,
-        the preceding portion of the document (all content before N.span_start)
-        has been sufficiently summarized. This improves the information density
-        of context retrieval for embeddings and summaries.
+        Uses a two-pass approach:
+        - Pass 1: Find the eligibility frontier based on forest completeness
+        - Pass 2: Find first job within that frontier
+
+        The eligibility frontier accounts for both max_extraneous_detail and
+        verbatim_tokens settings. Jobs can extend past the strict completeness
+        boundary by the verbatim token budget (converted to characters).
         """
         store = self._store.for_document(document_id)
         roots = store.nodes.get_root_nodes(document_id)
 
-        max_extraneous = self._index_config.preceding_context_max_extraneous_detail
+        # Pass 1: Calculate eligibility frontier
+        frontier = self._calculate_eligibility_frontier(roots, store, document_id)
 
-        # Track cumulative forest statistics as we scan left-to-right
-        # These track the forest state BEFORE the current root
-        preceding_leaves = 0
-        preceding_roots = 0
-
+        # Pass 2: Find first eligible job within frontier
         for i, root in enumerate(roots):
-            root_height = int(getattr(root, "height", 0))
-            leaves_in_subtree = 2**root_height
+            root_span_start = int(getattr(root, "span_start", 0))
 
-            # Check extraneous detail in PRECEDING forest (before this root)
-            # Extraneous = actual_roots - min_roots (where min = popcount(leaves))
-            if preceding_leaves > 0:
-                min_roots = _min_roots_for_leaf_count(preceding_leaves)
-                extraneous = preceding_roots - min_roots
-
-                # If extraneous detail exceeds threshold, stop scanning
-                if extraneous > max_extraneous:
-                    logger.debug(
-                        "preceding forest extraneous detail %d > max %d at root %d, "
-                        "stopping scan (preceding_leaves=%d, preceding_roots=%d, min_roots=%d)",
-                        extraneous,
-                        max_extraneous,
-                        i,
-                        preceding_leaves,
-                        preceding_roots,
-                        min_roots,
-                    )
-                    return None
+            # Check if this root is within the eligibility frontier
+            if frontier is not None and root_span_start > frontier:
+                logger.debug(
+                    "root %d span_start %d > eligibility frontier %d, stopping scan",
+                    i,
+                    root_span_start,
+                    frontier,
+                )
+                return None
 
             # Check for leaf needing embedding
             if self._is_leaf(root) and not self._has_embedding(root, document_id):
@@ -508,11 +498,71 @@ class IndexingEngine:
                             continue
                         return summary_job
 
-            # Update preceding counts AFTER processing this root
-            # So next iteration checks extraneous detail up to (but not including) that root
+        return None
+
+    def _calculate_eligibility_frontier(
+        self,
+        roots: list[TreeNode],
+        store: DocumentStore,
+        document_id: str,
+    ) -> int | None:
+        """Calculate the last eligible position for jobs based on forest completeness.
+
+        Returns the maximum span_start position where jobs can be scheduled, or
+        None if there's no restriction (all jobs are eligible).
+
+        The frontier is calculated as:
+            first_ineligible_root.span_start + verbatim_tokens * avg_chars_per_token
+
+        This allows jobs to extend past the strict completeness boundary by the
+        verbatim token budget, since that content will be fetched as raw leaves
+        rather than summaries.
+        """
+        max_extraneous = self._index_config.preceding_context_max_extraneous_detail
+        verbatim_tokens = self._index_config.preceding_context_verbatim_tokens
+
+        # Track cumulative forest statistics as we scan left-to-right
+        preceding_leaves = 0
+        preceding_roots = 0
+
+        for root in roots:
+            root_height = int(getattr(root, "height", 0))
+            leaves_in_subtree = 2**root_height
+
+            # Check extraneous detail in PRECEDING forest (before this root)
+            if preceding_leaves > 0:
+                min_roots = _min_roots_for_leaf_count(preceding_leaves)
+                extraneous = preceding_roots - min_roots
+
+                if extraneous > max_extraneous:
+                    # Found first ineligible root - calculate frontier
+                    root_span_start = int(getattr(root, "span_start", 0))
+
+                    # Get avg chars per token for this document
+                    avg_chars = store.nodes.get_avg_chars_per_token(document_id)
+                    if avg_chars is None:
+                        avg_chars = 4.0  # Reasonable default for English text
+
+                    verbatim_chars = int(verbatim_tokens * avg_chars)
+                    frontier = root_span_start + verbatim_chars
+
+                    logger.debug(
+                        "eligibility frontier at %d "
+                        "(first_ineligible_span=%d + verbatim_chars=%d, "
+                        "extraneous=%d > max=%d)",
+                        frontier,
+                        root_span_start,
+                        verbatim_chars,
+                        extraneous,
+                        max_extraneous,
+                    )
+                    return frontier
+
+            # Update preceding counts for next iteration
             preceding_leaves += leaves_in_subtree
             preceding_roots += 1
 
+        # No ineligibility found - all jobs are eligible
         return None
 
     def _is_leaf(self, node: TreeNode) -> bool:
