@@ -22,7 +22,7 @@ class IndexConfigDict(TypedDict):
     use_anti_verbatim_vaccine: bool
     processing_strategy: str
     context_lag_tokens: int
-    preceding_context_min_forest_completeness: float
+    preceding_context_max_extraneous_detail: int
 
 
 # Type for configuration values that can be primitives
@@ -157,7 +157,7 @@ class IndexConfig:
     use_anti_verbatim_vaccine: bool
     processing_strategy: str
     context_lag_tokens: int
-    preceding_context_min_forest_completeness: float
+    preceding_context_max_extraneous_detail: int
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -179,11 +179,11 @@ class IndexConfig:
                 f"processing_strategy must be one of {valid_strategies}, got '{self.processing_strategy}'"
             )
 
-        # Validate forest completeness threshold
-        if not 0.0 <= self.preceding_context_min_forest_completeness <= 1.0:
+        # Validate max extraneous detail
+        if self.preceding_context_max_extraneous_detail < 0:
             raise ValueError(
-                f"preceding_context_min_forest_completeness must be between 0.0 and 1.0, "
-                f"got {self.preceding_context_min_forest_completeness}"
+                f"preceding_context_max_extraneous_detail must be >= 0, "
+                f"got {self.preceding_context_max_extraneous_detail}"
             )
 
     @classmethod
@@ -214,8 +214,8 @@ class IndexConfig:
                 "processing_strategy", "bottom_to_top"
             ),
             "context_lag_tokens": config_dict.get("context_lag_tokens", 0),
-            "preceding_context_min_forest_completeness": config_dict.get(
-                "preceding_context_min_forest_completeness", 0.5
+            "preceding_context_max_extraneous_detail": config_dict.get(
+                "preceding_context_max_extraneous_detail", 5
             ),
         }
 
@@ -235,8 +235,8 @@ class IndexConfig:
             ),
             processing_strategy=str(index_config_fields["processing_strategy"]),
             context_lag_tokens=int(index_config_fields["context_lag_tokens"]),
-            preceding_context_min_forest_completeness=float(
-                index_config_fields["preceding_context_min_forest_completeness"]
+            preceding_context_max_extraneous_detail=int(
+                index_config_fields["preceding_context_max_extraneous_detail"]
             ),
         )
 
@@ -274,7 +274,7 @@ class IndexConfig:
         use_anti_verbatim_vaccine: bool | None = None,
         processing_strategy: str | None = None,
         context_lag_tokens: int | None = None,
-        preceding_context_min_forest_completeness: float | None = None,
+        preceding_context_max_extraneous_detail: int | None = None,
     ) -> "IndexConfig":
         """Create a new IndexConfig with some fields changed."""
         from dataclasses import replace
@@ -321,10 +321,10 @@ class IndexConfig:
                 if context_lag_tokens is not None
                 else self.context_lag_tokens
             ),
-            preceding_context_min_forest_completeness=(
-                preceding_context_min_forest_completeness
-                if preceding_context_min_forest_completeness is not None
-                else self.preceding_context_min_forest_completeness
+            preceding_context_max_extraneous_detail=(
+                preceding_context_max_extraneous_detail
+                if preceding_context_max_extraneous_detail is not None
+                else self.preceding_context_max_extraneous_detail
             ),
         )
 

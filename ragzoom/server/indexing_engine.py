@@ -71,20 +71,20 @@ def _expected_total_from_leaf_count(n: int) -> int:
     return 2 * n - popcount
 
 
-def _expected_nodes_from_leaf_count(n: int) -> int:
-    """Calculate expected total nodes in complete forest over N leaves.
+def _min_roots_for_leaf_count(n: int) -> int:
+    """Return minimum number of roots for a complete forest of n leaves.
 
-    For N leaves, the complete forest has:
-    - N leaves
-    - N - popcount(N) internal nodes (summaries)
-    Total = 2N - popcount(N)
+    This equals popcount(n) - the number of 1-bits in binary representation.
+    A complete binary forest over n leaves has exactly popcount(n) trees.
 
-    This is the same formula as jobs because each node requires one job.
+    Examples:
+        - 8 leaves (0b1000): popcount=1 → 1 root (one perfect tree of 8)
+        - 7 leaves (0b111):  popcount=3 → 3 roots (trees of 4, 2, 1)
+        - 5 leaves (0b101):  popcount=2 → 2 roots (trees of 4 and 1)
     """
     if n <= 0:
         return 0
-    popcount = bin(n).count("1")
-    return 2 * n - popcount
+    return bin(n).count("1")
 
 
 def _average_embeddings(
@@ -457,37 +457,34 @@ class IndexingEngine:
         store = self._store.for_document(document_id)
         roots = store.nodes.get_root_nodes(document_id)
 
-        min_completeness = self._index_config.preceding_context_min_forest_completeness
+        max_extraneous = self._index_config.preceding_context_max_extraneous_detail
 
         # Track cumulative forest statistics as we scan left-to-right
         # These track the forest state BEFORE the current root
         preceding_leaves = 0
-        preceding_nodes = 0
+        preceding_roots = 0
 
         for i, root in enumerate(roots):
             root_height = int(getattr(root, "height", 0))
             leaves_in_subtree = 2**root_height
-            nodes_in_subtree = 2 ** (root_height + 1) - 1
 
-            # Check completeness of PRECEDING forest (before this root)
-            # Only check if there are preceding leaves and threshold > 0
-            if preceding_leaves > 0 and min_completeness > 0.0:
-                expected_nodes = _expected_nodes_from_leaf_count(preceding_leaves)
-                completeness = (
-                    preceding_nodes / expected_nodes if expected_nodes > 0 else 1.0
-                )
+            # Check extraneous detail in PRECEDING forest (before this root)
+            # Extraneous = actual_roots - min_roots (where min = popcount(leaves))
+            if preceding_leaves > 0:
+                min_roots = _min_roots_for_leaf_count(preceding_leaves)
+                extraneous = preceding_roots - min_roots
 
-                # If preceding forest completeness is below threshold, stop scanning
-                if completeness < min_completeness:
+                # If extraneous detail exceeds threshold, stop scanning
+                if extraneous > max_extraneous:
                     logger.debug(
-                        "preceding forest completeness %.2f < threshold %.2f at root %d, "
-                        "stopping scan (preceding_leaves=%d, preceding_nodes=%d, expected=%d)",
-                        completeness,
-                        min_completeness,
+                        "preceding forest extraneous detail %d > max %d at root %d, "
+                        "stopping scan (preceding_leaves=%d, preceding_roots=%d, min_roots=%d)",
+                        extraneous,
+                        max_extraneous,
                         i,
                         preceding_leaves,
-                        preceding_nodes,
-                        expected_nodes,
+                        preceding_roots,
+                        min_roots,
                     )
                     return None
 
@@ -512,9 +509,9 @@ class IndexingEngine:
                         return summary_job
 
             # Update preceding counts AFTER processing this root
-            # So next iteration checks completeness of forest up to (but not including) that root
+            # So next iteration checks extraneous detail up to (but not including) that root
             preceding_leaves += leaves_in_subtree
-            preceding_nodes += nodes_in_subtree
+            preceding_roots += 1
 
         return None
 
