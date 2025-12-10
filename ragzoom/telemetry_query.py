@@ -20,7 +20,7 @@ class QueryTelemetry:
     - MMR diversity selection
     - Coverage map building
     - Node scoring
-    - Dynamic programming tiling
+    - Greedy tiling
     - Text assembly
     """
 
@@ -36,7 +36,7 @@ class QueryTelemetry:
     mmr_time: float = 0.0
     coverage_map_time: float = 0.0
     scoring_time: float = 0.0
-    dp_time: float = 0.0
+    tiling_time: float = 0.0
     assembly_time: float = 0.0
 
     # Overall timing
@@ -75,7 +75,7 @@ class QueryTelemetry:
     @property
     def processing_time(self) -> float:
         """Time spent in processing phases (scoring + DP + assembly)."""
-        return self.scoring_time + self.dp_time + self.assembly_time
+        return self.scoring_time + self.tiling_time + self.assembly_time
 
     def to_dict(self) -> "QueryTelemetryDict":
         """Convert telemetry to dictionary for JSON serialization."""
@@ -91,7 +91,7 @@ class QueryTelemetry:
                 "mmr_time": self.mmr_time,
                 "coverage_map_time": self.coverage_map_time,
                 "scoring_time": self.scoring_time,
-                "dp_time": self.dp_time,
+                "tiling_time": self.tiling_time,
                 "assembly_time": self.assembly_time,
                 "total_time": self.total_time,
                 "retrieval_time": self.retrieval_time,
@@ -162,7 +162,7 @@ class QueryTimingsDict(TypedDict):
     mmr_time: float
     coverage_map_time: float
     scoring_time: float
-    dp_time: float
+    tiling_time: float
     assembly_time: float
     total_time: float
     retrieval_time: float

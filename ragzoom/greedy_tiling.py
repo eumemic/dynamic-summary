@@ -5,12 +5,33 @@ from __future__ import annotations
 import heapq
 import logging
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import NamedTuple
 
 from ragzoom.config import QueryConfig
 from ragzoom.contracts.tree_node import TreeNode
-from ragzoom.dynamic_tiling import DPResult, NodeInfo
 from ragzoom.tiling import Tiling
+
+
+@dataclass
+class NodeInfo:
+    """Information about a node in the tiling."""
+
+    node_id: str
+    token_cost: int
+    span_start: int
+    span_end: int
+
+
+@dataclass
+class TilingResult:
+    """Complete result from tiling generation."""
+
+    tiling: Tiling  # The optimal tiling found
+    node_infos: list[NodeInfo]
+    total_quality: float
+    coverage_map: dict[str, bool]
+
 
 logger = logging.getLogger(__name__)
 
@@ -24,22 +45,27 @@ class GreedyTilingGenerator:
     def find_optimal_tiling_over_roots(
         self,
         root_ids: Sequence[str],
-        budget_tokens: int,
+        budget_tokens: int | None,
         scores: Mapping[str, float],
         nodes: Mapping[str, TreeNode],
-    ) -> DPResult:
+    ) -> TilingResult:
         """Generate a tiling by pruning the frontier until within budget.
 
         Args:
             root_ids: Root node IDs to start traversal from
-            budget_tokens: Token budget for the tiling
+            budget_tokens: Token budget for the tiling, or None for no pruning
             scores: Relevance scores for each node
             nodes: All nodes in the coverage tree
         """
         if not nodes:
-            return DPResult(Tiling.empty(), [], 0.0, {})
+            return TilingResult(Tiling.empty(), [], 0.0, {})
 
         frontier = _build_frontier(nodes, root_ids)
+
+        # No budget constraint: return full frontier
+        if budget_tokens is None:
+            return _build_result(frontier, scores, nodes)
+
         total_tokens = sum(nodes[node_id].token_count for node_id in frontier)
 
         # Already within budget: return as-is.
@@ -249,8 +275,8 @@ def _build_result(
     frontier: Sequence[str],
     scores: Mapping[str, float],
     nodes: Mapping[str, TreeNode],
-) -> DPResult:
-    """Convert frontier node ids into a DPResult shape."""
+) -> TilingResult:
+    """Convert frontier node ids into a TilingResult shape."""
 
     tiling_score = sum(
         scores.get(node_id, 0.0) * nodes[node_id].token_count for node_id in frontier
@@ -268,7 +294,7 @@ def _build_result(
     ]
 
     coverage_map = {node_id: True for node_id in nodes}
-    return DPResult(
+    return TilingResult(
         tiling=tiling,
         node_infos=node_infos,
         total_quality=tiling.relevance_tokens,
