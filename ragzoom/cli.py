@@ -1432,10 +1432,10 @@ def server() -> None:
     help="Override preceding_summary_budget_tokens (default: 2000)",
 )
 @click.option(
-    "--context-lag",
-    "context_lag_tokens",
+    "--preceding-context-verbatim-tokens",
+    "preceding_context_verbatim_tokens",
     type=int,
-    help="Override context_lag_tokens (default: 2000)",
+    help="Override preceding_context_verbatim_tokens (default: 2000)",
 )
 @click.option(
     "--max-parallelism",
@@ -1462,7 +1462,7 @@ def start_server(
     collect_telemetry: bool,
     telemetry_dir: Path | None,
     preceding_summary_budget_tokens: int | None,
-    context_lag_tokens: int | None,
+    preceding_context_verbatim_tokens: int | None,
     max_parallelism: int | None,
     preceding_context_max_extraneous_detail: int | None,
     preceding_context_num_seeds: int | None,
@@ -1477,7 +1477,7 @@ def start_server(
         collect_telemetry=collect_telemetry,
         telemetry_dir=str(telemetry_dir) if telemetry_dir else None,
         preceding_summary_budget_tokens=preceding_summary_budget_tokens,
-        context_lag_tokens=context_lag_tokens,
+        preceding_context_verbatim_tokens=preceding_context_verbatim_tokens,
         max_parallelism=max_parallelism,
         preceding_context_max_extraneous_detail=preceding_context_max_extraneous_detail,
         preceding_context_num_seeds=preceding_context_num_seeds,

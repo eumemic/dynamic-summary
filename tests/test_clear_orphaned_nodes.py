@@ -48,7 +48,7 @@ class TestAutomaticClearing:
             embedding_batch_size=100,
             use_anti_verbatim_vaccine=True,
             processing_strategy="bottom_to_top",
-            context_lag_tokens=0,
+            preceding_context_verbatim_tokens=0,
             preceding_context_max_extraneous_detail=5,
             preceding_context_num_seeds=None,
         )

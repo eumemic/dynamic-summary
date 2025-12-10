@@ -26,7 +26,7 @@ class ServerOptions:
     telemetry_dir: str | None = None
     # Config overrides (take precedence over config file)
     preceding_summary_budget_tokens: int | None = None
-    context_lag_tokens: int | None = None
+    preceding_context_verbatim_tokens: int | None = None
     max_parallelism: int | None = None
     preceding_context_max_extraneous_detail: int | None = None
     preceding_context_num_seeds: int | None = None
@@ -41,13 +41,13 @@ def build_state(options: ServerOptions) -> ServerState:
     # Apply CLI overrides if provided
     if (
         options.preceding_summary_budget_tokens is not None
-        or options.context_lag_tokens is not None
+        or options.preceding_context_verbatim_tokens is not None
         or options.preceding_context_max_extraneous_detail is not None
         or options.preceding_context_num_seeds is not None
     ):
         index_cfg = index_cfg.replace(
             preceding_summary_budget_tokens=options.preceding_summary_budget_tokens,
-            context_lag_tokens=options.context_lag_tokens,
+            preceding_context_verbatim_tokens=options.preceding_context_verbatim_tokens,
             preceding_context_max_extraneous_detail=options.preceding_context_max_extraneous_detail,
             preceding_context_num_seeds=options.preceding_context_num_seeds,
         )

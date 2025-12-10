@@ -667,7 +667,7 @@ class IndexingEngine:
                         span_end_limit=span_start,
                         budget_tokens=self._index_config.preceding_summary_budget_tokens,
                         document_id=job.document_id,
-                        recent_verbatim_token_budget=0,
+                        recent_verbatim_token_budget=self._index_config.preceding_context_verbatim_tokens,
                         num_seeds=self._index_config.preceding_context_num_seeds,
                     )
                 except Exception:
@@ -957,7 +957,7 @@ class IndexingEngine:
                     span_end_limit=span_start,
                     budget_tokens=self._index_config.preceding_summary_budget_tokens,
                     document_id=job.document_id,
-                    recent_verbatim_token_budget=0,
+                    recent_verbatim_token_budget=self._index_config.preceding_context_verbatim_tokens,
                     query_embedding=parent_embedding_list,
                     num_seeds=self._index_config.preceding_context_num_seeds,
                 )
