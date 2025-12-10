@@ -1129,3 +1129,23 @@ class PostgresNodeRepository(BaseRepository):
             for row in rows:
                 session.expunge(row)
             return list(rows)
+
+    def get_avg_chars_per_token(self, document_id: str | None) -> float | None:
+        """Return average characters per token for leaves in a document.
+
+        Computes SUM(span_end - span_start) / SUM(token_count) for all leaves.
+        Returns None if no leaves exist yet.
+        """
+        with self.SessionLocal() as session:
+            query = session.query(
+                func.sum(PostgresTreeNode.span_end - PostgresTreeNode.span_start),
+                func.sum(PostgresTreeNode.token_count),
+            ).filter(PostgresTreeNode.height == 0)
+            if document_id is not None:
+                query = query.filter(PostgresTreeNode.document_id == document_id)
+
+            result = query.one()
+            total_chars, total_tokens = result
+            if total_tokens is None or total_tokens == 0:
+                return None
+            return float(total_chars) / float(total_tokens)

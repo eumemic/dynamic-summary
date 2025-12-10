@@ -377,6 +377,24 @@ class DocumentNodeRepository:
             )
         return list(getter(target_doc, span_start))
 
+    def get_avg_chars_per_token(self, document_id: str | None = None) -> float | None:
+        """Return average characters per token for leaves in a document.
+
+        Args:
+            document_id: Document to filter by (defaults to this repository's document_id)
+
+        Returns:
+            Average chars per token, or None if no leaves exist yet.
+        """
+        target_doc = document_id or self.document_id
+        getter = getattr(self._repo, "get_avg_chars_per_token", None)
+        if not callable(getter):
+            raise NotImplementedError(
+                "Underlying repository does not support get_avg_chars_per_token"
+            )
+        result = getter(target_doc)
+        return float(result) if result is not None else None
+
     # jscpd:ignore-end
 
 

@@ -956,6 +956,26 @@ class SqliteNodeRepository:
             rows = session.execute(stmt).scalars().all()
             return _detach_rows(session, list(rows))
 
+    def get_avg_chars_per_token(self, document_id: str | None) -> float | None:
+        """Return average characters per token for leaves in a document.
+
+        Computes SUM(span_end - span_start) / SUM(token_count) for all leaves.
+        Returns None if no leaves exist yet.
+        """
+        with self.SessionLocal() as session:
+            stmt = select(
+                func.sum(SQLiteTreeNode.span_end - SQLiteTreeNode.span_start),
+                func.sum(SQLiteTreeNode.token_count),
+            ).where(SQLiteTreeNode.height == 0)
+            if document_id is not None:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+
+            result = session.execute(stmt).one()
+            total_chars, total_tokens = result
+            if total_tokens is None or total_tokens == 0:
+                return None
+            return float(total_chars) / float(total_tokens)
+
     # jscpd:ignore-end
 
 

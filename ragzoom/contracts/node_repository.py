@@ -199,3 +199,13 @@ class NodeRepository(Protocol):
         Used for computing the eligible span for contextual indexing gating.
         """
         ...
+
+    def get_avg_chars_per_token(self, document_id: str | None) -> float | None:
+        """Return average characters per token for leaves in a document.
+
+        Computes SUM(span_end - span_start) / SUM(token_count) for all leaves.
+        Returns None if no leaves exist yet.
+
+        Used for estimating character positions from token budgets.
+        """
+        ...
