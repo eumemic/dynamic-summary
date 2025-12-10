@@ -71,6 +71,22 @@ def _expected_total_from_leaf_count(n: int) -> int:
     return 2 * n - popcount
 
 
+def _expected_nodes_from_leaf_count(n: int) -> int:
+    """Calculate expected total nodes in complete forest over N leaves.
+
+    For N leaves, the complete forest has:
+    - N leaves
+    - N - popcount(N) internal nodes (summaries)
+    Total = 2N - popcount(N)
+
+    This is the same formula as jobs because each node requires one job.
+    """
+    if n <= 0:
+        return 0
+    popcount = bin(n).count("1")
+    return 2 * n - popcount
+
+
 def _average_embeddings(
     emb1: bytes, emb2: bytes
 ) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
@@ -431,11 +447,50 @@ class IndexingEngine:
         1. Is not already active
         2. Has not previously failed
         3. Is either a leaf needing embedding, or an eligible sibling pair
+        4. Has sufficient preceding forest completeness (if threshold > 0)
+
+        The forest completeness gating ensures that when processing node N,
+        the preceding portion of the document (all content before N.span_start)
+        has been sufficiently summarized. This improves the information density
+        of context retrieval for embeddings and summaries.
         """
         store = self._store.for_document(document_id)
         roots = store.nodes.get_root_nodes(document_id)
 
+        min_completeness = self._index_config.preceding_context_min_forest_completeness
+
+        # Track cumulative forest statistics as we scan left-to-right
+        # These track the forest state BEFORE the current root
+        preceding_leaves = 0
+        preceding_nodes = 0
+
         for i, root in enumerate(roots):
+            root_height = int(getattr(root, "height", 0))
+            leaves_in_subtree = 2**root_height
+            nodes_in_subtree = 2 ** (root_height + 1) - 1
+
+            # Check completeness of PRECEDING forest (before this root)
+            # Only check if there are preceding leaves and threshold > 0
+            if preceding_leaves > 0 and min_completeness > 0.0:
+                expected_nodes = _expected_nodes_from_leaf_count(preceding_leaves)
+                completeness = (
+                    preceding_nodes / expected_nodes if expected_nodes > 0 else 1.0
+                )
+
+                # If preceding forest completeness is below threshold, stop scanning
+                if completeness < min_completeness:
+                    logger.debug(
+                        "preceding forest completeness %.2f < threshold %.2f at root %d, "
+                        "stopping scan (preceding_leaves=%d, preceding_nodes=%d, expected=%d)",
+                        completeness,
+                        min_completeness,
+                        i,
+                        preceding_leaves,
+                        preceding_nodes,
+                        expected_nodes,
+                    )
+                    return None
+
             # Check for leaf needing embedding
             if self._is_leaf(root) and not self._has_embedding(root, document_id):
                 embedding_job = EmbeddingJob(document_id, root.id)
@@ -455,6 +510,11 @@ class IndexingEngine:
                         if ctx is not None and ctx.is_failed(summary_job):
                             continue
                         return summary_job
+
+            # Update preceding counts AFTER processing this root
+            # So next iteration checks completeness of forest up to (but not including) that root
+            preceding_leaves += leaves_in_subtree
+            preceding_nodes += nodes_in_subtree
 
         return None
 

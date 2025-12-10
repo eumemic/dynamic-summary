@@ -1442,6 +1442,12 @@ def server() -> None:
     type=int,
     help="Maximum concurrent indexing jobs (default: 30)",
 )
+@click.option(
+    "--preceding-context-min-forest-completeness",
+    "preceding_context_min_forest_completeness",
+    type=float,
+    help="Min forest completeness before retrieving context (0.0-1.0, default: 0.5)",
+)
 def start_server(
     host: str,
     port: int,
@@ -1452,6 +1458,7 @@ def start_server(
     preceding_summary_budget_tokens: int | None,
     context_lag_tokens: int | None,
     max_parallelism: int | None,
+    preceding_context_min_forest_completeness: float | None,
 ) -> None:
     """Start the RagZoom gRPC server."""
 
@@ -1465,6 +1472,7 @@ def start_server(
         preceding_summary_budget_tokens=preceding_summary_budget_tokens,
         context_lag_tokens=context_lag_tokens,
         max_parallelism=max_parallelism,
+        preceding_context_min_forest_completeness=preceding_context_min_forest_completeness,
     )
     run_server(options)
 

@@ -7,5 +7,6 @@
   "max_retries": 3,
   "embedding_batch_size": 100,
   "use_anti_verbatim_vaccine": true,
-  "context_lag_tokens": 2000
+  "context_lag_tokens": 2000,
+  "preceding_context_min_forest_completeness": 0.5
 }
