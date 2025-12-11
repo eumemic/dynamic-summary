@@ -48,7 +48,7 @@ class TestAutomaticClearing:
             use_anti_verbatim_vaccine=True,
             processing_strategy="bottom_to_top",
             preceding_context_verbatim_tokens=0,
-            preceding_context_max_extraneous_detail=5,
+            preceding_context_min_forest_completeness=0.5,
             preceding_context_num_seeds=None,
         )
 

@@ -88,6 +88,55 @@ def _min_roots_for_leaf_count(n: int) -> int:
     return bin(n).count("1")
 
 
+def _optimal_max_height(n: int) -> int:
+    """Return max height of an optimal forest for n leaves.
+
+    This is the position of the highest set bit, i.e., floor(log2(n)).
+
+    Examples:
+        - 8 (0b1000): max_height = 3
+        - 7 (0b111):  max_height = 2
+        - 13 (0b1101): max_height = 3
+    """
+    if n <= 0:
+        return 0
+    return n.bit_length() - 1
+
+
+def _forest_completeness(num_roots: int, max_height: int, leaf_count: int) -> float:
+    """Compute forest completeness using tiling cost estimate.
+
+    The metric is: (optimal_roots + optimal_max_h) / (actual_roots + actual_max_h)
+
+    This estimates the ratio of worst-case tiling costs. A tiling that zooms
+    to a single seed needs at most (num_roots + max_height) tiles:
+    - num_roots for the minimal coverage
+    - max_height additional tiles to zoom down in the tallest tree
+
+    The ratio is always <= 1.0 because:
+    - Fewer merges → more roots but lower max height
+    - The sum is minimized when the forest is optimally compressed
+
+    Examples:
+        - 8 leaves, 1 root height 3: (1+3)/(1+3) = 1.0 (optimal)
+        - 8 leaves, 8 roots height 0: (1+3)/(8+0) = 0.5 (no merges)
+        - 8 leaves, 2 roots heights [2,2]: (1+3)/(2+2) = 1.0 (equivalent)
+    """
+    if leaf_count <= 1:
+        return 1.0  # Trivially complete
+
+    optimal_roots = _min_roots_for_leaf_count(leaf_count)
+    optimal_max_h = _optimal_max_height(leaf_count)
+
+    optimal_cost = optimal_roots + optimal_max_h
+    actual_cost = num_roots + max_height
+
+    if actual_cost == 0:
+        return 1.0
+
+    return optimal_cost / actual_cost
+
+
 def _average_embeddings(
     emb1: bytes, emb2: bytes
 ) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
@@ -454,7 +503,7 @@ class IndexingEngine:
         - Pass 1: Find the eligibility frontier based on forest completeness
         - Pass 2: Find first job within that frontier
 
-        The eligibility frontier accounts for both max_extraneous_detail and
+        The eligibility frontier accounts for both min_forest_completeness and
         verbatim_tokens settings. Jobs can extend past the strict completeness
         boundary by the verbatim token budget (converted to characters).
         """
@@ -517,24 +566,35 @@ class IndexingEngine:
         This allows jobs to extend past the strict completeness boundary by the
         verbatim token budget, since that content will be fetched as raw leaves
         rather than summaries.
+
+        Forest completeness is measured by comparing the height histogram of
+        actual roots against the optimal forest structure. This is scale-invariant
+        because it compares structural shape rather than absolute counts.
+
+        - 1.0 = heights match optimal forest exactly
+        - 0.0 = maximum deviation from optimal
         """
-        max_extraneous = self._index_config.preceding_context_max_extraneous_detail
+        min_forest_completeness = (
+            self._index_config.preceding_context_min_forest_completeness
+        )
         verbatim_tokens = self._index_config.preceding_context_verbatim_tokens
 
         # Track cumulative forest statistics as we scan left-to-right
         preceding_leaves = 0
         preceding_roots = 0
+        preceding_max_height = 0
 
         for root in roots:
             root_height = int(getattr(root, "height", 0))
             leaves_in_subtree = 2**root_height
 
-            # Check extraneous detail in PRECEDING forest (before this root)
-            if preceding_leaves > 0:
-                min_roots = _min_roots_for_leaf_count(preceding_leaves)
-                extraneous = preceding_roots - min_roots
+            # Check completeness in PRECEDING forest (before this root)
+            if preceding_leaves > 1:
+                completeness = _forest_completeness(
+                    preceding_roots, preceding_max_height, preceding_leaves
+                )
 
-                if extraneous > max_extraneous:
+                if completeness < min_forest_completeness:
                     # Found first ineligible root - calculate frontier
                     root_span_start = int(getattr(root, "span_start", 0))
 
@@ -549,18 +609,22 @@ class IndexingEngine:
                     logger.debug(
                         "eligibility frontier at %d "
                         "(first_ineligible_span=%d + verbatim_chars=%d, "
-                        "extraneous=%d > max=%d)",
+                        "completeness=%.2f < min=%.2f, "
+                        "preceding_leaves=%d, preceding_roots=%d)",
                         frontier,
                         root_span_start,
                         verbatim_chars,
-                        extraneous,
-                        max_extraneous,
+                        completeness,
+                        min_forest_completeness,
+                        preceding_leaves,
+                        preceding_roots,
                     )
                     return frontier
 
-            # Update preceding counts for next iteration
+            # Update preceding stats for next iteration
             preceding_leaves += leaves_in_subtree
             preceding_roots += 1
+            preceding_max_height = max(preceding_max_height, root_height)
 
         # No ineligibility found - all jobs are eligible
         return None

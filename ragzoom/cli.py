@@ -1425,10 +1425,10 @@ def server() -> None:
     help="Maximum concurrent indexing jobs (default: 30)",
 )
 @click.option(
-    "--preceding-context-max-extraneous-detail",
-    "preceding_context_max_extraneous_detail",
-    type=int,
-    help="Max extra roots beyond minimum before gating (default: 5)",
+    "--preceding-context-min-forest-completeness",
+    "preceding_context_min_forest_completeness",
+    type=float,
+    help="Min forest completeness ratio (0.0-1.0) before gating (default: 0.5)",
 )
 @click.option(
     "--preceding-context-num-seeds",
@@ -1445,7 +1445,7 @@ def start_server(
     telemetry_dir: Path | None,
     preceding_context_verbatim_tokens: int | None,
     max_parallelism: int | None,
-    preceding_context_max_extraneous_detail: int | None,
+    preceding_context_min_forest_completeness: float | None,
     preceding_context_num_seeds: int | None,
 ) -> None:
     """Start the RagZoom gRPC server."""
@@ -1459,7 +1459,7 @@ def start_server(
         telemetry_dir=str(telemetry_dir) if telemetry_dir else None,
         preceding_context_verbatim_tokens=preceding_context_verbatim_tokens,
         max_parallelism=max_parallelism,
-        preceding_context_max_extraneous_detail=preceding_context_max_extraneous_detail,
+        preceding_context_min_forest_completeness=preceding_context_min_forest_completeness,
         preceding_context_num_seeds=preceding_context_num_seeds,
     )
     run_server(options)

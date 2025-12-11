@@ -21,7 +21,7 @@ class IndexConfigDict(TypedDict):
     use_anti_verbatim_vaccine: bool
     processing_strategy: str
     preceding_context_verbatim_tokens: int
-    preceding_context_max_extraneous_detail: int
+    preceding_context_min_forest_completeness: float
     preceding_context_num_seeds: int | None
 
 
@@ -156,7 +156,7 @@ class IndexConfig:
     use_anti_verbatim_vaccine: bool
     processing_strategy: str
     preceding_context_verbatim_tokens: int
-    preceding_context_max_extraneous_detail: int
+    preceding_context_min_forest_completeness: float
     preceding_context_num_seeds: int | None
 
     def __post_init__(self) -> None:
@@ -179,11 +179,11 @@ class IndexConfig:
                 f"processing_strategy must be one of {valid_strategies}, got '{self.processing_strategy}'"
             )
 
-        # Validate max extraneous detail
-        if self.preceding_context_max_extraneous_detail < 0:
+        # Validate min compressibility (must be between 0.0 and 1.0)
+        if not 0.0 <= self.preceding_context_min_forest_completeness <= 1.0:
             raise ValueError(
-                f"preceding_context_max_extraneous_detail must be >= 0, "
-                f"got {self.preceding_context_max_extraneous_detail}"
+                f"preceding_context_min_forest_completeness must be between 0.0 and 1.0, "
+                f"got {self.preceding_context_min_forest_completeness}"
             )
 
         # Validate num_seeds if provided
@@ -227,8 +227,8 @@ class IndexConfig:
             preceding_context_verbatim_tokens=int(
                 config_dict.get("preceding_context_verbatim_tokens", 0)
             ),
-            preceding_context_max_extraneous_detail=int(
-                config_dict.get("preceding_context_max_extraneous_detail", 5)
+            preceding_context_min_forest_completeness=float(
+                config_dict.get("preceding_context_min_forest_completeness", 0.5)
             ),
             preceding_context_num_seeds=num_seeds,
         )
@@ -269,7 +269,7 @@ class IndexConfig:
         use_anti_verbatim_vaccine: bool | None = None,
         processing_strategy: str | None = None,
         preceding_context_verbatim_tokens: int | None = None,
-        preceding_context_max_extraneous_detail: int | None = None,
+        preceding_context_min_forest_completeness: float | None = None,
         preceding_context_num_seeds: int | None = _NOT_PROVIDED,
     ) -> "IndexConfig":
         """Create a new IndexConfig with some fields changed."""
@@ -312,10 +312,10 @@ class IndexConfig:
                 if preceding_context_verbatim_tokens is not None
                 else self.preceding_context_verbatim_tokens
             ),
-            preceding_context_max_extraneous_detail=(
-                preceding_context_max_extraneous_detail
-                if preceding_context_max_extraneous_detail is not None
-                else self.preceding_context_max_extraneous_detail
+            preceding_context_min_forest_completeness=(
+                preceding_context_min_forest_completeness
+                if preceding_context_min_forest_completeness is not None
+                else self.preceding_context_min_forest_completeness
             ),
             preceding_context_num_seeds=(
                 preceding_context_num_seeds

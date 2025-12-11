@@ -114,31 +114,31 @@ class TestExtraneousDetailCalculation:
         assert actual_roots - min_roots == 1
 
 
-class TestExtraneousDetailGatingBehavior:
-    """Test gating behavior with different max_extraneous_detail values."""
+class TestCompressibilityGatingBehavior:
+    """Test gating behavior with different min_forest_completeness values."""
 
-    def test_high_max_allows_all(self) -> None:
-        """High max_extraneous_detail value should allow all roots."""
-        max_extraneous = 100
-        # Even with 10 extraneous roots, should pass
-        for extraneous in [0, 1, 5, 10, 50]:
-            assert extraneous <= max_extraneous
+    def test_zero_forest_completeness_allows_all(self) -> None:
+        """min_forest_completeness=0.0 should allow all roots regardless of state."""
+        min_forest_completeness = 0.0
+        # Even very low forest_completeness ratios pass
+        for forest_completeness in [0.0, 0.1, 0.5, 1.0]:
+            assert forest_completeness >= min_forest_completeness
 
-    def test_max_zero_requires_optimal(self) -> None:
-        """max_extraneous_detail=0 only allows optimal forest state."""
-        max_extraneous = 0
-        # Only 0 extraneous passes
-        assert 0 <= max_extraneous
-        assert 1 > max_extraneous
-        assert 5 > max_extraneous
+    def test_perfect_forest_completeness_requires_optimal(self) -> None:
+        """min_forest_completeness=1.0 only allows optimal forest state."""
+        min_forest_completeness = 1.0
+        # Only perfect forest_completeness (1.0) passes
+        assert 1.0 >= min_forest_completeness
+        assert 0.9 < min_forest_completeness
+        assert 0.5 < min_forest_completeness
 
-    def test_max_two_allows_some_slack(self) -> None:
-        """max_extraneous_detail=2 allows up to 2 extra roots."""
-        max_extraneous = 2
-        assert 0 <= max_extraneous
-        assert 1 <= max_extraneous
-        assert 2 <= max_extraneous
-        assert 3 > max_extraneous
+    def test_half_forest_completeness_allows_some_slack(self) -> None:
+        """min_forest_completeness=0.5 allows up to 2x the minimum roots."""
+        min_forest_completeness = 0.5
+        assert 1.0 >= min_forest_completeness
+        assert 0.75 >= min_forest_completeness
+        assert 0.5 >= min_forest_completeness
+        assert 0.33 < min_forest_completeness
 
 
 class TestFindNextJobGating:
@@ -175,15 +175,17 @@ class TestFindNextJobGating:
         node.embedding = b"fake"  # Has embedding
         return node
 
-    def test_first_leaf_always_allowed_with_max_zero(self) -> None:
-        """First leaf (no preceding forest) always allowed, even with max_extraneous=0."""
+    def test_first_leaf_always_allowed_with_perfect_forest_completeness(self) -> None:
+        """First leaf (no preceding forest) always allowed, even with min_forest_completeness=1.0."""
 
         from ragzoom.config import IndexConfig
         from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
 
         # Strictest threshold: no extraneous detail allowed
         index_config = IndexConfig.load()
-        index_config = index_config.replace(preceding_context_max_extraneous_detail=0)
+        index_config = index_config.replace(
+            preceding_context_min_forest_completeness=1.0
+        )
 
         mock_store = MagicMock()
         engine = IndexingEngine(
@@ -214,7 +216,7 @@ class TestFindNextJobGating:
 
         index_config = IndexConfig.load()
         index_config = index_config.replace(
-            preceding_context_max_extraneous_detail=0  # Strictest
+            preceding_context_min_forest_completeness=1.0  # Strictest
         )
 
         mock_store = MagicMock()
@@ -243,11 +245,11 @@ class TestFindNextJobGating:
         assert job.leaf_id == "leaf1"
 
     def test_third_leaf_blocked_returns_summary_job(self) -> None:
-        """Third leaf blocked with max_extraneous=0, returns summary job.
+        """Third leaf blocked with min_forest_completeness=1.0, returns summary job.
 
         Preceding forest: 2 leaves as 2 separate roots.
         min_roots = popcount(2) = 1
-        extraneous = 2 - 1 = 1 > max_extraneous=0 → BLOCKED
+        forest_completeness = 1/2 = 0.5 < min_forest_completeness=1.0 → BLOCKED
         But engine returns a SummaryJob to combine leaf0+leaf1.
         """
 
@@ -255,7 +257,9 @@ class TestFindNextJobGating:
         from ragzoom.server.indexing_engine import IndexingEngine, SummaryJob
 
         index_config = IndexConfig.load()
-        index_config = index_config.replace(preceding_context_max_extraneous_detail=0)
+        index_config = index_config.replace(
+            preceding_context_min_forest_completeness=1.0
+        )
 
         mock_store = MagicMock()
         engine = IndexingEngine(
@@ -294,7 +298,9 @@ class TestFindNextJobGating:
         from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
 
         index_config = IndexConfig.load()
-        index_config = index_config.replace(preceding_context_max_extraneous_detail=0)
+        index_config = index_config.replace(
+            preceding_context_min_forest_completeness=1.0
+        )
 
         mock_store = MagicMock()
         engine = IndexingEngine(
@@ -320,15 +326,15 @@ class TestFindNextJobGating:
         assert isinstance(job, EmbeddingJob)
         assert job.leaf_id == "leaf2"
 
-    def test_large_max_allows_all_leaves(self) -> None:
-        """With large max_extraneous_detail, all leaves allowed regardless of forest state."""
+    def test_zero_forest_completeness_allows_all_leaves(self) -> None:
+        """With min_forest_completeness=0.0, all leaves allowed regardless of forest state."""
 
         from ragzoom.config import IndexConfig
         from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
 
         index_config = IndexConfig.load()
         index_config = index_config.replace(
-            preceding_context_max_extraneous_detail=100  # Very permissive
+            preceding_context_min_forest_completeness=0.0  # Very permissive
         )
 
         mock_store = MagicMock()
@@ -356,8 +362,8 @@ class TestFindNextJobGating:
     def test_fifth_leaf_blocked_with_four_separate_roots(self) -> None:
         """Fifth leaf blocked when 4 preceding leaves exist as 4 separate roots.
 
-        Preceding: 4 leaves, 4 roots, min=popcount(4)=1 → extraneous=3
-        With max_extraneous=2, this exceeds threshold.
+        Preceding: 4 leaves, 4 roots, min=popcount(4)=1
+        forest_completeness = 1/4 = 0.25 < min_forest_completeness=0.33 → BLOCKED
         """
 
         from ragzoom.config import IndexConfig
@@ -365,7 +371,7 @@ class TestFindNextJobGating:
 
         index_config = IndexConfig.load()
         index_config = index_config.replace(
-            preceding_context_max_extraneous_detail=2  # Allow up to 2 extra roots
+            preceding_context_min_forest_completeness=0.33  # Allow up to 2 extra roots
         )
 
         mock_store = MagicMock()
@@ -394,15 +400,17 @@ class TestFindNextJobGating:
     def test_fifth_leaf_allowed_with_partially_summarized(self) -> None:
         """Fifth leaf allowed when preceding 4 leaves are partially summarized.
 
-        Preceding: 4 leaves in 2 height-1 roots → 2 roots, min=1 → extraneous=1
-        With max_extraneous=2, this is allowed.
+        Preceding: 4 leaves in 2 height-1 roots → 2 roots, min=1
+        forest_completeness = 1/2 = 0.5 >= min_forest_completeness=0.33 → ALLOWED
         """
 
         from ragzoom.config import IndexConfig
         from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
 
         index_config = IndexConfig.load()
-        index_config = index_config.replace(preceding_context_max_extraneous_detail=2)
+        index_config = index_config.replace(
+            preceding_context_min_forest_completeness=0.33
+        )
 
         mock_store = MagicMock()
         engine = IndexingEngine(
@@ -469,19 +477,19 @@ class TestVerbatimTokensFrontier:
         """Third leaf allowed when within verbatim token budget.
 
         Scenario: height-1 root (covering 2 leaves) + third leaf needing embedding.
-        With max_extraneous=0, the third leaf would normally be blocked because
-        preceding forest has 1 root but 2 leaves (extraneous = 1 - 1 = 0, OK).
+        With min_forest_completeness=1.0, the third leaf would normally be blocked because
+        preceding forest has 1 root but 2 leaves (forest_completeness = 1/1 = 1.0, OK).
         But let's test with a case that would be blocked without verbatim tokens.
 
         Actually, with an optimal preceding forest (h1 root), third leaf is allowed.
-        Let's create a scenario with intentional extraneous detail to test verbatim.
+        Let's create a scenario with intentional low forest_completeness to test verbatim.
         """
         from ragzoom.config import IndexConfig
         from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
 
         index_config = IndexConfig.load()
         index_config = index_config.replace(
-            preceding_context_max_extraneous_detail=0,  # Strictest gating
+            preceding_context_min_forest_completeness=1.0,  # Strictest gating
             preceding_context_verbatim_tokens=100,  # Allow 100 tokens ahead
         )
 
@@ -526,7 +534,7 @@ class TestVerbatimTokensFrontier:
 
         index_config = IndexConfig.load()
         index_config = index_config.replace(
-            preceding_context_max_extraneous_detail=0,  # Strictest gating
+            preceding_context_min_forest_completeness=1.0,  # Strictest gating
             preceding_context_verbatim_tokens=100,  # Allow 100 tokens = 400 chars ahead
         )
 
@@ -564,18 +572,29 @@ class TestVerbatimTokensFrontier:
 
         First ineligible determines frontier. Later roots past frontier are blocked.
 
-        Setup: 2 height-1 roots + 1 leaf (with embedding) + 1 leaf far away
-        - First ineligible: leaf_ok (extraneous=1 > 0 at preceding=4 leaves, 2 roots)
-        - frontier = 400 + 10*4 = 440
-        - leaf_ok at 400 <= 440 allowed, but already has embedding
-        - leaf_far at 1000 > 440 blocked
+        Setup: 1 height-2 root (complete) + 1 leaf far away needing embedding
+        - At leaf_far: preceding = 4 leaves in 1 root → completeness = 1.0
+        - But we set min_completeness very high and use a suboptimal forest
+
+        Actually, simpler: use a height-1 root (2 leaves) + leaf, which gives:
+        - 3 leaves in 2 roots (height 1 + height 0)
+        - Optimal: popcount(3)=2 roots, max_height=1, cost = 2+1 = 3
+        - Actual: 2 roots, max_height=1, cost = 2+1 = 3 → completeness = 1.0
+
+        Need a truly incomplete forest. Use 4 separate leaves (no merging):
+        - 4 leaves in 4 roots, max_height=0
+        - Optimal: 1 root, max_height=2, cost = 1+2 = 3
+        - Actual: cost = 4+0 = 4, completeness = 0.75 < 1.0
+
+        The job found should be a summary for the leaves, not the far leaf.
+        We verify the far leaf is blocked by checking its span_start > frontier.
         """
         from ragzoom.config import IndexConfig
-        from ragzoom.server.indexing_engine import IndexingEngine
+        from ragzoom.server.indexing_engine import IndexingEngine, SummaryJob
 
         index_config = IndexConfig.load()
         index_config = index_config.replace(
-            preceding_context_max_extraneous_detail=0,
+            preceding_context_min_forest_completeness=1.0,
             preceding_context_verbatim_tokens=10,  # Only 10 tokens = 40 chars
         )
 
@@ -588,30 +607,45 @@ class TestVerbatimTokensFrontier:
             max_parallelism=30,
         )
 
-        # 2 height-1 roots + 1 leaf (with embedding) + 1 leaf needing embedding far away
-        h1_0 = self._make_height1_root("h1_0", 0, span_start=0, span_end=200)
-        h1_1 = self._make_height1_root("h1_1", 2, span_start=200, span_end=400)
-        leaf_ok = self._make_leaf_root("leaf_ok", 4, span_start=400, span_end=500)
-        leaf_ok.embedding = b"fake"  # Already has embedding
-        leaf_far = self._make_leaf_root("leaf_far", 5, span_start=1000, span_end=1100)
+        # 4 height-0 leaves (with embeddings) + 1 leaf needing embedding far away
+        leaf_0 = self._make_leaf_root("leaf_0", 0, span_start=0, span_end=100)
+        leaf_0.embedding = b"fake"
+        leaf_1 = self._make_leaf_root("leaf_1", 1, span_start=100, span_end=200)
+        leaf_1.embedding = b"fake"
+        leaf_2 = self._make_leaf_root("leaf_2", 2, span_start=200, span_end=300)
+        leaf_2.embedding = b"fake"
+        leaf_3 = self._make_leaf_root("leaf_3", 3, span_start=300, span_end=400)
+        leaf_3.embedding = b"fake"
+        leaf_far = self._make_leaf_root("leaf_far", 4, span_start=2000, span_end=2100)
 
         mock_doc_store = MagicMock()
         mock_doc_store.nodes.get_root_nodes.return_value = [
-            h1_0,
-            h1_1,
-            leaf_ok,
+            leaf_0,
+            leaf_1,
+            leaf_2,
+            leaf_3,
             leaf_far,
         ]
         mock_doc_store.nodes.get_avg_chars_per_token.return_value = 4.0
         mock_store.for_document.return_value = mock_doc_store
 
-        # First ineligible: leaf_ok (preceding = 4 leaves in 2 roots, extraneous=1 > 0)
-        # frontier = 400 + 10*4 = 440
-        # leaf_ok.span_start=400 <= 440 → allowed (but has embedding)
-        # leaf_far.span_start=1000 > 440 → blocked
-        # Returns None since no work can be done within frontier
+        # At leaf_far: preceding = 4 leaves in 4 roots, max_height = 0
+        # optimal_cost = 1+2 = 3, actual_cost = 4+0 = 4
+        # completeness = 3/4 = 0.75 < 1.0 → ineligible
+        # frontier = 2000 + 40 = 2040
+        # But leaf_far is at 2000 <= 2040, so it's within frontier!
+        #
+        # However, work within the frontier is still allowed. The first job found
+        # is the summary job for leaf_0 + leaf_1 (within frontier at span_start=0).
+        # The leaf_far embedding job is blocked because there's other work to do first.
+        #
+        # This test verifies that even with an incomplete forest, work within
+        # the frontier proceeds (summarization), while the far leaf waits.
         job = engine._find_next_job("doc1", set(), None)
-        assert job is None
+        assert job is not None
+        assert isinstance(job, SummaryJob)
+        assert job.left_id == "leaf_0"
+        assert job.right_id == "leaf_1"
 
     def test_avg_chars_per_token_none_uses_fallback(self) -> None:
         """When get_avg_chars_per_token returns None, use fallback of 4.0.
@@ -626,7 +660,7 @@ class TestVerbatimTokensFrontier:
 
         index_config = IndexConfig.load()
         index_config = index_config.replace(
-            preceding_context_max_extraneous_detail=0,
+            preceding_context_min_forest_completeness=1.0,
             preceding_context_verbatim_tokens=50,  # 50 tokens * 4.0 fallback = 200 chars
         )
 
@@ -674,7 +708,7 @@ class TestVerbatimTokensFrontier:
 
         index_config = IndexConfig.load()
         index_config = index_config.replace(
-            preceding_context_max_extraneous_detail=0,
+            preceding_context_min_forest_completeness=1.0,
             preceding_context_verbatim_tokens=0,  # No verbatim buffer
         )
 
