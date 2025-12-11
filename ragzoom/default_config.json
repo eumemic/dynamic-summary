@@ -8,5 +8,5 @@
   "use_anti_verbatim_vaccine": true,
   "preceding_context_verbatim_tokens": 2000,
   "preceding_context_min_forest_completeness": 0.25,
-  "preceding_context_num_seeds": 1
+  "preceding_context_num_seeds": 3
 }
