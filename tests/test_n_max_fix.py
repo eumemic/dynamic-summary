@@ -241,8 +241,15 @@ class TestNumSeedsFixSQLite:
             # Retrieve with num_seeds=1
             result = retriever.retrieve("dragon", num_seeds=1, document_id="doc1")
 
-        # Verify selected nodes
-        assert result.node_ids == ["leaf1"]
+            # Verify selected nodes
+            assert result.node_ids == ["leaf1"]
+
+            # Test num_seeds=0: should return only root (minimal summary)
+            result_zero = retriever.retrieve("dragon", num_seeds=0, document_id="doc1")
+
+        # Verify num_seeds=0 returns only root
+        assert result_zero.coverage_map.keys() == {"root"}
+        assert result_zero.tiling == ["root"]
 
         # Verify coverage map contains selected + ancestors + siblings to maintain full binary tree
         # Since leaf1 is included and nodeA is its parent, leaf2 (sibling) must be included

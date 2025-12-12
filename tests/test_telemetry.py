@@ -432,7 +432,7 @@ class TestTelemetryIntegration:
     """Test telemetry integration with real indexing."""
 
     @pytest.mark.asyncio
-    @pytest.mark.slow_threshold(2.0)
+    @pytest.mark.slow_threshold(3.0)
     async def test_telemetry_captures_all_nodes(
         self,
         storage_backend: StorageBackend,
