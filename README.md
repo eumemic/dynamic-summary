@@ -309,7 +309,7 @@ Install `grpcio-tools` via `pip-sync requirements/dev.lock` to make sure the com
 ```
 
 - Runs ruff/black/mypy/js-cpd/bandit and the test suite.
-- Enforces per-test 1s timeout by default (override via `RZ_MAX_TEST_DURATION`).
+- Enforces per-test 2s timeout by default (override via `RZ_MAX_TEST_DURATION`).
 - Lists slowest tests when `PYTEST_DURATIONS` is set (e.g., `PYTEST_DURATIONS=25`).
 - Runs tests after type checks pass to fail fast and reduce contention.
 

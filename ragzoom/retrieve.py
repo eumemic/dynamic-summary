@@ -346,7 +346,7 @@ class Retriever:
 
         # Phase 5: Build scores map
         # Use document-scoped scoring service (skip if no query embedding)
-        if query_embedding:
+        if len(query_embedding) > 0:
             doc_scoring_service = ScoringService(self.document_store, self.vector_index)
             scores = doc_scoring_service.compute_scores(
                 query_embedding, coverage_map, candidates, nodes=coverage_result.nodes
