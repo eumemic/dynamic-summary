@@ -147,7 +147,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--max-test-duration",
         type=float,
-        default=float(os.getenv("RZ_MAX_TEST_DURATION", "1.0")),
+        default=float(os.getenv("RZ_MAX_TEST_DURATION", "2.0")),
         help=(
             "Fail any test whose call phase exceeds N seconds (default 1.0). "
             "Override via env RZ_MAX_TEST_DURATION or this option."

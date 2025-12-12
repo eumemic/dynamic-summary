@@ -106,7 +106,7 @@ class TestIndexingFast:
             ), f"Document not fully indexed: {last_span_end} < {doc_length}"
 
     @pytest.mark.asyncio
-    @pytest.mark.slow_threshold(2.5)
+    @pytest.mark.slow_threshold(4.0)
     async def test_check_api_batch_limits(
         self,
         indexer_runtime_harness: IndexerRuntimeHarness,

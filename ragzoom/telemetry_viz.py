@@ -25,6 +25,7 @@ import numpy as np
 import seaborn as sns
 from matplotlib.axes import Axes
 from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
+from matplotlib.layout_engine import ConstrainedLayoutEngine
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from typing_extensions import TypedDict
@@ -605,9 +606,9 @@ class TelemetryVisualizer:
 
         # Create figure with GridSpec for flexible subplot arrangement
         fig = plt.figure(figsize=figsize, constrained_layout=True)
-        set_pads = getattr(fig, "set_constrained_layout_pads", None)
-        if callable(set_pads):
-            set_pads(w_pad=0.125, h_pad=0.3, hspace=ROW_SPACING, wspace=0.09)
+        layout_engine = fig.get_layout_engine()
+        if isinstance(layout_engine, ConstrainedLayoutEngine):
+            layout_engine.set(w_pad=0.125, h_pad=0.3, hspace=ROW_SPACING, wspace=0.09)
 
         # Create main grid with 2 sections for different spacing
         main_gs = GridSpec(2, 1, figure=fig, height_ratios=[3, 2])

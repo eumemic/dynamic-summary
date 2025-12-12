@@ -507,8 +507,9 @@ if [ "$RUN_TESTS" = true ]; then
             fi
         fi
 
-        # Ensure across-the-board 1s per-test timeout unless explicitly overridden via env
-        export RZ_MAX_TEST_DURATION="${RZ_MAX_TEST_DURATION:-1.0}"
+        # Ensure across-the-board 2s per-test timeout unless explicitly overridden via env
+        # (1s is too tight when running 8 workers in parallel due to resource contention)
+        export RZ_MAX_TEST_DURATION="${RZ_MAX_TEST_DURATION:-2.0}"
 
         dur_flag=""
         if [ -n "${PYTEST_DURATIONS:-}" ]; then

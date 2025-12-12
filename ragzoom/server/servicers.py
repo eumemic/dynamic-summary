@@ -312,16 +312,17 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
                 code=grpc.StatusCode.INVALID_ARGUMENT,
                 message="Retrieve requires `document_id`.",
             )
-        if not request.query:
+        num_seeds = request.num_seeds if request.num_seeds >= 0 else None
+        # Query required unless num_seeds=0 (minimal summary mode)
+        if not request.query and num_seeds != 0:
             await _abort(
                 context,
                 code=grpc.StatusCode.INVALID_ARGUMENT,
-                message="Retrieve requires `query`.",
+                message="Retrieve requires `query` (unless num_seeds=0).",
             )
 
         doc_id = request.document_id
         budget = request.budget_tokens or self._state.query_config.budget_tokens
-        num_seeds = request.num_seeds if request.num_seeds > 0 else None
 
         retriever, document_store = _build_retriever(self._state, document_id=doc_id)
 
@@ -345,16 +346,17 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
                 code=grpc.StatusCode.INVALID_ARGUMENT,
                 message="ExecuteQuery requires `document_id`.",
             )
-        if not request.query:
+        num_seeds = request.num_seeds if request.num_seeds >= 0 else None
+        # Query required unless num_seeds=0 (minimal summary mode)
+        if not request.query and num_seeds != 0:
             await _abort(
                 context,
                 code=grpc.StatusCode.INVALID_ARGUMENT,
-                message="ExecuteQuery requires `query`.",
+                message="ExecuteQuery requires `query` (unless num_seeds=0).",
             )
 
         budget_default = self._state.query_config.budget_tokens
         budget = request.budget_tokens or budget_default
-        num_seeds = request.num_seeds if request.num_seeds > 0 else None
         embedding_model = (
             request.embedding_model or self._state.query_config.embedding_model
         )

@@ -769,9 +769,13 @@ def validate(
 
 
 @cli.command()
-@click.argument("query_text")
+@click.argument("query_text", default="")
 @click.option("--document-id", "-d", required=True, help="Document ID to query within")
-@click.option("--num-seeds", type=int, help="Number of seed nodes to retrieve")
+@click.option(
+    "--num-seeds",
+    type=int,
+    help="Number of seed nodes to retrieve (0 for minimal root-only summary)",
+)
 @click.option("--token-budget", type=int, help="Token budget for summary")
 @click.option("--embedding-model", type=str, help="Embedding model for query")
 @click.option(
@@ -804,7 +808,7 @@ def validate(
 @click.option(
     "--viz-coords",
     type=click.Choice(["source-chars", "output-tokens"]),
-    default="output-tokens",
+    default="source-chars",
     help="Coordinate system for tree visualization (source-chars=source position, output-tokens=output budget)",
 )
 @click.option(
@@ -837,6 +841,15 @@ def query(
     profile: bool,
 ) -> None:
     """Query the system and get a summary."""
+    # Handle query/num_seeds defaults
+    if not query_text:
+        # No query → minimal summary mode
+        if num_seeds is not None and num_seeds > 0:
+            raise click.UsageError("Cannot specify --num-seeds > 0 without a query")
+        num_seeds = 0
+    elif num_seeds is None and token_budget is None:
+        # Query provided but no num_seeds/budget → default to 1 seed, unlimited budget
+        num_seeds = 1
 
     setup_command_environment(None, debug)
 
