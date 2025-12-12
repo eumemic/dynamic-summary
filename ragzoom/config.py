@@ -186,11 +186,11 @@ class IndexConfig:
                 f"got {self.preceding_context_min_forest_completeness}"
             )
 
-        # Validate num_seeds if provided
+        # Validate num_seeds if provided (0 is valid for minimal summary mode)
         if self.preceding_context_num_seeds is not None:
-            if self.preceding_context_num_seeds < 1:
+            if self.preceding_context_num_seeds < 0:
                 raise ValueError(
-                    f"preceding_context_num_seeds must be >= 1, "
+                    f"preceding_context_num_seeds must be >= 0, "
                     f"got {self.preceding_context_num_seeds}"
                 )
 
