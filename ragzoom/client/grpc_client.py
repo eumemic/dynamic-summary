@@ -470,7 +470,10 @@ class GrpcRagzoomClient:
         request = pb2.ExportTelemetryRequest(document_id=document_id)
         try:
             export_rpc = getattr(self._workers, "ExportTelemetry")
-            response = export_rpc(request, timeout=self._timeout)
+            # Use stream timeout because fidelity computation requires embedding
+            # parent summaries on-demand, which can take significant time for
+            # large trees (many API calls to embedding service)
+            response = export_rpc(request, timeout=self._stream_timeout)
         except grpc.RpcError as error:  # pragma: no cover
             raise _map_rpc_error(error) from error
 
