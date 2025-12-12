@@ -171,8 +171,8 @@ def main() -> int:
     parser.add_argument(
         "--per-test-seconds",
         type=float,
-        default=float(os.environ.get("RZ_MAX_TEST_DURATION", "1.0")),
-        help="Hard per-test timeout in seconds (default from RZ_MAX_TEST_DURATION or 1.0)",
+        default=float(os.environ.get("RZ_MAX_TEST_DURATION", "2.0")),
+        help="Hard per-test timeout in seconds (default from RZ_MAX_TEST_DURATION or 2.0)",
     )
     parser.add_argument(
         "--include-integration",

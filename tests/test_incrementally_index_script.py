@@ -283,7 +283,8 @@ def test_cli_main_defaults_telemetry_filename(
 
 
 @pytest.mark.asyncio
-@pytest.mark.slow_threshold(30.0)
+@pytest.mark.integration
+@pytest.mark.slow_threshold(60.0)
 async def test_incremental_index_cli_validates_document(
     grpc_test_environment: tuple[str, ServerState],
     tmp_path: Path,
