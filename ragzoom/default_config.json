@@ -6,7 +6,7 @@
   "max_retries": 3,
   "embedding_batch_size": 100,
   "use_anti_verbatim_vaccine": true,
+  "preceding_context_num_seeds": 0,
   "preceding_context_verbatim_tokens": 2000,
-  "preceding_context_min_forest_completeness": 0.25,
-  "preceding_context_num_seeds": 3
+  "preceding_context_min_forest_completeness": 0
 }
