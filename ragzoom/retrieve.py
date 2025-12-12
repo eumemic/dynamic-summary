@@ -23,6 +23,7 @@ from ragzoom.retrieval import (
 )
 from ragzoom.retrieval.telemetry_collector import TelemetryCollector
 from ragzoom.telemetry_query import QueryTelemetry
+from ragzoom.vector_api import Vector
 
 if TYPE_CHECKING:
     from ragzoom.contracts.vector_index import VectorIndex
@@ -75,7 +76,7 @@ class Retriever:
 
     async def retrieve_async(
         self,
-        query: str,
+        query: str = "",
         num_seeds: int | None = None,
         budget_tokens: int | None = None,
         document_id: str | None = None,
@@ -220,58 +221,68 @@ class Retriever:
                 # Leaves are returned sorted by span_start, so first one is the horizon
                 verbatim_horizon = verbatim_leaves[0].span_start
 
-        # Phase 1: Get query embedding
-        query_embedding = self.embedding_service.get_query_embedding(
-            query, effective_doc_id
-        )
-        if telemetry_collector:
-            telemetry_collector.end_phase("embedding")
-            telemetry_collector.start_phase()
-            telemetry_collector.record_metric(
-                "embedding_model", self.query_config.embedding_model
-            )
-
-        # Phase 2: Initial retrieval (always via VectorIndex v2)
-        # Filter seeds to only come from before verbatim horizon
-        k_candidates = int(num_seeds * self.query_config.mmr_k_multiplier)
+        # Phase 1: Get query embedding (skip if num_seeds=0, no search needed)
         from ragzoom.retrieval import mmr
         from ragzoom.retrieval import similarity as sim
 
-        filters: list[VectorFilter] = []
-        if effective_doc_id:
-            filters.append(DocumentIdFilter(effective_doc_id))
-        if verbatim_horizon is not None:
-            filters.append(SpanEndLtFilter(verbatim_horizon))
-        if is_windowed and actual_end is not None:
-            filters.append(SpanOverlapsFilter(actual_start, actual_end))
-        raw_candidates = self.vector_index.search_similar(
-            query_embedding,
-            k_candidates,
-            filters if filters else None,
-        )
-        # Filter out stale vectors that don't exist in storage to preserve invariants
-        cand_ids = [v.id for v in raw_candidates]
-        existing_nodes = self.document_store.nodes.get_nodes(cand_ids)
-        existing_ids = {n.id for n in existing_nodes}
-        vec_candidates = [v for v in raw_candidates if v.id in existing_ids]
-        if telemetry_collector:
-            telemetry_collector.record_metric(
-                "candidates_filtered", len(vec_candidates)
+        if num_seeds == 0:
+            # num_seeds=0: skip embedding and vector search, produce minimal summary
+            query_embedding: list[float] = []
+            selected_ids: list[str] = []
+            vec_candidates: list[Vector] = []
+            if telemetry_collector:
+                telemetry_collector.end_phase("embedding")
+                telemetry_collector.start_phase()
+                telemetry_collector.record_metric("candidates_retrieved", 0)
+        else:
+            query_embedding = self.embedding_service.get_query_embedding(
+                query, effective_doc_id
             )
-        if telemetry_collector:
-            telemetry_collector.end_phase("search")
-            telemetry_collector.start_phase()
-            telemetry_collector.record_metric(
-                "candidates_retrieved", len(vec_candidates)
-            )
+            if telemetry_collector:
+                telemetry_collector.end_phase("embedding")
+                telemetry_collector.start_phase()
+                telemetry_collector.record_metric(
+                    "embedding_model", self.query_config.embedding_model
+                )
 
-        # Phase 3: Apply MMR selection using generic math over canonical vectors
-        selected_ids = mmr.select_diverse(
-            query_embedding,
-            vec_candidates,
-            num_seeds,
-            self.query_config.mmr_lambda,
-        )
+            # Phase 2: Initial retrieval (always via VectorIndex v2)
+            # Filter seeds to only come from before verbatim horizon
+            k_candidates = int(num_seeds * self.query_config.mmr_k_multiplier)
+            filters: list[VectorFilter] = []
+            if effective_doc_id:
+                filters.append(DocumentIdFilter(effective_doc_id))
+            if verbatim_horizon is not None:
+                filters.append(SpanEndLtFilter(verbatim_horizon))
+            if is_windowed and actual_end is not None:
+                filters.append(SpanOverlapsFilter(actual_start, actual_end))
+            raw_candidates = self.vector_index.search_similar(
+                query_embedding,
+                k_candidates,
+                filters if filters else None,
+            )
+            # Filter out stale vectors that don't exist in storage to preserve invariants
+            cand_ids = [v.id for v in raw_candidates]
+            existing_nodes = self.document_store.nodes.get_nodes(cand_ids)
+            existing_ids = {n.id for n in existing_nodes}
+            vec_candidates = [v for v in raw_candidates if v.id in existing_ids]
+            if telemetry_collector:
+                telemetry_collector.record_metric(
+                    "candidates_filtered", len(vec_candidates)
+                )
+            if telemetry_collector:
+                telemetry_collector.end_phase("search")
+                telemetry_collector.start_phase()
+                telemetry_collector.record_metric(
+                    "candidates_retrieved", len(vec_candidates)
+                )
+
+            # Phase 3: Apply MMR selection using generic math over canonical vectors
+            selected_ids = mmr.select_diverse(
+                query_embedding,
+                vec_candidates,
+                num_seeds,
+                self.query_config.mmr_lambda,
+            )
         seed_count = len(selected_ids)
         verbatim_count = len(pinned_ids) if pinned_ids else 0
 
@@ -334,11 +345,15 @@ class Retriever:
             telemetry_collector.record_metric("coverage_size", len(coverage_map))
 
         # Phase 5: Build scores map
-        # Use document-scoped scoring service
-        doc_scoring_service = ScoringService(self.document_store, self.vector_index)
-        scores = doc_scoring_service.compute_scores(
-            query_embedding, coverage_map, candidates, nodes=coverage_result.nodes
-        )
+        # Use document-scoped scoring service (skip if no query embedding)
+        if len(query_embedding) > 0:
+            doc_scoring_service = ScoringService(self.document_store, self.vector_index)
+            scores = doc_scoring_service.compute_scores(
+                query_embedding, coverage_map, candidates, nodes=coverage_result.nodes
+            )
+        else:
+            # num_seeds=0: no query, use default scores (0.0 for all nodes)
+            scores = {node_id: 0.0 for node_id in coverage_map}
         if telemetry_collector:
             telemetry_collector.end_phase("scoring")
             telemetry_collector.start_phase()
@@ -430,7 +445,7 @@ class Retriever:
     # jscpd:ignore-start - Sync wrapper for async method (legitimate duplication pattern)
     def retrieve(
         self,
-        query: str,
+        query: str = "",
         num_seeds: int | None = None,
         budget_tokens: int | None = None,
         document_id: str | None = None,
