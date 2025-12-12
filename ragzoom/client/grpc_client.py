@@ -261,7 +261,7 @@ class GrpcRagzoomClient:
             query=query,
             document_id=document_id,
             budget_tokens=budget_tokens or 0,
-            num_seeds=num_seeds or 0,
+            num_seeds=num_seeds if num_seeds is not None else -1,
             embedding_model=embedding_model or "",
             debug=debug,
             viz_width=viz_width,
