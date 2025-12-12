@@ -315,19 +315,15 @@ class Retriever:
                 telemetry_collector.end_phase("embedding")
                 telemetry_collector.start_phase()
                 telemetry_collector.record_metric("candidates_retrieved", 0)
-        elif query_embedding is not None:
-            # Pre-computed embedding provided (e.g., during indexing)
-            effective_query_embedding = query_embedding
-            if telemetry_collector:
-                telemetry_collector.end_phase("embedding")
-                telemetry_collector.start_phase()
-                telemetry_collector.record_metric(
-                    "embedding_model", self.query_config.embedding_model
-                )
         else:
-            effective_query_embedding = self.embedding_service.get_query_embedding(
-                query, effective_doc_id
-            )
+            # Get embedding: either pre-computed or computed on demand
+            if query_embedding is not None:
+                # Pre-computed embedding provided (e.g., during indexing)
+                effective_query_embedding = query_embedding
+            else:
+                effective_query_embedding = self.embedding_service.get_query_embedding(
+                    query, effective_doc_id
+                )
             if telemetry_collector:
                 telemetry_collector.end_phase("embedding")
                 telemetry_collector.start_phase()
