@@ -293,21 +293,17 @@ class TelemetryVisualizer:
 
         embedding_cost = (total_embedding_tokens / 1000) * embedding_cost_per_1k
 
-        # Calculate summary cost from all attempts
+        # Calculate summary cost from all attempts (including leaf node context summaries)
         summary_cost = 0.0
         for node in nodes:
-            height = node["height"]
-            if height > 0:  # Summary nodes only
-                attempts = node.get("summary_attempts", [])
-                for attempt in attempts:
-                    prompt_tokens = attempt.get("prompt_tokens", 0)
-                    completion_tokens = attempt.get("completion_tokens", 0)
+            attempts = node.get("summary_attempts", [])
+            for attempt in attempts:
+                prompt_tokens = attempt.get("prompt_tokens", 0)
+                completion_tokens = attempt.get("completion_tokens", 0)
 
-                    input_cost = (prompt_tokens / 1000) * summary_input_cost_per_1k
-                    output_cost = (
-                        completion_tokens / 1000
-                    ) * summary_output_cost_per_1k
-                    summary_cost += input_cost + output_cost
+                input_cost = (prompt_tokens / 1000) * summary_input_cost_per_1k
+                output_cost = (completion_tokens / 1000) * summary_output_cost_per_1k
+                summary_cost += input_cost + output_cost
 
         return embedding_cost + summary_cost
 
@@ -801,25 +797,21 @@ class TelemetryVisualizer:
 
         embedding_cost = (total_embedding_tokens / 1000) * embedding_cost_per_1k
 
-        # Process all attempts from summary nodes
+        # Process all attempts (including leaf node context summaries)
         for node in nodes:
-            height = node["height"]
-            if height > 0:  # Summary nodes only
-                attempts = node.get("summary_attempts", [])
-                for attempt_num, attempt in enumerate(attempts, 1):
-                    prompt_tokens = attempt.get("prompt_tokens", 0)
-                    completion_tokens = attempt.get("completion_tokens", 0)
+            attempts = node.get("summary_attempts", [])
+            for attempt_num, attempt in enumerate(attempts, 1):
+                prompt_tokens = attempt.get("prompt_tokens", 0)
+                completion_tokens = attempt.get("completion_tokens", 0)
 
-                    # Calculate cost for this attempt
-                    input_cost = (prompt_tokens / 1000) * summary_input_cost_per_1k
-                    output_cost = (
-                        completion_tokens / 1000
-                    ) * summary_output_cost_per_1k
-                    attempt_cost = input_cost + output_cost
+                # Calculate cost for this attempt
+                input_cost = (prompt_tokens / 1000) * summary_input_cost_per_1k
+                output_cost = (completion_tokens / 1000) * summary_output_cost_per_1k
+                attempt_cost = input_cost + output_cost
 
-                    # Group attempts 5+ together
-                    display_num = min(attempt_num, 5)
-                    costs_by_attempt[display_num] += attempt_cost
+                # Group attempts 5+ together
+                display_num = min(attempt_num, 5)
+                costs_by_attempt[display_num] += attempt_cost
 
         # Calculate total cost (including embeddings now)
         summary_cost = sum(costs_by_attempt.values())
