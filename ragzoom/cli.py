@@ -1615,15 +1615,15 @@ def doctor() -> None:
 @click.option(
     "--num-samples",
     "-n",
-    default=20,
+    default=100,
     type=int,
     help="Number of nodes to sample (-1 for all)",
 )
 @click.option(
     "--model",
     "-m",
-    default=None,
-    help="Model for evaluation (default: use summary_model from config)",
+    default="gpt-5",
+    help="Model for evaluation",
 )
 @click.option(
     "--threshold",
@@ -1643,7 +1643,7 @@ def evaluate(
     ctx: click.Context,
     document_id: str,
     num_samples: int,
-    model: str | None,
+    model: str,
     threshold: float,
     yes: bool,
 ) -> None:
@@ -1664,8 +1664,7 @@ def evaluate(
         operational_config = ctx.obj["operational_config"]
         index_config: IndexConfig = ctx.obj["index_config"]
 
-        # Use configured model or override
-        eval_model = model or index_config.summary_model
+        eval_model = model
 
         # Get store and document
         store = create_store_with_docker(
@@ -1689,27 +1688,38 @@ def evaluate(
             )
             sys.exit(1)
 
-        total_inner = len(inner_nodes)
+        # Filter to valid inner nodes (those with both children)
+        valid_inner_nodes = []
+        for node in inner_nodes:
+            left_child, right_child = doc_store.tree.get_children(node.id)
+            if left_child is not None and right_child is not None:
+                valid_inner_nodes.append((node, left_child, right_child))
+
+        total_inner = len(valid_inner_nodes)
+
+        if total_inner == 0:
+            click.echo(
+                "No valid inner nodes found (all nodes missing children).", err=True
+            )
+            sys.exit(1)
 
         # Sample nodes
         if num_samples == -1 or num_samples >= total_inner:
-            selected_nodes = inner_nodes
+            selected_nodes = valid_inner_nodes
         else:
-            selected_nodes = random.sample(inner_nodes, num_samples)
+            selected_nodes = random.sample(valid_inner_nodes, num_samples)
 
         # Prepare node data for evaluation
-        # Tuple format: (node_id, summary, left_text, right_text, preceding_context,
+        # Tuple format: (node_id, summary, source_text, preceding_context,
         #                height, level_index, span_start, compression_ratio)
-        node_data: list[tuple[str, str, str, str, str | None, int, int, int, float]] = (
-            []
-        )
-        for node in selected_nodes:
-            left_child, right_child = doc_store.tree.get_children(node.id)
-            if left_child is None or right_child is None:
-                continue  # Skip malformed nodes
+        node_data: list[tuple[str, str, str, str | None, int, int, int, float]] = []
+        for node, left_child, right_child in selected_nodes:
 
             preceding = doc_store.tree.get_preceding_neighbor(node.id)
             preceding_text = preceding.text if preceding else None
+
+            # Concatenate children texts as the summarizer sees them
+            source_text = left_child.text + right_child.text
 
             # Compression ratio: children tokens / summary tokens
             children_tokens = left_child.token_count + right_child.token_count
@@ -1721,8 +1731,7 @@ def evaluate(
                 (
                     node.id,
                     node.text,
-                    left_child.text,
-                    right_child.text,
+                    source_text,
                     preceding_text,
                     node.height,
                     node.level_index,

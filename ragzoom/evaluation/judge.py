@@ -14,15 +14,15 @@ SYSTEM_PROMPT = """You are an expert evaluator assessing the quality of text sum
 
 You will be given:
 1. A SUMMARY to evaluate
-2. The LEFT CHILD and RIGHT CHILD texts that were combined and summarized
+2. The SOURCE TEXT that was summarized
 3. Optionally, PRECEDING CONTEXT (the summary of content that came before)
 
-The summary was created by compressing the children's text to roughly half its length. Information loss is expected and acceptable - your job is to assess whether the RIGHT information was kept.
+The summary was created by compressing the source text to roughly half its length. Information loss is expected and acceptable - your job is to assess whether the RIGHT information was kept.
 
 Evaluate the summary on these four dimensions:
 
 ## RETENTION (1-5)
-Does the summary retain the most important information from the children?
+Does the summary retain the most important information from the source?
 - Consider: key events, important details, essential context
 - Remember: ~50% compression means things MUST be cut - focus on whether the RIGHT things were kept
 - 5: Excellent prioritization of important content
@@ -40,9 +40,9 @@ Does the summary avoid importing facts from the preceding context as if they occ
 
 ## FAITHFULNESS (1-5)
 Does the summary avoid hallucination and knowledge contamination?
-- All facts in the summary should be traceable to the children or context
+- All facts in the summary should be traceable to the source or context
 - The summary MUST NOT include information the model knows from training data but isn't in the inputs
-- Example: If summarizing The Hobbit, don't hint at plot points not yet revealed in the children
+- Example: If summarizing The Hobbit, don't hint at plot points not yet revealed in the source
 - 5: Completely faithful to inputs
 - 3: Minor inaccuracies or slight embellishments
 - 1: Contains fabricated facts or spoilers from external knowledge
@@ -71,8 +71,7 @@ IMPORTANT: The explanation field should ONLY describe defects - reasons points w
 
 def _build_user_prompt(
     summary: str,
-    left_text: str,
-    right_text: str,
+    source_text: str,
     preceding_context: str | None,
 ) -> str:
     """Build the user prompt with the texts to evaluate."""
@@ -81,8 +80,7 @@ def _build_user_prompt(
     if preceding_context:
         parts.append(f"## PRECEDING CONTEXT\n{preceding_context}")
 
-    parts.append(f"## LEFT CHILD\n{left_text}")
-    parts.append(f"## RIGHT CHILD\n{right_text}")
+    parts.append(f"## SOURCE TEXT\n{source_text}")
     parts.append(f"## SUMMARY TO EVALUATE\n{summary}")
 
     return "\n\n".join(parts)
@@ -106,8 +104,7 @@ def _parse_response(response_text: str) -> dict[str, DimensionScore]:
 async def evaluate_node(
     *,
     summary: str,
-    left_text: str,
-    right_text: str,
+    source_text: str,
     preceding_context: str | None,
     chat_model: ChatModel,
 ) -> dict[str, DimensionScore]:
@@ -115,8 +112,7 @@ async def evaluate_node(
 
     Args:
         summary: The summary text to evaluate
-        left_text: Text of the left child node
-        right_text: Text of the right child node
+        source_text: The original text that was summarized
         preceding_context: Text of the preceding neighbor (or None)
         chat_model: ChatModel instance for LLM calls
 
@@ -128,8 +124,7 @@ async def evaluate_node(
     """
     user_prompt = _build_user_prompt(
         summary=summary,
-        left_text=left_text,
-        right_text=right_text,
+        source_text=source_text,
         preceding_context=preceding_context,
     )
 
@@ -165,14 +160,14 @@ async def evaluate_node(
 
 
 async def evaluate_nodes(
-    nodes: list[tuple[str, str, str, str, str | None, int, int, int, float]],
+    nodes: list[tuple[str, str, str, str | None, int, int, int, float]],
     chat_model: ChatModel,
     max_concurrent: int = 10,
 ) -> list[NodeEvaluation]:
     """Evaluate multiple nodes in parallel with concurrency control.
 
     Args:
-        nodes: List of tuples (node_id, summary, left_text, right_text,
+        nodes: List of tuples (node_id, summary, source_text,
                preceding_context, height, level_index, span_start, compression_ratio)
         chat_model: ChatModel instance for LLM calls
         max_concurrent: Maximum concurrent API calls
@@ -185,8 +180,7 @@ async def evaluate_nodes(
     async def evaluate_with_limit(
         node_id: str,
         summary: str,
-        left_text: str,
-        right_text: str,
+        source_text: str,
         preceding_context: str | None,
         height: int,
         level_index: int,
@@ -196,8 +190,7 @@ async def evaluate_nodes(
         async with semaphore:
             scores = await evaluate_node(
                 summary=summary,
-                left_text=left_text,
-                right_text=right_text,
+                source_text=source_text,
                 preceding_context=preceding_context,
                 chat_model=chat_model,
             )
@@ -217,13 +210,12 @@ async def evaluate_nodes(
         evaluate_with_limit(
             node_id=n[0],
             summary=n[1],
-            left_text=n[2],
-            right_text=n[3],
-            preceding_context=n[4],
-            height=n[5],
-            level_index=n[6],
-            span_start=n[7],
-            compression_ratio=n[8],
+            source_text=n[2],
+            preceding_context=n[3],
+            height=n[4],
+            level_index=n[5],
+            span_start=n[6],
+            compression_ratio=n[7],
         )
         for n in nodes
     ]

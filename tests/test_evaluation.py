@@ -208,17 +208,14 @@ class TestJudgePromptConstruction:
         """User prompt should include all sections when context provided."""
         prompt = _build_user_prompt(
             summary="This is the summary",
-            left_text="Left child content",
-            right_text="Right child content",
+            source_text="The source text content",
             preceding_context="Previous context",
         )
 
         assert "## PRECEDING CONTEXT" in prompt
         assert "Previous context" in prompt
-        assert "## LEFT CHILD" in prompt
-        assert "Left child content" in prompt
-        assert "## RIGHT CHILD" in prompt
-        assert "Right child content" in prompt
+        assert "## SOURCE TEXT" in prompt
+        assert "The source text content" in prompt
         assert "## SUMMARY TO EVALUATE" in prompt
         assert "This is the summary" in prompt
 
@@ -226,14 +223,12 @@ class TestJudgePromptConstruction:
         """User prompt should omit context section when None."""
         prompt = _build_user_prompt(
             summary="This is the summary",
-            left_text="Left child content",
-            right_text="Right child content",
+            source_text="The source text content",
             preceding_context=None,
         )
 
         assert "## PRECEDING CONTEXT" not in prompt
-        assert "## LEFT CHILD" in prompt
-        assert "## RIGHT CHILD" in prompt
+        assert "## SOURCE TEXT" in prompt
         assert "## SUMMARY TO EVALUATE" in prompt
 
 
@@ -317,8 +312,7 @@ class TestEvaluateNode:
 
         result = await evaluate_node(
             summary="Test summary",
-            left_text="Left text",
-            right_text="Right text",
+            source_text="Left text Right text",
             preceding_context="Context",
             chat_model=mock_chat_model,
         )
@@ -343,8 +337,7 @@ class TestEvaluateNode:
         with pytest.raises(LLMError) as exc_info:
             await evaluate_node(
                 summary="Test",
-                left_text="Left",
-                right_text="Right",
+                source_text="Left Right",
                 preceding_context=None,
                 chat_model=mock_chat_model,
             )
@@ -369,8 +362,7 @@ class TestEvaluateNode:
         with pytest.raises(LLMError) as exc_info:
             await evaluate_node(
                 summary="Test",
-                left_text="Left",
-                right_text="Right",
+                source_text="Left Right",
                 preceding_context=None,
                 chat_model=mock_chat_model,
             )
@@ -449,6 +441,7 @@ class TestPrintReport:
             "(2, 0) @ 100" in captured.out
         )  # Coordinate format: (height, level_index) @ span_start
         assert "R=1" in captured.out  # Abbreviated format
+        assert "avg=" in captured.out  # Average score shown
         assert "Very poor retention" in captured.out
         assert "FAILED" in captured.out
 

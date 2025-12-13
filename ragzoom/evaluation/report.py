@@ -5,6 +5,60 @@ import click
 from ragzoom.evaluation.types import DIMENSIONS, EvaluationReport, NodeEvaluation
 
 
+def _format_histograms_side_by_side(
+    all_scores: dict[str, list[int]], height: int = 8
+) -> list[str]:
+    """Format vertical ASCII histograms for all dimensions side by side."""
+    dims = list(all_scores.keys())
+    all_counts = {
+        dim: [scores.count(i) for i in range(1, 6)]
+        for dim, scores in all_scores.items()
+    }
+    max_counts = {
+        dim: max(counts) if counts else 1 for dim, counts in all_counts.items()
+    }
+
+    lines = []
+
+    # Dimension labels centered over each histogram (width 20 each, spacing 4)
+    labels = [f"{dim.capitalize():^20}" for dim in dims]
+    lines.append("    ".join(labels))
+    lines.append("")
+
+    # Build histogram rows
+    for row in range(height, 0, -1):
+        row_parts = []
+        for dim in dims:
+            counts = all_counts[dim]
+            max_count = max_counts[dim]
+            threshold = (row / height) * max_count
+            cells = []
+            for count in counts:
+                if count >= threshold and count > 0:
+                    cells.append(" ██ ")
+                else:
+                    cells.append("    ")
+            row_parts.append("".join(cells))
+        lines.append("    ".join(row_parts))
+
+    # X-axis separators
+    separator = "─" * 20
+    lines.append("    ".join([separator] * len(dims)))
+
+    # X-axis labels (1-5)
+    axis_labels = "  1   2   3   4   5 "
+    lines.append("    ".join([axis_labels] * len(dims)))
+
+    # Counts
+    count_parts = []
+    for dim in dims:
+        count_strs = [f"{c:^4}" for c in all_counts[dim]]
+        count_parts.append("".join(count_strs))
+    lines.append("    ".join(count_parts))
+
+    return lines
+
+
 def _format_score_line(dim: str, mean: float, std: float) -> str:
     """Format a single dimension's score line."""
     dim_display = dim.capitalize().ljust(12)
@@ -15,21 +69,23 @@ def _format_evaluation(evaluation: NodeEvaluation) -> list[str]:
     """Format an evaluation for display."""
     lines = []
 
-    # Header line with node info and all scores
+    # Header line with node info, all scores, and average
     scores_str = ", ".join(
         f"{dim[0].upper()}={getattr(evaluation, dim).score}" for dim in DIMENSIONS
     )
     coord = f"({evaluation.height}, {evaluation.level_index})"
-    header = f"  Node {coord} @ {evaluation.span_start}: {scores_str}"
+    header = (
+        f"  Node {coord} @ {evaluation.span_start}: "
+        f"{scores_str}, avg={evaluation.mean_score:.1f}"
+    )
     lines.append(header)
+    lines.append(f"    id: {evaluation.node_id}")
 
-    # Show explanation for lowest-scoring dimension
+    # Show full explanation for lowest-scoring dimension
     min_dim = min(DIMENSIONS, key=lambda d: getattr(evaluation, d).score)
     score = getattr(evaluation, min_dim)
-    explanation = score.explanation
-    if len(explanation) > 100:
-        explanation = explanation[:97] + "..."
-    lines.append(f'    {min_dim}: "{explanation}"')
+    if score.explanation:
+        lines.append(f'    {min_dim}: "{score.explanation}"')
 
     return lines
 
@@ -69,6 +125,15 @@ def print_report(report: EvaluationReport, threshold: float) -> None:
     stds = report.std_scores()
     for dim in DIMENSIONS:
         click.echo(_format_score_line(dim, means[dim], stds[dim]))
+
+    # Histograms for all dimensions side by side
+    click.echo()
+    click.echo("SCORE DISTRIBUTIONS")
+    all_scores = {
+        dim: [getattr(e, dim).score for e in report.evaluations] for dim in DIMENSIONS
+    }
+    for line in _format_histograms_side_by_side(all_scores):
+        click.echo(f"  {line}")
 
     # Lowest-scoring nodes (show bottom 5 by min score)
     sorted_evals = sorted(report.evaluations, key=lambda e: (e.min_score, e.mean_score))
