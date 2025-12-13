@@ -60,7 +60,7 @@ You MUST respond with valid JSON in this exact format:
 
 Rules:
 - Only include themes that appeared in 3+ of the 10 analyses
-- Each node_id should appear in at most one issue (pick the most relevant)
+- CRITICAL: Each node_id must appear in EXACTLY ONE issue. If a node has multiple problems, assign it to its PRIMARY issue category only. Do not duplicate nodes across issues.
 - Use the exact node_ids from the defect data
 - Only include issues that affect 2+ nodes"""
 
@@ -203,12 +203,20 @@ Identify recurring themes that appeared in 3+ analyses and assign node IDs to ea
     except json.JSONDecodeError:
         return []
 
+    # Track which nodes have been assigned to enforce one-issue-per-node
+    assigned_nodes: set[str] = set()
+
     issues: list[RecurringIssue] = []
     for issue_data in data.get("issues", []):
         raw_node_ids = issue_data.get("node_ids", [])
         if not isinstance(raw_node_ids, list):
             continue
-        node_ids = [nid for nid in raw_node_ids if nid in valid_node_ids]
+        # Filter to valid nodes that haven't been assigned yet
+        node_ids = [
+            nid
+            for nid in raw_node_ids
+            if nid in valid_node_ids and nid not in assigned_nodes
+        ]
         if len(node_ids) < 2:
             continue
 
@@ -224,6 +232,9 @@ Identify recurring themes that appeared in 3+ analyses and assign node IDs to ea
         sorted_nodes = sorted(node_ids, key=lambda nid: scores_by_id[nid])
         sorted_scores = tuple(scores_by_id[nid] for nid in sorted_nodes)
         overall_mean = mean(sorted_scores) if sorted_scores else 0.0
+
+        # Mark these nodes as assigned
+        assigned_nodes.update(sorted_nodes)
 
         issues.append(
             RecurringIssue(

@@ -66,7 +66,7 @@ def _format_score_line(dim: str, mean: float, std: float, p5: float, p10: float)
     return f"  {dim_display} {mean:.2f} +/- {std:.2f}    p5={p5:.1f}  p10={p10:.1f}"
 
 
-def _format_issue(issue: RecurringIssue) -> list[str]:
+def _format_issue(issue: RecurringIssue, max_nodes: int = 5) -> list[str]:
     """Format a recurring issue for display."""
     lines = []
     # Header with name, score, and count
@@ -76,12 +76,15 @@ def _format_issue(issue: RecurringIssue) -> list[str]:
     # Description
     if issue.description:
         lines.append(f"    {issue.description}")
-    # Node IDs with scores (abbreviated to 8 chars, sorted by score ascending)
+    # Show worst N nodes with scores (sorted by score ascending)
     node_strs = [
         f"{nid[:8]}({score:.1f})"
-        for nid, score in zip(issue.node_ids, issue.node_scores)
+        for nid, score in zip(issue.node_ids[:max_nodes], issue.node_scores[:max_nodes])
     ]
-    lines.append(f"    Nodes: {', '.join(node_strs)}")
+    remaining = issue.node_count - max_nodes
+    if remaining > 0:
+        node_strs.append(f"...+{remaining} more")
+    lines.append(f"    Worst: {', '.join(node_strs)}")
     return lines
 
 
