@@ -57,11 +57,16 @@ Does the summary flow smoothly from the preceding context?
 
 Respond with a JSON object containing your evaluation:
 {
-  "retention": {"score": <1-5>, "explanation": "<brief explanation>"},
-  "isolation": {"score": <1-5>, "explanation": "<brief explanation>"},
-  "faithfulness": {"score": <1-5>, "explanation": "<brief explanation>"},
-  "continuity": {"score": <1-5>, "explanation": "<brief explanation>"}
-}"""
+  "retention": {"score": <1-5>, "explanation": "<defects only>"},
+  "isolation": {"score": <1-5>, "explanation": "<defects only>"},
+  "faithfulness": {"score": <1-5>, "explanation": "<defects only>"},
+  "continuity": {"score": <1-5>, "explanation": "<defects only>"}
+}
+
+IMPORTANT: The explanation field should ONLY describe defects - reasons points were deducted.
+- Do NOT mention what went right or praise good aspects
+- If the score is 5 (perfect), the explanation MUST be an empty string ""
+- For scores 1-4, briefly explain what specific issues caused the deduction"""
 
 
 def _build_user_prompt(
@@ -160,7 +165,7 @@ async def evaluate_node(
 
 
 async def evaluate_nodes(
-    nodes: list[tuple[str, str, str, str, str | None, int, float, float]],
+    nodes: list[tuple[str, str, str, str, str | None, int, int, int, float]],
     chat_model: ChatModel,
     max_concurrent: int = 10,
 ) -> list[NodeEvaluation]:
@@ -168,7 +173,7 @@ async def evaluate_nodes(
 
     Args:
         nodes: List of tuples (node_id, summary, left_text, right_text,
-               preceding_context, height, compression_ratio, position_fraction)
+               preceding_context, height, level_index, span_start, compression_ratio)
         chat_model: ChatModel instance for LLM calls
         max_concurrent: Maximum concurrent API calls
 
@@ -184,8 +189,9 @@ async def evaluate_nodes(
         right_text: str,
         preceding_context: str | None,
         height: int,
+        level_index: int,
+        span_start: int,
         compression_ratio: float,
-        position_fraction: float,
     ) -> NodeEvaluation:
         async with semaphore:
             scores = await evaluate_node(
@@ -198,8 +204,9 @@ async def evaluate_nodes(
             return NodeEvaluation(
                 node_id=node_id,
                 height=height,
+                level_index=level_index,
+                span_start=span_start,
                 compression_ratio=compression_ratio,
-                position_fraction=position_fraction,
                 retention=scores["retention"],
                 isolation=scores["isolation"],
                 faithfulness=scores["faithfulness"],
@@ -214,8 +221,9 @@ async def evaluate_nodes(
             right_text=n[3],
             preceding_context=n[4],
             height=n[5],
-            compression_ratio=n[6],
-            position_fraction=n[7],
+            level_index=n[6],
+            span_start=n[7],
+            compression_ratio=n[8],
         )
         for n in nodes
     ]
