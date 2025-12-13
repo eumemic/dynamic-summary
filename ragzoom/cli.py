@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
 import os
+import random
 import shutil
 import sys
 from collections.abc import Iterable, Mapping
@@ -1606,6 +1608,187 @@ def doctor() -> None:
 # Telemetry commands are available via optional dependencies
 # Install with: pip install ragzoom[telemetry]
 # Usage: ragzoom-telemetry analyze|compare|visualize
+
+
+@cli.command()
+@click.argument("document_id")
+@click.option(
+    "--num-samples",
+    "-n",
+    default=20,
+    type=int,
+    help="Number of nodes to sample (-1 for all)",
+)
+@click.option(
+    "--model",
+    "-m",
+    default=None,
+    help="Model for evaluation (default: use summary_model from config)",
+)
+@click.option(
+    "--threshold",
+    "-t",
+    default=3.0,
+    type=float,
+    help="Minimum mean score to pass (1-5)",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompt",
+)
+@click.pass_context
+def evaluate(
+    ctx: click.Context,
+    document_id: str,
+    num_samples: int,
+    model: str | None,
+    threshold: float,
+    yes: bool,
+) -> None:
+    """Evaluate summary quality for a document using LLM-as-judge.
+
+    Evaluates summaries on four dimensions:
+      - Retention: Keeps most important details
+      - Isolation: Doesn't bleed facts from preceding context
+      - Faithfulness: No hallucination or knowledge contamination
+      - Continuity: Flows smoothly from preceding context
+
+    Examples:
+      ragzoom evaluate my-document
+      ragzoom evaluate my-document -n 50 --model gpt-4o
+      ragzoom evaluate my-document -n -1 -y  # All nodes, no confirmation
+    """
+    try:
+        operational_config = ctx.obj["operational_config"]
+        index_config: IndexConfig = ctx.obj["index_config"]
+
+        # Use configured model or override
+        eval_model = model or index_config.summary_model
+
+        # Get store and document
+        store = create_store_with_docker(
+            operational_config, embedding_model=index_config.embedding_model
+        )
+        doc_store = store.for_document(document_id)
+
+        # Verify document exists
+        doc_meta = doc_store.get_metadata()
+        if doc_meta is None:
+            click.echo(f"Document '{document_id}' not found.", err=True)
+            sys.exit(1)
+
+        # Get all inner nodes (height > 0)
+        all_nodes = doc_store.nodes.get_all()
+        inner_nodes = [n for n in all_nodes if n.height > 0]
+
+        if not inner_nodes:
+            click.echo(
+                "No inner nodes found (document may only have leaves).", err=True
+            )
+            sys.exit(1)
+
+        total_inner = len(inner_nodes)
+
+        # Sample nodes
+        if num_samples == -1 or num_samples >= total_inner:
+            selected_nodes = inner_nodes
+        else:
+            selected_nodes = random.sample(inner_nodes, num_samples)
+
+        # Calculate document span for position_fraction
+        leaves = doc_store.nodes.get_leaves()
+        doc_end = max(leaf.span_end for leaf in leaves) if leaves else 1
+
+        # Prepare node data for evaluation
+        node_data: list[tuple[str, str, str, str, str | None, int, float, float]] = []
+        for node in selected_nodes:
+            left_child, right_child = doc_store.tree.get_children(node.id)
+            if left_child is None or right_child is None:
+                continue  # Skip malformed nodes
+
+            preceding = doc_store.tree.get_preceding_neighbor(node.id)
+            preceding_text = preceding.text if preceding else None
+
+            # Compression ratio: children tokens / summary tokens
+            children_tokens = left_child.token_count + right_child.token_count
+            compression = (
+                children_tokens / node.token_count if node.token_count > 0 else 1.0
+            )
+
+            # Position as fraction of document
+            position = node.span_start / doc_end if doc_end > 0 else 0.0
+
+            node_data.append(
+                (
+                    node.id,
+                    node.text,
+                    left_child.text,
+                    right_child.text,
+                    preceding_text,
+                    node.height,
+                    compression,
+                    position,
+                )
+            )
+
+        if not node_data:
+            click.echo("No valid inner nodes to evaluate.", err=True)
+            sys.exit(1)
+
+        # Cost estimate and confirmation
+        estimated_calls = len(node_data)
+        click.echo(f"\nEvaluating {estimated_calls} of {total_inner} inner nodes")
+        click.echo(f"Model: {eval_model}")
+        click.echo(f"Threshold: {threshold}")
+
+        if not yes:
+            if not click.confirm("\nProceed with evaluation?"):
+                click.echo("Aborted.")
+                return
+
+        # Run evaluation
+        click.echo("\nRunning evaluation...")
+
+        from openai import AsyncOpenAI
+
+        from ragzoom.adapters.openai_chat_model import OpenAIChatModel
+        from ragzoom.evaluation import EvaluationReport, evaluate_nodes, print_report
+        from ragzoom.evaluation.types import NodeEvaluation
+
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            click.echo("OPENAI_API_KEY environment variable not set.", err=True)
+            sys.exit(1)
+
+        async def run_evaluation() -> list[NodeEvaluation]:
+            client = AsyncOpenAI(api_key=api_key)
+            chat_model = OpenAIChatModel(client, eval_model)
+            return await evaluate_nodes(
+                nodes=node_data,
+                chat_model=chat_model,
+                max_concurrent=10,
+            )
+
+        evaluations = asyncio.run(run_evaluation())
+
+        # Generate report
+        report = EvaluationReport(
+            document_id=document_id,
+            total_inner_nodes=total_inner,
+            nodes_evaluated=len(evaluations),
+            evaluations=evaluations,
+        )
+
+        print_report(report, threshold)
+
+        # Exit with appropriate code
+        if not report.passed(threshold):
+            sys.exit(1)
+
+    except Exception as e:
+        handle_cli_error(e, "evaluating document")
 
 
 if __name__ == "__main__":
