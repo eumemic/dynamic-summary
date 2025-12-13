@@ -41,14 +41,17 @@ class MockChatModel(ChatModel):
     def model_id(self) -> str:
         return self._model_id
 
+    # jscpd:ignore-start - Protocol implementation must match signature
     async def complete(
         self,
-        messages: Sequence[Message],
+        messages: list[Message],
         *,
         temperature: float | None = None,
         max_tokens: int | None = None,
         reasoning_effort: str | None = None,
+        json_mode: bool = False,
     ) -> ChatResult:
+        # jscpd:ignore-end
         # Take the last user message content as the source
         content_src = ""
         for m in reversed(messages):
