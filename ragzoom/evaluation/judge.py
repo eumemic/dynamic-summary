@@ -134,7 +134,7 @@ async def evaluate_node(
     ]
 
     try:
-        result = await chat_model.complete(messages, temperature=0.1, json_mode=True)
+        result = await chat_model.complete(messages, json_mode=True)
         return _parse_response(result["content"])
 
     except json.JSONDecodeError as e:

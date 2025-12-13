@@ -1676,12 +1676,6 @@ def eval() -> None:
     type=click.Path(),
     help="Output path for evaluation JSON (default: <document_id>.eval.json)",
 )
-@click.option(
-    "--yes",
-    "-y",
-    is_flag=True,
-    help="Skip confirmation prompt",
-)
 @click.pass_context
 def measure(
     ctx: click.Context,
@@ -1689,7 +1683,6 @@ def measure(
     num_samples: int,
     model: str,
     output: str | None,
-    yes: bool,
 ) -> None:
     """Evaluate summary quality for a document using LLM-as-judge.
 
@@ -1704,7 +1697,7 @@ def measure(
     Examples:
       ragzoom eval measure my-document
       ragzoom eval measure my-document -n 50 --model gpt-4o
-      ragzoom eval measure my-document -n -1 -y  # All nodes, no confirmation
+      ragzoom eval measure my-document -n -1  # All nodes
     """
     try:
         operational_config = ctx.obj["operational_config"]
@@ -1803,18 +1796,9 @@ def measure(
             click.echo("No valid inner nodes to evaluate.", err=True)
             sys.exit(1)
 
-        # Cost estimate and confirmation
-        estimated_calls = len(node_data)
-        click.echo(f"\nEvaluating {estimated_calls} of {total_inner} inner nodes")
-        click.echo(f"Model: {eval_model}")
-
-        if not yes:
-            if not click.confirm("\nProceed with evaluation?"):
-                click.echo("Aborted.")
-                return
-
         # Run evaluation
-        click.echo("\nRunning evaluation...")
+        click.echo(f"\nEvaluating {len(node_data)} of {total_inner} inner nodes...")
+        click.echo(f"Model: {eval_model}")
 
         from openai import AsyncOpenAI
 

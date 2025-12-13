@@ -438,7 +438,7 @@ class TestEvaluateNode:
         # Verify API was called correctly
         mock_chat_model.complete.assert_called_once()
         call_args = mock_chat_model.complete.call_args
-        assert call_args.kwargs.get("temperature") == 0.1
+        assert call_args.kwargs.get("json_mode") is True
 
     @pytest.mark.asyncio
     async def test_evaluate_node_api_error(self) -> None:

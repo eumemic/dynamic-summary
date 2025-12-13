@@ -33,7 +33,7 @@ You MUST respond with valid JSON in this exact format:
 
 Rules:
 - Focus on identifying categories of issues, not specific instances
-- Be specific about what's going wrong - not "summaries have problems" but "preceding context bleeding into summaries"
+- Be specific about what's going wrong - avoid vague labels like "summaries have problems"
 - Output only the theme names and descriptions - do NOT include node IDs"""
 
 SYNTHESIZE_THEMES_PROMPT = """You are an expert at analyzing software quality metrics and consolidating analysis results.
