@@ -1697,12 +1697,12 @@ def evaluate(
         else:
             selected_nodes = random.sample(inner_nodes, num_samples)
 
-        # Calculate document span for position_fraction
-        leaves = doc_store.nodes.get_leaves()
-        doc_end = max(leaf.span_end for leaf in leaves) if leaves else 1
-
         # Prepare node data for evaluation
-        node_data: list[tuple[str, str, str, str, str | None, int, float, float]] = []
+        # Tuple format: (node_id, summary, left_text, right_text, preceding_context,
+        #                height, level_index, span_start, compression_ratio)
+        node_data: list[tuple[str, str, str, str, str | None, int, int, int, float]] = (
+            []
+        )
         for node in selected_nodes:
             left_child, right_child = doc_store.tree.get_children(node.id)
             if left_child is None or right_child is None:
@@ -1717,9 +1717,6 @@ def evaluate(
                 children_tokens / node.token_count if node.token_count > 0 else 1.0
             )
 
-            # Position as fraction of document
-            position = node.span_start / doc_end if doc_end > 0 else 0.0
-
             node_data.append(
                 (
                     node.id,
@@ -1728,8 +1725,9 @@ def evaluate(
                     right_child.text,
                     preceding_text,
                     node.height,
+                    node.level_index,
+                    node.span_start,
                     compression,
-                    position,
                 )
             )
 

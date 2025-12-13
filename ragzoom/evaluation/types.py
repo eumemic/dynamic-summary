@@ -22,8 +22,9 @@ class NodeEvaluation:
 
     node_id: str
     height: int
+    level_index: int
+    span_start: int
     compression_ratio: float  # children_tokens / summary_tokens
-    position_fraction: float  # 0.0 = start, 1.0 = end of document
 
     retention: DimensionScore
     isolation: DimensionScore

@@ -52,7 +52,8 @@ class TestNodeEvaluation:
             node_id="test-node",
             height=2,
             compression_ratio=2.0,
-            position_fraction=0.5,
+            level_index=0,
+            span_start=100,
             retention=DimensionScore(score=4, explanation="Good retention"),
             isolation=DimensionScore(score=5, explanation="Perfect isolation"),
             faithfulness=DimensionScore(score=3, explanation="Minor issues"),
@@ -85,7 +86,8 @@ class TestEvaluationReport:
                 node_id="node-1",
                 height=1,
                 compression_ratio=2.0,
-                position_fraction=0.25,
+                level_index=0,
+                span_start=0,
                 retention=DimensionScore(score=4, explanation=""),
                 isolation=DimensionScore(score=5, explanation=""),
                 faithfulness=DimensionScore(score=5, explanation=""),
@@ -95,7 +97,8 @@ class TestEvaluationReport:
                 node_id="node-2",
                 height=2,
                 compression_ratio=2.1,
-                position_fraction=0.75,
+                level_index=0,
+                span_start=512,
                 retention=DimensionScore(score=3, explanation=""),
                 isolation=DimensionScore(score=4, explanation=""),
                 faithfulness=DimensionScore(score=4, explanation=""),
@@ -152,7 +155,8 @@ class TestEvaluationReport:
                 node_id="good",
                 height=1,
                 compression_ratio=2.0,
-                position_fraction=0.5,
+                level_index=0,
+                span_start=100,
                 retention=DimensionScore(score=4, explanation=""),
                 isolation=DimensionScore(score=4, explanation=""),
                 faithfulness=DimensionScore(score=4, explanation=""),
@@ -162,7 +166,8 @@ class TestEvaluationReport:
                 node_id="bad",
                 height=1,
                 compression_ratio=2.0,
-                position_fraction=0.5,
+                level_index=0,
+                span_start=100,
                 retention=DimensionScore(score=2, explanation="Poor retention"),
                 isolation=DimensionScore(score=4, explanation=""),
                 faithfulness=DimensionScore(score=4, explanation=""),
@@ -385,7 +390,8 @@ class TestPrintReport:
                 node_id="node-1",
                 height=1,
                 compression_ratio=2.0,
-                position_fraction=0.25,
+                level_index=0,
+                span_start=0,
                 retention=DimensionScore(score=4, explanation="Good"),
                 isolation=DimensionScore(score=5, explanation="Perfect"),
                 faithfulness=DimensionScore(score=4, explanation="Faithful"),
@@ -410,16 +416,17 @@ class TestPrintReport:
         assert "Retention" in captured.out
         assert "PASSED" in captured.out
 
-    def test_print_report_with_outliers(
+    def test_print_report_shows_lowest_scores(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Report should display outliers when present."""
+        """Report should display lowest-scoring nodes."""
         evals = [
             NodeEvaluation(
                 node_id="bad-node-123",
                 height=2,
                 compression_ratio=2.0,
-                position_fraction=0.5,
+                level_index=0,
+                span_start=100,
                 retention=DimensionScore(score=1, explanation="Very poor retention"),
                 isolation=DimensionScore(score=4, explanation="OK"),
                 faithfulness=DimensionScore(score=4, explanation="OK"),
@@ -437,9 +444,11 @@ class TestPrintReport:
         print_report(report, threshold=3.5)
 
         captured = capsys.readouterr()
-        assert "OUTLIERS" in captured.out
-        assert "bad-node" in captured.out
-        assert "Retention=1" in captured.out
+        assert "LOWEST SCORES" in captured.out
+        assert (
+            "(2, 0) @ 100" in captured.out
+        )  # Coordinate format: (height, level_index) @ span_start
+        assert "R=1" in captured.out  # Abbreviated format
         assert "Very poor retention" in captured.out
         assert "FAILED" in captured.out
 

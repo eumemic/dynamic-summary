@@ -11,35 +11,25 @@ def _format_score_line(dim: str, mean: float, std: float) -> str:
     return f"  {dim_display} {mean:.2f} +/- {std:.2f}"
 
 
-def _format_outlier(evaluation: NodeEvaluation) -> list[str]:
-    """Format an outlier evaluation for display."""
+def _format_evaluation(evaluation: NodeEvaluation) -> list[str]:
+    """Format an evaluation for display."""
     lines = []
 
-    # Header line with node info
-    header = (
-        f"  Node {evaluation.node_id[:8]} "
-        f"(height {evaluation.height}, pos {evaluation.position_fraction:.2f})"
+    # Header line with node info and all scores
+    scores_str = ", ".join(
+        f"{dim[0].upper()}={getattr(evaluation, dim).score}" for dim in DIMENSIONS
     )
-
-    # Find which dimensions have low scores
-    low_scores = []
-    for dim in DIMENSIONS:
-        score = getattr(evaluation, dim)
-        if score.score <= 2:
-            low_scores.append(f"{dim.capitalize()}={score.score}")
-
-    header += f": {', '.join(low_scores)}"
+    coord = f"({evaluation.height}, {evaluation.level_index})"
+    header = f"  Node {coord} @ {evaluation.span_start}: {scores_str}"
     lines.append(header)
 
-    # Add explanations for low-scoring dimensions
-    for dim in DIMENSIONS:
-        score = getattr(evaluation, dim)
-        if score.score <= 2:
-            # Truncate long explanations
-            explanation = score.explanation
-            if len(explanation) > 100:
-                explanation = explanation[:97] + "..."
-            lines.append(f'    {dim}: "{explanation}"')
+    # Show explanation for lowest-scoring dimension
+    min_dim = min(DIMENSIONS, key=lambda d: getattr(evaluation, d).score)
+    score = getattr(evaluation, min_dim)
+    explanation = score.explanation
+    if len(explanation) > 100:
+        explanation = explanation[:97] + "..."
+    lines.append(f'    {min_dim}: "{explanation}"')
 
     return lines
 
@@ -80,19 +70,15 @@ def print_report(report: EvaluationReport, threshold: float) -> None:
     for dim in DIMENSIONS:
         click.echo(_format_score_line(dim, means[dim], stds[dim]))
 
-    # Outliers
-    outliers = report.outliers(threshold=2)
+    # Lowest-scoring nodes (show bottom 5 by min score)
+    sorted_evals = sorted(report.evaluations, key=lambda e: (e.min_score, e.mean_score))
+    bottom_5 = sorted_evals[:5]
     click.echo()
-    if outliers:
-        click.echo(f"OUTLIERS (score <= 2): {len(outliers)} found")
-        for outlier in outliers[:5]:  # Show at most 5
-            for line in _format_outlier(outlier):
-                click.echo(line)
-            click.echo()
-        if len(outliers) > 5:
-            click.echo(f"  ... and {len(outliers) - 5} more")
-    else:
-        click.echo("OUTLIERS (score <= 2): None")
+    click.echo("LOWEST SCORES")
+    for evaluation in bottom_5:
+        for line in _format_evaluation(evaluation):
+            click.echo(line)
+        click.echo()
 
     # Result
     click.echo()
