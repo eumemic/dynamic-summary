@@ -8,7 +8,9 @@ from typing import cast as _cast
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN, NotGiven
 from openai.types.chat import ChatCompletionMessageParam
+from openai.types.shared_params import ResponseFormatJSONObject
 
+from ragzoom.config import is_gpt5_model
 from ragzoom.contracts.chat_model import ChatModel, ChatResult, Message, UsageInfo
 from ragzoom.error_handling import handle_graceful_error
 from ragzoom.exceptions import LLMError
@@ -23,6 +25,7 @@ class OpenAIChatModel(ChatModel):
     def model_id(self) -> str:
         return self._model_id
 
+    # jscpd:ignore-start - Protocol implementation must match signature
     async def complete(
         self,
         messages: list[Message],
@@ -30,29 +33,45 @@ class OpenAIChatModel(ChatModel):
         temperature: float | None = None,
         max_tokens: int | None = None,
         reasoning_effort: str | None = None,
-    ) -> ChatResult:
+        json_mode: bool = False,
+    ) -> ChatResult:  # jscpd:ignore-end
         # Convert provider-neutral Message to OpenAI's param shape
         oa_messages = cast(list[ChatCompletionMessageParam], messages)
 
-        temp_arg: float | NotGiven | None = (
-            float(temperature) if temperature is not None else NOT_GIVEN
-        )
         max_tokens_arg: int | NotGiven | None = (
             int(max_tokens) if max_tokens is not None else NOT_GIVEN
         )
-        reasoning_arg: Literal["minimal", "low", "medium", "high"] | NotGiven | None = (
-            _cast(Literal["minimal", "low", "medium", "high"], reasoning_effort)
-            if reasoning_effort is not None
-            else NOT_GIVEN
+
+        # Build response_format arg - use proper OpenAI type
+        response_format_arg: ResponseFormatJSONObject | NotGiven = (
+            ResponseFormatJSONObject(type="json_object") if json_mode else NOT_GIVEN
         )
 
-        response = await self._client.chat.completions.create(
-            model=self._model_id,
-            messages=oa_messages,
-            temperature=temp_arg,
-            max_tokens=max_tokens_arg,
-            reasoning_effort=reasoning_arg,
-        )
+        # GPT-5 models don't support temperature, use reasoning_effort instead
+        if is_gpt5_model(self._model_id):
+            reasoning_arg: Literal["minimal", "low", "medium", "high"] | NotGiven = (
+                _cast(Literal["minimal", "low", "medium", "high"], reasoning_effort)
+                if reasoning_effort is not None
+                else "minimal"
+            )
+            response = await self._client.chat.completions.create(
+                model=self._model_id,
+                messages=oa_messages,
+                max_tokens=max_tokens_arg,
+                reasoning_effort=reasoning_arg,
+                response_format=response_format_arg,
+            )
+        else:
+            temp_arg: float | NotGiven | None = (
+                float(temperature) if temperature is not None else NOT_GIVEN
+            )
+            response = await self._client.chat.completions.create(
+                model=self._model_id,
+                messages=oa_messages,
+                temperature=temp_arg,
+                max_tokens=max_tokens_arg,
+                response_format=response_format_arg,
+            )
 
         content = response.choices[0].message.content
         if not content:

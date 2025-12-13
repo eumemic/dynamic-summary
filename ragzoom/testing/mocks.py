@@ -48,6 +48,7 @@ class MockChatModel(ChatModel):
         temperature: float | None = None,
         max_tokens: int | None = None,
         reasoning_effort: str | None = None,
+        json_mode: bool = False,
     ) -> ChatResult:
         # Take the last user message content as the source
         content_src = ""
