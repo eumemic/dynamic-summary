@@ -433,15 +433,24 @@ class TestPrintReport:
             evaluations=evals,
         )
 
-        issue_summary = (
-            "- **Context bleeding**: Summaries include info from outside scope"
-        )
+        from ragzoom.evaluation.issue_summary import RecurringIssue
 
-        print_report(report, threshold=3.5, issue_summary=issue_summary)
+        issues = [
+            RecurringIssue(
+                name="Context bleeding",
+                description="Summaries include info from outside scope",
+                node_ids=("bad-node-123", "bad-node-456"),
+                mean_score=2.5,
+            )
+        ]
+
+        print_report(report, threshold=3.5, issues=issues)
 
         captured = capsys.readouterr()
         assert "RECURRING ISSUES" in captured.out
         assert "Context bleeding" in captured.out
+        assert "score: 2.5" in captured.out
+        assert "2 nodes" in captured.out
         assert "FAILED" in captured.out
 
     def test_print_report_no_issue_summary(

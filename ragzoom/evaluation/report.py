@@ -2,6 +2,7 @@
 
 import click
 
+from ragzoom.evaluation.issue_summary import RecurringIssue
 from ragzoom.evaluation.types import DIMENSIONS, EvaluationReport
 
 
@@ -65,17 +66,36 @@ def _format_score_line(dim: str, mean: float, std: float, p5: float, p10: float)
     return f"  {dim_display} {mean:.2f} +/- {std:.2f}    p5={p5:.1f}  p10={p10:.1f}"
 
 
+def _format_issue(issue: RecurringIssue) -> list[str]:
+    """Format a recurring issue for display."""
+    lines = []
+    # Header with name, score, and count
+    lines.append(
+        f"  {issue.name} (score: {issue.mean_score:.1f}, {issue.node_count} nodes)"
+    )
+    # Description
+    if issue.description:
+        lines.append(f"    {issue.description}")
+    # Node IDs (truncate if too many)
+    if issue.node_count <= 10:
+        node_list = ", ".join(issue.node_ids)
+    else:
+        node_list = ", ".join(issue.node_ids[:10]) + f", ... (+{issue.node_count - 10})"
+    lines.append(f"    Nodes: {node_list}")
+    return lines
+
+
 def print_report(
     report: EvaluationReport,
     threshold: float,
-    issue_summary: str | None = None,
+    issues: list[RecurringIssue] | None = None,
 ) -> None:
     """Print formatted evaluation report to stdout.
 
     Args:
         report: The evaluation report to display
         threshold: Minimum mean score threshold for pass/fail
-        issue_summary: Optional LLM-generated summary of recurring issues
+        issues: Optional list of recurring issues with node mappings
     """
     # Header
     click.echo()
@@ -127,12 +147,14 @@ def print_report(
     for line in _format_histograms_side_by_side(all_scores):
         click.echo(f"  {line}")
 
-    # Systemic issues summary (if provided)
-    if issue_summary:
+    # Recurring issues (if provided)
+    if issues:
         click.echo()
         click.echo("RECURRING ISSUES")
-        for line in issue_summary.strip().split("\n"):
-            click.echo(f"  {line}")
+        for issue in issues:
+            for line in _format_issue(issue):
+                click.echo(line)
+            click.echo()
 
     # Result
     click.echo()

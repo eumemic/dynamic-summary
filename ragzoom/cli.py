@@ -1820,6 +1820,7 @@ def evaluate(
             generate_issue_summary,
             print_report,
         )
+        from ragzoom.evaluation.issue_summary import RecurringIssue
         from ragzoom.evaluation.types import NodeEvaluation
 
         api_key = os.getenv("OPENAI_API_KEY")
@@ -1827,7 +1828,7 @@ def evaluate(
             click.echo("OPENAI_API_KEY environment variable not set.", err=True)
             sys.exit(1)
 
-        async def run_evaluation() -> tuple[list[NodeEvaluation], str]:
+        async def run_evaluation() -> tuple[list[NodeEvaluation], list[RecurringIssue]]:
             client = AsyncOpenAI(api_key=api_key)
             chat_model = OpenAIChatModel(client, eval_model)
             evals = await evaluate_nodes(
@@ -1842,10 +1843,10 @@ def evaluate(
                 nodes_evaluated=len(evals),
                 evaluations=evals,
             )
-            issue_summary = await generate_issue_summary(report, chat_model)
-            return evals, issue_summary
+            issues = await generate_issue_summary(report, chat_model)
+            return evals, issues
 
-        evaluations, issue_summary = asyncio.run(run_evaluation())
+        evaluations, issues = asyncio.run(run_evaluation())
 
         # Generate report
         report = EvaluationReport(
@@ -1855,7 +1856,7 @@ def evaluate(
             evaluations=evaluations,
         )
 
-        print_report(report, threshold, issue_summary)
+        print_report(report, threshold, issues)
 
         # Exit with appropriate code
         if not report.passed(threshold):
