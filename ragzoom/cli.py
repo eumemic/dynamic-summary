@@ -165,7 +165,19 @@ def handle_cli_error(e: Exception, operation: str) -> None:
             err=True,
         )
     elif isinstance(e, LLMError):
-        click.echo(f"❌ AI service error during {operation}: {e}", err=True)
+        msg_lower = str(e).lower()
+        if "model" in msg_lower and (
+            "not found" in msg_lower or "does not exist" in msg_lower
+        ):
+            click.echo(
+                f"❌ Invalid model specified during {operation}.\n\n"
+                "The model name may be incorrect or you may not have access to it.\n"
+                "Common models: gpt-4o, gpt-4o-mini, gpt-5, gpt-5-mini\n\n"
+                f"Technical error: {e}",
+                err=True,
+            )
+        else:
+            click.echo(f"❌ AI service error during {operation}: {e}", err=True)
     elif isinstance(e, ValidationError):
         click.echo(f"❌ Validation error during {operation}: {e}", err=True)
     elif isinstance(e, ConfigurationError):
