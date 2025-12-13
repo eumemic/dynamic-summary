@@ -1755,8 +1755,21 @@ def evaluate(
         node_data: list[tuple[str, str, str, str | None, int, int, int, float]] = []
         for node, left_child, right_child in selected_nodes:
 
-            preceding = doc_store.tree.get_preceding_neighbor(node.id)
-            preceding_text = preceding.text if preceding else None
+            # Reconstruct the preceding context that was used during summarization
+            # by fetching and concatenating the tiling node texts
+            preceding_text: str | None = None
+            if node.preceding_context:
+                import json
+
+                tiling_ids: list[str] = json.loads(node.preceding_context)
+                if tiling_ids:
+                    tiling_texts: list[str] = []
+                    for tiling_id in tiling_ids:
+                        tiling_node = doc_store.nodes.get(tiling_id)
+                        if tiling_node and tiling_node.text:
+                            tiling_texts.append(tiling_node.text)
+                    if tiling_texts:
+                        preceding_text = "\n\n".join(tiling_texts)
 
             # Concatenate children texts as the summarizer sees them
             source_text = left_child.text + right_child.text
