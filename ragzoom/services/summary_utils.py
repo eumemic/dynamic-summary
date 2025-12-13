@@ -127,12 +127,16 @@ def prepare_summary_inputs(
 
     target_words = tokens_to_words(target_tokens)
     instruction = (
-        "You will be given a piece of content to summarize. You are to summarize ONLY the content "
-        f"between the <SUMMARIZE_TEXT> tags in AT MOST {target_words} words. Use the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context). "
-        "You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary.\n\n"
-        "Make your summary information-dense, covering the full temporal scope of the source material. Match the voice, tense, and tone of the original text insofar as possible. "
-        "Abstract over details as necessary to fit within the word limit while preserving key events and themes.\n\n"
-        "Here's the content to summarize:"
+        f"Summarize the content between <SUMMARIZE_TEXT> tags in AT MOST {target_words} words.\n\n"
+        "CRITICAL RULES:\n"
+        "1. Summarize ONLY what happens in <SUMMARIZE_TEXT>. Never include events or facts from <PRECEDING_TEXT>.\n"
+        "2. The reader already knows <PRECEDING_TEXT>. Your summary continues from there - don't repeat it.\n"
+        "3. You may use pronouns or references that depend on context (e.g., 'he continued' instead of re-introducing someone).\n\n"
+        "STYLE:\n"
+        "- Information-dense, covering the full temporal scope of <SUMMARIZE_TEXT>\n"
+        "- Match the voice, tense, and tone of the original\n"
+        "- Abstract over details to fit the word limit while preserving key events and themes\n\n"
+        "Here's the content:"
     )
 
     prompt_parts: list[str] = [instruction]
