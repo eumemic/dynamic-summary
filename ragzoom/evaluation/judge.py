@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 
 from ragzoom.contracts.chat_model import ChatModel, Message
 from ragzoom.evaluation.types import DimensionScore, NodeEvaluation
@@ -163,6 +164,7 @@ async def evaluate_nodes(
     nodes: list[tuple[str, str, str, str | None, int, int, int, float]],
     chat_model: ChatModel,
     max_concurrent: int = 10,
+    on_progress: Callable[[], None] | None = None,
 ) -> list[NodeEvaluation]:
     """Evaluate multiple nodes in parallel with concurrency control.
 
@@ -171,6 +173,7 @@ async def evaluate_nodes(
                preceding_context, height, level_index, span_start, compression_ratio)
         chat_model: ChatModel instance for LLM calls
         max_concurrent: Maximum concurrent API calls
+        on_progress: Optional callback invoked after each node is evaluated
 
     Returns:
         List of NodeEvaluation objects
@@ -194,7 +197,7 @@ async def evaluate_nodes(
                 preceding_context=preceding_context,
                 chat_model=chat_model,
             )
-            return NodeEvaluation(
+            result = NodeEvaluation(
                 node_id=node_id,
                 height=height,
                 level_index=level_index,
@@ -205,6 +208,9 @@ async def evaluate_nodes(
                 faithfulness=scores["faithfulness"],
                 continuity=scores["continuity"],
             )
+            if on_progress:
+                on_progress()
+            return result
 
     tasks = [
         evaluate_with_limit(

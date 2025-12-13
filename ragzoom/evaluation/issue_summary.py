@@ -5,6 +5,7 @@ Uses ensemble approach: 10x parallel theme identification + synthesis for consis
 
 import asyncio
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from statistics import mean
 from typing import cast
@@ -135,6 +136,7 @@ def _parse_json_response(content: str) -> ParsedJSON:
 async def _identify_themes(
     defects_prompt: str,
     chat_model: ChatModel,
+    on_progress: Callable[[], None] | None = None,
 ) -> list[Theme]:
     """Identify recurring themes from defects (single run).
 
@@ -147,6 +149,9 @@ async def _identify_themes(
 
     result = await chat_model.complete(messages, temperature=0.7)
     content = result["content"]
+
+    if on_progress:
+        on_progress()
 
     try:
         data = _parse_json_response(content)
@@ -256,6 +261,7 @@ async def generate_issue_summary(
     report: EvaluationReport,
     chat_model: ChatModel,
     num_parallel: int = 10,
+    on_progress: Callable[[], None] | None = None,
 ) -> list[RecurringIssue]:
     """Generate a synthesis of recurring issues from evaluation results.
 
@@ -267,6 +273,7 @@ async def generate_issue_summary(
         report: The evaluation report containing all node evaluations
         chat_model: ChatModel instance for LLM calls
         num_parallel: Number of parallel theme identification runs (default: 10)
+        on_progress: Optional callback invoked after each LLM call completes
 
     Returns:
         List of RecurringIssue objects with node mappings and scores
@@ -290,7 +297,8 @@ async def generate_issue_summary(
 
     # Stage 1: Run theme identification in parallel
     theme_tasks = [
-        _identify_themes(defects_without_ids, chat_model) for _ in range(num_parallel)
+        _identify_themes(defects_without_ids, chat_model, on_progress)
+        for _ in range(num_parallel)
     ]
     theme_lists = await asyncio.gather(*theme_tasks)
 
@@ -303,5 +311,9 @@ async def generate_issue_summary(
         report.evaluations,
         chat_model,
     )
+
+    # Count synthesis as one more progress step
+    if on_progress:
+        on_progress()
 
     return issues

@@ -1801,6 +1801,7 @@ def measure(
         click.echo(f"Model: {eval_model}")
 
         from openai import AsyncOpenAI
+        from tqdm import tqdm
 
         from ragzoom.adapters.openai_chat_model import OpenAIChatModel
         from ragzoom.evaluation import evaluate_nodes
@@ -1814,11 +1815,17 @@ def measure(
         async def run_evaluation() -> list[NodeEvaluation]:
             client = AsyncOpenAI(api_key=api_key)
             chat_model = OpenAIChatModel(client, eval_model)
-            return await evaluate_nodes(
-                nodes=node_data,
-                chat_model=chat_model,
-                max_concurrent=10,
-            )
+
+            def update_progress() -> None:
+                pbar.update(1)
+
+            with tqdm(total=len(node_data), unit="node", leave=False) as pbar:
+                return await evaluate_nodes(
+                    nodes=node_data,
+                    chat_model=chat_model,
+                    max_concurrent=10,
+                    on_progress=update_progress,
+                )
 
         evaluations = asyncio.run(run_evaluation())
 
@@ -1897,9 +1904,8 @@ def report(
         )
 
         # Generate issue summary
-        click.echo("Analyzing recurring issues...")
-
         from openai import AsyncOpenAI
+        from tqdm import tqdm
 
         from ragzoom.adapters.openai_chat_model import OpenAIChatModel
         from ragzoom.evaluation.issue_summary import RecurringIssue
@@ -1909,10 +1915,22 @@ def report(
             click.echo("OPENAI_API_KEY environment variable not set.", err=True)
             sys.exit(1)
 
+        # 10 parallel theme identification + 1 synthesis = 11 LLM calls
+        num_parallel = 10
+
         async def run_synthesis() -> list[RecurringIssue]:
             client = AsyncOpenAI(api_key=api_key)
             chat_model = OpenAIChatModel(client, model)
-            return await generate_issue_summary(eval_report, chat_model)
+
+            def update_progress() -> None:
+                pbar.update(1)
+
+            with tqdm(
+                total=num_parallel + 1, unit="call", desc="Analyzing", leave=False
+            ) as pbar:
+                return await generate_issue_summary(
+                    eval_report, chat_model, num_parallel, update_progress
+                )
 
         issues = asyncio.run(run_synthesis())
 
