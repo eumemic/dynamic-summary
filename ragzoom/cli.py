@@ -1814,7 +1814,12 @@ def evaluate(
         from openai import AsyncOpenAI
 
         from ragzoom.adapters.openai_chat_model import OpenAIChatModel
-        from ragzoom.evaluation import EvaluationReport, evaluate_nodes, print_report
+        from ragzoom.evaluation import (
+            EvaluationReport,
+            evaluate_nodes,
+            generate_issue_summary,
+            print_report,
+        )
         from ragzoom.evaluation.types import NodeEvaluation
 
         api_key = os.getenv("OPENAI_API_KEY")
@@ -1822,16 +1827,25 @@ def evaluate(
             click.echo("OPENAI_API_KEY environment variable not set.", err=True)
             sys.exit(1)
 
-        async def run_evaluation() -> list[NodeEvaluation]:
+        async def run_evaluation() -> tuple[list[NodeEvaluation], str]:
             client = AsyncOpenAI(api_key=api_key)
             chat_model = OpenAIChatModel(client, eval_model)
-            return await evaluate_nodes(
+            evals = await evaluate_nodes(
                 nodes=node_data,
                 chat_model=chat_model,
                 max_concurrent=10,
             )
+            # Generate issue summary from the evaluations
+            report = EvaluationReport(
+                document_id=document_id,
+                total_inner_nodes=total_inner,
+                nodes_evaluated=len(evals),
+                evaluations=evals,
+            )
+            issue_summary = await generate_issue_summary(report, chat_model)
+            return evals, issue_summary
 
-        evaluations = asyncio.run(run_evaluation())
+        evaluations, issue_summary = asyncio.run(run_evaluation())
 
         # Generate report
         report = EvaluationReport(
@@ -1841,7 +1855,7 @@ def evaluate(
             evaluations=evaluations,
         )
 
-        print_report(report, threshold)
+        print_report(report, threshold, issue_summary)
 
         # Exit with appropriate code
         if not report.passed(threshold):

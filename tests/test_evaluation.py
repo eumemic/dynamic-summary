@@ -408,10 +408,46 @@ class TestPrintReport:
         assert "Retention" in captured.out
         assert "PASSED" in captured.out
 
-    def test_print_report_shows_lowest_scores(
+    def test_print_report_shows_issue_summary(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Report should display lowest-scoring nodes."""
+        """Report should display LLM-generated issue summary when provided."""
+        evals = [
+            NodeEvaluation(
+                node_id="bad-node-123",
+                height=2,
+                compression_ratio=2.0,
+                level_index=0,
+                span_start=100,
+                retention=DimensionScore(score=1, explanation="Very poor retention"),
+                isolation=DimensionScore(score=4, explanation="OK"),
+                faithfulness=DimensionScore(score=4, explanation="OK"),
+                continuity=DimensionScore(score=4, explanation="OK"),
+            ),
+        ]
+
+        report = EvaluationReport(
+            document_id="test-doc",
+            total_inner_nodes=1,
+            nodes_evaluated=1,
+            evaluations=evals,
+        )
+
+        issue_summary = (
+            "- **Context bleeding**: Summaries include info from outside scope"
+        )
+
+        print_report(report, threshold=3.5, issue_summary=issue_summary)
+
+        captured = capsys.readouterr()
+        assert "RECURRING ISSUES" in captured.out
+        assert "Context bleeding" in captured.out
+        assert "FAILED" in captured.out
+
+    def test_print_report_no_issue_summary(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Report should not show RECURRING ISSUES when no summary provided."""
         evals = [
             NodeEvaluation(
                 node_id="bad-node-123",
@@ -436,13 +472,7 @@ class TestPrintReport:
         print_report(report, threshold=3.5)
 
         captured = capsys.readouterr()
-        assert "LOWEST SCORES" in captured.out
-        assert (
-            "(2, 0) @ 100" in captured.out
-        )  # Coordinate format: (height, level_index) @ span_start
-        assert "R=1" in captured.out  # Abbreviated format
-        assert "avg=" in captured.out  # Average score shown
-        assert "Very poor retention" in captured.out
+        assert "RECURRING ISSUES" not in captured.out
         assert "FAILED" in captured.out
 
     def test_print_report_empty(self, capsys: pytest.CaptureFixture[str]) -> None:

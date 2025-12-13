@@ -2,7 +2,7 @@
 
 import click
 
-from ragzoom.evaluation.types import DIMENSIONS, EvaluationReport, NodeEvaluation
+from ragzoom.evaluation.types import DIMENSIONS, EvaluationReport
 
 
 def _format_histograms_side_by_side(
@@ -65,37 +65,17 @@ def _format_score_line(dim: str, mean: float, std: float, p5: float, p10: float)
     return f"  {dim_display} {mean:.2f} +/- {std:.2f}    p5={p5:.1f}  p10={p10:.1f}"
 
 
-def _format_evaluation(evaluation: NodeEvaluation) -> list[str]:
-    """Format an evaluation for display."""
-    lines = []
-
-    # Header line with node info, all scores, and average
-    scores_str = ", ".join(
-        f"{dim[0].upper()}={getattr(evaluation, dim).score}" for dim in DIMENSIONS
-    )
-    coord = f"({evaluation.height}, {evaluation.level_index})"
-    header = (
-        f"  Node {coord} @ {evaluation.span_start}: "
-        f"{scores_str}, avg={evaluation.mean_score:.1f}"
-    )
-    lines.append(header)
-    lines.append(f"    id: {evaluation.node_id}")
-
-    # Show full explanation for lowest-scoring dimension
-    min_dim = min(DIMENSIONS, key=lambda d: getattr(evaluation, d).score)
-    score = getattr(evaluation, min_dim)
-    if score.explanation:
-        lines.append(f'    {min_dim}: "{score.explanation}"')
-
-    return lines
-
-
-def print_report(report: EvaluationReport, threshold: float) -> None:
+def print_report(
+    report: EvaluationReport,
+    threshold: float,
+    issue_summary: str | None = None,
+) -> None:
     """Print formatted evaluation report to stdout.
 
     Args:
         report: The evaluation report to display
         threshold: Minimum mean score threshold for pass/fail
+        issue_summary: Optional LLM-generated summary of recurring issues
     """
     # Header
     click.echo()
@@ -147,15 +127,12 @@ def print_report(report: EvaluationReport, threshold: float) -> None:
     for line in _format_histograms_side_by_side(all_scores):
         click.echo(f"  {line}")
 
-    # Lowest-scoring nodes (show bottom 5 by min score)
-    sorted_evals = sorted(report.evaluations, key=lambda e: (e.min_score, e.mean_score))
-    bottom_5 = sorted_evals[:5]
-    click.echo()
-    click.echo("LOWEST SCORES")
-    for evaluation in bottom_5:
-        for line in _format_evaluation(evaluation):
-            click.echo(line)
+    # Systemic issues summary (if provided)
+    if issue_summary:
         click.echo()
+        click.echo("RECURRING ISSUES")
+        for line in issue_summary.strip().split("\n"):
+            click.echo(f"  {line}")
 
     # Result
     click.echo()
