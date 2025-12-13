@@ -321,8 +321,10 @@ class Retriever:
                 # Pre-computed embedding provided (e.g., during indexing)
                 effective_query_embedding = query_embedding
             else:
-                effective_query_embedding = self.embedding_service.get_query_embedding(
-                    query, effective_doc_id
+                effective_query_embedding = (
+                    await self.embedding_service.get_query_embedding_async(
+                        query, effective_doc_id
+                    )
                 )
             if telemetry_collector:
                 telemetry_collector.end_phase("embedding")
