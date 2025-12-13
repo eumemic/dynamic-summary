@@ -46,5 +46,6 @@ class ChatModel(Protocol):
         temperature: float | None = None,
         max_tokens: int | None = None,
         reasoning_effort: str | None = None,
+        json_mode: bool = False,
     ) -> ChatResult:  # pragma: no cover - protocol surface
         ...
