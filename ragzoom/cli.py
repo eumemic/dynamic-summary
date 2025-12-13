@@ -1650,7 +1650,12 @@ def doctor() -> None:
 # Usage: ragzoom-telemetry analyze|compare|visualize
 
 
-@cli.command()
+@cli.group()
+def eval() -> None:
+    """Summary quality evaluation commands."""
+
+
+@eval.command("measure")
 @click.argument("document_id")
 @click.option(
     "--num-samples",
@@ -1678,7 +1683,7 @@ def doctor() -> None:
     help="Skip confirmation prompt",
 )
 @click.pass_context
-def evaluate(
+def measure(
     ctx: click.Context,
     document_id: str,
     num_samples: int,
@@ -1694,12 +1699,12 @@ def evaluate(
       - Faithfulness: No hallucination or knowledge contamination
       - Continuity: Flows smoothly from preceding context
 
-    Saves evaluations to JSON for later analysis with 'ragzoom report'.
+    Saves evaluations to JSON for later analysis with 'ragzoom eval report'.
 
     Examples:
-      ragzoom evaluate my-document
-      ragzoom evaluate my-document -n 50 --model gpt-4o
-      ragzoom evaluate my-document -n -1 -y  # All nodes, no confirmation
+      ragzoom eval measure my-document
+      ragzoom eval measure my-document -n 50 --model gpt-4o
+      ragzoom eval measure my-document -n -1 -y  # All nodes, no confirmation
     """
     try:
         operational_config = ctx.obj["operational_config"]
@@ -1849,7 +1854,7 @@ def evaluate(
         handle_cli_error(e, "evaluating document")
 
 
-@cli.command()
+@eval.command("report")
 @click.argument("eval_file", type=click.Path(exists=True))
 @click.option(
     "--threshold",
@@ -1871,12 +1876,12 @@ def report(
 ) -> None:
     """Generate a quality report from evaluation JSON.
 
-    Loads evaluations from a JSON file created by 'ragzoom evaluate',
+    Loads evaluations from a JSON file created by 'ragzoom eval measure',
     runs issue synthesis, and prints a formatted report.
 
     Examples:
-      ragzoom report my-document.eval.json
-      ragzoom report my-document.eval.json --threshold 4.0
+      ragzoom eval report my-document.eval.json
+      ragzoom eval report my-document.eval.json --threshold 4.0
     """
     try:
         # Load evaluations from JSON
