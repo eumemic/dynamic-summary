@@ -1,7 +1,7 @@
 """Data types for summary evaluation."""
 
 from dataclasses import dataclass, field
-from statistics import mean, stdev
+from statistics import mean, quantiles, stdev
 
 
 @dataclass(frozen=True)
@@ -99,3 +99,32 @@ class EvaluationReport:
     def passed(self, min_mean: float) -> bool:
         """Return True if overall mean meets threshold."""
         return self.overall_mean() >= min_mean
+
+    def percentile_scores(self, percentile: int) -> dict[str, float]:
+        """Return the given percentile (0-100) for each dimension.
+
+        Uses exclusive method: percentile 5 gives the value at the 5th percentile.
+        """
+        if len(self.evaluations) < 2:
+            return {dim: 0.0 for dim in DIMENSIONS}
+
+        # quantiles(data, n=20) gives 19 cut points for 5% intervals
+        # Index 0 = p5, index 1 = p10, ..., index 18 = p95
+        result: dict[str, float] = {}
+        for dim in DIMENSIONS:
+            scores = sorted(getattr(e, dim).score for e in self.evaluations)
+            # quantiles with n=20 gives cut points at 5%, 10%, ..., 95%
+            cuts = quantiles(scores, n=20)
+            # Map percentile to index: p5->0, p10->1, ..., p95->18
+            idx = (percentile // 5) - 1
+            if idx < 0:
+                result[dim] = float(min(scores))
+            elif idx >= len(cuts):
+                result[dim] = float(max(scores))
+            else:
+                result[dim] = cuts[idx]
+        return result
+
+    def failure_count(self, threshold: float = 2.5) -> int:
+        """Count nodes with any dimension score below threshold."""
+        return sum(1 for e in self.evaluations if e.min_score < threshold)

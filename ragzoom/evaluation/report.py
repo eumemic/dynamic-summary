@@ -59,10 +59,10 @@ def _format_histograms_side_by_side(
     return lines
 
 
-def _format_score_line(dim: str, mean: float, std: float) -> str:
-    """Format a single dimension's score line."""
+def _format_score_line(dim: str, mean: float, std: float, p5: float, p10: float) -> str:
+    """Format a single dimension's score line with percentiles."""
     dim_display = dim.capitalize().ljust(12)
-    return f"  {dim_display} {mean:.2f} +/- {std:.2f}"
+    return f"  {dim_display} {mean:.2f} +/- {std:.2f}    p5={p5:.1f}  p10={p10:.1f}"
 
 
 def _format_evaluation(evaluation: NodeEvaluation) -> list[str]:
@@ -118,13 +118,25 @@ def print_report(report: EvaluationReport, threshold: float) -> None:
         click.echo("No evaluations to report.")
         return
 
-    # Aggregate scores
+    # Aggregate scores with percentiles
     click.echo()
-    click.echo("AGGREGATE SCORES (mean +/- std)")
+    click.echo("AGGREGATE SCORES (mean +/- std, percentiles)")
     means = report.mean_scores()
     stds = report.std_scores()
+    p5s = report.percentile_scores(5)
+    p10s = report.percentile_scores(10)
     for dim in DIMENSIONS:
-        click.echo(_format_score_line(dim, means[dim], stds[dim]))
+        click.echo(_format_score_line(dim, means[dim], stds[dim], p5s[dim], p10s[dim]))
+
+    # Failure count
+    failure_count = report.failure_count(threshold=2.5)
+    failure_pct = (
+        (failure_count / len(report.evaluations) * 100) if report.evaluations else 0
+    )
+    click.echo()
+    click.echo(
+        f"FAILURES: {failure_count} nodes ({failure_pct:.1f}%) have any dimension < 2.5"
+    )
 
     # Histograms for all dimensions side by side
     click.echo()
