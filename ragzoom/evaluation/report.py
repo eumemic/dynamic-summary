@@ -76,12 +76,12 @@ def _format_issue(issue: RecurringIssue) -> list[str]:
     # Description
     if issue.description:
         lines.append(f"    {issue.description}")
-    # Node IDs (truncate if too many)
-    if issue.node_count <= 10:
-        node_list = ", ".join(issue.node_ids)
-    else:
-        node_list = ", ".join(issue.node_ids[:10]) + f", ... (+{issue.node_count - 10})"
-    lines.append(f"    Nodes: {node_list}")
+    # Node IDs with scores (abbreviated to 8 chars, sorted by score ascending)
+    node_strs = [
+        f"{nid[:8]}({score:.1f})"
+        for nid, score in zip(issue.node_ids, issue.node_scores)
+    ]
+    lines.append(f"    Nodes: {', '.join(node_strs)}")
     return lines
 
 

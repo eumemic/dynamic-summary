@@ -71,7 +71,8 @@ class RecurringIssue:
 
     name: str
     description: str
-    node_ids: tuple[str, ...]
+    node_ids: tuple[str, ...]  # Sorted by score ascending (worst first)
+    node_scores: tuple[float, ...]  # Parallel array of scores
     mean_score: float
 
     @property
@@ -113,16 +114,12 @@ def _build_defects_prompt(report: EvaluationReport, include_node_ids: bool) -> s
     return "\n".join(parts)
 
 
-def _compute_mean_score(
+def _get_node_scores(
     node_ids: list[str], evaluations: list[NodeEvaluation]
-) -> float:
-    """Compute mean score across all dimensions for the given nodes."""
-    node_id_set = set(node_ids)
-    scores: list[float] = []
-    for e in evaluations:
-        if e.node_id in node_id_set:
-            scores.append(e.mean_score)
-    return mean(scores) if scores else 0.0
+) -> dict[str, float]:
+    """Get mean score for each node."""
+    eval_by_id = {e.node_id: e.mean_score for e in evaluations}
+    return {nid: eval_by_id.get(nid, 0.0) for nid in node_ids}
 
 
 def _parse_json_response(content: str) -> ParsedJSON:
@@ -222,13 +219,19 @@ Identify recurring themes that appeared in 3+ analyses and assign node IDs to ea
         if not isinstance(description, str):
             description = ""
 
-        mean_score = _compute_mean_score(node_ids, evaluations)
+        # Get per-node scores and sort by score (worst first)
+        scores_by_id = _get_node_scores(node_ids, evaluations)
+        sorted_nodes = sorted(node_ids, key=lambda nid: scores_by_id[nid])
+        sorted_scores = tuple(scores_by_id[nid] for nid in sorted_nodes)
+        overall_mean = mean(sorted_scores) if sorted_scores else 0.0
+
         issues.append(
             RecurringIssue(
                 name=name,
                 description=description,
-                node_ids=tuple(node_ids),
-                mean_score=mean_score,
+                node_ids=tuple(sorted_nodes),
+                node_scores=sorted_scores,
+                mean_score=overall_mean,
             )
         )
 

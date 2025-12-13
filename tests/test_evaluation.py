@@ -553,6 +553,7 @@ class TestPrintReport:
                 name="Context bleeding",
                 description="Summaries include info from outside scope",
                 node_ids=("bad-node-123", "bad-node-456"),
+                node_scores=(2.0, 3.0),
                 mean_score=2.5,
             )
         ]
