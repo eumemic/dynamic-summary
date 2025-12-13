@@ -1666,11 +1666,10 @@ def doctor() -> None:
     help="Model for evaluation",
 )
 @click.option(
-    "--threshold",
-    "-t",
-    default=3.0,
-    type=float,
-    help="Minimum mean score to pass (1-5)",
+    "--output",
+    "-o",
+    type=click.Path(),
+    help="Output path for evaluation JSON (default: <document_id>.eval.json)",
 )
 @click.option(
     "--yes",
@@ -1684,7 +1683,7 @@ def evaluate(
     document_id: str,
     num_samples: int,
     model: str,
-    threshold: float,
+    output: str | None,
     yes: bool,
 ) -> None:
     """Evaluate summary quality for a document using LLM-as-judge.
@@ -1694,6 +1693,8 @@ def evaluate(
       - Isolation: Doesn't bleed facts from preceding context
       - Faithfulness: No hallucination or knowledge contamination
       - Continuity: Flows smoothly from preceding context
+
+    Saves evaluations to JSON for later analysis with 'ragzoom report'.
 
     Examples:
       ragzoom evaluate my-document
@@ -1801,7 +1802,6 @@ def evaluate(
         estimated_calls = len(node_data)
         click.echo(f"\nEvaluating {estimated_calls} of {total_inner} inner nodes")
         click.echo(f"Model: {eval_model}")
-        click.echo(f"Threshold: {threshold}")
 
         if not yes:
             if not click.confirm("\nProceed with evaluation?"):
@@ -1814,13 +1814,7 @@ def evaluate(
         from openai import AsyncOpenAI
 
         from ragzoom.adapters.openai_chat_model import OpenAIChatModel
-        from ragzoom.evaluation import (
-            EvaluationReport,
-            evaluate_nodes,
-            generate_issue_summary,
-            print_report,
-        )
-        from ragzoom.evaluation.issue_summary import RecurringIssue
+        from ragzoom.evaluation import evaluate_nodes
         from ragzoom.evaluation.types import NodeEvaluation
 
         api_key = os.getenv("OPENAI_API_KEY")
@@ -1828,42 +1822,126 @@ def evaluate(
             click.echo("OPENAI_API_KEY environment variable not set.", err=True)
             sys.exit(1)
 
-        async def run_evaluation() -> tuple[list[NodeEvaluation], list[RecurringIssue]]:
+        async def run_evaluation() -> list[NodeEvaluation]:
             client = AsyncOpenAI(api_key=api_key)
             chat_model = OpenAIChatModel(client, eval_model)
-            evals = await evaluate_nodes(
+            return await evaluate_nodes(
                 nodes=node_data,
                 chat_model=chat_model,
                 max_concurrent=10,
             )
-            # Generate issue summary from the evaluations
-            report = EvaluationReport(
-                document_id=document_id,
-                total_inner_nodes=total_inner,
-                nodes_evaluated=len(evals),
-                evaluations=evals,
-            )
-            issues = await generate_issue_summary(report, chat_model)
-            return evals, issues
 
-        evaluations, issues = asyncio.run(run_evaluation())
+        evaluations = asyncio.run(run_evaluation())
 
-        # Generate report
-        report = EvaluationReport(
+        # Save to JSON
+        output_path = output or f"{document_id}.eval.json"
+        eval_data = {
+            "document_id": document_id,
+            "evaluations": [e.to_dict() for e in evaluations],
+        }
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(eval_data, f, indent=2)
+
+        click.echo(f"\n✅ Saved {len(evaluations)} evaluations to {output_path}")
+
+    except Exception as e:
+        handle_cli_error(e, "evaluating document")
+
+
+@cli.command()
+@click.argument("eval_file", type=click.Path(exists=True))
+@click.option(
+    "--threshold",
+    "-t",
+    default=3.0,
+    type=float,
+    help="Minimum mean score to pass (1-5)",
+)
+@click.option(
+    "--model",
+    "-m",
+    default="gpt-5",
+    help="Model for issue synthesis",
+)
+def report(
+    eval_file: str,
+    threshold: float,
+    model: str,
+) -> None:
+    """Generate a quality report from evaluation JSON.
+
+    Loads evaluations from a JSON file created by 'ragzoom evaluate',
+    runs issue synthesis, and prints a formatted report.
+
+    Examples:
+      ragzoom report my-document.eval.json
+      ragzoom report my-document.eval.json --threshold 4.0
+    """
+    try:
+        # Load evaluations from JSON
+        with open(eval_file, encoding="utf-8") as f:
+            data = json.load(f)
+
+        document_id = data["document_id"]
+        eval_dicts = data["evaluations"]
+
+        from ragzoom.evaluation import (
+            EvaluationReport,
+            NodeEvaluation,
+            generate_issue_summary,
+        )
+        from ragzoom.evaluation import (
+            print_report as print_eval_report,
+        )
+
+        evaluations = [NodeEvaluation.from_dict(e) for e in eval_dicts]
+
+        click.echo(f"Loaded {len(evaluations)} evaluations for '{document_id}'")
+
+        # Build report
+        eval_report = EvaluationReport(
             document_id=document_id,
-            total_inner_nodes=total_inner,
+            total_inner_nodes=len(evaluations),
             nodes_evaluated=len(evaluations),
             evaluations=evaluations,
         )
 
-        print_report(report, threshold, issues)
+        # Generate issue summary
+        click.echo("Analyzing recurring issues...")
 
-        # Exit with appropriate code
-        if not report.passed(threshold):
+        from openai import AsyncOpenAI
+
+        from ragzoom.adapters.openai_chat_model import OpenAIChatModel
+        from ragzoom.evaluation.issue_summary import RecurringIssue
+
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            click.echo("OPENAI_API_KEY environment variable not set.", err=True)
             sys.exit(1)
 
+        async def run_synthesis() -> list[RecurringIssue]:
+            client = AsyncOpenAI(api_key=api_key)
+            chat_model = OpenAIChatModel(client, model)
+            return await generate_issue_summary(eval_report, chat_model)
+
+        issues = asyncio.run(run_synthesis())
+
+        # Print report
+        print_eval_report(eval_report, threshold, issues)
+
+        # Exit with appropriate code
+        if not eval_report.passed(threshold):
+            sys.exit(1)
+
+    except json.JSONDecodeError as e:
+        click.echo(f"Invalid JSON in evaluation file: {e}", err=True)
+        sys.exit(1)
+    except KeyError as e:
+        click.echo(f"Missing required field in evaluation file: {e}", err=True)
+        sys.exit(1)
     except Exception as e:
-        handle_cli_error(e, "evaluating document")
+        handle_cli_error(e, "generating report")
 
 
 if __name__ == "__main__":

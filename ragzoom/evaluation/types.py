@@ -15,6 +15,15 @@ class DimensionScore:
         if not 1 <= self.score <= 5:
             raise ValueError(f"Score must be 1-5, got {self.score}")
 
+    def to_dict(self) -> dict[str, int | str]:
+        """Convert to JSON-serializable dict."""
+        return {"score": self.score, "explanation": self.explanation}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, int | str]) -> "DimensionScore":
+        """Create from dict."""
+        return cls(score=int(data["score"]), explanation=str(data["explanation"]))
+
 
 @dataclass(frozen=True)
 class NodeEvaluation:
@@ -51,6 +60,45 @@ class NodeEvaluation:
                 self.faithfulness.score,
                 self.continuity.score,
             ]
+        )
+
+    def to_dict(self) -> dict[str, str | int | float | dict[str, int | str]]:
+        """Convert to JSON-serializable dict."""
+        return {
+            "node_id": self.node_id,
+            "height": self.height,
+            "level_index": self.level_index,
+            "span_start": self.span_start,
+            "compression_ratio": self.compression_ratio,
+            "retention": self.retention.to_dict(),
+            "isolation": self.isolation.to_dict(),
+            "faithfulness": self.faithfulness.to_dict(),
+            "continuity": self.continuity.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(
+        cls, data: dict[str, str | int | float | dict[str, int | str]]
+    ) -> "NodeEvaluation":
+        """Create from dict."""
+        retention_data = data["retention"]
+        isolation_data = data["isolation"]
+        faithfulness_data = data["faithfulness"]
+        continuity_data = data["continuity"]
+        assert isinstance(retention_data, dict)
+        assert isinstance(isolation_data, dict)
+        assert isinstance(faithfulness_data, dict)
+        assert isinstance(continuity_data, dict)
+        return cls(
+            node_id=str(data["node_id"]),
+            height=int(data["height"]),  # type: ignore[arg-type]
+            level_index=int(data["level_index"]),  # type: ignore[arg-type]
+            span_start=int(data["span_start"]),  # type: ignore[arg-type]
+            compression_ratio=float(data["compression_ratio"]),  # type: ignore[arg-type]
+            retention=DimensionScore.from_dict(retention_data),
+            isolation=DimensionScore.from_dict(isolation_data),
+            faithfulness=DimensionScore.from_dict(faithfulness_data),
+            continuity=DimensionScore.from_dict(continuity_data),
         )
 
 
