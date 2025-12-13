@@ -209,3 +209,12 @@ class NodeRepository(Protocol):
         Used for estimating character positions from token budgets.
         """
         ...
+
+    def get_nodes_by_id_prefix(
+        self, document_id: str | None, id_prefix: str
+    ) -> list[TreeNode]:
+        """Get nodes whose ID starts with the given prefix.
+
+        Used for CLI commands where users provide shortened node IDs.
+        """
+        ...

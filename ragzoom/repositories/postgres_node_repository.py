@@ -1149,3 +1149,15 @@ class PostgresNodeRepository(BaseRepository):
             if total_tokens is None or total_tokens == 0:
                 return None
             return float(total_chars) / float(total_tokens)
+
+    def get_nodes_by_id_prefix(
+        self, document_id: str | None, id_prefix: str
+    ) -> list[TreeNode]:
+        """Get nodes whose ID starts with the given prefix."""
+        with self.SessionLocal() as session:
+            query = session.query(PostgresTreeNode).filter(
+                PostgresTreeNode.id.startswith(id_prefix)
+            )
+            if document_id is not None:
+                query = query.filter(PostgresTreeNode.document_id == document_id)
+            return list(query.all())

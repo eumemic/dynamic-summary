@@ -1133,6 +1133,104 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
         handle_cli_error(e, "clearing database")
 
 
+@cli.command("inspect")
+@click.argument("node_id")
+@click.pass_context
+def inspect_node(
+    ctx: click.Context,
+    node_id: str,
+) -> None:
+    """Inspect a node's summary, source text, and preceding context.
+
+    NODE_ID can be a prefix (e.g. first 8 characters of the UUID).
+    If multiple nodes match the prefix, they will be listed.
+
+    Examples:
+      ragzoom inspect 73d5aa10
+      ragzoom inspect 73d5aa10-1234-5678-abcd-ef1234567890
+    """
+    try:
+        operational_config = ctx.obj["operational_config"]
+        index_config: IndexConfig = ctx.obj["index_config"]
+
+        store = create_store_with_docker(
+            operational_config, embedding_model=index_config.embedding_model
+        )
+
+        # Use document-agnostic store to find nodes by prefix
+        global_store = store.for_document(None)
+        matches = global_store.nodes.get_by_prefix(node_id)
+
+        if not matches:
+            click.echo(f"No nodes found matching prefix '{node_id}'.", err=True)
+            sys.exit(1)
+
+        if len(matches) > 1:
+            click.echo(f"Multiple nodes match prefix '{node_id}':")
+            for match in matches:
+                click.echo(
+                    f"  {match.id} (height={match.height}, level={match.level_index})"
+                )
+            click.echo("\nPlease provide a more specific prefix.")
+            sys.exit(1)
+
+        # Single match - display full node details
+        node = matches[0]
+
+        # Create doc_store for this node's document
+        doc_store = store.for_document(node.document_id)
+
+        # Get children
+        left_child, right_child = doc_store.tree.get_children(node.id)
+
+        # Reconstruct source text from children
+        source_parts: list[str] = []
+        if left_child:
+            source_parts.append(left_child.text)
+        if right_child:
+            source_parts.append(right_child.text)
+        source_text = "\n".join(source_parts) if source_parts else "(no children)"
+
+        # Reconstruct preceding context from tiling node IDs
+        preceding_text: str | None = None
+        if node.preceding_context:
+            tiling_ids: list[str] = json.loads(node.preceding_context)
+            if tiling_ids:
+                tiling_texts: list[str] = []
+                for tiling_id in tiling_ids:
+                    tiling_node = doc_store.nodes.get(tiling_id)
+                    if tiling_node and tiling_node.text:
+                        tiling_texts.append(tiling_node.text)
+                if tiling_texts:
+                    preceding_text = "\n".join(tiling_texts)
+
+        # Print formatted output
+        click.echo(f"\nNODE: {node.id}")
+        click.echo(
+            f"Height: {node.height} | Level Index: {node.level_index} | "
+            f"Span: {node.span_start}-{node.span_end}"
+        )
+
+        click.echo("\n── PRECEDING CONTEXT " + "─" * 55)
+        if preceding_text:
+            click.echo(preceding_text)
+        else:
+            click.echo("(none)")
+
+        if node.preceding_context_summary:
+            click.echo("\n── PRECEDING CONTEXT SUMMARY " + "─" * 47)
+            click.echo(node.preceding_context_summary)
+
+        click.echo("\n── SOURCE TEXT (children concatenated) " + "─" * 37)
+        click.echo(source_text)
+
+        click.echo("\n── SUMMARY (this node's text) " + "─" * 45)
+        click.echo(node.text or "(empty)")
+
+    except Exception as e:
+        handle_cli_error(e, "inspecting node")
+
+
 @cli.command()
 @click.argument("output_file", type=click.Path())
 @click.option("--format", type=click.Choice(["json", "text"]), default="text")
@@ -1823,7 +1921,7 @@ def measure(
                 return await evaluate_nodes(
                     nodes=node_data,
                     chat_model=chat_model,
-                    max_concurrent=10,
+                    max_concurrent=30,
                     on_progress=update_progress,
                 )
 

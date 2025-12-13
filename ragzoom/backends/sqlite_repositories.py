@@ -976,6 +976,17 @@ class SqliteNodeRepository:
                 return None
             return float(total_chars) / float(total_tokens)
 
+    def get_nodes_by_id_prefix(
+        self, document_id: str | None, id_prefix: str
+    ) -> list[TreeNode]:
+        """Get nodes whose ID starts with the given prefix."""
+        with self.SessionLocal() as session:
+            stmt = select(SQLiteTreeNode).where(SQLiteTreeNode.id.startswith(id_prefix))
+            if document_id is not None:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+            rows = session.execute(stmt).scalars().all()
+            return list(rows)
+
     # jscpd:ignore-end
 
 

@@ -138,6 +138,10 @@ class DocumentNodeRepository:
             return node
         return None
 
+    def get_by_prefix(self, id_prefix: str) -> list[TreeNode]:
+        """Get nodes whose ID starts with the given prefix."""
+        return self._repo.get_nodes_by_id_prefix(self.document_id, id_prefix)
+
     # Alias for compatibility with repository naming
     def get_node(self, node_id: str) -> TreeNode | None:
         """Alias of get() to match NodeRepository interface methods."""
