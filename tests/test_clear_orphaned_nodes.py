@@ -9,7 +9,13 @@ import pytest
 from click.testing import CliRunner
 
 from ragzoom.cli import cli
-from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
+from ragzoom.config import (
+    IndexConfig,
+    OperationalConfig,
+    PrecedingContextConfig,
+    PrecedingContextSettings,
+    SecretStr,
+)
 from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.services.indexing_service import IndexingResult
@@ -47,9 +53,14 @@ class TestAutomaticClearing:
             embedding_batch_size=100,
             use_anti_verbatim_vaccine=True,
             processing_strategy="bottom_to_top",
-            preceding_context_verbatim_tokens=0,
-            preceding_context_min_forest_completeness=0.5,
-            preceding_context_num_seeds=None,
+            preceding_context=PrecedingContextSettings(
+                leaf=PrecedingContextConfig(
+                    verbatim_tokens=0, min_forest_completeness=0.5
+                ),
+                inner=PrecedingContextConfig(
+                    verbatim_tokens=0, min_forest_completeness=0.5
+                ),
+            ),
         )
 
     @pytest.fixture

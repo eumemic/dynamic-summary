@@ -1539,27 +1539,59 @@ def server() -> None:
     help="Directory to store telemetry events (defaults near data dir)",
 )
 @click.option(
-    "--preceding-context-verbatim-tokens",
-    "preceding_context_verbatim_tokens",
-    type=int,
-    help="Override preceding_context_verbatim_tokens (default: 2000)",
-)
-@click.option(
     "--max-parallelism",
     type=int,
     help="Maximum concurrent indexing jobs (default: 30)",
 )
 @click.option(
-    "--preceding-context-min-forest-completeness",
-    "preceding_context_min_forest_completeness",
-    type=float,
-    help="Min forest completeness ratio (0.0-1.0) before gating (default: 0.5)",
+    "--preceding-context-leaf-num-seeds",
+    "preceding_context_leaf_num_seeds",
+    type=int,
+    help="Number of seeds for leaf node preceding context",
 )
 @click.option(
-    "--preceding-context-num-seeds",
-    "preceding_context_num_seeds",
+    "--preceding-context-leaf-verbatim-tokens",
+    "preceding_context_leaf_verbatim_tokens",
     type=int,
-    help="Number of seeds for preceding context retrieval (default: auto)",
+    help="Verbatim token budget for leaf node preceding context",
+)
+@click.option(
+    "--preceding-context-leaf-min-forest-completeness",
+    "preceding_context_leaf_min_forest_completeness",
+    type=float,
+    help="Min forest completeness for leaf nodes (0.0-1.0)",
+)
+@click.option(
+    "--preceding-context-leaf-verbatim-nodes-only",
+    "preceding_context_leaf_verbatim_nodes_only",
+    is_flag=True,
+    default=None,
+    help="Use only verbatim nodes (no semantic retrieval) for leaves",
+)
+@click.option(
+    "--preceding-context-inner-num-seeds",
+    "preceding_context_inner_num_seeds",
+    type=int,
+    help="Number of seeds for inner node preceding context",
+)
+@click.option(
+    "--preceding-context-inner-verbatim-tokens",
+    "preceding_context_inner_verbatim_tokens",
+    type=int,
+    help="Verbatim token budget for inner node preceding context",
+)
+@click.option(
+    "--preceding-context-inner-min-forest-completeness",
+    "preceding_context_inner_min_forest_completeness",
+    type=float,
+    help="Min forest completeness for inner nodes (0.0-1.0)",
+)
+@click.option(
+    "--preceding-context-inner-verbatim-nodes-only",
+    "preceding_context_inner_verbatim_nodes_only",
+    is_flag=True,
+    default=None,
+    help="Use only verbatim nodes (no semantic retrieval) for inner nodes",
 )
 def start_server(
     host: str,
@@ -1568,10 +1600,15 @@ def start_server(
     debug: bool,
     collect_telemetry: bool,
     telemetry_dir: Path | None,
-    preceding_context_verbatim_tokens: int | None,
     max_parallelism: int | None,
-    preceding_context_min_forest_completeness: float | None,
-    preceding_context_num_seeds: int | None,
+    preceding_context_leaf_num_seeds: int | None,
+    preceding_context_leaf_verbatim_tokens: int | None,
+    preceding_context_leaf_min_forest_completeness: float | None,
+    preceding_context_leaf_verbatim_nodes_only: bool | None,
+    preceding_context_inner_num_seeds: int | None,
+    preceding_context_inner_verbatim_tokens: int | None,
+    preceding_context_inner_min_forest_completeness: float | None,
+    preceding_context_inner_verbatim_nodes_only: bool | None,
 ) -> None:
     """Start the RagZoom gRPC server."""
 
@@ -1582,10 +1619,15 @@ def start_server(
         config_path=str(config_path) if config_path else None,
         collect_telemetry=collect_telemetry,
         telemetry_dir=str(telemetry_dir) if telemetry_dir else None,
-        preceding_context_verbatim_tokens=preceding_context_verbatim_tokens,
         max_parallelism=max_parallelism,
-        preceding_context_min_forest_completeness=preceding_context_min_forest_completeness,
-        preceding_context_num_seeds=preceding_context_num_seeds,
+        preceding_context_leaf_num_seeds=preceding_context_leaf_num_seeds,
+        preceding_context_leaf_verbatim_tokens=preceding_context_leaf_verbatim_tokens,
+        preceding_context_leaf_min_forest_completeness=preceding_context_leaf_min_forest_completeness,
+        preceding_context_leaf_verbatim_nodes_only=preceding_context_leaf_verbatim_nodes_only,
+        preceding_context_inner_num_seeds=preceding_context_inner_num_seeds,
+        preceding_context_inner_verbatim_tokens=preceding_context_inner_verbatim_tokens,
+        preceding_context_inner_min_forest_completeness=preceding_context_inner_min_forest_completeness,
+        preceding_context_inner_verbatim_nodes_only=preceding_context_inner_verbatim_nodes_only,
     )
     run_server(options)
 

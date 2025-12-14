@@ -3,10 +3,26 @@
 import importlib.util
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from typing_extensions import TypedDict
+
+
+class PrecedingContextConfigDict(TypedDict, total=False):
+    """Type definition for per-node-type preceding context config."""
+
+    num_seeds: int | None
+    verbatim_tokens: int
+    min_forest_completeness: float
+    verbatim_nodes_only: bool
+
+
+class PrecedingContextSettingsDict(TypedDict, total=False):
+    """Type definition for nested preceding context settings."""
+
+    leaf: PrecedingContextConfigDict
+    inner: PrecedingContextConfigDict
 
 
 class IndexConfigDict(TypedDict):
@@ -20,9 +36,7 @@ class IndexConfigDict(TypedDict):
     embedding_batch_size: int
     use_anti_verbatim_vaccine: bool
     processing_strategy: str
-    preceding_context_verbatim_tokens: int
-    preceding_context_min_forest_completeness: float
-    preceding_context_num_seeds: int | None
+    preceding_context: PrecedingContextSettingsDict
 
 
 # Type for configuration values that can be primitives
@@ -138,6 +152,65 @@ def is_gpt5_model(model: str) -> bool:
 
 
 @dataclass
+class PrecedingContextConfig:
+    """Configuration for preceding context retrieval (per node type).
+
+    Controls how preceding context is retrieved for leaf nodes (during embedding)
+    or inner nodes (during summarization).
+    """
+
+    num_seeds: int | None = None
+    verbatim_tokens: int = 2000
+    min_forest_completeness: float = 0.0
+    verbatim_nodes_only: bool = False
+
+    def __post_init__(self) -> None:
+        """Validate configuration values."""
+        if self.num_seeds is not None and self.num_seeds < 0:
+            raise ValueError(f"num_seeds must be >= 0, got {self.num_seeds}")
+        if self.verbatim_tokens < 0:
+            raise ValueError(
+                f"verbatim_tokens must be >= 0, got {self.verbatim_tokens}"
+            )
+        if not 0.0 <= self.min_forest_completeness <= 1.0:
+            raise ValueError(
+                f"min_forest_completeness must be between 0.0 and 1.0, "
+                f"got {self.min_forest_completeness}"
+            )
+
+    @classmethod
+    def from_dict(cls, d: PrecedingContextConfigDict) -> "PrecedingContextConfig":
+        """Create from dictionary."""
+        return cls(
+            num_seeds=d.get("num_seeds"),
+            verbatim_tokens=d.get("verbatim_tokens", 2000),
+            min_forest_completeness=d.get("min_forest_completeness", 0.0),
+            verbatim_nodes_only=d.get("verbatim_nodes_only", False),
+        )
+
+
+@dataclass
+class PrecedingContextSettings:
+    """Container for leaf and inner node preceding context configs.
+
+    Allows different retrieval strategies for embedding (leaf) vs summarization (inner).
+    """
+
+    leaf: PrecedingContextConfig = field(default_factory=PrecedingContextConfig)
+    inner: PrecedingContextConfig = field(default_factory=PrecedingContextConfig)
+
+    @classmethod
+    def from_dict(cls, d: PrecedingContextSettingsDict) -> "PrecedingContextSettings":
+        """Create from dictionary."""
+        leaf_dict = d.get("leaf", {})
+        inner_dict = d.get("inner", {})
+        return cls(
+            leaf=PrecedingContextConfig.from_dict(leaf_dict),
+            inner=PrecedingContextConfig.from_dict(inner_dict),
+        )
+
+
+@dataclass
 class IndexConfig:
     """Configuration for document indexing.
 
@@ -155,9 +228,9 @@ class IndexConfig:
     embedding_batch_size: int
     use_anti_verbatim_vaccine: bool
     processing_strategy: str
-    preceding_context_verbatim_tokens: int
-    preceding_context_min_forest_completeness: float
-    preceding_context_num_seeds: int | None
+    preceding_context: PrecedingContextSettings = field(
+        default_factory=PrecedingContextSettings
+    )
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -172,45 +245,31 @@ class IndexConfig:
                 f"embedding_batch_size must be positive, got {self.embedding_batch_size}"
             )
 
-        # Validate processing strategy
         valid_strategies = {"bottom_to_top", "left_to_right"}
         if self.processing_strategy not in valid_strategies:
             raise ValueError(
                 f"processing_strategy must be one of {valid_strategies}, got '{self.processing_strategy}'"
             )
 
-        # Validate min compressibility (must be between 0.0 and 1.0)
-        if not 0.0 <= self.preceding_context_min_forest_completeness <= 1.0:
-            raise ValueError(
-                f"preceding_context_min_forest_completeness must be between 0.0 and 1.0, "
-                f"got {self.preceding_context_min_forest_completeness}"
-            )
-
-        # Validate num_seeds if provided (0 is valid for minimal summary mode)
-        if self.preceding_context_num_seeds is not None:
-            if self.preceding_context_num_seeds < 0:
-                raise ValueError(
-                    f"preceding_context_num_seeds must be >= 0, "
-                    f"got {self.preceding_context_num_seeds}"
-                )
-
     @classmethod
     def from_dict(cls, config_dict: dict[str, ConfigValue]) -> "IndexConfig":
-        """Create IndexConfig from a dictionary (e.g., from telemetry JSON).
+        """Create IndexConfig from a dictionary (e.g., from config JSON).
 
         Args:
-            config_dict: Dictionary with config fields
+            config_dict: Dictionary with config fields. Must include
+                        preceding_context with leaf and inner sub-configs.
 
         Returns:
             IndexConfig instance
         """
-        # Handle num_seeds which can be None or int
-        raw_num_seeds = config_dict.get("preceding_context_num_seeds")
-        num_seeds: int | None = (
-            int(raw_num_seeds) if raw_num_seeds is not None else None
-        )
+        raw_nested = config_dict.get("preceding_context")
+        if not isinstance(raw_nested, dict):
+            raise ValueError(
+                "preceding_context must be a dict with 'leaf' and 'inner' keys"
+            )
+        nested_dict: PrecedingContextSettingsDict = raw_nested
+        preceding_context = PrecedingContextSettings.from_dict(nested_dict)
 
-        # Type-safe construction with proper field types
         return cls(
             target_chunk_tokens=int(config_dict["target_chunk_tokens"]),
             summary_model=str(config_dict["summary_model"]),
@@ -224,13 +283,7 @@ class IndexConfig:
             processing_strategy=str(
                 config_dict.get("processing_strategy", "bottom_to_top")
             ),
-            preceding_context_verbatim_tokens=int(
-                config_dict.get("preceding_context_verbatim_tokens", 0)
-            ),
-            preceding_context_min_forest_completeness=float(
-                config_dict.get("preceding_context_min_forest_completeness", 0.5)
-            ),
-            preceding_context_num_seeds=num_seeds,
+            preceding_context=preceding_context,
         )
 
     @classmethod
@@ -249,14 +302,8 @@ class IndexConfig:
         Returns:
             IndexConfig instance
         """
-        # Load the raw config dictionary (handles defaults internally)
         config_dict = _load_index_config(config_path, **cli_options)
-
-        # Use from_dict to create the instance
         return cls.from_dict(config_dict)
-
-    # Sentinel for "not provided" in replace() - distinct from None which is valid
-    _NOT_PROVIDED: int = -999999
 
     def replace(
         self,
@@ -268,9 +315,7 @@ class IndexConfig:
         embedding_batch_size: int | None = None,
         use_anti_verbatim_vaccine: bool | None = None,
         processing_strategy: str | None = None,
-        preceding_context_verbatim_tokens: int | None = None,
-        preceding_context_min_forest_completeness: float | None = None,
-        preceding_context_num_seeds: int | None = _NOT_PROVIDED,
+        preceding_context: PrecedingContextSettings | None = None,
     ) -> "IndexConfig":
         """Create a new IndexConfig with some fields changed."""
         from dataclasses import replace
@@ -307,20 +352,10 @@ class IndexConfig:
                 if processing_strategy is not None
                 else self.processing_strategy
             ),
-            preceding_context_verbatim_tokens=(
-                preceding_context_verbatim_tokens
-                if preceding_context_verbatim_tokens is not None
-                else self.preceding_context_verbatim_tokens
-            ),
-            preceding_context_min_forest_completeness=(
-                preceding_context_min_forest_completeness
-                if preceding_context_min_forest_completeness is not None
-                else self.preceding_context_min_forest_completeness
-            ),
-            preceding_context_num_seeds=(
-                preceding_context_num_seeds
-                if preceding_context_num_seeds != self._NOT_PROVIDED
-                else self.preceding_context_num_seeds
+            preceding_context=(
+                preceding_context
+                if preceding_context is not None
+                else self.preceding_context
             ),
         )
 

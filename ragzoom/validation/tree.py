@@ -1218,19 +1218,9 @@ def _preceding_context_check(
         # Sort by span_start
         tiling_spans.sort(key=lambda x: x[1])
 
-        # Check first node starts at 0
-        first_id, first_start, first_end = tiling_spans[0]
-        if first_start != 0:
-            findings.append(
-                ValidationFinding(
-                    code="preceding_context.incomplete_start",
-                    message=(
-                        f"Tiling does not start at 0: first node {first_id} "
-                        f"starts at {first_start}"
-                    ),
-                    node_id=node.id,
-                )
-            )
+        # Note: Tilings don't need to start at 0. With verbatim_nodes_only mode,
+        # we may only include a subset of nodes within a token budget. The key
+        # invariant is that the tiling must end at span_start and have no gaps.
 
         # Check last node ends at span_start
         last_id, last_start, last_end = tiling_spans[-1]

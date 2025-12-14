@@ -4,10 +4,36 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from ragzoom.config import IndexConfig, PrecedingContextConfig, PrecedingContextSettings
 from ragzoom.server.indexing_engine import (
     _expected_total_from_leaf_count,
     _min_roots_for_leaf_count,
 )
+
+
+def _make_preceding_context(
+    min_forest_completeness: float = 0.0,
+    verbatim_tokens: int = 0,
+) -> PrecedingContextSettings:
+    """Create PrecedingContextSettings with given values for both leaf and inner."""
+    config = PrecedingContextConfig(
+        min_forest_completeness=min_forest_completeness,
+        verbatim_tokens=verbatim_tokens,
+    )
+    return PrecedingContextSettings(leaf=config, inner=config)
+
+
+def _config_with_gating(
+    min_forest_completeness: float = 0.0,
+    verbatim_tokens: int = 0,
+) -> IndexConfig:
+    """Create IndexConfig with specified gating parameters."""
+    return IndexConfig.load().replace(
+        preceding_context=_make_preceding_context(
+            min_forest_completeness=min_forest_completeness,
+            verbatim_tokens=verbatim_tokens,
+        )
+    )
 
 
 class TestMinRootsForLeafCount:
@@ -178,14 +204,10 @@ class TestFindNextJobGating:
     def test_first_leaf_always_allowed_with_perfect_forest_completeness(self) -> None:
         """First leaf (no preceding forest) always allowed, even with min_forest_completeness=1.0."""
 
-        from ragzoom.config import IndexConfig
         from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
 
         # Strictest threshold: no extraneous detail allowed
-        index_config = IndexConfig.load()
-        index_config = index_config.replace(
-            preceding_context_min_forest_completeness=1.0
-        )
+        index_config = _config_with_gating(min_forest_completeness=1.0)
 
         mock_store = MagicMock()
         engine = IndexingEngine(
@@ -211,13 +233,9 @@ class TestFindNextJobGating:
     def test_second_leaf_allowed_when_first_is_single_root(self) -> None:
         """Second leaf allowed when first leaf exists as 1 root (1 leaf = 1 min root = 0 extraneous)."""
 
-        from ragzoom.config import IndexConfig
         from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
 
-        index_config = IndexConfig.load()
-        index_config = index_config.replace(
-            preceding_context_min_forest_completeness=1.0  # Strictest
-        )
+        index_config = _config_with_gating(min_forest_completeness=1.0)
 
         mock_store = MagicMock()
         engine = IndexingEngine(
@@ -253,13 +271,9 @@ class TestFindNextJobGating:
         But engine returns a SummaryJob to combine leaf0+leaf1.
         """
 
-        from ragzoom.config import IndexConfig
         from ragzoom.server.indexing_engine import IndexingEngine, SummaryJob
 
-        index_config = IndexConfig.load()
-        index_config = index_config.replace(
-            preceding_context_min_forest_completeness=1.0
-        )
+        index_config = _config_with_gating(min_forest_completeness=1.0)
 
         mock_store = MagicMock()
         engine = IndexingEngine(
@@ -294,13 +308,9 @@ class TestFindNextJobGating:
         Preceding forest: height-1 root covering 2 leaves → 1 root, min=1 → extraneous=0.
         """
 
-        from ragzoom.config import IndexConfig
         from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
 
-        index_config = IndexConfig.load()
-        index_config = index_config.replace(
-            preceding_context_min_forest_completeness=1.0
-        )
+        index_config = _config_with_gating(min_forest_completeness=1.0)
 
         mock_store = MagicMock()
         engine = IndexingEngine(
@@ -329,13 +339,9 @@ class TestFindNextJobGating:
     def test_zero_forest_completeness_allows_all_leaves(self) -> None:
         """With min_forest_completeness=0.0, all leaves allowed regardless of forest state."""
 
-        from ragzoom.config import IndexConfig
         from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
 
-        index_config = IndexConfig.load()
-        index_config = index_config.replace(
-            preceding_context_min_forest_completeness=0.0  # Very permissive
-        )
+        index_config = _config_with_gating(min_forest_completeness=0.0)
 
         mock_store = MagicMock()
         engine = IndexingEngine(
@@ -366,13 +372,9 @@ class TestFindNextJobGating:
         forest_completeness = 1/4 = 0.25 < min_forest_completeness=0.33 → BLOCKED
         """
 
-        from ragzoom.config import IndexConfig
         from ragzoom.server.indexing_engine import IndexingEngine, SummaryJob
 
-        index_config = IndexConfig.load()
-        index_config = index_config.replace(
-            preceding_context_min_forest_completeness=0.33  # Allow up to 2 extra roots
-        )
+        index_config = _config_with_gating(min_forest_completeness=0.33)
 
         mock_store = MagicMock()
         engine = IndexingEngine(
@@ -404,13 +406,9 @@ class TestFindNextJobGating:
         forest_completeness = 1/2 = 0.5 >= min_forest_completeness=0.33 → ALLOWED
         """
 
-        from ragzoom.config import IndexConfig
         from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
 
-        index_config = IndexConfig.load()
-        index_config = index_config.replace(
-            preceding_context_min_forest_completeness=0.33
-        )
+        index_config = _config_with_gating(min_forest_completeness=0.33)
 
         mock_store = MagicMock()
         engine = IndexingEngine(
@@ -484,13 +482,10 @@ class TestVerbatimTokensFrontier:
         Actually, with an optimal preceding forest (h1 root), third leaf is allowed.
         Let's create a scenario with intentional low forest_completeness to test verbatim.
         """
-        from ragzoom.config import IndexConfig
         from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
 
-        index_config = IndexConfig.load()
-        index_config = index_config.replace(
-            preceding_context_min_forest_completeness=1.0,  # Strictest gating
-            preceding_context_verbatim_tokens=100,  # Allow 100 tokens ahead
+        index_config = _config_with_gating(
+            min_forest_completeness=1.0, verbatim_tokens=100
         )
 
         mock_store = MagicMock()
@@ -529,13 +524,10 @@ class TestVerbatimTokensFrontier:
         - Without verbatim: leaf blocked (first_ineligible=leaf, frontier=400)
         - With verbatim_tokens=100: frontier = 400 + 400 = 800, leaf at 400 allowed
         """
-        from ragzoom.config import IndexConfig
         from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
 
-        index_config = IndexConfig.load()
-        index_config = index_config.replace(
-            preceding_context_min_forest_completeness=1.0,  # Strictest gating
-            preceding_context_verbatim_tokens=100,  # Allow 100 tokens = 400 chars ahead
+        index_config = _config_with_gating(
+            min_forest_completeness=1.0, verbatim_tokens=100
         )
 
         mock_store = MagicMock()
@@ -589,13 +581,10 @@ class TestVerbatimTokensFrontier:
         The job found should be a summary for the leaves, not the far leaf.
         We verify the far leaf is blocked by checking its span_start > frontier.
         """
-        from ragzoom.config import IndexConfig
         from ragzoom.server.indexing_engine import IndexingEngine, SummaryJob
 
-        index_config = IndexConfig.load()
-        index_config = index_config.replace(
-            preceding_context_min_forest_completeness=1.0,
-            preceding_context_verbatim_tokens=10,  # Only 10 tokens = 40 chars
+        index_config = _config_with_gating(
+            min_forest_completeness=1.0, verbatim_tokens=10
         )
 
         mock_store = MagicMock()
@@ -655,13 +644,10 @@ class TestVerbatimTokensFrontier:
         - frontier = 400 + 50*4.0(fallback) = 600
         - leaf at 400 <= 600 → allowed
         """
-        from ragzoom.config import IndexConfig
         from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
 
-        index_config = IndexConfig.load()
-        index_config = index_config.replace(
-            preceding_context_min_forest_completeness=1.0,
-            preceding_context_verbatim_tokens=50,  # 50 tokens * 4.0 fallback = 200 chars
+        index_config = _config_with_gating(
+            min_forest_completeness=1.0, verbatim_tokens=50
         )
 
         mock_store = MagicMock()
@@ -703,13 +689,10 @@ class TestVerbatimTokensFrontier:
         - leaf: before checking, preceding has 4 leaves in 2 roots, min=popcount(4)=1
                 extraneous=1 > 0 → leaf IS the first ineligible root
         """
-        from ragzoom.config import IndexConfig
         from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
 
-        index_config = IndexConfig.load()
-        index_config = index_config.replace(
-            preceding_context_min_forest_completeness=1.0,
-            preceding_context_verbatim_tokens=0,  # No verbatim buffer
+        index_config = _config_with_gating(
+            min_forest_completeness=1.0, verbatim_tokens=0
         )
 
         mock_store = MagicMock()
