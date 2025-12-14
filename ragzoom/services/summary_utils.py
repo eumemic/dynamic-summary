@@ -126,32 +126,44 @@ def prepare_summary_inputs(
     input_text_tokens = combined_tokens
 
     target_words = tokens_to_words(target_tokens)
-    instruction = (
-        f"Summarize the content between <SUMMARIZE_TEXT> tags in AT MOST {target_words} words.\n\n"
-        "CRITICAL RULES:\n"
-        "1. Summarize ONLY what happens in <SUMMARIZE_TEXT>. Never include events or facts from <PRECEDING_TEXT>.\n"
-        "2. The reader already knows <PRECEDING_TEXT>. Your summary continues from there - don't repeat it.\n"
-        "3. You may use pronouns or references that depend on context (e.g., 'he continued' instead of re-introducing someone).\n\n"
-        "STYLE:\n"
-        "- Information-dense, covering the full temporal scope of <SUMMARIZE_TEXT>\n"
-        "- Match the voice, tense, and tone of the original\n"
-        "- Abstract over details to fit the word limit while preserving key events and themes\n\n"
-        "Here's the content:"
-    )
 
-    prompt_parts: list[str] = [instruction]
+    # Build prompt explaining the compression task
+    # Key insight: output gets concatenated after preceding text, so we frame it
+    # as "compress in place" rather than "summarize with context"
     if prev_context:
-        prompt_parts.append(
-            f"\n<PRECEDING_TEXT>\n...{prev_context.strip()}\n</PRECEDING_TEXT>"
-        )
-    prompt_parts.append(f"\n<SUMMARIZE_TEXT>\n{combined_text}\n</SUMMARIZE_TEXT>")
+        prompt_parts: list[str] = [
+            "You are compressing part of a document. The reader will see:",
+            "  [PRECEDING_TEXT] + [YOUR OUTPUT]",
+            "This must be semantically equivalent to reading the original:",
+            "  [PRECEDING_TEXT] + [COMPRESS_THIS_TEXT_ONLY]",
+            f"\n<PRECEDING_TEXT>\n{prev_context.strip()}\n</PRECEDING_TEXT>",
+            f"\n<COMPRESS_THIS_TEXT_ONLY>\n{combined_text}\n</COMPRESS_THIS_TEXT_ONLY>",
+            f"\nCompress <COMPRESS_THIS_TEXT_ONLY> to AT MOST {target_words} words. "
+            "Your output will be appended directly after <PRECEDING_TEXT>.\n\n"
+            "Rules:\n"
+            "- Output ONLY the compressed text - nothing else\n"
+            "- Don't repeat anything from <PRECEDING_TEXT> - it's already there\n"
+            "- You may use pronouns referencing things established earlier\n"
+            "- Preserve all key information from <COMPRESS_THIS_TEXT_ONLY>",
+        ]
+    else:
+        prompt_parts = [
+            f"Compress the following text to AT MOST {target_words} words.",
+            f"\n<TEXT>\n{combined_text}\n</TEXT>",
+            "\nRules:\n"
+            "- Output ONLY the compressed text - nothing else\n"
+            "- Preserve all key information",
+        ]
 
-    full_prompt = "\n\n".join(prompt_parts)
+    full_prompt = "\n".join(prompt_parts)
 
     messages: list[dict[str, str]] = [
         {
             "role": "system",
-            "content": "You are a precise summarizer who ONLY uses information explicitly provided in the input text. You NEVER add context or details from outside the given text.",
+            "content": (
+                "You are a text compressor. You compress sections of documents while "
+                "preserving their meaning. You output ONLY the compressed text, nothing else."
+            ),
         },
         {"role": "user", "content": full_prompt},
     ]
