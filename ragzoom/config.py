@@ -208,12 +208,15 @@ class PrecedingContextSettings:
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
-        if not self.inner.verbatim_nodes_only:
+        # Inner nodes don't store embeddings, so semantic retrieval (num_seeds > 0)
+        # requires verbatim_nodes_only=True. But if num_seeds=0, no embedding query
+        # happens, so verbatim_nodes_only can be False.
+        if not self.inner.verbatim_nodes_only and (self.inner.num_seeds or 0) > 0:
             raise ValueError(
-                "inner.verbatim_nodes_only must be True. Inner nodes no longer store "
-                "embeddings, so semantic retrieval for inner node preceding context "
-                "is not currently supported. Use verbatim_nodes_only=True for inner "
-                "nodes, or set inner.verbatim_tokens to control context size."
+                "inner.verbatim_nodes_only must be True when inner.num_seeds > 0. "
+                "Inner nodes no longer store embeddings, so semantic retrieval for "
+                "inner node preceding context is not currently supported. Either set "
+                "verbatim_nodes_only=True or set num_seeds=0."
             )
 
     @classmethod

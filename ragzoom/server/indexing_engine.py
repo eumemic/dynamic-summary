@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
     from openai import OpenAI
 
-    from ragzoom.config import IndexConfig
+    from ragzoom.config import IndexConfig, PrecedingContextConfig
     from ragzoom.contracts.storage_backend import StorageBackend
     from ragzoom.contracts.vector_index import VectorIndex
     from ragzoom.document_store import DocumentStore
@@ -137,8 +137,8 @@ def _forest_completeness(num_roots: int, max_height: int, leaf_count: int) -> fl
 
 
 @dataclass
-class VerbatimContextResult:
-    """Result from verbatim context retrieval."""
+class PrecedingContextResult:
+    """Result from preceding context retrieval."""
 
     tiling_ids: list[str]
     nodes: dict[str, TreeNode]
@@ -150,7 +150,7 @@ def get_verbatim_context_nodes(
     document_id: str,
     span_end_limit: int,
     verbatim_tokens: int,
-) -> VerbatimContextResult:
+) -> PrecedingContextResult:
     """Get rightmost nodes before span_end_limit totaling >= verbatim_tokens.
 
     This is a simplified retrieval path used when verbatim_nodes_only=true.
@@ -164,10 +164,10 @@ def get_verbatim_context_nodes(
         verbatim_tokens: Target token budget for verbatim content
 
     Returns:
-        VerbatimContextResult with node IDs in document order and their data.
+        PrecedingContextResult with node IDs in document order and their data.
     """
     if span_end_limit <= 0 or verbatim_tokens <= 0:
-        return VerbatimContextResult(tiling_ids=[], nodes={}, tiling_tokens=0)
+        return PrecedingContextResult(tiling_ids=[], nodes={}, tiling_tokens=0)
 
     # Use existing repository method that handles the windowed budget query
     leaves = store.nodes._repo.get_recent_leaves_within_budget_before(
@@ -175,14 +175,14 @@ def get_verbatim_context_nodes(
     )
 
     if not leaves:
-        return VerbatimContextResult(tiling_ids=[], nodes={}, tiling_tokens=0)
+        return PrecedingContextResult(tiling_ids=[], nodes={}, tiling_tokens=0)
 
     # Build result in document order (already sorted by span_start)
     tiling_ids = [leaf.id for leaf in leaves]
     nodes = {leaf.id: leaf for leaf in leaves}
     tiling_tokens = sum(leaf.token_count for leaf in leaves)
 
-    return VerbatimContextResult(
+    return PrecedingContextResult(
         tiling_ids=tiling_ids,
         nodes=nodes,
         tiling_tokens=tiling_tokens,
@@ -877,66 +877,27 @@ class IndexingEngine:
         # Get leaf-specific preceding context config
         leaf_config = self._index_config.preceding_context.leaf
 
-        # Retrieve preceding context
-        # Nodes at span_start=0 get empty tiling, others get retrieved context
-        tiling_ids: list[str] = []
-        context_nodes: dict[str, TreeNode] = {}
-        tiling_tokens = 0
+        # Retrieve preceding context (unified function handles span_start=0 case)
+        retrieval_start_time = time.time()
+        context_result = await self._get_preceding_context(
+            store=store,
+            document_id=job.document_id,
+            span_start=span_start,
+            config=leaf_config,
+            query_text=leaf_text,
+        )
+        tiling_ids = context_result.tiling_ids
+        context_nodes = context_result.nodes
+        tiling_tokens = context_result.tiling_tokens
 
-        if span_start > 0:
-            retrieval_start_time = time.time()
-
-            if leaf_config.verbatim_nodes_only:
-                # Simplified path: just get rightmost N leaves within budget
-                verbatim_result = get_verbatim_context_nodes(
-                    store,
-                    job.document_id,
-                    span_start,
-                    leaf_config.verbatim_tokens,
-                )
-                tiling_ids = verbatim_result.tiling_ids
-                context_nodes = verbatim_result.nodes
-                tiling_tokens = verbatim_result.tiling_tokens
-            else:
-                # Full retrieval path with semantic search
-                retriever = self._create_retriever(job.document_id)
-                if retriever is not None:
-                    try:
-                        context_result = await retriever.retrieve_for_context(
-                            query_text=leaf_text,
-                            span_end_limit=span_start,
-                            budget_tokens=self._index_config.preceding_context_budget,
-                            document_id=job.document_id,
-                            recent_verbatim_token_budget=leaf_config.verbatim_tokens,
-                            num_seeds=leaf_config.num_seeds,
-                        )
-                        if (
-                            context_result is not None
-                            and context_result.tiling
-                            and context_result.nodes
-                        ):
-                            tiling_ids = list(context_result.tiling)
-                            context_nodes = context_result.nodes
-                            tiling_tokens = sum(
-                                context_nodes[nid].token_count
-                                for nid in tiling_ids
-                                if nid in context_nodes
-                            )
-                    except Exception:
-                        logger.exception(
-                            "embed: failed to retrieve context doc=%s leaf=%s",
-                            job.document_id,
-                            job.leaf_id,
-                        )
-
-            # Record retrieval telemetry
-            if telemetry is not None:
-                telemetry.record_retrieval_call(
-                    node_id=job.leaf_id,
-                    tiling_node_count=len(tiling_ids),
-                    tiling_tokens=tiling_tokens,
-                    start_time=retrieval_start_time,
-                )
+        # Record retrieval telemetry
+        if span_start > 0 and telemetry is not None:
+            telemetry.record_retrieval_call(
+                node_id=job.leaf_id,
+                tiling_node_count=len(tiling_ids),
+                tiling_tokens=tiling_tokens,
+                start_time=retrieval_start_time,
+            )
 
         # Assemble context text from tiling nodes
         context_prefix = ""
@@ -1157,41 +1118,30 @@ class IndexingEngine:
         # Get inner-specific preceding context config
         inner_config = self._index_config.preceding_context.inner
 
-        # Note: inner.verbatim_nodes_only is enforced True by config validation.
-        # Semantic retrieval for inner nodes would require embeddings on inner
-        # nodes, but we no longer store those to enable parallel summarization.
-        # This could be re-enabled by computing inner embeddings on-the-fly.
-
-        # Retrieve preceding context BEFORE summarization
-        # Nodes at span_start=0 get empty tiling, others get retrieved context
+        # Retrieve preceding context (unified function handles span_start=0 case)
+        # Inner nodes pass query_text=None (no semantic search, just minimal tiling)
         import json
 
-        tiling_ids: list[str] = []
-        context_nodes: dict[str, TreeNode] = {}
-        tiling_tokens = 0
+        retrieval_start_time = time.time()
+        context_result = await self._get_preceding_context(
+            store=store,
+            document_id=job.document_id,
+            span_start=span_start,
+            config=inner_config,
+            query_text=None,
+        )
+        tiling_ids = context_result.tiling_ids
+        context_nodes = context_result.nodes
+        tiling_tokens = context_result.tiling_tokens
 
-        if span_start > 0:
-            retrieval_start_time = time.time()
-
-            # Verbatim path: get rightmost N nodes within budget (no semantic search)
-            verbatim_result = get_verbatim_context_nodes(
-                store,
-                job.document_id,
-                span_start,
-                inner_config.verbatim_tokens,
+        # Record retrieval telemetry
+        if span_start > 0 and telemetry is not None:
+            telemetry.record_retrieval_call(
+                node_id=parent_id,
+                tiling_node_count=len(tiling_ids),
+                tiling_tokens=tiling_tokens,
+                start_time=retrieval_start_time,
             )
-            tiling_ids = verbatim_result.tiling_ids
-            context_nodes = verbatim_result.nodes
-            tiling_tokens = verbatim_result.tiling_tokens
-
-            # Record retrieval telemetry
-            if telemetry is not None:
-                telemetry.record_retrieval_call(
-                    node_id=parent_id,
-                    tiling_node_count=len(tiling_ids),
-                    tiling_tokens=tiling_tokens,
-                    start_time=retrieval_start_time,
-                )
 
         # Assemble context text from tiling nodes
         context_text = ""
@@ -1343,3 +1293,78 @@ class IndexingEngine:
             budget_planner=budget_planner,
             vector_index=vector_index,
         )
+
+    async def _get_preceding_context(
+        self,
+        store: DocumentStore,
+        document_id: str,
+        span_start: int,
+        config: PrecedingContextConfig,
+        query_text: str | None,
+    ) -> PrecedingContextResult:
+        """Retrieve preceding context for a node.
+
+        Unified function for both leaf embedding and inner node summarization.
+
+        Args:
+            store: Document store for the document
+            document_id: Document ID
+            span_start: Start position of the node (context covers [0, span_start))
+            config: Preceding context configuration (leaf or inner)
+            query_text: Query text for semantic retrieval. Pass the node's text for
+                leaves, or None for inner nodes (which use minimal tiling).
+
+        Returns:
+            PrecedingContextResult with tiling node IDs, node data, and token count.
+        """
+        if span_start <= 0:
+            return PrecedingContextResult(tiling_ids=[], nodes={}, tiling_tokens=0)
+
+        if config.verbatim_nodes_only:
+            # Simplified path: get rightmost N leaves within token budget
+            return get_verbatim_context_nodes(
+                store,
+                document_id,
+                span_start,
+                config.verbatim_tokens,
+            )
+
+        # Standard retrieval path with semantic search (or minimal tiling if no query)
+        retriever = self._create_retriever(document_id)
+        if retriever is None:
+            return PrecedingContextResult(tiling_ids=[], nodes={}, tiling_tokens=0)
+
+        try:
+            context_result = await retriever.retrieve_for_context(
+                query_text=query_text or "",
+                span_end_limit=span_start,
+                budget_tokens=self._index_config.preceding_context_budget,
+                document_id=document_id,
+                recent_verbatim_token_budget=config.verbatim_tokens,
+                num_seeds=config.num_seeds,
+            )
+            if (
+                context_result is not None
+                and context_result.tiling
+                and context_result.nodes
+            ):
+                tiling_ids = list(context_result.tiling)
+                context_nodes = context_result.nodes
+                tiling_tokens = sum(
+                    context_nodes[nid].token_count
+                    for nid in tiling_ids
+                    if nid in context_nodes
+                )
+                return PrecedingContextResult(
+                    tiling_ids=tiling_ids,
+                    nodes=context_nodes,
+                    tiling_tokens=tiling_tokens,
+                )
+        except Exception:
+            logger.exception(
+                "Failed to retrieve preceding context doc=%s span_start=%d",
+                document_id,
+                span_start,
+            )
+
+        return PrecedingContextResult(tiling_ids=[], nodes={}, tiling_tokens=0)
