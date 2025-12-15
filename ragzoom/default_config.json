@@ -9,15 +9,15 @@
   "preceding_context": {
     "leaf": {
       "num_seeds": 3,
-      "verbatim_tokens": 400,
+      "verbatim_tokens": 2000,
       "min_forest_completeness": 1.0,
       "verbatim_nodes_only": false
     },
     "inner": {
       "num_seeds": 0,
-      "verbatim_tokens": 0,
+      "verbatim_tokens": 2000,
       "min_forest_completeness": 0.0,
-      "verbatim_nodes_only": false
+      "verbatim_nodes_only": true
     }
   }
 }
