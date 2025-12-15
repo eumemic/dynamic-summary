@@ -24,14 +24,34 @@ if TYPE_CHECKING:
 def _make_preceding_context(
     min_forest_completeness: float = 0.0,
     verbatim_tokens: int = 0,
+    *,
+    leaf_min_forest_completeness: float | None = None,
+    inner_min_forest_completeness: float | None = None,
 ) -> PrecedingContextSettings:
-    """Create PrecedingContextSettings with given values for both leaf and inner."""
+    """Create PrecedingContextSettings with given values.
+
+    Args:
+        min_forest_completeness: Default value for both leaf and inner
+        verbatim_tokens: Verbatim token budget
+        leaf_min_forest_completeness: Override for leaf (None = use default)
+        inner_min_forest_completeness: Override for inner (None = use default)
+    """
+    leaf_completeness = (
+        leaf_min_forest_completeness
+        if leaf_min_forest_completeness is not None
+        else min_forest_completeness
+    )
+    inner_completeness = (
+        inner_min_forest_completeness
+        if inner_min_forest_completeness is not None
+        else min_forest_completeness
+    )
     leaf_config = PrecedingContextConfig(
-        min_forest_completeness=min_forest_completeness,
+        min_forest_completeness=leaf_completeness,
         verbatim_tokens=verbatim_tokens,
     )
     inner_config = PrecedingContextConfig(
-        min_forest_completeness=min_forest_completeness,
+        min_forest_completeness=inner_completeness,
         verbatim_tokens=verbatim_tokens,
         verbatim_nodes_only=True,  # Required - inner nodes don't store embeddings
     )
@@ -41,12 +61,17 @@ def _make_preceding_context(
 def _config_with_gating(
     min_forest_completeness: float = 0.0,
     verbatim_tokens: int = 0,
+    *,
+    leaf_min_forest_completeness: float | None = None,
+    inner_min_forest_completeness: float | None = None,
 ) -> IndexConfig:
     """Create IndexConfig with specified gating parameters."""
     return IndexConfig.load().replace(
         preceding_context=_make_preceding_context(
             min_forest_completeness=min_forest_completeness,
             verbatim_tokens=verbatim_tokens,
+            leaf_min_forest_completeness=leaf_min_forest_completeness,
+            inner_min_forest_completeness=inner_min_forest_completeness,
         )
     )
 
@@ -741,6 +766,119 @@ class TestVerbatimTokensFrontier:
         assert job is not None
         assert isinstance(job, EmbeddingJob)
         assert job.leaf_id == "leaf4"
+
+
+class TestAsymmetricGating:
+    """Test that embedding and summary jobs use different gating thresholds.
+
+    This is the key test for parallelism: when leaf.min_forest_completeness=1.0
+    but inner.min_forest_completeness=0.0, embedding jobs should be blocked
+    while summary jobs proceed freely.
+    """
+
+    @pytest.fixture
+    def asymmetric_engine(self, storage_backend: StorageBackend) -> IndexingEngine:
+        """Create engine with strict leaf gating but no inner gating.
+
+        This is the production configuration for maximum parallelism:
+        - leaf.min_forest_completeness=1.0 (embeddings wait for complete forest)
+        - inner.min_forest_completeness=0.0 (summaries never wait)
+        """
+        index_config = _config_with_gating(
+            leaf_min_forest_completeness=1.0,
+            inner_min_forest_completeness=0.0,
+        )
+        return IndexingEngine(
+            store=storage_backend,
+            llm_service=MagicMock(),
+            index_config=index_config,
+            openai_client=MagicMock(),
+            max_parallelism=30,
+        )
+
+    def test_summary_job_not_blocked_when_embedding_blocked(
+        self, storage_backend: StorageBackend, asymmetric_engine: IndexingEngine
+    ) -> None:
+        """Summary jobs proceed even when embedding jobs are blocked by gating.
+
+        Scenario: 4 unsummarized leaves create an incomplete forest.
+        - Embedding jobs for later leaves ARE blocked (leaf.min_forest_completeness=1.0)
+        - Summary jobs for eligible pairs are NOT blocked (inner.min_forest_completeness=0.0)
+        """
+        doc_id = "test_asymmetric_gating"
+        builder = TreeBuilder(storage_backend, doc_id)
+
+        # Create 4 leaves - all embedded, forming 4 separate roots (incomplete forest)
+        for i in range(4):
+            builder.add_leaf(
+                f"leaf{i}",
+                level_index=i,
+                with_embedding=True,
+                span_start=i * 100,
+                span_end=(i + 1) * 100,
+            )
+
+        # Add 5th leaf without embedding - this embedding job would be blocked
+        # because preceding forest has 4 roots but should have 1 (completeness=0.25)
+        builder.add_leaf(
+            "leaf4",
+            level_index=4,
+            with_embedding=False,
+            span_start=400,
+            span_end=500,
+        )
+
+        # With asymmetric gating, should return SUMMARY job (not blocked)
+        # even though an embedding job exists but is blocked
+        job = asymmetric_engine._find_next_job(doc_id, set(), None)
+
+        # The summary job for the first eligible pair (leaf0, leaf1) should be returned
+        # because inner.min_forest_completeness=0.0 means no gating for summaries
+        assert job is not None
+        assert isinstance(job, SummaryJob), (
+            f"Expected SummaryJob but got {type(job).__name__}. "
+            "Summary jobs should not be blocked when inner.min_forest_completeness=0.0"
+        )
+        assert job.left_id == "leaf0"
+        assert job.right_id == "leaf1"
+
+    def test_embedding_blocked_but_later_summary_allowed(
+        self, storage_backend: StorageBackend, asymmetric_engine: IndexingEngine
+    ) -> None:
+        """Embedding job at position N blocked, but summary job at position M > N allowed.
+
+        This tests that summary jobs can proceed past the embedding frontier.
+        """
+        doc_id = "test_summary_past_frontier"
+        builder = TreeBuilder(storage_backend, doc_id)
+
+        # Create 8 leaves, first 4 embedded, last 4 not embedded
+        for i in range(4):
+            builder.add_leaf(
+                f"leaf{i}",
+                level_index=i,
+                with_embedding=True,
+                span_start=i * 100,
+                span_end=(i + 1) * 100,
+            )
+        for i in range(4, 8):
+            builder.add_leaf(
+                f"leaf{i}",
+                level_index=i,
+                with_embedding=False,
+                span_start=i * 100,
+                span_end=(i + 1) * 100,
+            )
+
+        # The embedding frontier is at leaf4 (first incomplete forest point)
+        # But with inner.min_forest_completeness=0.0, ALL summary jobs are allowed
+        # including pairs at leaf4-leaf5, leaf6-leaf7
+
+        job = asymmetric_engine._find_next_job(doc_id, set(), None)
+
+        # Should return earliest summary job (leaf0, leaf1)
+        assert job is not None
+        assert isinstance(job, SummaryJob)
 
 
 class TestExpectedTotalMatchesMinRoots:

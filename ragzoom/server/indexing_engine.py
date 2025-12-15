@@ -538,19 +538,31 @@ class IndexingEngine:
         Calls separate scanners for embedding and summary jobs, then returns
         the leftmost job by span_start. This ensures leaves get embedded even
         after being summarized (since embedding jobs scan all leaves, not just roots).
+
+        Each job type uses its own forest completeness gating:
+        - Embedding jobs use leaf.min_forest_completeness (typically 1.0)
+        - Summary jobs use inner.min_forest_completeness (typically 0.0 = no gating)
         """
         store = self._store.for_document(document_id)
         roots = store.nodes.get_root_nodes(document_id)
 
-        # Calculate eligibility frontier for summary jobs
-        frontier = self._calculate_eligibility_frontier(roots, store, document_id)
+        # Calculate separate frontiers for each job type
+        leaf_config = self._index_config.preceding_context.leaf
+        inner_config = self._index_config.preceding_context.inner
 
-        # Find candidates from each scanner
+        embedding_frontier = self._calculate_eligibility_frontier(
+            roots, store, document_id, leaf_config.min_forest_completeness
+        )
+        summary_frontier = self._calculate_eligibility_frontier(
+            roots, store, document_id, inner_config.min_forest_completeness
+        )
+
+        # Find candidates from each scanner with their respective frontiers
         embedding_job = self._find_next_embedding_job(
-            store, document_id, active_jobs, ctx, frontier
+            store, document_id, active_jobs, ctx, embedding_frontier
         )
         summary_job = self._find_next_summary_job(
-            roots, document_id, active_jobs, ctx, frontier
+            roots, document_id, active_jobs, ctx, summary_frontier
         )
 
         # Return leftmost job by span_start
@@ -639,6 +651,7 @@ class IndexingEngine:
         roots: list[TreeNode],
         store: DocumentStore,
         document_id: str,
+        min_forest_completeness: float,
     ) -> int | None:
         """Calculate the last eligible position for jobs based on forest completeness.
 
@@ -658,10 +671,19 @@ class IndexingEngine:
 
         - 1.0 = heights match optimal forest exactly
         - 0.0 = maximum deviation from optimal
+
+        Args:
+            roots: Current root nodes in document order
+            store: Document store for metadata lookups
+            document_id: Document being indexed
+            min_forest_completeness: Minimum completeness threshold (0.0 = no gating)
         """
-        # Use leaf config for gating (applies to leaf embedding jobs)
+        # No gating if min_forest_completeness is 0
+        if min_forest_completeness <= 0.0:
+            return None
+
+        # Use leaf config for verbatim token budget
         leaf_config = self._index_config.preceding_context.leaf
-        min_forest_completeness = leaf_config.min_forest_completeness
         verbatim_tokens = leaf_config.verbatim_tokens
 
         # Track cumulative forest statistics as we scan left-to-right
