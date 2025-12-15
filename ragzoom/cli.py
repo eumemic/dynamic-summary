@@ -756,7 +756,7 @@ def validate(
         else "❌ Document validation failed"
     )
     if complete and report.status == "ok":
-        heading += " (complete tree required)"
+        heading += " (complete forest required)"
 
     click.echo(heading)
     click.echo(
