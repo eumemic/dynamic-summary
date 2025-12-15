@@ -27,7 +27,6 @@ import numpy as np
 
 from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.tree_node import TreeNode
-from ragzoom.vector_api import unpack_embedding
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -135,16 +134,6 @@ def _forest_completeness(num_roots: int, max_height: int, leaf_count: int) -> fl
         return 1.0
 
     return optimal_cost / actual_cost
-
-
-def _average_embeddings(
-    emb1: bytes, emb2: bytes
-) -> np.ndarray[tuple[int], np.dtype[np.float64]]:
-    """Compute average of two packed embeddings, returning numpy array."""
-    arr1 = unpack_embedding(emb1).astype(np.float64)
-    arr2 = unpack_embedding(emb2).astype(np.float64)
-    avg: np.ndarray[tuple[int], np.dtype[np.float64]] = (arr1 + arr2) / 2.0
-    return avg
 
 
 @dataclass
@@ -544,50 +533,94 @@ class IndexingEngine:
         active_jobs: set[IndexingJob],
         ctx: DocumentContext | None,
     ) -> IndexingJob | None:
-        """Scan roots left-to-right for next eligible job.
+        """Find the next eligible job by checking both embedding and summary jobs.
 
-        Returns the first job that:
-        1. Is not already active
-        2. Has not previously failed
-        3. Is either a leaf needing embedding, or an eligible sibling pair
-        4. Has span_start within the eligibility frontier
-
-        Uses a two-pass approach:
-        - Pass 1: Find the eligibility frontier based on forest completeness
-        - Pass 2: Find first job within that frontier
-
-        The eligibility frontier accounts for both min_forest_completeness and
-        verbatim_tokens settings. Jobs can extend past the strict completeness
-        boundary by the verbatim token budget (converted to characters).
+        Calls separate scanners for embedding and summary jobs, then returns
+        the leftmost job by span_start. This ensures leaves get embedded even
+        after being summarized (since embedding jobs scan all leaves, not just roots).
         """
         store = self._store.for_document(document_id)
         roots = store.nodes.get_root_nodes(document_id)
 
-        # Pass 1: Calculate eligibility frontier
+        # Calculate eligibility frontier for summary jobs
         frontier = self._calculate_eligibility_frontier(roots, store, document_id)
 
-        # Pass 2: Find first eligible job within frontier
-        for i, root in enumerate(roots):
-            root_span_start = int(getattr(root, "span_start", 0))
+        # Find candidates from each scanner
+        embedding_job = self._find_next_embedding_job(
+            store, document_id, active_jobs, ctx, frontier
+        )
+        summary_job = self._find_next_summary_job(
+            roots, document_id, active_jobs, ctx, frontier
+        )
 
-            # Check if this root is within the eligibility frontier
-            if frontier is not None and root_span_start > frontier:
-                logger.debug(
-                    "root %d span_start %d > eligibility frontier %d, stopping scan",
-                    i,
-                    root_span_start,
-                    frontier,
-                )
+        # Return leftmost job by span_start
+        if embedding_job is None:
+            return summary_job
+        if summary_job is None:
+            return embedding_job
+
+        # Both exist - compare span_start to pick leftmost
+        embed_leaf = store.nodes.get(embedding_job.leaf_id)
+        summary_left = store.nodes.get(summary_job.left_id)
+        embed_span = int(getattr(embed_leaf, "span_start", 0)) if embed_leaf else 0
+        summary_span = (
+            int(getattr(summary_left, "span_start", 0)) if summary_left else 0
+        )
+
+        if embed_span <= summary_span:
+            return embedding_job
+        return summary_job
+
+    def _find_next_embedding_job(
+        self,
+        store: DocumentStore,
+        document_id: str,
+        active_jobs: set[IndexingJob],
+        ctx: DocumentContext | None,
+        frontier: int | None,
+    ) -> EmbeddingJob | None:
+        """Scan all leaves for the first one needing an embedding.
+
+        Scans all leaves (not just roots) because leaves may have been
+        summarized before their embedding job started. Leaves are sorted
+        by span_start for deterministic left-to-right processing.
+        """
+        leaves = store.nodes.get_leaves()
+        # Sort by span_start for left-to-right order
+        leaves.sort(key=lambda n: int(getattr(n, "span_start", 0)))
+
+        for leaf in leaves:
+            leaf_span_start = int(getattr(leaf, "span_start", 0))
+
+            # Check frontier (embedding jobs respect the same frontier as summaries)
+            if frontier is not None and leaf_span_start > frontier:
                 return None
 
-            # Check for leaf needing embedding
-            if self._is_leaf(root) and not self._has_embedding(root, document_id):
-                embedding_job = EmbeddingJob(document_id, root.id)
+            # Check if needs embedding
+            if not self._has_embedding(leaf, document_id):
+                embedding_job = EmbeddingJob(document_id, leaf.id)
                 if embedding_job not in active_jobs:
-                    # Skip if this job already failed
                     if ctx is not None and ctx.is_failed(embedding_job):
                         continue
                     return embedding_job
+
+        return None
+
+    def _find_next_summary_job(
+        self,
+        roots: list[TreeNode],
+        document_id: str,
+        active_jobs: set[IndexingJob],
+        ctx: DocumentContext | None,
+        frontier: int | None,
+    ) -> SummaryJob | None:
+        """Scan roots for the first eligible sibling pair to summarize."""
+        for i, root in enumerate(roots):
+            root_span_start = int(getattr(root, "span_start", 0))
+
+            # Check frontier
+            if frontier is not None and root_span_start > frontier:
+                return None
 
             # Check for eligible sibling pair
             if i + 1 < len(roots):
@@ -595,7 +628,6 @@ class IndexingEngine:
                 if self._is_eligible_pair(root, right, document_id):
                     summary_job = SummaryJob(document_id, root.id, right.id)
                     if summary_job not in active_jobs:
-                        # Skip if this job already failed
                         if ctx is not None and ctx.is_failed(summary_job):
                             continue
                         return summary_job
@@ -709,7 +741,14 @@ class IndexingEngine:
         1. They have the same height
         2. Left has an even level_index (is a left child position)
         3. Right has level_index = left.level_index + 1 (is adjacent)
-        4. For leaves (height 0): both must have embeddings
+
+        Note: No embedding requirements for summarization eligibility.
+        - Leaf embeddings are for query-time retrieval, not summarization.
+          Embedding jobs run in parallel with summary jobs.
+        - Inner nodes use verbatim_nodes_only=True for preceding context
+          (enforced by config), so they don't need embeddings either.
+        - Inner nodes no longer store embeddings - score propagation happens
+          at query time from descendant leaf embeddings.
         """
         left_height = int(getattr(left, "height", 0))
         right_height = int(getattr(right, "height", 0))
@@ -726,13 +765,6 @@ class IndexingEngine:
         # Right must be adjacent (left's sibling)
         if right_level != left_level + 1:
             return False
-
-        # For leaves, both must have embeddings before summarization
-        if left_height == 0:
-            if not self._has_embedding(left, document_id):
-                return False
-            if not self._has_embedding(right, document_id):
-                return False
 
         return True
 
@@ -1103,22 +1135,10 @@ class IndexingEngine:
         # Get inner-specific preceding context config
         inner_config = self._index_config.preceding_context.inner
 
-        # Compute parent embedding only if needed for full semantic retrieval
-        # When verbatim_nodes_only=true, we skip embedding computation entirely
-        parent_embedding: np.ndarray[tuple[int], np.dtype[np.float64]] | None = None
-        if not inner_config.verbatim_nodes_only:
-            # Need parent embedding for semantic retrieval query
-            if left.embedding is None:
-                raise RuntimeError(
-                    f"Left child {left.id} missing embedding in _summarize_pair "
-                    "(required when inner.verbatim_nodes_only=false)"
-                )
-            if right.embedding is None:
-                raise RuntimeError(
-                    f"Right child {right.id} missing embedding in _summarize_pair "
-                    "(required when inner.verbatim_nodes_only=false)"
-                )
-            parent_embedding = _average_embeddings(left.embedding, right.embedding)
+        # Note: inner.verbatim_nodes_only is enforced True by config validation.
+        # Semantic retrieval for inner nodes would require embeddings on inner
+        # nodes, but we no longer store those to enable parallel summarization.
+        # This could be re-enabled by computing inner embeddings on-the-fly.
 
         # Retrieve preceding context BEFORE summarization
         # Nodes at span_start=0 get empty tiling, others get retrieved context
@@ -1131,52 +1151,16 @@ class IndexingEngine:
         if span_start > 0:
             retrieval_start_time = time.time()
 
-            if inner_config.verbatim_nodes_only:
-                # Simplified path: just get rightmost N leaves within budget
-                verbatim_result = get_verbatim_context_nodes(
-                    store,
-                    job.document_id,
-                    span_start,
-                    inner_config.verbatim_tokens,
-                )
-                tiling_ids = verbatim_result.tiling_ids
-                context_nodes = verbatim_result.nodes
-                tiling_tokens = verbatim_result.tiling_tokens
-            else:
-                # Full retrieval path with semantic search
-                retriever = self._create_retriever(job.document_id)
-                if retriever is not None and parent_embedding is not None:
-                    query_text = f"{left_text}\n{right_text}"
-                    # Convert parent embedding to list[float] for retrieval
-                    parent_embedding_list = parent_embedding.tolist()
-                    try:
-                        context_result = await retriever.retrieve_for_context(
-                            query_text=query_text,
-                            span_end_limit=span_start,
-                            budget_tokens=self._index_config.preceding_context_budget,
-                            document_id=job.document_id,
-                            recent_verbatim_token_budget=inner_config.verbatim_tokens,
-                            query_embedding=parent_embedding_list,
-                            num_seeds=inner_config.num_seeds,
-                        )
-                        if (
-                            context_result is not None
-                            and context_result.tiling
-                            and context_result.nodes
-                        ):
-                            tiling_ids = list(context_result.tiling)
-                            context_nodes = context_result.nodes
-                            tiling_tokens = sum(
-                                context_nodes[nid].token_count
-                                for nid in tiling_ids
-                                if nid in context_nodes
-                            )
-                    except Exception:
-                        logger.exception(
-                            "summarize: failed to retrieve context doc=%s parent=%s",
-                            job.document_id,
-                            parent_id,
-                        )
+            # Verbatim path: get rightmost N nodes within budget (no semantic search)
+            verbatim_result = get_verbatim_context_nodes(
+                store,
+                job.document_id,
+                span_start,
+                inner_config.verbatim_tokens,
+            )
+            tiling_ids = verbatim_result.tiling_ids
+            context_nodes = verbatim_result.nodes
+            tiling_tokens = verbatim_result.tiling_tokens
 
             # Record retrieval telemetry
             if telemetry is not None:
@@ -1283,9 +1267,10 @@ class IndexingEngine:
 
         store.nodes.update_neighbors_batch(neighbors_update)
 
-        # Store parent embedding only if it was computed (when using full semantic retrieval)
-        if parent_embedding is not None:
-            store.nodes._repo.update_embedding(parent_id, parent_embedding)
+        # Note: Inner nodes no longer store embeddings (to enable parallel
+        # summarization). Embeddings only exist on leaf nodes for query-time
+        # retrieval. Score propagation at query time computes inner node scores
+        # from descendant leaf embeddings.
 
         logger.debug(
             "summarize: created parent doc=%s parent=%s left=%s right=%s h=%d",

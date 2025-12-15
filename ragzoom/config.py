@@ -194,19 +194,45 @@ class PrecedingContextSettings:
     """Container for leaf and inner node preceding context configs.
 
     Allows different retrieval strategies for embedding (leaf) vs summarization (inner).
+
+    Note: inner.verbatim_nodes_only must be True. Inner nodes no longer store
+    embeddings (to enable parallel summarization), so semantic retrieval for
+    inner node preceding context is not currently supported. This may be
+    re-enabled in the future by computing inner embeddings on-the-fly.
     """
 
     leaf: PrecedingContextConfig = field(default_factory=PrecedingContextConfig)
-    inner: PrecedingContextConfig = field(default_factory=PrecedingContextConfig)
+    inner: PrecedingContextConfig = field(
+        default_factory=lambda: PrecedingContextConfig(verbatim_nodes_only=True)
+    )
+
+    def __post_init__(self) -> None:
+        """Validate configuration values."""
+        if not self.inner.verbatim_nodes_only:
+            raise ValueError(
+                "inner.verbatim_nodes_only must be True. Inner nodes no longer store "
+                "embeddings, so semantic retrieval for inner node preceding context "
+                "is not currently supported. Use verbatim_nodes_only=True for inner "
+                "nodes, or set inner.verbatim_tokens to control context size."
+            )
 
     @classmethod
     def from_dict(cls, d: PrecedingContextSettingsDict) -> "PrecedingContextSettings":
-        """Create from dictionary."""
+        """Create from dictionary.
+
+        Note: inner.verbatim_nodes_only defaults to True (unlike leaf which defaults
+        to False) because inner nodes don't store embeddings for semantic retrieval.
+        """
         leaf_dict = d.get("leaf", {})
         inner_dict = d.get("inner", {})
+        # Inner defaults to verbatim_nodes_only=True (required constraint)
+        inner_dict_with_default: PrecedingContextConfigDict = {
+            "verbatim_nodes_only": True,
+            **inner_dict,
+        }
         return cls(
             leaf=PrecedingContextConfig.from_dict(leaf_dict),
-            inner=PrecedingContextConfig.from_dict(inner_dict),
+            inner=PrecedingContextConfig.from_dict(inner_dict_with_default),
         )
 
 

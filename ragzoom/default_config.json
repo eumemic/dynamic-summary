@@ -9,13 +9,13 @@
   "preceding_context": {
     "leaf": {
       "num_seeds": 0,
-      "verbatim_tokens": 2000,
-      "min_forest_completeness": 0.0,
-      "verbatim_nodes_only": false
+      "verbatim_tokens": 400,
+      "min_forest_completeness": 1.0,
+      "verbatim_nodes_only": true
     },
     "inner": {
       "num_seeds": 0,
-      "verbatim_tokens": 2000,
+      "verbatim_tokens": 400,
       "min_forest_completeness": 0.0,
       "verbatim_nodes_only": true
     }
