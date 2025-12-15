@@ -207,6 +207,7 @@ class WorkerProgressDisplay:
                     leave=False,
                     dynamic_ncols=True,
                     miniters=1,
+                    smoothing=0.05,
                 )
                 self._bars[doc_id] = bar
             else:
