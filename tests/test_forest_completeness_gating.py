@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
+import pytest
+
 from ragzoom.config import IndexConfig, PrecedingContextConfig, PrecedingContextSettings
+from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.server.indexing_engine import (
+    EmbeddingJob,
+    IndexingEngine,
+    SummaryJob,
     _expected_total_from_leaf_count,
     _min_roots_for_leaf_count,
 )
+
+if TYPE_CHECKING:
+    from ragzoom.contracts.storage_backend import StorageBackend
 
 
 def _make_preceding_context(
@@ -16,11 +26,16 @@ def _make_preceding_context(
     verbatim_tokens: int = 0,
 ) -> PrecedingContextSettings:
     """Create PrecedingContextSettings with given values for both leaf and inner."""
-    config = PrecedingContextConfig(
+    leaf_config = PrecedingContextConfig(
         min_forest_completeness=min_forest_completeness,
         verbatim_tokens=verbatim_tokens,
     )
-    return PrecedingContextSettings(leaf=config, inner=config)
+    inner_config = PrecedingContextConfig(
+        min_forest_completeness=min_forest_completeness,
+        verbatim_tokens=verbatim_tokens,
+        verbatim_nodes_only=True,  # Required - inner nodes don't store embeddings
+    )
+    return PrecedingContextSettings(leaf=leaf_config, inner=inner_config)
 
 
 def _config_with_gating(
@@ -167,102 +182,184 @@ class TestCompressibilityGatingBehavior:
         assert 0.33 < min_forest_completeness
 
 
+# -----------------------------------------------------------------------------
+# Test helper for building tree structures with real storage
+# -----------------------------------------------------------------------------
+
+
+class TreeBuilder:
+    """Helper for building tree structures in a real storage backend.
+
+    This creates actual nodes in the database so tests exercise real storage
+    queries (get_root_nodes, get_leaves, etc.) rather than mocks.
+    """
+
+    def __init__(self, storage_backend: StorageBackend, document_id: str) -> None:
+        self.storage = storage_backend
+        self.document_id = document_id
+        self._next_span = 0
+        self._span_size = 100  # chars per leaf
+
+        # Initialize document metadata
+        doc_store = storage_backend.for_document(document_id)
+        doc_store.set_metadata(
+            file_path=f"/test/{document_id}",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+
+    def add_leaf(
+        self,
+        node_id: str,
+        level_index: int,
+        *,
+        with_embedding: bool = False,
+        span_start: int | None = None,
+        span_end: int | None = None,
+    ) -> None:
+        """Add a leaf node to the tree."""
+        if span_start is None:
+            span_start = self._next_span
+        if span_end is None:
+            span_end = span_start + self._span_size
+        self._next_span = span_end
+
+        doc_store = self.storage.for_document(self.document_id)
+        node_data: NodeDataDict = {
+            "node_id": node_id,
+            "text": f"Leaf content {node_id}",
+            "span_start": span_start,
+            "span_end": span_end,
+            "token_count": (span_end - span_start) // 4,  # ~4 chars per token
+            "height": 0,
+            "level_index": level_index,
+        }
+        doc_store.nodes.add_batch([node_data])
+
+        if with_embedding:
+            # Add a fake embedding (1536 dimensions for text-embedding-3-small)
+            fake_embedding = [0.1] * 1536
+            doc_store.nodes._repo.update_embedding(node_id, fake_embedding)
+
+    def add_parent(
+        self,
+        node_id: str,
+        level_index: int,
+        left_child_id: str,
+        right_child_id: str,
+        height: int,
+        span_start: int,
+        span_end: int,
+    ) -> None:
+        """Add a parent (inner) node covering two children."""
+        doc_store = self.storage.for_document(self.document_id)
+        node_data: NodeDataDict = {
+            "node_id": node_id,
+            "text": f"Summary of {left_child_id} and {right_child_id}",
+            "span_start": span_start,
+            "span_end": span_end,
+            "token_count": (span_end - span_start) // 4,
+            "height": height,
+            "level_index": level_index,
+            "left_child_id": left_child_id,
+            "right_child_id": right_child_id,
+        }
+        doc_store.nodes.add_batch([node_data])
+
+        # Update children's parent_id
+        doc_store.nodes._repo.update_parent_references_batch(
+            [
+                (left_child_id, node_id),
+                (right_child_id, node_id),
+            ]
+        )
+
+
+# -----------------------------------------------------------------------------
+# Tests using real storage backend
+# -----------------------------------------------------------------------------
+
+
 class TestFindNextJobGating:
-    """Test _find_next_job with actual mock roots to verify gating logic.
+    """Test _find_next_job with real storage backend to verify gating logic.
 
     These tests verify that the gating correctly uses PRECEDING forest state,
     not including the current root being evaluated.
     """
 
-    def _make_leaf_root(self, node_id: str, level_index: int) -> MagicMock:
-        """Create a mock leaf root node."""
-        node = MagicMock()
-        node.id = node_id
-        node.height = 0
-        node.level_index = level_index
-        node.embedding = None  # No embedding yet
-        return node
-
-    def _make_height1_root(self, node_id: str, level_index: int) -> MagicMock:
-        """Create a mock height-1 root (summarized pair, covers 2 leaves)."""
-        node = MagicMock()
-        node.id = node_id
-        node.height = 1
-        node.level_index = level_index
-        node.embedding = b"fake"  # Has embedding
-        return node
-
-    def _make_height2_root(self, node_id: str, level_index: int) -> MagicMock:
-        """Create a mock height-2 root (covers 4 leaves)."""
-        node = MagicMock()
-        node.id = node_id
-        node.height = 2
-        node.level_index = level_index
-        node.embedding = b"fake"  # Has embedding
-        return node
-
-    def test_first_leaf_always_allowed_with_perfect_forest_completeness(self) -> None:
-        """First leaf (no preceding forest) always allowed, even with min_forest_completeness=1.0."""
-
-        from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
-
-        # Strictest threshold: no extraneous detail allowed
+    @pytest.fixture
+    def engine(self, storage_backend: StorageBackend) -> IndexingEngine:
+        """Create an IndexingEngine with min_forest_completeness=1.0."""
         index_config = _config_with_gating(min_forest_completeness=1.0)
-
-        mock_store = MagicMock()
-        engine = IndexingEngine(
-            store=mock_store,
+        return IndexingEngine(
+            store=storage_backend,
             llm_service=MagicMock(),
             index_config=index_config,
             openai_client=MagicMock(),
             max_parallelism=30,
         )
 
-        # Single leaf root with no embedding
-        leaf0 = self._make_leaf_root("leaf0", 0)
-        mock_doc_store = MagicMock()
-        mock_doc_store.nodes.get_root_nodes.return_value = [leaf0]
-        mock_store.for_document.return_value = mock_doc_store
+    @pytest.fixture
+    def relaxed_engine(self, storage_backend: StorageBackend) -> IndexingEngine:
+        """Create an IndexingEngine with min_forest_completeness=0.0."""
+        index_config = _config_with_gating(min_forest_completeness=0.0)
+        return IndexingEngine(
+            store=storage_backend,
+            llm_service=MagicMock(),
+            index_config=index_config,
+            openai_client=MagicMock(),
+            max_parallelism=30,
+        )
+
+    @pytest.fixture
+    def partial_gating_engine(self, storage_backend: StorageBackend) -> IndexingEngine:
+        """Create an IndexingEngine with min_forest_completeness=0.33."""
+        index_config = _config_with_gating(min_forest_completeness=0.33)
+        return IndexingEngine(
+            store=storage_backend,
+            llm_service=MagicMock(),
+            index_config=index_config,
+            openai_client=MagicMock(),
+            max_parallelism=30,
+        )
+
+    def test_first_leaf_always_allowed_with_perfect_forest_completeness(
+        self, storage_backend: StorageBackend, engine: IndexingEngine
+    ) -> None:
+        """First leaf (no preceding forest) always allowed, even with min_forest_completeness=1.0."""
+        doc_id = "test_first_leaf"
+        builder = TreeBuilder(storage_backend, doc_id)
+        builder.add_leaf("leaf0", level_index=0, with_embedding=False)
 
         # Should return embedding job for leaf0 (no preceding forest to check)
-        job = engine._find_next_job("doc1", set(), None)
+        job = engine._find_next_job(doc_id, set(), None)
         assert job is not None
         assert isinstance(job, EmbeddingJob)
         assert job.leaf_id == "leaf0"
 
-    def test_second_leaf_allowed_when_first_is_single_root(self) -> None:
-        """Second leaf allowed when first leaf exists as 1 root (1 leaf = 1 min root = 0 extraneous)."""
+    def test_two_leaves_returns_summary_job(
+        self, storage_backend: StorageBackend, engine: IndexingEngine
+    ) -> None:
+        """Two leaves form an eligible pair, returns summary job.
 
-        from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
+        Summary jobs don't require embeddings - leaf embeddings are for query-time
+        retrieval, not summarization.
+        """
+        doc_id = "test_two_leaves"
+        builder = TreeBuilder(storage_backend, doc_id)
+        builder.add_leaf("leaf0", level_index=0, with_embedding=True)
+        builder.add_leaf("leaf1", level_index=1, with_embedding=False)
 
-        index_config = _config_with_gating(min_forest_completeness=1.0)
-
-        mock_store = MagicMock()
-        engine = IndexingEngine(
-            store=mock_store,
-            llm_service=MagicMock(),
-            index_config=index_config,
-            openai_client=MagicMock(),
-            max_parallelism=30,
-        )
-
-        # Two leaves: leaf0 has embedding (complete), leaf1 needs embedding
-        leaf0 = self._make_leaf_root("leaf0", 0)
-        leaf0.embedding = b"fake"  # leaf0 is done
-        leaf1 = self._make_leaf_root("leaf1", 1)
-
-        mock_doc_store = MagicMock()
-        mock_doc_store.nodes.get_root_nodes.return_value = [leaf0, leaf1]
-        mock_store.for_document.return_value = mock_doc_store
-
-        # Should return embedding job for leaf1
-        # Preceding forest: 1 leaf, 1 root, min_roots=1 → extraneous=0
-        job = engine._find_next_job("doc1", set(), None)
+        # Returns summary job since leaves form an eligible pair
+        job = engine._find_next_job(doc_id, set(), None)
         assert job is not None
-        assert isinstance(job, EmbeddingJob)
-        assert job.leaf_id == "leaf1"
+        assert isinstance(job, SummaryJob)
+        assert job.left_id == "leaf0"
+        assert job.right_id == "leaf1"
 
-    def test_third_leaf_blocked_returns_summary_job(self) -> None:
+    def test_third_leaf_blocked_returns_summary_job(
+        self, storage_backend: StorageBackend, engine: IndexingEngine
+    ) -> None:
         """Third leaf blocked with min_forest_completeness=1.0, returns summary job.
 
         Preceding forest: 2 leaves as 2 separate roots.
@@ -270,167 +367,141 @@ class TestFindNextJobGating:
         forest_completeness = 1/2 = 0.5 < min_forest_completeness=1.0 → BLOCKED
         But engine returns a SummaryJob to combine leaf0+leaf1.
         """
-
-        from ragzoom.server.indexing_engine import IndexingEngine, SummaryJob
-
-        index_config = _config_with_gating(min_forest_completeness=1.0)
-
-        mock_store = MagicMock()
-        engine = IndexingEngine(
-            store=mock_store,
-            llm_service=MagicMock(),
-            index_config=index_config,
-            openai_client=MagicMock(),
-            max_parallelism=30,
-        )
-
-        # Three leaves, first two with embeddings but not summarized
-        leaf0 = self._make_leaf_root("leaf0", 0)
-        leaf0.embedding = b"fake"
-        leaf1 = self._make_leaf_root("leaf1", 1)
-        leaf1.embedding = b"fake"
-        leaf2 = self._make_leaf_root("leaf2", 2)  # No embedding
-
-        mock_doc_store = MagicMock()
-        mock_doc_store.nodes.get_root_nodes.return_value = [leaf0, leaf1, leaf2]
-        mock_store.for_document.return_value = mock_doc_store
+        doc_id = "test_third_leaf_blocked"
+        builder = TreeBuilder(storage_backend, doc_id)
+        builder.add_leaf("leaf0", level_index=0, with_embedding=True)
+        builder.add_leaf("leaf1", level_index=1, with_embedding=True)
+        builder.add_leaf("leaf2", level_index=2, with_embedding=False)
 
         # Engine returns summary job for leaf0+leaf1 since leaf2 is blocked
-        job = engine._find_next_job("doc1", set(), None)
+        job = engine._find_next_job(doc_id, set(), None)
         assert job is not None
         assert isinstance(job, SummaryJob)
         assert job.left_id == "leaf0"
         assert job.right_id == "leaf1"
 
-    def test_third_leaf_allowed_when_preceding_summarized(self) -> None:
+    def test_third_leaf_allowed_when_preceding_summarized(
+        self, storage_backend: StorageBackend, engine: IndexingEngine
+    ) -> None:
         """Third leaf allowed when first two are summarized into one root.
 
         Preceding forest: height-1 root covering 2 leaves → 1 root, min=1 → extraneous=0.
         """
+        doc_id = "test_third_leaf_allowed"
+        builder = TreeBuilder(storage_backend, doc_id)
 
-        from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
-
-        index_config = _config_with_gating(min_forest_completeness=1.0)
-
-        mock_store = MagicMock()
-        engine = IndexingEngine(
-            store=mock_store,
-            llm_service=MagicMock(),
-            index_config=index_config,
-            openai_client=MagicMock(),
-            max_parallelism=30,
+        # Create leaves and their parent
+        builder.add_leaf(
+            "leaf0", level_index=0, with_embedding=True, span_start=0, span_end=100
+        )
+        builder.add_leaf(
+            "leaf1", level_index=1, with_embedding=True, span_start=100, span_end=200
+        )
+        builder.add_parent(
+            "parent01",
+            level_index=0,
+            left_child_id="leaf0",
+            right_child_id="leaf1",
+            height=1,
+            span_start=0,
+            span_end=200,
+        )
+        builder.add_leaf(
+            "leaf2", level_index=2, with_embedding=False, span_start=200, span_end=300
         )
 
-        # Height-1 root (covers 2 leaves) + leaf2 needing embedding
-        parent01 = self._make_height1_root("parent01", 0)
-        leaf2 = self._make_leaf_root("leaf2", 2)
-
-        mock_doc_store = MagicMock()
-        mock_doc_store.nodes.get_root_nodes.return_value = [parent01, leaf2]
-        mock_store.for_document.return_value = mock_doc_store
-
-        # Should return embedding job for leaf2
-        # Preceding: 2 leaves in 1 root, min=1 → extraneous=0
-        job = engine._find_next_job("doc1", set(), None)
+        # Should return embedding job for leaf2 (preceding forest is optimal)
+        job = engine._find_next_job(doc_id, set(), None)
         assert job is not None
         assert isinstance(job, EmbeddingJob)
         assert job.leaf_id == "leaf2"
 
-    def test_zero_forest_completeness_allows_all_leaves(self) -> None:
+    def test_zero_forest_completeness_allows_all_leaves(
+        self, storage_backend: StorageBackend, relaxed_engine: IndexingEngine
+    ) -> None:
         """With min_forest_completeness=0.0, all leaves allowed regardless of forest state."""
-
-        from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
-
-        index_config = _config_with_gating(min_forest_completeness=0.0)
-
-        mock_store = MagicMock()
-        engine = IndexingEngine(
-            store=mock_store,
-            llm_service=MagicMock(),
-            index_config=index_config,
-            openai_client=MagicMock(),
-            max_parallelism=30,
-        )
-
-        # Four leaves, none with embeddings, no parents
-        leaves = [self._make_leaf_root(f"leaf{i}", i) for i in range(4)]
-
-        mock_doc_store = MagicMock()
-        mock_doc_store.nodes.get_root_nodes.return_value = leaves
-        mock_store.for_document.return_value = mock_doc_store
+        doc_id = "test_relaxed_gating"
+        builder = TreeBuilder(storage_backend, doc_id)
+        for i in range(4):
+            builder.add_leaf(f"leaf{i}", level_index=i, with_embedding=False)
 
         # Should return embedding job for first leaf
-        job = engine._find_next_job("doc1", set(), None)
+        job = relaxed_engine._find_next_job(doc_id, set(), None)
         assert job is not None
         assert isinstance(job, EmbeddingJob)
         assert job.leaf_id == "leaf0"
 
-    def test_fifth_leaf_blocked_with_four_separate_roots(self) -> None:
+    def test_fifth_leaf_blocked_with_four_separate_roots(
+        self, storage_backend: StorageBackend, partial_gating_engine: IndexingEngine
+    ) -> None:
         """Fifth leaf blocked when 4 preceding leaves exist as 4 separate roots.
 
         Preceding: 4 leaves, 4 roots, min=popcount(4)=1
         forest_completeness = 1/4 = 0.25 < min_forest_completeness=0.33 → BLOCKED
         """
-
-        from ragzoom.server.indexing_engine import IndexingEngine, SummaryJob
-
-        index_config = _config_with_gating(min_forest_completeness=0.33)
-
-        mock_store = MagicMock()
-        engine = IndexingEngine(
-            store=mock_store,
-            llm_service=MagicMock(),
-            index_config=index_config,
-            openai_client=MagicMock(),
-            max_parallelism=30,
-        )
-
-        # Five leaves, first four with embeddings but not summarized
-        leaves = [self._make_leaf_root(f"leaf{i}", i) for i in range(5)]
+        doc_id = "test_fifth_leaf_blocked"
+        builder = TreeBuilder(storage_backend, doc_id)
         for i in range(4):
-            leaves[i].embedding = b"fake"
+            builder.add_leaf(f"leaf{i}", level_index=i, with_embedding=True)
+        builder.add_leaf("leaf4", level_index=4, with_embedding=False)
 
-        mock_doc_store = MagicMock()
-        mock_doc_store.nodes.get_root_nodes.return_value = leaves
-        mock_store.for_document.return_value = mock_doc_store
-
-        # Fifth leaf is blocked (extraneous=3 > max=2), returns summary job
-        job = engine._find_next_job("doc1", set(), None)
+        # Fifth leaf is blocked (extraneous=3 > max), returns summary job
+        job = partial_gating_engine._find_next_job(doc_id, set(), None)
         assert job is not None
         assert isinstance(job, SummaryJob)
 
-    def test_fifth_leaf_allowed_with_partially_summarized(self) -> None:
+    def test_fifth_leaf_allowed_with_partially_summarized(
+        self, storage_backend: StorageBackend, partial_gating_engine: IndexingEngine
+    ) -> None:
         """Fifth leaf allowed when preceding 4 leaves are partially summarized.
 
         Preceding: 4 leaves in 2 height-1 roots → 2 roots, min=1
         forest_completeness = 1/2 = 0.5 >= min_forest_completeness=0.33 → ALLOWED
         """
+        doc_id = "test_fifth_leaf_allowed"
+        builder = TreeBuilder(storage_backend, doc_id)
 
-        from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
-
-        index_config = _config_with_gating(min_forest_completeness=0.33)
-
-        mock_store = MagicMock()
-        engine = IndexingEngine(
-            store=mock_store,
-            llm_service=MagicMock(),
-            index_config=index_config,
-            openai_client=MagicMock(),
-            max_parallelism=30,
+        # Create first pair of leaves and their parent
+        builder.add_leaf(
+            "leaf0", level_index=0, with_embedding=True, span_start=0, span_end=100
+        )
+        builder.add_leaf(
+            "leaf1", level_index=1, with_embedding=True, span_start=100, span_end=200
+        )
+        builder.add_parent(
+            "parent01",
+            level_index=0,
+            left_child_id="leaf0",
+            right_child_id="leaf1",
+            height=1,
+            span_start=0,
+            span_end=200,
         )
 
-        # Two height-1 roots (covering 4 leaves) + leaf4 needing embedding
-        parent01 = self._make_height1_root("parent01", 0)
-        parent23 = self._make_height1_root("parent23", 2)
-        leaf4 = self._make_leaf_root("leaf4", 4)
+        # Create second pair of leaves and their parent
+        builder.add_leaf(
+            "leaf2", level_index=2, with_embedding=True, span_start=200, span_end=300
+        )
+        builder.add_leaf(
+            "leaf3", level_index=3, with_embedding=True, span_start=300, span_end=400
+        )
+        builder.add_parent(
+            "parent23",
+            level_index=2,
+            left_child_id="leaf2",
+            right_child_id="leaf3",
+            height=1,
+            span_start=200,
+            span_end=400,
+        )
 
-        mock_doc_store = MagicMock()
-        mock_doc_store.nodes.get_root_nodes.return_value = [parent01, parent23, leaf4]
-        mock_store.for_document.return_value = mock_doc_store
+        # Fifth leaf needing embedding
+        builder.add_leaf(
+            "leaf4", level_index=4, with_embedding=False, span_start=400, span_end=500
+        )
 
         # Should return embedding job for leaf4
-        # Preceding: 4 leaves in 2 roots, min=1 → extraneous=1 <= max=2
-        job = engine._find_next_job("doc1", set(), None)
+        job = partial_gating_engine._find_next_job(doc_id, set(), None)
         assert job is not None
         assert isinstance(job, EmbeddingJob)
         assert job.leaf_id == "leaf4"
@@ -444,79 +515,69 @@ class TestVerbatimTokensFrontier:
     verbatim_tokens * avg_chars_per_token.
     """
 
-    def _make_leaf_root(
-        self, node_id: str, level_index: int, span_start: int, span_end: int
-    ) -> MagicMock:
-        """Create a mock leaf root node with span information."""
-        node = MagicMock()
-        node.id = node_id
-        node.height = 0
-        node.level_index = level_index
-        node.span_start = span_start
-        node.span_end = span_end
-        node.token_count = (span_end - span_start) // 4  # ~4 chars per token
-        node.embedding = None
-        return node
-
-    def _make_height1_root(
-        self, node_id: str, level_index: int, span_start: int, span_end: int
-    ) -> MagicMock:
-        """Create a mock height-1 root (summarized pair, covers 2 leaves)."""
-        node = MagicMock()
-        node.id = node_id
-        node.height = 1
-        node.level_index = level_index
-        node.span_start = span_start
-        node.span_end = span_end
-        node.embedding = b"fake"  # Has embedding
-        return node
-
-    def test_third_leaf_allowed_with_verbatim_tokens(self) -> None:
-        """Third leaf allowed when within verbatim token budget.
-
-        Scenario: height-1 root (covering 2 leaves) + third leaf needing embedding.
-        With min_forest_completeness=1.0, the third leaf would normally be blocked because
-        preceding forest has 1 root but 2 leaves (forest_completeness = 1/1 = 1.0, OK).
-        But let's test with a case that would be blocked without verbatim tokens.
-
-        Actually, with an optimal preceding forest (h1 root), third leaf is allowed.
-        Let's create a scenario with intentional low forest_completeness to test verbatim.
-        """
-        from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
-
+    def _make_engine(
+        self,
+        storage_backend: StorageBackend,
+        min_forest_completeness: float,
+        verbatim_tokens: int,
+    ) -> IndexingEngine:
+        """Create engine with specified gating parameters."""
         index_config = _config_with_gating(
-            min_forest_completeness=1.0, verbatim_tokens=100
+            min_forest_completeness=min_forest_completeness,
+            verbatim_tokens=verbatim_tokens,
         )
-
-        mock_store = MagicMock()
-        engine = IndexingEngine(
-            store=mock_store,
+        return IndexingEngine(
+            store=storage_backend,
             llm_service=MagicMock(),
             index_config=index_config,
             openai_client=MagicMock(),
             max_parallelism=30,
         )
 
-        # Three roots where first two are already summarized:
-        # - height-1 root covering leaves 0-1 (span 0-200)
-        # - leaf2 needing embedding (span 200-300)
-        # Preceding forest before leaf2: 2 leaves in 1 root = optimal (extraneous=0)
-        # So this test verifies the leaf is allowed (no blocking needed).
-        h1_root = self._make_height1_root("parent01", 0, span_start=0, span_end=200)
-        leaf2 = self._make_leaf_root("leaf2", 2, span_start=200, span_end=300)
+    def test_third_leaf_allowed_with_verbatim_tokens(
+        self, storage_backend: StorageBackend
+    ) -> None:
+        """Third leaf allowed when preceding forest is optimal.
 
-        mock_doc_store = MagicMock()
-        mock_doc_store.nodes.get_root_nodes.return_value = [h1_root, leaf2]
-        mock_doc_store.nodes.get_avg_chars_per_token.return_value = 4.0
-        mock_store.for_document.return_value = mock_doc_store
+        Scenario: height-1 root (covering 2 leaves) + third leaf needing embedding.
+        Preceding forest before leaf2: 2 leaves in 1 root = optimal (extraneous=0)
+        """
+        engine = self._make_engine(
+            storage_backend, min_forest_completeness=1.0, verbatim_tokens=100
+        )
 
-        # Preceding forest is optimal, so leaf2 is eligible without verbatim
-        job = engine._find_next_job("doc1", set(), None)
+        doc_id = "test_verbatim_third_leaf"
+        builder = TreeBuilder(storage_backend, doc_id)
+
+        # Create summarized pair
+        builder.add_leaf(
+            "leaf0", level_index=0, with_embedding=True, span_start=0, span_end=100
+        )
+        builder.add_leaf(
+            "leaf1", level_index=1, with_embedding=True, span_start=100, span_end=200
+        )
+        builder.add_parent(
+            "parent01",
+            level_index=0,
+            left_child_id="leaf0",
+            right_child_id="leaf1",
+            height=1,
+            span_start=0,
+            span_end=200,
+        )
+        builder.add_leaf(
+            "leaf2", level_index=2, with_embedding=False, span_start=200, span_end=300
+        )
+
+        # Preceding forest is optimal, so leaf2 is eligible
+        job = engine._find_next_job(doc_id, set(), None)
         assert job is not None
         assert isinstance(job, EmbeddingJob)
         assert job.leaf_id == "leaf2"
 
-    def test_leaf_allowed_within_verbatim_frontier(self) -> None:
+    def test_leaf_allowed_within_verbatim_frontier(
+        self, storage_backend: StorageBackend
+    ) -> None:
         """Leaf allowed when past strict gating but within verbatim frontier.
 
         Setup: 2 height-1 roots + leaf needing embedding
@@ -524,204 +585,162 @@ class TestVerbatimTokensFrontier:
         - Without verbatim: leaf blocked (first_ineligible=leaf, frontier=400)
         - With verbatim_tokens=100: frontier = 400 + 400 = 800, leaf at 400 allowed
         """
-        from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
-
-        index_config = _config_with_gating(
-            min_forest_completeness=1.0, verbatim_tokens=100
+        engine = self._make_engine(
+            storage_backend, min_forest_completeness=1.0, verbatim_tokens=100
         )
 
-        mock_store = MagicMock()
-        engine = IndexingEngine(
-            store=mock_store,
-            llm_service=MagicMock(),
-            index_config=index_config,
-            openai_client=MagicMock(),
-            max_parallelism=30,
+        doc_id = "test_verbatim_frontier"
+        builder = TreeBuilder(storage_backend, doc_id)
+
+        # Create first pair
+        builder.add_leaf(
+            "leaf0", level_index=0, with_embedding=True, span_start=0, span_end=100
+        )
+        builder.add_leaf(
+            "leaf1", level_index=1, with_embedding=True, span_start=100, span_end=200
+        )
+        builder.add_parent(
+            "h1_0",
+            level_index=0,
+            left_child_id="leaf0",
+            right_child_id="leaf1",
+            height=1,
+            span_start=0,
+            span_end=200,
         )
 
-        # Setup: 2 height-1 roots + 1 leaf needing embedding
-        # Preceding 2 h1 roots = 4 leaves, 2 roots, min=popcount(4)=1 → extraneous=1
-        h1_0 = self._make_height1_root("h1_0", 0, span_start=0, span_end=200)
-        h1_1 = self._make_height1_root("h1_1", 2, span_start=200, span_end=400)
-        leaf = self._make_leaf_root("leaf", 4, span_start=400, span_end=500)
+        # Create second pair
+        builder.add_leaf(
+            "leaf2", level_index=2, with_embedding=True, span_start=200, span_end=300
+        )
+        builder.add_leaf(
+            "leaf3", level_index=3, with_embedding=True, span_start=300, span_end=400
+        )
+        builder.add_parent(
+            "h1_1",
+            level_index=2,
+            left_child_id="leaf2",
+            right_child_id="leaf3",
+            height=1,
+            span_start=200,
+            span_end=400,
+        )
 
-        mock_doc_store = MagicMock()
-        mock_doc_store.nodes.get_root_nodes.return_value = [h1_0, h1_1, leaf]
-        mock_doc_store.nodes.get_avg_chars_per_token.return_value = 4.0
-        mock_store.for_document.return_value = mock_doc_store
+        # Add leaf needing embedding
+        builder.add_leaf(
+            "leaf4", level_index=4, with_embedding=False, span_start=400, span_end=500
+        )
 
-        # Preceding: 4 leaves in 2 roots, min=popcount(4)=1 → extraneous=1 > 0
-        # First ineligible = leaf at span_start=400
-        # frontier = 400 + 100*4 = 800
-        # leaf.span_start=400 <= 800 → allowed
-        job = engine._find_next_job("doc1", set(), None)
+        # frontier = 400 + 100*4 = 800, leaf at 400 <= 800 → allowed
+        job = engine._find_next_job(doc_id, set(), None)
         assert job is not None
         assert isinstance(job, EmbeddingJob)
-        assert job.leaf_id == "leaf"
+        assert job.leaf_id == "leaf4"
 
-    def test_leaf_blocked_beyond_verbatim_frontier(self) -> None:
+    def test_leaf_blocked_beyond_verbatim_frontier(
+        self, storage_backend: StorageBackend
+    ) -> None:
         """Leaf blocked when span_start exceeds verbatim frontier.
 
-        First ineligible determines frontier. Later roots past frontier are blocked.
-
-        Setup: 1 height-2 root (complete) + 1 leaf far away needing embedding
-        - At leaf_far: preceding = 4 leaves in 1 root → completeness = 1.0
-        - But we set min_completeness very high and use a suboptimal forest
-
-        Actually, simpler: use a height-1 root (2 leaves) + leaf, which gives:
-        - 3 leaves in 2 roots (height 1 + height 0)
-        - Optimal: popcount(3)=2 roots, max_height=1, cost = 2+1 = 3
-        - Actual: 2 roots, max_height=1, cost = 2+1 = 3 → completeness = 1.0
-
-        Need a truly incomplete forest. Use 4 separate leaves (no merging):
-        - 4 leaves in 4 roots, max_height=0
-        - Optimal: 1 root, max_height=2, cost = 1+2 = 3
-        - Actual: cost = 4+0 = 4, completeness = 0.75 < 1.0
-
-        The job found should be a summary for the leaves, not the far leaf.
-        We verify the far leaf is blocked by checking its span_start > frontier.
+        Setup: 4 separate leaves (no merging) + 1 leaf far away
+        - 4 leaves in 4 roots, completeness = 1/4 = 0.25 < 1.0 → ineligible
+        - frontier = span_start + verbatim_budget
+        - Far leaf waits while summary jobs proceed
         """
-        from ragzoom.server.indexing_engine import IndexingEngine, SummaryJob
-
-        index_config = _config_with_gating(
-            min_forest_completeness=1.0, verbatim_tokens=10
+        engine = self._make_engine(
+            storage_backend, min_forest_completeness=1.0, verbatim_tokens=10
         )
 
-        mock_store = MagicMock()
-        engine = IndexingEngine(
-            store=mock_store,
-            llm_service=MagicMock(),
-            index_config=index_config,
-            openai_client=MagicMock(),
-            max_parallelism=30,
+        doc_id = "test_verbatim_blocked"
+        builder = TreeBuilder(storage_backend, doc_id)
+
+        # 4 height-0 leaves (with embeddings)
+        for i in range(4):
+            builder.add_leaf(
+                f"leaf_{i}",
+                level_index=i,
+                with_embedding=True,
+                span_start=i * 100,
+                span_end=(i + 1) * 100,
+            )
+
+        # Far leaf needing embedding
+        builder.add_leaf(
+            "leaf_far",
+            level_index=4,
+            with_embedding=False,
+            span_start=2000,
+            span_end=2100,
         )
 
-        # 4 height-0 leaves (with embeddings) + 1 leaf needing embedding far away
-        leaf_0 = self._make_leaf_root("leaf_0", 0, span_start=0, span_end=100)
-        leaf_0.embedding = b"fake"
-        leaf_1 = self._make_leaf_root("leaf_1", 1, span_start=100, span_end=200)
-        leaf_1.embedding = b"fake"
-        leaf_2 = self._make_leaf_root("leaf_2", 2, span_start=200, span_end=300)
-        leaf_2.embedding = b"fake"
-        leaf_3 = self._make_leaf_root("leaf_3", 3, span_start=300, span_end=400)
-        leaf_3.embedding = b"fake"
-        leaf_far = self._make_leaf_root("leaf_far", 4, span_start=2000, span_end=2100)
-
-        mock_doc_store = MagicMock()
-        mock_doc_store.nodes.get_root_nodes.return_value = [
-            leaf_0,
-            leaf_1,
-            leaf_2,
-            leaf_3,
-            leaf_far,
-        ]
-        mock_doc_store.nodes.get_avg_chars_per_token.return_value = 4.0
-        mock_store.for_document.return_value = mock_doc_store
-
-        # At leaf_far: preceding = 4 leaves in 4 roots, max_height = 0
-        # optimal_cost = 1+2 = 3, actual_cost = 4+0 = 4
-        # completeness = 3/4 = 0.75 < 1.0 → ineligible
-        # frontier = 2000 + 40 = 2040
-        # But leaf_far is at 2000 <= 2040, so it's within frontier!
-        #
-        # However, work within the frontier is still allowed. The first job found
-        # is the summary job for leaf_0 + leaf_1 (within frontier at span_start=0).
-        # The leaf_far embedding job is blocked because there's other work to do first.
-        #
-        # This test verifies that even with an incomplete forest, work within
-        # the frontier proceeds (summarization), while the far leaf waits.
-        job = engine._find_next_job("doc1", set(), None)
+        # Work within frontier proceeds (summarization), far leaf waits
+        job = engine._find_next_job(doc_id, set(), None)
         assert job is not None
         assert isinstance(job, SummaryJob)
         assert job.left_id == "leaf_0"
         assert job.right_id == "leaf_1"
 
-    def test_avg_chars_per_token_none_uses_fallback(self) -> None:
-        """When get_avg_chars_per_token returns None, use fallback of 4.0.
-
-        Setup: 2 height-1 roots + leaf needing embedding
-        - First ineligible: leaf (extraneous=1 > 0)
-        - frontier = 400 + 50*4.0(fallback) = 600
-        - leaf at 400 <= 600 → allowed
-        """
-        from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
-
-        index_config = _config_with_gating(
-            min_forest_completeness=1.0, verbatim_tokens=50
-        )
-
-        mock_store = MagicMock()
-        engine = IndexingEngine(
-            store=mock_store,
-            llm_service=MagicMock(),
-            index_config=index_config,
-            openai_client=MagicMock(),
-            max_parallelism=30,
-        )
-
-        # 2 height-1 roots + leaf needing embedding
-        h1_0 = self._make_height1_root("h1_0", 0, span_start=0, span_end=200)
-        h1_1 = self._make_height1_root("h1_1", 2, span_start=200, span_end=400)
-        leaf = self._make_leaf_root("leaf", 4, span_start=400, span_end=500)
-
-        mock_doc_store = MagicMock()
-        mock_doc_store.nodes.get_root_nodes.return_value = [h1_0, h1_1, leaf]
-        mock_doc_store.nodes.get_avg_chars_per_token.return_value = None  # No data yet
-        mock_store.for_document.return_value = mock_doc_store
-
-        # frontier = 400 + 50*4.0 = 600
-        # leaf.span_start=400 <= 600 → allowed
-        job = engine._find_next_job("doc1", set(), None)
-        assert job is not None
-        assert isinstance(job, EmbeddingJob)
-        assert job.leaf_id == "leaf"
-
-    def test_verbatim_zero_allows_first_ineligible_root(self) -> None:
+    def test_verbatim_zero_allows_first_ineligible_root(
+        self, storage_backend: StorageBackend
+    ) -> None:
         """With verbatim_tokens=0, first_ineligible_root.span_start is still allowed.
 
         frontier = first_ineligible.span_start + 0 = first_ineligible.span_start
         And comparison is <=, so the first ineligible root IS eligible.
-
-        Setup: 2 height-1 roots + leaf needing embedding
-        - h1_0: covers 2 leaves → preceding_leaves=2, preceding_roots=1
-        - h1_1: before checking, preceding has 2 leaves in 1 root, min=1, extraneous=0 ≤ 0 ✓
-                after: preceding_leaves=4, preceding_roots=2
-        - leaf: before checking, preceding has 4 leaves in 2 roots, min=popcount(4)=1
-                extraneous=1 > 0 → leaf IS the first ineligible root
         """
-        from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
-
-        index_config = _config_with_gating(
-            min_forest_completeness=1.0, verbatim_tokens=0
+        engine = self._make_engine(
+            storage_backend, min_forest_completeness=1.0, verbatim_tokens=0
         )
 
-        mock_store = MagicMock()
-        engine = IndexingEngine(
-            store=mock_store,
-            llm_service=MagicMock(),
-            index_config=index_config,
-            openai_client=MagicMock(),
-            max_parallelism=30,
+        doc_id = "test_verbatim_zero"
+        builder = TreeBuilder(storage_backend, doc_id)
+
+        # Create first pair
+        builder.add_leaf(
+            "leaf0", level_index=0, with_embedding=True, span_start=0, span_end=100
+        )
+        builder.add_leaf(
+            "leaf1", level_index=1, with_embedding=True, span_start=100, span_end=200
+        )
+        builder.add_parent(
+            "h1_0",
+            level_index=0,
+            left_child_id="leaf0",
+            right_child_id="leaf1",
+            height=1,
+            span_start=0,
+            span_end=200,
         )
 
-        # 2 height-1 roots + leaf needing embedding
-        # This creates 4 preceding leaves in 2 roots, extraneous=1 > 0
-        h1_0 = self._make_height1_root("h1_0", 0, span_start=0, span_end=200)
-        h1_1 = self._make_height1_root("h1_1", 2, span_start=200, span_end=400)
-        leaf = self._make_leaf_root("leaf", 4, span_start=400, span_end=500)
+        # Create second pair
+        builder.add_leaf(
+            "leaf2", level_index=2, with_embedding=True, span_start=200, span_end=300
+        )
+        builder.add_leaf(
+            "leaf3", level_index=3, with_embedding=True, span_start=300, span_end=400
+        )
+        builder.add_parent(
+            "h1_1",
+            level_index=2,
+            left_child_id="leaf2",
+            right_child_id="leaf3",
+            height=1,
+            span_start=200,
+            span_end=400,
+        )
 
-        mock_doc_store = MagicMock()
-        mock_doc_store.nodes.get_root_nodes.return_value = [h1_0, h1_1, leaf]
-        mock_doc_store.nodes.get_avg_chars_per_token.return_value = 4.0
-        mock_store.for_document.return_value = mock_doc_store
+        # Leaf needing embedding (this is the first ineligible root)
+        builder.add_leaf(
+            "leaf4", level_index=4, with_embedding=False, span_start=400, span_end=500
+        )
 
         # first_ineligible = leaf at span_start=400
         # frontier = 400 + 0*4 = 400
-        # leaf.span_start=400 <= 400 → allowed (the key insight!)
-        job = engine._find_next_job("doc1", set(), None)
+        # leaf.span_start=400 <= 400 → allowed
+        job = engine._find_next_job(doc_id, set(), None)
         assert job is not None
         assert isinstance(job, EmbeddingJob)
-        assert job.leaf_id == "leaf"
+        assert job.leaf_id == "leaf4"
 
 
 class TestExpectedTotalMatchesMinRoots:
