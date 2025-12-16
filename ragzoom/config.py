@@ -15,6 +15,7 @@ class PrecedingContextConfigDict(TypedDict, total=False):
     num_seeds: int | None
     verbatim_tokens: int
     min_forest_completeness: float
+    max_forest_height_differential: int | None
     verbatim_nodes_only: bool
 
 
@@ -162,6 +163,7 @@ class PrecedingContextConfig:
     num_seeds: int | None = None
     verbatim_tokens: int = 2000
     min_forest_completeness: float = 0.0
+    max_forest_height_differential: int | None = None
     verbatim_nodes_only: bool = False
 
     def __post_init__(self) -> None:
@@ -177,6 +179,14 @@ class PrecedingContextConfig:
                 f"min_forest_completeness must be between 0.0 and 1.0, "
                 f"got {self.min_forest_completeness}"
             )
+        if (
+            self.max_forest_height_differential is not None
+            and self.max_forest_height_differential < 0
+        ):
+            raise ValueError(
+                f"max_forest_height_differential must be >= 0, "
+                f"got {self.max_forest_height_differential}"
+            )
 
     @classmethod
     def from_dict(cls, d: PrecedingContextConfigDict) -> "PrecedingContextConfig":
@@ -185,6 +195,7 @@ class PrecedingContextConfig:
             num_seeds=d.get("num_seeds"),
             verbatim_tokens=d.get("verbatim_tokens", 2000),
             min_forest_completeness=d.get("min_forest_completeness", 0.0),
+            max_forest_height_differential=d.get("max_forest_height_differential"),
             verbatim_nodes_only=d.get("verbatim_nodes_only", False),
         )
 

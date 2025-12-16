@@ -551,18 +551,37 @@ class IndexingEngine:
         inner_config = self._index_config.preceding_context.inner
 
         embedding_frontier = self._calculate_eligibility_frontier(
-            roots, store, document_id, leaf_config.min_forest_completeness
+            roots,
+            store,
+            document_id,
+            leaf_config.min_forest_completeness,
+            leaf_config.verbatim_tokens,
         )
         summary_frontier = self._calculate_eligibility_frontier(
-            roots, store, document_id, inner_config.min_forest_completeness
+            roots,
+            store,
+            document_id,
+            inner_config.min_forest_completeness,
+            inner_config.verbatim_tokens,
         )
 
         # Find candidates from each scanner with their respective frontiers
         embedding_job = self._find_next_embedding_job(
-            store, document_id, active_jobs, ctx, embedding_frontier
+            store,
+            document_id,
+            active_jobs,
+            ctx,
+            embedding_frontier,
+            roots,
+            leaf_config.max_forest_height_differential,
         )
         summary_job = self._find_next_summary_job(
-            roots, document_id, active_jobs, ctx, summary_frontier
+            roots,
+            document_id,
+            active_jobs,
+            ctx,
+            summary_frontier,
+            inner_config.max_forest_height_differential,
         )
 
         # Return leftmost job by span_start
@@ -590,6 +609,8 @@ class IndexingEngine:
         active_jobs: set[IndexingJob],
         ctx: DocumentContext | None,
         frontier: int | None,
+        roots: list[TreeNode],
+        max_height_diff: int | None,
     ) -> EmbeddingJob | None:
         """Scan all leaves for the first one needing an embedding.
 
@@ -608,6 +629,14 @@ class IndexingEngine:
             if frontier is not None and leaf_span_start > frontier:
                 return None
 
+            # Check height differential constraint
+            if max_height_diff is not None:
+                min_preceding = self._get_min_preceding_height(roots, leaf_span_start)
+                if min_preceding is not None:
+                    leaf_height = int(getattr(leaf, "height", 0))
+                    if leaf_height - min_preceding > max_height_diff:
+                        return None
+
             # Check if needs embedding
             if not self._has_embedding(leaf, document_id):
                 embedding_job = EmbeddingJob(document_id, leaf.id)
@@ -625,6 +654,7 @@ class IndexingEngine:
         active_jobs: set[IndexingJob],
         ctx: DocumentContext | None,
         frontier: int | None,
+        max_height_diff: int | None,
     ) -> SummaryJob | None:
         """Scan roots for the first eligible sibling pair to summarize."""
         for i, root in enumerate(roots):
@@ -638,6 +668,18 @@ class IndexingEngine:
             if i + 1 < len(roots):
                 right = roots[i + 1]
                 if self._is_eligible_pair(root, right, document_id):
+                    # Check height differential constraint
+                    # Parent node will have height = left.height + 1
+                    if max_height_diff is not None:
+                        min_preceding = self._get_min_preceding_height(
+                            roots, root_span_start
+                        )
+                        if min_preceding is not None:
+                            left_height = int(getattr(root, "height", 0))
+                            parent_height = left_height + 1
+                            if parent_height - min_preceding > max_height_diff:
+                                return None
+
                     summary_job = SummaryJob(document_id, root.id, right.id)
                     if summary_job not in active_jobs:
                         if ctx is not None and ctx.is_failed(summary_job):
@@ -652,6 +694,7 @@ class IndexingEngine:
         store: DocumentStore,
         document_id: str,
         min_forest_completeness: float,
+        verbatim_tokens: int,
     ) -> int | None:
         """Calculate the last eligible position for jobs based on forest completeness.
 
@@ -677,14 +720,11 @@ class IndexingEngine:
             store: Document store for metadata lookups
             document_id: Document being indexed
             min_forest_completeness: Minimum completeness threshold (0.0 = no gating)
+            verbatim_tokens: Token budget for verbatim context (used for frontier offset)
         """
         # No gating if min_forest_completeness is 0
         if min_forest_completeness <= 0.0:
             return None
-
-        # Use leaf config for verbatim token budget
-        leaf_config = self._index_config.preceding_context.leaf
-        verbatim_tokens = leaf_config.verbatim_tokens
 
         # Track cumulative forest statistics as we scan left-to-right
         preceding_leaves = 0
@@ -735,6 +775,28 @@ class IndexingEngine:
 
         # No ineligibility found - all jobs are eligible
         return None
+
+    def _get_min_preceding_height(
+        self, roots: list[TreeNode], span_start: int
+    ) -> int | None:
+        """Get the minimum height among roots before the given span position.
+
+        Args:
+            roots: Current root nodes in document order
+            span_start: Position to check before
+
+        Returns:
+            Minimum height of preceding roots, or None if no preceding roots
+        """
+        min_height: int | None = None
+        for root in roots:
+            root_span_start = int(getattr(root, "span_start", 0))
+            if root_span_start >= span_start:
+                break
+            root_height = int(getattr(root, "height", 0))
+            if min_height is None or root_height < min_height:
+                min_height = root_height
+        return min_height
 
     def _is_leaf(self, node: TreeNode) -> bool:
         """Check if a node is a leaf (height 0)."""

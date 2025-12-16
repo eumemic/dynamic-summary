@@ -17,6 +17,7 @@
       "num_seeds": 0,
       "verbatim_tokens": 2000,
       "min_forest_completeness": 0.0,
+      "max_forest_height_differential": 1,
       "verbatim_nodes_only": true
     }
   }
