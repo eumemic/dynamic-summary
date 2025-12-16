@@ -207,10 +207,8 @@ class PrecedingContextSettings:
 
     Allows different retrieval strategies for embedding (leaf) vs summarization (inner).
 
-    Note: inner.verbatim_nodes_only must be True. Inner nodes no longer store
-    embeddings (to enable parallel summarization), so semantic retrieval for
-    inner node preceding context is not currently supported. This may be
-    re-enabled in the future by computing inner embeddings on-the-fly.
+    Note: inner.num_seeds must be 0. Inner nodes don't store embeddings (to enable
+    parallel summarization), so semantic retrieval is not supported.
     """
 
     leaf: PrecedingContextConfig = field(default_factory=PrecedingContextConfig)
@@ -220,24 +218,19 @@ class PrecedingContextSettings:
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
-        # Inner nodes don't store embeddings, so semantic retrieval (num_seeds > 0)
-        # requires verbatim_nodes_only=True. But if num_seeds=0, no embedding query
-        # happens, so verbatim_nodes_only can be False.
-        if not self.inner.verbatim_nodes_only and (self.inner.num_seeds or 0) > 0:
+        # Inner nodes don't store embeddings, so num_seeds must be 0.
+        # Even with verbatim_nodes_only=True, num_seeds > 0 would be confusing
+        # since seeds are ignored when verbatim_nodes_only is set.
+        if (self.inner.num_seeds or 0) > 0:
             raise ValueError(
-                "inner.verbatim_nodes_only must be True when inner.num_seeds > 0. "
-                "Inner nodes no longer store embeddings, so semantic retrieval for "
-                "inner node preceding context is not currently supported. Either set "
-                "verbatim_nodes_only=True or set num_seeds=0."
+                "inner.num_seeds must be 0. Inner nodes don't store embeddings, "
+                "so semantic retrieval is not supported for inner node preceding "
+                "context. Set num_seeds=0 (seeds are ignored with verbatim_nodes_only)."
             )
 
     @classmethod
     def from_dict(cls, d: PrecedingContextSettingsDict) -> "PrecedingContextSettings":
-        """Create from dictionary.
-
-        Note: inner.verbatim_nodes_only defaults to True (unlike leaf which defaults
-        to False) because inner nodes don't store embeddings for semantic retrieval.
-        """
+        """Create from dictionary."""
         leaf_dict = d.get("leaf", {})
         inner_dict = d.get("inner", {})
         # Inner defaults to verbatim_nodes_only=True (required constraint)
