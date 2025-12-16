@@ -10,15 +10,15 @@
   "preceding_context": {
     "leaf": {
       "num_seeds": 0,
-      "verbatim_tokens": 400,
-      "token_cap": null,
-      "min_forest_completeness": 1.0,
+      "verbatim_tokens": 100,
+      "token_cap": 100,
+      "min_forest_completeness": 0.0,
       "max_forest_height_differential": null
     },
     "inner": {
       "num_seeds": 0,
       "verbatim_tokens": 0,
-      "token_cap": 400,
+      "token_cap": 300,
       "min_forest_completeness": 0.0,
       "max_forest_height_differential": 2
     }
