@@ -10,10 +10,10 @@ from openai._types import NOT_GIVEN, NotGiven
 from openai.types.chat import ChatCompletionMessageParam
 from openai.types.shared_params import ResponseFormatJSONObject
 
-from ragzoom.config import is_gpt5_model
 from ragzoom.contracts.chat_model import ChatModel, ChatResult, Message, UsageInfo
 from ragzoom.error_handling import handle_graceful_error
 from ragzoom.exceptions import LLMError
+from ragzoom.model_info import ModelInfo
 
 
 class OpenAIChatModel(ChatModel):
@@ -47,12 +47,27 @@ class OpenAIChatModel(ChatModel):
             ResponseFormatJSONObject(type="json_object") if json_mode else NOT_GIVEN
         )
 
-        # GPT-5 models don't support temperature, use reasoning_effort instead
-        if is_gpt5_model(self._model_id):
-            reasoning_arg: Literal["minimal", "low", "medium", "high"] | NotGiven = (
-                _cast(Literal["minimal", "low", "medium", "high"], reasoning_effort)
-                if reasoning_effort is not None
-                else "minimal"
+        # Check if model uses reasoning_effort instead of temperature
+        model_info = ModelInfo()
+        reasoning_levels = model_info.get_reasoning_levels(self._model_id)
+
+        if reasoning_levels is not None:
+            # Model uses reasoning_effort - determine the appropriate value
+            if reasoning_effort is not None:
+                # Caller specified a level - translate if needed
+                if reasoning_effort not in reasoning_levels:
+                    # Map unsupported levels to closest equivalent
+                    # "minimal" -> first level (usually "none" or "minimal")
+                    reasoning_str = reasoning_levels[0]
+                else:
+                    reasoning_str = reasoning_effort
+            else:
+                # Default to lowest reasoning level
+                reasoning_str = reasoning_levels[0]
+
+            # Cast to SDK-expected type (SDK may not have all levels in type hints)
+            reasoning_arg = _cast(
+                Literal["minimal", "low", "medium", "high"], reasoning_str
             )
             response = await self._client.chat.completions.create(
                 model=self._model_id,

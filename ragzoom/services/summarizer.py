@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from typing import cast
 
-from ragzoom.config import IndexConfig, is_gpt5_model
+from ragzoom.config import IndexConfig
 from ragzoom.contracts.chat_model import ChatModel, ChatResult, Message, UsageInfo
 from ragzoom.error_utils import preserve_exception_chain
 from ragzoom.exceptions import LLMError
+from ragzoom.model_info import ModelInfo
 from ragzoom.services import summary_utils
 from ragzoom.telemetry_collection import TelemetryCollector
 
@@ -30,10 +31,13 @@ class Summarizer:
     ) -> tuple[str, UsageInfo]:
         try:
             typed_messages = cast(list[Message], messages)
-            if is_gpt5_model(self.config.summary_model):
+            # Use reasoning_effort for models that support it, temperature otherwise.
+            # The adapter handles translation of unsupported reasoning levels.
+            model_info = ModelInfo()
+            if model_info.get_reasoning_levels(self.config.summary_model) is not None:
                 result: ChatResult = await self.chat_model.complete(
                     typed_messages,
-                    reasoning_effort="minimal",
+                    reasoning_effort=self.config.summary_reasoning_level,
                 )
             else:
                 result = await self.chat_model.complete(typed_messages, temperature=0.3)

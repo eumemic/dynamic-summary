@@ -24,8 +24,8 @@ class LLMModelConfigDict(TypedDict):
     input: float
     output: float
     cache_discount: NotRequired[float]
-    supports_temperature: NotRequired[bool]
     context_window: int
+    reasoning_levels: NotRequired[list[str]]
 
 
 class ModelsConfigDict(TypedDict, total=False):
@@ -159,14 +159,15 @@ class ModelInfo:
         # Default to 0.0 (no discount) for models without caching support.
         return float(self._data["llms"][model].get("cache_discount", 0.0))
 
-    def supports_temperature(self, model: str) -> bool:
-        """Check if an LLM supports temperature parameter.
+    def get_reasoning_levels(self, model: str) -> list[str] | None:
+        """Get the supported reasoning effort levels for an LLM.
 
         Args:
             model: The LLM model name
 
         Returns:
-            True if the model supports temperature, False otherwise
+            List of supported reasoning levels (e.g. ["none", "low", "medium", "high"]),
+            or None if the model uses temperature instead of reasoning levels.
 
         Raises:
             ValueError: If the model is not found
@@ -177,9 +178,27 @@ class ModelInfo:
                 f"LLM model '{model}' not found. Available models: {available}"
             )
 
-        # supports_temperature is optional (NotRequired in TypedDict).
-        # Default to True since most LLMs support temperature control.
-        return bool(self._data["llms"][model].get("supports_temperature", True))
+        levels = self._data["llms"][model].get("reasoning_levels")
+        if levels is None:
+            return None
+        return list(levels)
+
+    def supports_temperature(self, model: str) -> bool:
+        """Check if an LLM supports temperature parameter.
+
+        Models with reasoning_levels use reasoning effort instead of temperature.
+
+        Args:
+            model: The LLM model name
+
+        Returns:
+            True if the model supports temperature, False if it uses reasoning levels
+
+        Raises:
+            ValueError: If the model is not found
+        """
+        # Model supports temperature if it doesn't have reasoning_levels
+        return self.get_reasoning_levels(model) is None
 
     def get_context_window(self, model: str) -> int:
         """Get the context window size for an LLM.

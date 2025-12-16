@@ -1,6 +1,7 @@
 {
   "target_chunk_tokens": 200,
-  "summary_model": "gpt-5-nano",
+  "summary_model": "gpt-5.2",
+  "summary_reasoning_level": "none",
   "embedding_model": "text-embedding-3-small",
   "retry_threshold": 0.2,
   "max_retries": 3,
@@ -15,9 +16,9 @@
     },
     "inner": {
       "num_seeds": 0,
-      "verbatim_tokens": 2000,
+      "verbatim_tokens": 1000,
       "min_forest_completeness": 0.0,
-      "max_forest_height_differential": 1,
+      "max_forest_height_differential": null,
       "verbatim_nodes_only": true
     }
   }

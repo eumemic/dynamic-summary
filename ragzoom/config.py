@@ -26,7 +26,7 @@ class PrecedingContextSettingsDict(TypedDict, total=False):
     inner: PrecedingContextConfigDict
 
 
-class IndexConfigDict(TypedDict):
+class IndexConfigDict(TypedDict, total=False):
     """Type definition for IndexConfig dictionary representation."""
 
     target_chunk_tokens: int
@@ -38,6 +38,7 @@ class IndexConfigDict(TypedDict):
     use_anti_verbatim_vaccine: bool
     processing_strategy: str
     preceding_context: PrecedingContextSettingsDict
+    summary_reasoning_level: str | None
 
 
 # Type for configuration values that can be primitives
@@ -271,6 +272,7 @@ class IndexConfig:
     preceding_context: PrecedingContextSettings = field(
         default_factory=PrecedingContextSettings
     )
+    summary_reasoning_level: str | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -310,6 +312,12 @@ class IndexConfig:
         nested_dict: PrecedingContextSettingsDict = raw_nested
         preceding_context = PrecedingContextSettings.from_dict(nested_dict)
 
+        # Get optional summary_reasoning_level (may be str or None)
+        raw_reasoning = config_dict.get("summary_reasoning_level")
+        summary_reasoning_level: str | None = (
+            str(raw_reasoning) if raw_reasoning is not None else None
+        )
+
         return cls(
             target_chunk_tokens=int(config_dict["target_chunk_tokens"]),
             summary_model=str(config_dict["summary_model"]),
@@ -324,6 +332,7 @@ class IndexConfig:
                 config_dict.get("processing_strategy", "bottom_to_top")
             ),
             preceding_context=preceding_context,
+            summary_reasoning_level=summary_reasoning_level,
         )
 
     @classmethod
@@ -356,6 +365,7 @@ class IndexConfig:
         use_anti_verbatim_vaccine: bool | None = None,
         processing_strategy: str | None = None,
         preceding_context: PrecedingContextSettings | None = None,
+        summary_reasoning_level: str | None = None,
     ) -> "IndexConfig":
         """Create a new IndexConfig with some fields changed."""
         from dataclasses import replace
@@ -396,6 +406,11 @@ class IndexConfig:
                 preceding_context
                 if preceding_context is not None
                 else self.preceding_context
+            ),
+            summary_reasoning_level=(
+                summary_reasoning_level
+                if summary_reasoning_level is not None
+                else self.summary_reasoning_level
             ),
         )
 
