@@ -61,6 +61,25 @@ def tokens_to_words(target_tokens: int) -> int:
     return int(target_tokens * WORDS_PER_TOKEN)
 
 
+def is_acceptable_length(
+    token_count: int, target_tokens: int, threshold: float
+) -> bool:
+    """Check if a token count is acceptable given the target and threshold.
+
+    A count is acceptable if it's at or below the target, or if it exceeds
+    the target by no more than the threshold fraction.
+
+    This is the single source of truth for "good enough" length checks,
+    used both for passthrough decisions and retry termination.
+    """
+    if target_tokens <= 0:
+        return True
+    if token_count <= target_tokens:
+        return True
+    deviation = (token_count - target_tokens) / target_tokens
+    return deviation <= threshold
+
+
 def should_retry_summary(
     summary: str,
     current_tokens: int,
@@ -70,12 +89,7 @@ def should_retry_summary(
     """Determine whether another summarization attempt is warranted."""
     if not summary or not summary.strip():
         return True
-    if target_tokens <= 0:
-        return False
-    if current_tokens <= target_tokens:
-        return False
-    deviation = (current_tokens - target_tokens) / target_tokens
-    return deviation > retry_threshold
+    return not is_acceptable_length(current_tokens, target_tokens, retry_threshold)
 
 
 def append_retry_prompt(
@@ -365,7 +379,9 @@ async def run_summary_workflow(
         use_anti_verbatim_vaccine=config.use_anti_verbatim_vaccine,
     )
 
-    if preparation.combined_tokens <= target_tokens:
+    if is_acceptable_length(
+        preparation.combined_tokens, target_tokens, config.retry_threshold
+    ):
         record_passthrough_attempt(
             reporter,
             parent_id,
