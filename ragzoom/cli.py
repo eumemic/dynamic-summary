@@ -1562,11 +1562,10 @@ def server() -> None:
     help="Min forest completeness for leaf nodes (0.0-1.0)",
 )
 @click.option(
-    "--preceding-context-leaf-verbatim-nodes-only",
-    "preceding_context_leaf_verbatim_nodes_only",
-    is_flag=True,
-    default=None,
-    help="Use only verbatim nodes (no semantic retrieval) for leaves",
+    "--preceding-context-leaf-token-cap",
+    "preceding_context_leaf_token_cap",
+    type=int,
+    help="Token cap for leaf node preceding context (select rightmost N tokens)",
 )
 @click.option(
     "--preceding-context-inner-num-seeds",
@@ -1587,11 +1586,10 @@ def server() -> None:
     help="Min forest completeness for inner nodes (0.0-1.0)",
 )
 @click.option(
-    "--preceding-context-inner-verbatim-nodes-only",
-    "preceding_context_inner_verbatim_nodes_only",
-    is_flag=True,
-    default=None,
-    help="Use only verbatim nodes (no semantic retrieval) for inner nodes",
+    "--preceding-context-inner-token-cap",
+    "preceding_context_inner_token_cap",
+    type=int,
+    help="Token cap for inner node preceding context (select rightmost N tokens)",
 )
 def start_server(
     host: str,
@@ -1604,11 +1602,11 @@ def start_server(
     preceding_context_leaf_num_seeds: int | None,
     preceding_context_leaf_verbatim_tokens: int | None,
     preceding_context_leaf_min_forest_completeness: float | None,
-    preceding_context_leaf_verbatim_nodes_only: bool | None,
+    preceding_context_leaf_token_cap: int | None,
     preceding_context_inner_num_seeds: int | None,
     preceding_context_inner_verbatim_tokens: int | None,
     preceding_context_inner_min_forest_completeness: float | None,
-    preceding_context_inner_verbatim_nodes_only: bool | None,
+    preceding_context_inner_token_cap: int | None,
 ) -> None:
     """Start the RagZoom gRPC server."""
 
@@ -1623,11 +1621,11 @@ def start_server(
         preceding_context_leaf_num_seeds=preceding_context_leaf_num_seeds,
         preceding_context_leaf_verbatim_tokens=preceding_context_leaf_verbatim_tokens,
         preceding_context_leaf_min_forest_completeness=preceding_context_leaf_min_forest_completeness,
-        preceding_context_leaf_verbatim_nodes_only=preceding_context_leaf_verbatim_nodes_only,
+        preceding_context_leaf_token_cap=preceding_context_leaf_token_cap,
         preceding_context_inner_num_seeds=preceding_context_inner_num_seeds,
         preceding_context_inner_verbatim_tokens=preceding_context_inner_verbatim_tokens,
         preceding_context_inner_min_forest_completeness=preceding_context_inner_min_forest_completeness,
-        preceding_context_inner_verbatim_nodes_only=preceding_context_inner_verbatim_nodes_only,
+        preceding_context_inner_token_cap=preceding_context_inner_token_cap,
     )
     run_server(options)
 

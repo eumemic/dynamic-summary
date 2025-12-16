@@ -145,48 +145,49 @@ class PrecedingContextResult:
     tiling_tokens: int
 
 
-def get_verbatim_context_nodes(
-    store: DocumentStore,
-    document_id: str,
-    span_end_limit: int,
-    verbatim_tokens: int,
-) -> PrecedingContextResult:
-    """Get rightmost nodes before span_end_limit totaling >= verbatim_tokens.
+def _apply_token_cap(
+    tiling_ids: list[str],
+    nodes: dict[str, TreeNode],
+    token_cap: int,
+) -> tuple[list[str], int]:
+    """Select smallest suffix of tiling with total tokens >= token_cap.
 
-    This is a simplified retrieval path used when verbatim_nodes_only=true.
-    It skips the full retrieval algorithm (embedding query, MMR, coverage building)
-    and just walks backwards collecting leaves until the token budget is met.
+    Walks backward from the end of the tiling, accumulating nodes until
+    the cumulative token count meets or exceeds token_cap. Returns the
+    selected node IDs (in document order) and the total token count.
+
+    This rounds UP to whole nodes - if token_cap=200 and the last node
+    has 150 tokens, we include the previous node even if it pushes us
+    over the budget. The semantics are "at least token_cap tokens".
+
+    The tiling is a complete, gapless sequence of adjacent nodes covering
+    some portion of the document. This function selects the rightmost
+    portion of that tiling.
 
     Args:
-        store: Document store for node retrieval
-        document_id: Document to retrieve from
-        span_end_limit: Only include nodes with span_end <= this value
-        verbatim_tokens: Target token budget for verbatim content
+        tiling_ids: Node IDs in document order (left to right)
+        nodes: Node data keyed by ID
+        token_cap: Minimum token budget to meet
 
     Returns:
-        PrecedingContextResult with node IDs in document order and their data.
+        Tuple of (selected_ids in document order, total_tokens)
     """
-    if span_end_limit <= 0 or verbatim_tokens <= 0:
-        return PrecedingContextResult(tiling_ids=[], nodes={}, tiling_tokens=0)
+    if not tiling_ids or token_cap <= 0:
+        return [], 0
 
-    # Use existing repository method that handles the windowed budget query
-    leaves = store.nodes._repo.get_recent_leaves_within_budget_before(
-        document_id, verbatim_tokens, span_end_limit
-    )
+    # Walk backward accumulating tokens until we meet the cap
+    cumulative = 0
+    start_idx = len(tiling_ids)
 
-    if not leaves:
-        return PrecedingContextResult(tiling_ids=[], nodes={}, tiling_tokens=0)
+    for i in range(len(tiling_ids) - 1, -1, -1):
+        node = nodes[tiling_ids[i]]
+        cumulative += node.token_count
+        start_idx = i
+        if cumulative >= token_cap:
+            break
 
-    # Build result in document order (already sorted by span_start)
-    tiling_ids = [leaf.id for leaf in leaves]
-    nodes = {leaf.id: leaf for leaf in leaves}
-    tiling_tokens = sum(leaf.token_count for leaf in leaves)
-
-    return PrecedingContextResult(
-        tiling_ids=tiling_ids,
-        nodes=nodes,
-        tiling_tokens=tiling_tokens,
-    )
+    selected = tiling_ids[start_idx:]
+    return selected, cumulative
 
 
 # ---------------------------------------------------------------------------
@@ -829,8 +830,8 @@ class IndexingEngine:
         Note: No embedding requirements for summarization eligibility.
         - Leaf embeddings are for query-time retrieval, not summarization.
           Embedding jobs run in parallel with summary jobs.
-        - Inner nodes use verbatim_nodes_only=True for preceding context
-          (enforced by config), so they don't need embeddings either.
+        - Inner nodes use token_cap for preceding context to select the
+          rightmost portion of the tiling, avoiding embedding lookups.
         - Inner nodes no longer store embeddings - score propagation happens
           at query time from descendant leaf embeddings.
         """
@@ -1382,16 +1383,7 @@ class IndexingEngine:
         if span_start <= 0:
             return PrecedingContextResult(tiling_ids=[], nodes={}, tiling_tokens=0)
 
-        if config.verbatim_nodes_only:
-            # Simplified path: get rightmost N leaves within token budget
-            return get_verbatim_context_nodes(
-                store,
-                document_id,
-                span_start,
-                config.verbatim_tokens,
-            )
-
-        # Standard retrieval path with semantic search (or minimal tiling if no query)
+        # Always use standard retrieval path
         retriever = self._create_retriever(document_id)
         if retriever is None:
             return PrecedingContextResult(tiling_ids=[], nodes={}, tiling_tokens=0)
@@ -1412,11 +1404,19 @@ class IndexingEngine:
             ):
                 tiling_ids = list(context_result.tiling)
                 context_nodes = context_result.nodes
-                tiling_tokens = sum(
-                    context_nodes[nid].token_count
-                    for nid in tiling_ids
-                    if nid in context_nodes
-                )
+
+                # Apply token_cap if set: select rightmost nodes totaling >= token_cap
+                if config.token_cap is not None:
+                    tiling_ids, tiling_tokens = _apply_token_cap(
+                        tiling_ids, context_nodes, config.token_cap
+                    )
+                else:
+                    tiling_tokens = sum(
+                        context_nodes[nid].token_count
+                        for nid in tiling_ids
+                        if nid in context_nodes
+                    )
+
                 return PrecedingContextResult(
                     tiling_ids=tiling_ids,
                     nodes=context_nodes,

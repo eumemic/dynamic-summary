@@ -60,7 +60,7 @@ class TestAutomaticClearing:
                 inner=PrecedingContextConfig(
                     verbatim_tokens=0,
                     min_forest_completeness=0.5,
-                    verbatim_nodes_only=True,  # Required - inner nodes don't store embeddings
+                    token_cap=0,  # Cap inner node context
                 ),
             ),
         )

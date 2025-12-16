@@ -1,7 +1,7 @@
 {
   "target_chunk_tokens": 200,
-  "summary_model": "gpt-5.2",
-  "summary_reasoning_level": "none",
+  "summary_model": "gpt-5-nano",
+  "summary_reasoning_level": "minimal",
   "embedding_model": "text-embedding-3-small",
   "retry_threshold": 0.2,
   "max_retries": 3,
@@ -10,16 +10,17 @@
   "preceding_context": {
     "leaf": {
       "num_seeds": 3,
-      "verbatim_tokens": 400,
+      "verbatim_tokens": 1600,
+      "token_cap": null,
       "min_forest_completeness": 1.0,
-      "verbatim_nodes_only": false
+      "max_forest_height_differential": null
     },
     "inner": {
       "num_seeds": 0,
-      "verbatim_tokens": 400,
+      "verbatim_tokens": 0,
+      "token_cap": 800,
       "min_forest_completeness": 0.0,
-      "max_forest_height_differential": null,
-      "verbatim_nodes_only": true
+      "max_forest_height_differential": 2
     }
   }
 }

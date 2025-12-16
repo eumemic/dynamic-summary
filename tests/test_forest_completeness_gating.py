@@ -53,7 +53,7 @@ def _make_preceding_context(
     inner_config = PrecedingContextConfig(
         min_forest_completeness=inner_completeness,
         verbatim_tokens=verbatim_tokens,
-        verbatim_nodes_only=True,  # Required - inner nodes don't store embeddings
+        token_cap=verbatim_tokens,  # Cap inner node context to verbatim_tokens
     )
     return PrecedingContextSettings(leaf=leaf_config, inner=inner_config)
 

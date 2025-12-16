@@ -16,7 +16,7 @@ class PrecedingContextConfigDict(TypedDict, total=False):
     verbatim_tokens: int
     min_forest_completeness: float
     max_forest_height_differential: int | None
-    verbatim_nodes_only: bool
+    token_cap: int | None
 
 
 class PrecedingContextSettingsDict(TypedDict, total=False):
@@ -159,13 +159,32 @@ class PrecedingContextConfig:
 
     Controls how preceding context is retrieved for leaf nodes (during embedding)
     or inner nodes (during summarization).
+
+    The retrieval algorithm always produces a complete tiling - a sequence of
+    adjacent, non-overlapping nodes that cover the document from start to the
+    current position. The `token_cap` parameter selects the rightmost portion
+    of this tiling.
+
+    Attributes:
+        num_seeds: Number of semantically similar nodes to use as seeds for
+            retrieval. Must be 0 for inner nodes (they don't store embeddings).
+        verbatim_tokens: Token budget for verbatim (leaf) content at the end
+            of the tiling. The retrieval ensures the rightmost nodes are leaves
+            up to this budget.
+        min_forest_completeness: Minimum completeness ratio (0.0-1.0) for the
+            preceding forest before a job becomes eligible.
+        max_forest_height_differential: Maximum allowed height difference between
+            the current node and the minimum height in the preceding forest.
+        token_cap: If set, select the smallest suffix of the tiling with total
+            tokens >= this value. Rounds up to whole nodes. None means use the
+            full tiling. Example: token_cap=400 takes the rightmost ~400 tokens.
     """
 
     num_seeds: int | None = None
     verbatim_tokens: int = 2000
     min_forest_completeness: float = 0.0
     max_forest_height_differential: int | None = None
-    verbatim_nodes_only: bool = False
+    token_cap: int | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -188,6 +207,8 @@ class PrecedingContextConfig:
                 f"max_forest_height_differential must be >= 0, "
                 f"got {self.max_forest_height_differential}"
             )
+        if self.token_cap is not None and self.token_cap < 0:
+            raise ValueError(f"token_cap must be >= 0, got {self.token_cap}")
 
     @classmethod
     def from_dict(cls, d: PrecedingContextConfigDict) -> "PrecedingContextConfig":
@@ -197,7 +218,7 @@ class PrecedingContextConfig:
             verbatim_tokens=d.get("verbatim_tokens", 2000),
             min_forest_completeness=d.get("min_forest_completeness", 0.0),
             max_forest_height_differential=d.get("max_forest_height_differential"),
-            verbatim_nodes_only=d.get("verbatim_nodes_only", False),
+            token_cap=d.get("token_cap"),
         )
 
 
@@ -213,19 +234,17 @@ class PrecedingContextSettings:
 
     leaf: PrecedingContextConfig = field(default_factory=PrecedingContextConfig)
     inner: PrecedingContextConfig = field(
-        default_factory=lambda: PrecedingContextConfig(verbatim_nodes_only=True)
+        default_factory=lambda: PrecedingContextConfig(token_cap=400)
     )
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
         # Inner nodes don't store embeddings, so num_seeds must be 0.
-        # Even with verbatim_nodes_only=True, num_seeds > 0 would be confusing
-        # since seeds are ignored when verbatim_nodes_only is set.
         if (self.inner.num_seeds or 0) > 0:
             raise ValueError(
                 "inner.num_seeds must be 0. Inner nodes don't store embeddings, "
                 "so semantic retrieval is not supported for inner node preceding "
-                "context. Set num_seeds=0 (seeds are ignored with verbatim_nodes_only)."
+                "context."
             )
 
     @classmethod
@@ -233,9 +252,9 @@ class PrecedingContextSettings:
         """Create from dictionary."""
         leaf_dict = d.get("leaf", {})
         inner_dict = d.get("inner", {})
-        # Inner defaults to verbatim_nodes_only=True (required constraint)
+        # Inner defaults to token_cap=400 (cap output to rightmost ~400 tokens)
         inner_dict_with_default: PrecedingContextConfigDict = {
-            "verbatim_nodes_only": True,
+            "token_cap": 400,
             **inner_dict,
         }
         return cls(

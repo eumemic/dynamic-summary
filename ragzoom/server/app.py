@@ -35,11 +35,11 @@ class ServerOptions:
     preceding_context_leaf_num_seeds: int | None = None
     preceding_context_leaf_verbatim_tokens: int | None = None
     preceding_context_leaf_min_forest_completeness: float | None = None
-    preceding_context_leaf_verbatim_nodes_only: bool | None = None
+    preceding_context_leaf_token_cap: int | None = None
     preceding_context_inner_num_seeds: int | None = None
     preceding_context_inner_verbatim_tokens: int | None = None
     preceding_context_inner_min_forest_completeness: float | None = None
-    preceding_context_inner_verbatim_nodes_only: bool | None = None
+    preceding_context_inner_token_cap: int | None = None
 
 
 def _apply_config_overrides(
@@ -47,7 +47,7 @@ def _apply_config_overrides(
     num_seeds: int | None,
     verbatim_tokens: int | None,
     min_forest_completeness: float | None,
-    verbatim_nodes_only: bool | None,
+    token_cap: int | None,
 ) -> PrecedingContextConfig:
     """Apply CLI overrides to a PrecedingContextConfig."""
     return PrecedingContextConfig(
@@ -60,11 +60,7 @@ def _apply_config_overrides(
             if min_forest_completeness is not None
             else base.min_forest_completeness
         ),
-        verbatim_nodes_only=(
-            verbatim_nodes_only
-            if verbatim_nodes_only is not None
-            else base.verbatim_nodes_only
-        ),
+        token_cap=(token_cap if token_cap is not None else base.token_cap),
     )
 
 
@@ -81,7 +77,7 @@ def build_state(options: ServerOptions) -> ServerState:
             options.preceding_context_leaf_num_seeds,
             options.preceding_context_leaf_verbatim_tokens,
             options.preceding_context_leaf_min_forest_completeness,
-            options.preceding_context_leaf_verbatim_nodes_only,
+            options.preceding_context_leaf_token_cap,
         ]
     )
     has_inner_overrides = any(
@@ -90,7 +86,7 @@ def build_state(options: ServerOptions) -> ServerState:
             options.preceding_context_inner_num_seeds,
             options.preceding_context_inner_verbatim_tokens,
             options.preceding_context_inner_min_forest_completeness,
-            options.preceding_context_inner_verbatim_nodes_only,
+            options.preceding_context_inner_token_cap,
         ]
     )
 
@@ -100,14 +96,14 @@ def build_state(options: ServerOptions) -> ServerState:
             options.preceding_context_leaf_num_seeds,
             options.preceding_context_leaf_verbatim_tokens,
             options.preceding_context_leaf_min_forest_completeness,
-            options.preceding_context_leaf_verbatim_nodes_only,
+            options.preceding_context_leaf_token_cap,
         )
         inner_cfg = _apply_config_overrides(
             index_cfg.preceding_context.inner,
             options.preceding_context_inner_num_seeds,
             options.preceding_context_inner_verbatim_tokens,
             options.preceding_context_inner_min_forest_completeness,
-            options.preceding_context_inner_verbatim_nodes_only,
+            options.preceding_context_inner_token_cap,
         )
         index_cfg = index_cfg.replace(
             preceding_context=PrecedingContextSettings(leaf=leaf_cfg, inner=inner_cfg)

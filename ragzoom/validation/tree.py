@@ -1218,9 +1218,9 @@ def _preceding_context_check(
         # Sort by span_start
         tiling_spans.sort(key=lambda x: x[1])
 
-        # Note: Tilings don't need to start at 0. With verbatim_nodes_only mode,
-        # we may only include a subset of nodes within a token budget. The key
-        # invariant is that the tiling must end at span_start and have no gaps.
+        # Note: Tilings don't need to start at 0. With token_cap, we may only
+        # include a subset of nodes within a token budget. The key invariant is
+        # that the tiling must end at span_start and have no gaps.
 
         # Check last node ends at span_start
         last_id, last_start, last_end = tiling_spans[-1]
