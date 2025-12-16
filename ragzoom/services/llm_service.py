@@ -6,11 +6,8 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
 from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletionMessageParam
 
-from ragzoom.config import IndexConfig, SecretStr, is_gpt5_model
-from ragzoom.contracts.chat_model import UsageInfo
-from ragzoom.services import summary_utils
+from ragzoom.config import IndexConfig, SecretStr
 from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
 
@@ -19,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - typing helper only
     from openai import AsyncOpenAI as OpenAIAsyncType
+
+    from ragzoom.services.summarizer import Summarizer
 else:  # pragma: no cover - runtime alias for test stubs
     OpenAIAsyncType = AsyncOpenAI
 
@@ -101,19 +100,6 @@ def _build_test_openai_client(model_id: str) -> "OpenAIAsyncType":
     return cast("OpenAIAsyncType", _StubClient())
 
 
-def _extract_cached_tokens(details: object | None) -> int:
-    """Return cached token count from mixed detail structures."""
-    if details is None:
-        return 0
-    if isinstance(details, dict):
-        cached = details.get("cached_tokens", 0)
-    else:
-        cached = getattr(details, "cached_tokens", 0)
-    if isinstance(cached, int | float) and cached > 0:
-        return int(cached)
-    return 0
-
-
 class LLMService:
     """Service for handling all LLM operations including embeddings and summarization."""
 
@@ -148,6 +134,36 @@ class LLMService:
             self.client = _build_test_openai_client(self.config.embedding_model)
         else:
             self.client = AsyncOpenAI(api_key=actual_key)
+
+        # Lazy-init summarizer; track client/config to detect when tests replace them
+        self._cached_summarizer: Summarizer | None = None
+        self._summarizer_client: OpenAIAsyncType | None = None
+        self._summarizer_config: IndexConfig | None = None
+
+    @property
+    def _summarizer(self) -> "Summarizer":
+        """Lazy-initialize the summarizer with current client and config.
+
+        Re-creates if client or config has changed (enables test mocking).
+        """
+        from ragzoom.adapters.openai_chat_model import OpenAIChatModel
+        from ragzoom.services.summarizer import Summarizer
+
+        # Check if we need to rebuild (client or config changed, or first access)
+        needs_rebuild = (
+            self._cached_summarizer is None
+            or self._summarizer_client is not self.client
+            or self._summarizer_config is not self.config
+        )
+        if needs_rebuild:
+            chat_model = OpenAIChatModel(self.client, self.config.summary_model)
+            self._cached_summarizer = Summarizer(chat_model, self.config)
+            self._summarizer_client = self.client
+            self._summarizer_config = self.config
+
+        # At this point _cached_summarizer is guaranteed to be set
+        assert self._cached_summarizer is not None
+        return self._cached_summarizer
 
     async def _get_embedding(self, text: str) -> list[float]:
         """Get embedding for text using OpenAI."""
@@ -280,84 +296,6 @@ class LLMService:
 
         return await self._get_embeddings_batch(texts)
 
-    async def _make_summary_call(  # jscpd:ignore-start
-        self,
-        messages: summary_utils.SummaryMessages,
-        target_tokens: int,
-        node_id: str,
-        reporter: TelemetryCollector | None = None,
-    ) -> tuple[str, UsageInfo]:
-        """Make OpenAI API call for summarization with telemetry tracking."""  # jscpd:ignore-end
-        try:
-            typed_messages = cast(list[ChatCompletionMessageParam], messages)
-            # GPT-5 models have different parameter requirements
-            if is_gpt5_model(self.config.summary_model):
-                # Use reasoning_effort="minimal" (valid despite SDK type hints saying otherwise)
-                response = await self.client.chat.completions.create(
-                    model=self.config.summary_model,
-                    messages=typed_messages,
-                    reasoning_effort="minimal",
-                )
-            else:
-                # Only add temperature for non-GPT-5 models (GPT-5 only supports default temperature=1)
-                # Use a hardcoded reasonable temperature for summaries
-                response = await self.client.chat.completions.create(
-                    model=self.config.summary_model,
-                    messages=typed_messages,
-                    temperature=0.3,
-                )
-
-            content = response.choices[0].message.content
-            if not content:
-                raise ValueError("Empty response from OpenAI")
-
-            # Extract usage information for telemetry
-            if not response.usage:
-                raise ValueError("No usage information in OpenAI response")
-
-            usage_info = cast(
-                UsageInfo,
-                {
-                    "prompt_tokens": response.usage.prompt_tokens,
-                    "completion_tokens": response.usage.completion_tokens,
-                    "total_tokens": response.usage.total_tokens,
-                    "model": self.config.summary_model,
-                },
-            )
-
-            cached_tokens = _extract_cached_tokens(
-                getattr(response.usage, "prompt_tokens_details", None)
-            )
-            if cached_tokens > 0:
-                usage_info["cached_tokens"] = cached_tokens
-
-            return content, usage_info
-
-        except Exception as e:
-            from ragzoom.error_utils import preserve_exception_chain
-            from ragzoom.exceptions import LLMError
-
-            llm_error = LLMError(
-                operation="summarize_text",
-                model=self.config.summary_model,
-                message=f"Failed to summarize text for node {node_id}: {e}",
-                node_id=node_id,
-            )
-            raise preserve_exception_chain(llm_error, e)
-
-    def _is_better_summary(
-        self,
-        new_tokens: int,
-        new_distance: float,
-        current_best_tokens: int,
-        current_best_distance: float,
-        target_tokens: int,
-    ) -> bool:
-        """Preserve compatibility with regression tests validating retry logic."""
-        return summary_utils.is_better_summary(
-            new_tokens, current_best_tokens, target_tokens
-        )
-
     async def _summarize_text(
         self,
         text: str,
@@ -369,17 +307,11 @@ class LLMService:
         text_tokens: int | None = None,
     ) -> tuple[str, int, int]:
         """Summarize text to approximately the target token count."""
-        summary_request: summary_utils.SummaryRequest = {
-            "text": text,
-            "target_tokens": target_tokens,
-            "prev_context": prev_context,
-            "parent_id": parent_id,
-            "reporter": reporter,
-            "text_tokens": text_tokens,
-        }
-
-        return await summary_utils.run_summary_request(
-            index_config=self.config,
-            request=summary_request,
-            call_summary=self._make_summary_call,
+        return await self._summarizer.summarize(
+            text,
+            target_tokens,
+            prev_context=prev_context,
+            parent_id=parent_id,
+            reporter=reporter,
+            text_tokens=text_tokens,
         )
