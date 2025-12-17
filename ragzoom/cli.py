@@ -1805,7 +1805,7 @@ def eval() -> None:
 @click.option(
     "--model",
     "-m",
-    default="gpt-5.2",
+    default="gpt-5-nano",
     help="Model for evaluation",
 )
 @click.option(
@@ -1995,7 +1995,7 @@ def measure(
 @click.option(
     "--model",
     "-m",
-    default="gpt-5.2",
+    default="gpt-5-nano",
     help="Model for issue synthesis",
 )
 def report(
