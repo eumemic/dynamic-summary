@@ -46,6 +46,7 @@ class TestAutomaticClearing:
         """Create a test configuration."""
         return IndexConfig(
             target_chunk_tokens=200,
+            max_parallelism=30,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
             retry_threshold=0.2,

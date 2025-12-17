@@ -30,6 +30,7 @@ class IndexConfigDict(TypedDict, total=False):
     """Type definition for IndexConfig dictionary representation."""
 
     target_chunk_tokens: int
+    max_parallelism: int
     summary_model: str
     embedding_model: str
     retry_threshold: float
@@ -274,6 +275,7 @@ class IndexConfig:
     """
 
     target_chunk_tokens: int
+    max_parallelism: int
     summary_model: str
     embedding_model: str
     retry_threshold: float
@@ -332,6 +334,7 @@ class IndexConfig:
 
         return cls(
             target_chunk_tokens=int(config_dict["target_chunk_tokens"]),
+            max_parallelism=int(config_dict.get("max_parallelism", 30)),
             summary_model=str(config_dict["summary_model"]),
             embedding_model=str(config_dict["embedding_model"]),
             retry_threshold=float(config_dict["retry_threshold"]),
@@ -369,6 +372,7 @@ class IndexConfig:
     def replace(
         self,
         target_chunk_tokens: int | None = None,
+        max_parallelism: int | None = None,
         summary_model: str | None = None,
         embedding_model: str | None = None,
         retry_threshold: float | None = None,
@@ -388,6 +392,9 @@ class IndexConfig:
                 target_chunk_tokens
                 if target_chunk_tokens is not None
                 else self.target_chunk_tokens
+            ),
+            max_parallelism=(
+                max_parallelism if max_parallelism is not None else self.max_parallelism
             ),
             summary_model=(
                 summary_model if summary_model is not None else self.summary_model
