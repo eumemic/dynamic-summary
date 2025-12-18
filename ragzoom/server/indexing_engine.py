@@ -330,6 +330,12 @@ class IndexingEngine:
         # Track documents with pending work
         self._active_documents: set[str] = set()
 
+        # Scheduling coalescing - prevents N completing jobs from triggering N
+        # separate scheduling calls. Instead, they mark documents dirty and a
+        # single scheduler task processes all of them.
+        self._dirty_documents: set[str] = set()
+        self._scheduler_task: asyncio.Task[None] | None = None
+
     # -----------------------------------------------------------------------
     # Public interface
     # -----------------------------------------------------------------------
@@ -450,8 +456,40 @@ class IndexingEngine:
     # Job discovery and scheduling
     # -----------------------------------------------------------------------
 
+    def _request_scheduling(self, document_id: str) -> None:
+        """Request scheduling for a document, coalescing multiple requests.
+
+        When multiple jobs complete simultaneously, each calls this method.
+        Instead of triggering N separate scheduling passes, we mark the document
+        dirty and ensure a single scheduler task processes all dirty documents.
+        """
+        self._dirty_documents.add(document_id)
+
+        # Start scheduler if not already running
+        if self._scheduler_task is None or self._scheduler_task.done():
+            self._scheduler_task = asyncio.create_task(self._run_scheduler())
+
+    async def _run_scheduler(self) -> None:
+        """Process all dirty documents, finding and starting jobs for each.
+
+        Yields once at start to let more completions accumulate, then processes
+        all dirty documents in a loop until none remain.
+        """
+        # Yield to let more job completions accumulate their scheduling requests
+        await asyncio.sleep(0)
+
+        while self._dirty_documents:
+            # Pop one document at a time (set iteration isn't safe during modification)
+            document_id = self._dirty_documents.pop()
+            await self._find_and_start_jobs(document_id)
+
     async def _find_and_start_jobs(self, document_id: str) -> None:
-        """Find and start eligible jobs up to max parallelism."""
+        """Find and start eligible jobs up to max parallelism.
+
+        Uses batch discovery to find multiple jobs at once, then fires them
+        all simultaneously. This reduces job discovery overhead and ensures
+        concurrent API requests hit the server together.
+        """
         loop_count = 0
         while True:
             loop_count += 1
@@ -460,7 +498,8 @@ class IndexingEngine:
                     "_find_and_start_jobs loop count %d, breaking", loop_count
                 )
                 break
-            # Check state under lock
+
+            # Check state and compute available slots under lock
             async with self._lock:
                 ctx = self._document_contexts.get(document_id)
                 if ctx is not None and ctx.cancelled:
@@ -468,20 +507,22 @@ class IndexingEngine:
                     self._notify_state_change()
                     return
 
-                if len(self._active_jobs) >= self._max_parallelism:
+                available_slots = self._max_parallelism - len(self._active_jobs)
+                if available_slots <= 0:
                     return
 
                 # Copy active jobs to check against outside lock
                 current_active = set(self._active_jobs)
 
-            # Find job outside lock (does I/O)
-            job = self._find_next_job(document_id, current_active, ctx)
+            # Find multiple jobs at once outside lock (does I/O)
+            jobs = self._find_next_n_jobs(
+                document_id, current_active, ctx, available_slots
+            )
 
-            # Acquire lock to add job
+            # Acquire lock to add jobs and fire them all at once
             async with self._lock:
-                if job is None:
-                    # Check if there are any active jobs for this document
-                    # Only fire idle callback when no work in progress
+                if not jobs:
+                    # No jobs found - check if document is truly idle
                     has_active_jobs = any(
                         j.document_id == document_id for j in self._active_jobs
                     )
@@ -498,19 +539,28 @@ class IndexingEngine:
                         asyncio.create_task(self._safe_on_document_idle(document_id))
                     return
 
-                # Re-check job not already added by another task
-                if job in self._active_jobs:
+                # Filter out any jobs already added by another task
+                new_jobs = [j for j in jobs if j not in self._active_jobs]
+                if not new_jobs:
                     continue
 
-                # Re-check parallelism limit
-                if len(self._active_jobs) >= self._max_parallelism:
+                # Re-check parallelism limit and trim if needed
+                available_now = self._max_parallelism - len(self._active_jobs)
+                if available_now <= 0:
                     return
+                new_jobs = new_jobs[:available_now]
 
-                self._active_jobs.add(job)
-                asyncio.create_task(self._run_job(job))
+                # Add all jobs to active set
+                for job in new_jobs:
+                    self._active_jobs.add(job)
+
+                # Fire all jobs simultaneously
+                for job in new_jobs:
+                    asyncio.create_task(self._run_job(job))
+
                 logger.debug(
-                    "engine: started job %s (active=%d)",
-                    job,
+                    "engine: started %d jobs (active=%d)",
+                    len(new_jobs),
                     len(self._active_jobs),
                 )
 
@@ -518,6 +568,21 @@ class IndexingEngine:
         """Wake up waiters after state changes. Must hold lock."""
         # Always set the event to wake up waiters so they can re-check conditions
         self._idle_event.set()
+
+    def _find_next_job(
+        self,
+        document_id: str,
+        active_jobs: set[IndexingJob],
+        ctx: DocumentContext | None,
+    ) -> IndexingJob | None:
+        """Find the next eligible job (convenience wrapper for tests).
+
+        This is a thin wrapper around _find_next_n_jobs that returns the first
+        job or None. Used by tests; the main scheduling loop uses _find_next_n_jobs
+        directly for batch discovery.
+        """
+        jobs = self._find_next_n_jobs(document_id, active_jobs, ctx, max_jobs=1)
+        return jobs[0] if jobs else None
 
     async def _safe_on_document_idle(self, document_id: str) -> None:
         """Call on_document_idle callback with error handling."""
@@ -528,17 +593,17 @@ class IndexingEngine:
         except Exception:
             logger.exception("on_document_idle callback failed for %s", document_id)
 
-    def _find_next_job(
+    def _find_next_n_jobs(
         self,
         document_id: str,
         active_jobs: set[IndexingJob],
         ctx: DocumentContext | None,
-    ) -> IndexingJob | None:
-        """Find the next eligible job by checking both embedding and summary jobs.
+        max_jobs: int,
+    ) -> list[IndexingJob]:
+        """Find up to max_jobs eligible jobs, sorted by span_start.
 
-        Calls separate scanners for embedding and summary jobs, then returns
-        the leftmost job by span_start. This ensures leaves get embedded even
-        after being summarized (since embedding jobs scan all leaves, not just roots).
+        Calls batch scanners for embedding and summary jobs, merges them
+        sorted by span_start, and returns up to max_jobs.
 
         Each job type uses its own forest completeness gating:
         - Embedding jobs use leaf.min_forest_completeness (typically 1.0)
@@ -566,8 +631,8 @@ class IndexingEngine:
             inner_config.verbatim_tokens,
         )
 
-        # Find candidates from each scanner with their respective frontiers
-        embedding_job = self._find_next_embedding_job(
+        # Find candidates from each scanner (returns (span_start, job) tuples)
+        embedding_jobs = self._find_next_n_embedding_jobs(
             store,
             document_id,
             active_jobs,
@@ -575,35 +640,27 @@ class IndexingEngine:
             embedding_frontier,
             roots,
             leaf_config.max_forest_height_differential,
+            max_jobs,
         )
-        summary_job = self._find_next_summary_job(
+        summary_jobs = self._find_next_n_summary_jobs(
             roots,
             document_id,
             active_jobs,
             ctx,
             summary_frontier,
             inner_config.max_forest_height_differential,
+            max_jobs,
         )
 
-        # Return leftmost job by span_start
-        if embedding_job is None:
-            return summary_job
-        if summary_job is None:
-            return embedding_job
+        # Merge both lists sorted by span_start, take up to max_jobs
+        all_jobs: list[tuple[int, IndexingJob]] = []
+        all_jobs.extend(embedding_jobs)
+        all_jobs.extend(summary_jobs)
+        all_jobs.sort(key=lambda x: x[0])
 
-        # Both exist - compare span_start to pick leftmost
-        embed_leaf = store.nodes.get(embedding_job.leaf_id)
-        summary_left = store.nodes.get(summary_job.left_id)
-        embed_span = int(getattr(embed_leaf, "span_start", 0)) if embed_leaf else 0
-        summary_span = (
-            int(getattr(summary_left, "span_start", 0)) if summary_left else 0
-        )
+        return [job for _, job in all_jobs[:max_jobs]]
 
-        if embed_span <= summary_span:
-            return embedding_job
-        return summary_job
-
-    def _find_next_embedding_job(
+    def _find_next_n_embedding_jobs(
         self,
         store: DocumentStore,
         document_id: str,
@@ -612,23 +669,27 @@ class IndexingEngine:
         frontier: int | None,
         roots: list[TreeNode],
         max_height_diff: int | None,
-    ) -> EmbeddingJob | None:
-        """Scan all leaves for the first one needing an embedding.
+        max_jobs: int,
+    ) -> list[tuple[int, EmbeddingJob]]:
+        """Scan leaves for up to max_jobs eligible embedding jobs.
 
+        Returns list of (span_start, job) tuples for merging with summary jobs.
         Scans all leaves (not just roots) because leaves may have been
-        summarized before their embedding job started. Leaves are sorted
-        by span_start for deterministic left-to-right processing.
+        summarized before their embedding job started.
         """
+        results: list[tuple[int, EmbeddingJob]] = []
         leaves = store.nodes.get_leaves()
-        # Sort by span_start for left-to-right order
         leaves.sort(key=lambda n: int(getattr(n, "span_start", 0)))
 
         for leaf in leaves:
+            if len(results) >= max_jobs:
+                break
+
             leaf_span_start = int(getattr(leaf, "span_start", 0))
 
-            # Check frontier (embedding jobs respect the same frontier as summaries)
+            # Check frontier
             if frontier is not None and leaf_span_start > frontier:
-                return None
+                break
 
             # Check height differential constraint
             if max_height_diff is not None:
@@ -636,7 +697,7 @@ class IndexingEngine:
                 if min_preceding is not None:
                     leaf_height = int(getattr(leaf, "height", 0))
                     if leaf_height - min_preceding > max_height_diff:
-                        return None
+                        break
 
             # Check if needs embedding
             if not self._has_embedding(leaf, document_id):
@@ -644,11 +705,11 @@ class IndexingEngine:
                 if embedding_job not in active_jobs:
                     if ctx is not None and ctx.is_failed(embedding_job):
                         continue
-                    return embedding_job
+                    results.append((leaf_span_start, embedding_job))
 
-        return None
+        return results
 
-    def _find_next_summary_job(
+    def _find_next_n_summary_jobs(
         self,
         roots: list[TreeNode],
         document_id: str,
@@ -656,21 +717,39 @@ class IndexingEngine:
         ctx: DocumentContext | None,
         frontier: int | None,
         max_height_diff: int | None,
-    ) -> SummaryJob | None:
-        """Scan roots for the first eligible sibling pair to summarize."""
+        max_jobs: int,
+    ) -> list[tuple[int, SummaryJob]]:
+        """Scan roots for up to max_jobs eligible sibling pairs to summarize.
+
+        Returns list of (span_start, job) tuples for merging with embedding jobs.
+        """
+        results: list[tuple[int, SummaryJob]] = []
+        # Track which roots are already used in a job (can't use same root twice)
+        used_roots: set[str] = set()
+
         for i, root in enumerate(roots):
+            if len(results) >= max_jobs:
+                break
+
             root_span_start = int(getattr(root, "span_start", 0))
 
             # Check frontier
             if frontier is not None and root_span_start > frontier:
-                return None
+                break
+
+            # Skip if this root is already used in a pending job
+            if root.id in used_roots:
+                continue
 
             # Check for eligible sibling pair
             if i + 1 < len(roots):
                 right = roots[i + 1]
+                # Skip if right sibling already used
+                if right.id in used_roots:
+                    continue
+
                 if self._is_eligible_pair(root, right, document_id):
                     # Check height differential constraint
-                    # Parent node will have height = left.height + 1
                     if max_height_diff is not None:
                         min_preceding = self._get_min_preceding_height(
                             roots, root_span_start
@@ -679,15 +758,17 @@ class IndexingEngine:
                             left_height = int(getattr(root, "height", 0))
                             parent_height = left_height + 1
                             if parent_height - min_preceding > max_height_diff:
-                                return None
+                                break
 
                     summary_job = SummaryJob(document_id, root.id, right.id)
                     if summary_job not in active_jobs:
                         if ctx is not None and ctx.is_failed(summary_job):
                             continue
-                        return summary_job
+                        results.append((root_span_start, summary_job))
+                        used_roots.add(root.id)
+                        used_roots.add(right.id)
 
-        return None
+        return results
 
     def _calculate_eligibility_frontier(
         self,
@@ -891,8 +972,8 @@ class IndexingEngine:
                 # Wake up any waiters to re-check their conditions
                 self._idle_event.set()
 
-            # Re-trigger to find more work
-            await self._find_and_start_jobs(document_id)
+                # Request scheduling (coalesced with other job completions)
+                self._request_scheduling(document_id)
 
     async def _embed_leaf(self, job: EmbeddingJob) -> None:
         """Generate contextual embedding for a leaf node.
@@ -903,8 +984,6 @@ class IndexingEngine:
         3. Generate embedding with context prefix
         4. Write to vector index
         """
-        import time
-
         from ragzoom.utils.tokenization import tokenizer
 
         store = self._store.for_document(job.document_id)
@@ -1209,11 +1288,13 @@ class IndexingEngine:
         # Assemble context text from tiling nodes
         context_text = ""
         if tiling_ids and context_nodes:
-            context_text = "\n\n".join(
-                context_nodes[nid].text or ""
-                for nid in tiling_ids
-                if nid in context_nodes
-            )
+            context_parts = []
+            for node_id in tiling_ids:
+                node = context_nodes.get(node_id)
+                if node and node.text:
+                    context_parts.append(node.text)
+            context_text = " ".join(context_parts)
+
         preceding_context_json = json.dumps(tiling_ids)
 
         # Generate summary with preceding context

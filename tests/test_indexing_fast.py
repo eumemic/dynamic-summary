@@ -163,3 +163,92 @@ class TestIndexingFast:
 
         assert api_call_count > 0
         assert texts_per_call, "Expected to record embedding call batch sizes"
+
+
+class TestSchedulingCoalescing:
+    """Unit tests for scheduling coalescing behavior."""
+
+    @pytest.mark.asyncio
+    async def test_multiple_requests_create_single_scheduler_task(
+        self,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        """Multiple _request_scheduling calls create only one scheduler task."""
+        engine = indexer_runtime_harness.indexing_engine
+
+        # Initially no scheduler task
+        assert engine._scheduler_task is None
+
+        # Make multiple scheduling requests without yielding
+        engine._request_scheduling("doc-1")
+        engine._request_scheduling("doc-2")
+        engine._request_scheduling("doc-3")
+
+        # Should have created exactly one scheduler task
+        assert engine._scheduler_task is not None
+        task = engine._scheduler_task
+
+        # Additional requests should reuse the same task (not done yet)
+        engine._request_scheduling("doc-4")
+        assert engine._scheduler_task is task
+
+        # All documents should be in dirty set
+        assert engine._dirty_documents == {"doc-1", "doc-2", "doc-3", "doc-4"}
+
+        # Let the scheduler run
+        await task
+
+        # After scheduler completes, dirty set should be empty
+        assert engine._dirty_documents == set()
+
+    @pytest.mark.asyncio
+    async def test_scheduler_processes_all_dirty_documents(
+        self,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        """Scheduler processes all dirty documents, not just the first."""
+        engine = indexer_runtime_harness.indexing_engine
+
+        processed_docs: list[str] = []
+        original_find_and_start = engine._find_and_start_jobs
+
+        async def tracking_find_and_start(document_id: str) -> None:
+            processed_docs.append(document_id)
+            await original_find_and_start(document_id)
+
+        engine._find_and_start_jobs = tracking_find_and_start  # type: ignore[method-assign]
+
+        # Queue up multiple documents
+        engine._request_scheduling("doc-a")
+        engine._request_scheduling("doc-b")
+        engine._request_scheduling("doc-c")
+
+        assert engine._scheduler_task is not None
+        await engine._scheduler_task
+
+        # All three documents should have been processed
+        assert set(processed_docs) == {"doc-a", "doc-b", "doc-c"}
+
+    @pytest.mark.asyncio
+    async def test_new_task_created_after_scheduler_completes(
+        self,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        """A new scheduler task is created if requested after previous completes."""
+        engine = indexer_runtime_harness.indexing_engine
+
+        # First scheduling round
+        engine._request_scheduling("doc-1")
+        first_task = engine._scheduler_task
+        assert first_task is not None
+        await first_task
+
+        # Task should now be done
+        assert first_task.done()
+
+        # New request should create a new task
+        engine._request_scheduling("doc-2")
+        second_task = engine._scheduler_task
+        assert second_task is not None
+        assert second_task is not first_task
+        await second_task
