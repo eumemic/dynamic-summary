@@ -108,6 +108,7 @@ async def evaluate_node(
     source_text: str,
     preceding_context: str | None,
     chat_model: ChatModel,
+    max_retries: int = 3,
 ) -> dict[str, DimensionScore]:
     """Evaluate a single node's summary on all four dimensions.
 
@@ -116,12 +117,13 @@ async def evaluate_node(
         source_text: The original text that was summarized
         preceding_context: Text of the preceding neighbor (or None)
         chat_model: ChatModel instance for LLM calls
+        max_retries: Maximum retries on schema parse failures
 
     Returns:
         Dict mapping dimension names to DimensionScore objects
 
     Raises:
-        LLMError: If the API call fails or response is invalid
+        LLMError: If the API call fails or response is invalid after retries
     """
     user_prompt = _build_user_prompt(
         summary=summary,
@@ -134,30 +136,51 @@ async def evaluate_node(
         {"role": "user", "content": user_prompt},
     ]
 
-    try:
-        result = await chat_model.complete(messages, json_mode=True)
-        return _parse_response(result["content"])
+    last_error: LLMError | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            result = await chat_model.complete(messages, json_mode=True)
+            return _parse_response(result["content"])
 
-    except json.JSONDecodeError as e:
-        raise LLMError(
-            operation="evaluate_node",
-            model=chat_model.model_id,
-            message=f"Failed to parse JSON response: {e}",
-        ) from e
-    except KeyError as e:
-        raise LLMError(
-            operation="evaluate_node",
-            model=chat_model.model_id,
-            message=f"Missing required field in response: {e}",
-        ) from e
-    except Exception as e:
-        if isinstance(e, LLMError):
-            raise
-        raise LLMError(
-            operation="evaluate_node",
-            model=chat_model.model_id,
-            message=f"Evaluation failed: {e}",
-        ) from e
+        except json.JSONDecodeError as e:
+            last_error = LLMError(
+                operation="evaluate_node",
+                model=chat_model.model_id,
+                message=f"Failed to parse JSON response: {e}",
+            )
+            if attempt < max_retries:
+                logger.debug(
+                    "Retrying evaluate_node due to JSON parse error (attempt %d/%d)",
+                    attempt + 1,
+                    max_retries + 1,
+                )
+                continue
+        except KeyError as e:
+            last_error = LLMError(
+                operation="evaluate_node",
+                model=chat_model.model_id,
+                message=f"Missing required field in response: {e}",
+            )
+            if attempt < max_retries:
+                logger.debug(
+                    "Retrying evaluate_node due to missing field %s (attempt %d/%d)",
+                    e,
+                    attempt + 1,
+                    max_retries + 1,
+                )
+                continue
+        except Exception as e:
+            if isinstance(e, LLMError):
+                raise
+            raise LLMError(
+                operation="evaluate_node",
+                model=chat_model.model_id,
+                message=f"Evaluation failed: {e}",
+            ) from e
+
+    # All retries exhausted
+    assert last_error is not None
+    raise last_error
 
 
 async def evaluate_nodes(
