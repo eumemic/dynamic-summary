@@ -5,7 +5,7 @@
   "summary_reasoning_level": "minimal",
   "embedding_model": "text-embedding-3-small",
   "retry_threshold": 0.2,
-  "max_retries": 0,
+  "max_retries": 3,
   "embedding_batch_size": 100,
   "use_anti_verbatim_vaccine": true,
   "preceding_context": {
