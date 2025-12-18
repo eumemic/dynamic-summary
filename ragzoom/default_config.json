@@ -19,9 +19,9 @@
     "inner": {
       "num_seeds": 0,
       "verbatim_tokens": 0,
-      "token_cap": 100,
+      "token_cap": 300,
       "min_forest_completeness": 0.0,
-      "max_forest_height_differential": null
+      "max_forest_height_differential": 2
     }
   }
 }
