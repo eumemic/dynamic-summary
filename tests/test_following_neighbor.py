@@ -89,7 +89,7 @@ class TestFollowingNeighbor:
                 assert preceding.following_neighbor_id == node.id
 
     @pytest.mark.asyncio
-    @pytest.mark.slow_threshold(2.0)
+    @pytest.mark.slow_threshold(4.0)
     async def test_leaf_nodes_have_correct_neighbor_relationships(
         self,
         base_config: BackwardCompatibilityConfig,

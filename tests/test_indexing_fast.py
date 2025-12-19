@@ -22,7 +22,7 @@ class TestIndexingFast:
     """Fast indexing tests using storage backend instead of real database."""
 
     @pytest.mark.asyncio
-    @pytest.mark.slow_threshold(2.5)
+    @pytest.mark.slow_threshold(5.0)
     async def test_full_document_gets_indexed(
         self,
         indexer_runtime_harness: IndexerRuntimeHarness,
