@@ -1057,18 +1057,18 @@ class IndexingEngine:
         preceding_context_json = json.dumps(tiling_ids)
         store.nodes._repo.update_preceding_context(job.leaf_id, preceding_context_json)
 
-        # Summarize preceding context if present, then build embedding text
+        # Contextualize preceding context if present, then build embedding text
         context_summary = ""
         if context_prefix:
-            # Generate a summary of the preceding context (target: target_chunk_tokens)
+            # Generate a contextualizing summary of preceding context
+            # (extracts only information relevant to understanding the leaf)
             context_summary, _retry_count, _summary_tokens = (
-                await self._llm_service._summarize_text(
-                    context_prefix,
-                    self._index_config.target_chunk_tokens,
+                await self._llm_service._contextualize_text(
+                    preceding_context=context_prefix,
+                    target_text=leaf_text,
+                    target_tokens=self._index_config.target_chunk_tokens,
                     parent_id=job.leaf_id,
                     reporter=telemetry,
-                    prev_context=None,
-                    text_tokens=tiling_tokens,
                 )
             )
             # Store the summary in the database

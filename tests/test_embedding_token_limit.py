@@ -119,20 +119,19 @@ async def test_indexing_engine_limits_embedding_text() -> None:
 
     mock_llm_service.embed_texts = capture_embed_texts
 
-    # Mock _summarize_text to return a short summary (simulating context summarization)
-    async def mock_summarize(
-        text: str,
+    # Mock _contextualize_text to return a short summary (simulating context summarization)
+    async def mock_contextualize(
+        preceding_context: str,
+        target_text: str,
         target_tokens: int,
         *,
         parent_id: str | None = None,
         reporter: object = None,
-        prev_context: str | None = None,
-        text_tokens: int | None = None,
     ) -> tuple[str, int, int]:
         # Return a short summary instead of the full context
         return ("summarized context", 0, 50)
 
-    mock_llm_service._summarize_text = mock_summarize
+    mock_llm_service._contextualize_text = mock_contextualize
 
     # Create mock retriever that returns large context (~5000 tokens)
     from ragzoom.retrieve import RetrievalResult

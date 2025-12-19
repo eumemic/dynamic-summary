@@ -188,6 +188,66 @@ def prepare_summary_inputs(
     )
 
 
+def prepare_contextualization_inputs(
+    *,
+    preceding_context: str,
+    target_text: str,
+    target_tokens: int,
+) -> SummaryPreparation:
+    """Return prepared prompt messages for contextualizing target_text.
+
+    Unlike compression which preserves all information, contextualization
+    extracts only the background information relevant to understanding
+    the target text.
+    """
+    context_stripped = preceding_context.strip()
+    target_stripped = target_text.strip()
+
+    # Token count is for the preceding context (what we're summarizing)
+    context_tokens = tokenizer.count_tokens(context_stripped)
+
+    target_words = tokens_to_words(target_tokens)
+
+    # Structure prompt for optimal LLM token caching: static content first,
+    # then dynamic content. The word limit comes last since it's the only
+    # dynamic value in the instructions.
+    prompt_parts: list[str] = [
+        "Write a concise summary of the background information that is specifically "
+        "relevant to understanding the target text below. Include only details that "
+        "help explain what's happening in the target text - what led to this point, "
+        "relevant definitions, or other necessary context. Omit background "
+        "information that isn't relevant to understanding this particular text.",
+        f"\nYour summary must be AT MOST {target_words} words.",
+        "\n<BACKGROUND>",
+        context_stripped,
+        "</BACKGROUND>",
+        "\n<TARGET_TEXT>",
+        target_stripped,
+        "</TARGET_TEXT>",
+    ]
+
+    full_prompt = "\n".join(prompt_parts)
+
+    messages: list[dict[str, str]] = [
+        {
+            "role": "system",
+            "content": (
+                "You provide concise background context to help readers understand "
+                "specific text. You output ONLY the contextualizing summary, "
+                "nothing else."
+            ),
+        },
+        {"role": "user", "content": full_prompt},
+    ]
+
+    return SummaryPreparation(
+        combined_text=context_stripped,
+        combined_tokens=context_tokens,
+        input_text_tokens=context_tokens,
+        messages=messages,
+    )
+
+
 def record_passthrough_attempt(
     reporter: TelemetryCollector | None,
     parent_id: str | None,
@@ -495,4 +555,156 @@ async def run_summary_request(
         parent_id=request["parent_id"],
         reporter=request["reporter"],
         call_summary=call_summary,
+    )
+
+
+class ContextualizationRequest(TypedDict):
+    preceding_context: str
+    target_text: str
+    target_tokens: int
+    parent_id: str | None
+    reporter: TelemetryCollector | None
+
+
+async def run_contextualization_workflow(
+    *,
+    preceding_context: str,
+    target_text: str,
+    target_tokens: int,
+    parent_id: str | None = None,
+    reporter: TelemetryCollector | None = None,
+    config: SummaryWorkflowConfig,
+    call_llm: SummaryCall,
+) -> tuple[str, int, int]:
+    """Execute contextualization workflow: extract relevant background for target text.
+
+    Unlike summarization which preserves all information, contextualization
+    filters the preceding context to include only information relevant to
+    understanding the target text. No passthrough - always runs LLM.
+
+    Returns: (context_summary, retry_count, summary_tokens)
+    """
+    preparation = prepare_contextualization_inputs(
+        preceding_context=preceding_context,
+        target_text=target_text,
+        target_tokens=target_tokens,
+    )
+
+    node_id = parent_id or ""
+
+    # jscpd:ignore-start - Parallel structure to run_summary_workflow intentional
+    async def telemetry_recorder(
+        usage: UsageInfo,
+        input_text_tokens: int,
+        actual_tokens: int,
+        start_time: float,
+    ) -> None:
+        await record_summary_attempt(
+            reporter,
+            parent_id,
+            usage=usage,
+            target_tokens=target_tokens,
+            input_text_tokens=input_text_tokens,
+            actual_tokens=actual_tokens,
+            start_time=start_time,
+            default_model=config.summary_model,
+        )
+
+    # jscpd:ignore-end
+
+    start_time = time.time()
+    context_summary, usage = await call_llm(
+        preparation.messages,
+        target_tokens,
+        node_id,
+        reporter,
+    )
+    summary_tokens = tokenizer.count_tokens(context_summary)
+
+    await telemetry_recorder(
+        usage,
+        preparation.input_text_tokens,
+        summary_tokens,
+        start_time,
+    )
+
+    if not should_retry_summary(
+        context_summary,
+        summary_tokens,
+        target_tokens,
+        config.retry_threshold,
+    ):
+        mark_accepted_attempt(reporter, parent_id, 0)
+        return context_summary, 0, summary_tokens
+
+    if config.max_retries > 0:
+        final_summary, retry_count, best_attempt_index = await retry_summary_correction(
+            base_messages=preparation.messages,
+            initial_summary=context_summary,
+            initial_tokens=summary_tokens,
+            target_tokens=target_tokens,
+            max_retries=config.max_retries,
+            retry_threshold=config.retry_threshold,
+            node_id=node_id,
+            reporter=reporter,
+            call_summary=call_llm,
+            record_attempt=telemetry_recorder,
+        )
+        mark_accepted_attempt(reporter, parent_id, best_attempt_index)
+        return (
+            final_summary,
+            retry_count,
+            tokenizer.count_tokens(final_summary),
+        )
+
+    mark_accepted_attempt(reporter, parent_id, 0)
+    return context_summary, 0, summary_tokens
+
+
+async def run_contextualization_from_config(
+    *,
+    index_config: IndexConfig,
+    preceding_context: str,
+    target_text: str,
+    target_tokens: int,
+    parent_id: str | None = None,
+    reporter: TelemetryCollector | None = None,
+    call_llm: SummaryCall,
+) -> tuple[str, int, int]:
+    """Convenience wrapper building workflow config from IndexConfig."""
+
+    config_snapshot = SummaryWorkflowConfig(
+        summary_model=index_config.summary_model,
+        use_anti_verbatim_vaccine=index_config.use_anti_verbatim_vaccine,
+        max_retries=index_config.max_retries,
+        retry_threshold=index_config.retry_threshold,
+    )
+
+    return await run_contextualization_workflow(
+        preceding_context=preceding_context,
+        target_text=target_text,
+        target_tokens=target_tokens,
+        parent_id=parent_id,
+        reporter=reporter,
+        config=config_snapshot,
+        call_llm=call_llm,
+    )
+
+
+async def run_contextualization_request(
+    *,
+    index_config: IndexConfig,
+    request: ContextualizationRequest,
+    call_llm: SummaryCall,
+) -> tuple[str, int, int]:
+    """Execute contextualization workflow using a packaged request payload."""
+
+    return await run_contextualization_from_config(
+        index_config=index_config,
+        preceding_context=request["preceding_context"],
+        target_text=request["target_text"],
+        target_tokens=request["target_tokens"],
+        parent_id=request["parent_id"],
+        reporter=request["reporter"],
+        call_llm=call_llm,
     )

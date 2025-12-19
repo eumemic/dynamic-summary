@@ -88,3 +88,34 @@ class Summarizer:
             request=request_kwargs,
             call_summary=self._make_summary_call,
         )
+
+    async def contextualize(
+        self,
+        preceding_context: str,
+        target_text: str,
+        target_tokens: int,
+        *,
+        parent_id: str | None = None,
+        reporter: TelemetryCollector | None = None,
+    ) -> tuple[str, int, int]:
+        """Generate contextualizing summary of preceding context for target text.
+
+        Unlike summarize() which compresses text preserving all information,
+        contextualize() extracts only the background information relevant to
+        understanding the target text.
+
+        Returns: (context_summary, retry_count, summary_tokens)
+        """
+        request_kwargs: summary_utils.ContextualizationRequest = {
+            "preceding_context": preceding_context,
+            "target_text": target_text,
+            "target_tokens": target_tokens,
+            "parent_id": parent_id,
+            "reporter": reporter,
+        }
+
+        return await summary_utils.run_contextualization_request(
+            index_config=self.config,
+            request=request_kwargs,
+            call_llm=self._make_summary_call,
+        )

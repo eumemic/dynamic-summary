@@ -315,3 +315,28 @@ class LLMService:
             reporter=reporter,
             text_tokens=text_tokens,
         )
+
+    async def _contextualize_text(
+        self,
+        preceding_context: str,
+        target_text: str,
+        target_tokens: int,
+        *,
+        parent_id: str | None = None,
+        reporter: TelemetryCollector | None = None,
+    ) -> tuple[str, int, int]:
+        """Generate contextualizing summary of preceding context for target text.
+
+        Unlike _summarize_text which compresses preserving all information,
+        this extracts only background information relevant to understanding
+        the target text.
+
+        Returns: (context_summary, retry_count, summary_tokens)
+        """
+        return await self._summarizer.contextualize(
+            preceding_context,
+            target_text,
+            target_tokens,
+            parent_id=parent_id,
+            reporter=reporter,
+        )
