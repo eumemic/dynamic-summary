@@ -1615,16 +1615,15 @@ class IndexingEngine:
 
     def _create_retriever(self, document_id: str) -> Retriever | None:
         """Create a retriever for the given document."""
-        if self._vector_index_factory is None:
-            return None
-
         from ragzoom.config import QueryConfig
         from ragzoom.retrieval.budget_planner import BudgetPlanner
         from ragzoom.retrieval.embedding_service import EmbeddingService
         from ragzoom.retrieve import Retriever
 
         document_store = self._store.for_document(document_id)
-        vector_index = self._vector_index_factory(self._index_config.embedding_model)
+        vector_index = self._get_vector_index()
+        if vector_index is None:
+            return None
 
         # Create per-document services
         embedding_service = EmbeddingService(
