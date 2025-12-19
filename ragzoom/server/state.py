@@ -88,19 +88,14 @@ class ServerState:
             api_key=operational_cfg.openai_api_key.get_secret_value()
         )
 
-        # Callback to complete telemetry runs when indexing finishes
-        async def on_document_idle(document_id: str) -> None:
-            run_context = await telemetry_run_manager.latest_for_document(document_id)
-            if run_context is not None and run_context.status == "in_progress":
-                await telemetry_run_manager.complete_run(run_context.run_id, error=None)
-
         indexing_engine = IndexingEngine(
             store=store,
             llm_service=llm_service,
             index_config=index_cfg,
             openai_client=openai_client,
             vector_index_factory=vector_factory,
-            on_document_idle=on_document_idle,
+            telemetry_run_manager=telemetry_run_manager,
+            on_document_idle=None,
             max_parallelism=(
                 max_parallelism
                 if max_parallelism is not None

@@ -397,14 +397,16 @@ class DocumentIndexSession:
                         total_leaves=outcome.total_leaves,
                     )
 
+            if run_context is not None:
+                await self._runtime._indexing_engine.register_run(
+                    self._document_id,
+                    run_id=run_context.run_id,
+                    telemetry_collector=run_context.telemetry_collector,
+                    new_leaf_ids=outcome.new_leaf_ids,
+                )
+
             # Trigger indexing work - engine discovers leaves and sibling pairs
-            telemetry_collector = (
-                run_context.telemetry_collector if run_context else None
-            )
-            await self._runtime._indexing_engine.trigger_work(
-                self._document_id,
-                telemetry_collector=telemetry_collector,
-            )
+            await self._runtime._indexing_engine.trigger_work(self._document_id)
 
             await self._runtime._emit_status(self._document_id)
             assert result is not None

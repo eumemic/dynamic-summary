@@ -19,14 +19,16 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections import deque
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.server.run_manager import TelemetryRunManager
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -260,6 +262,11 @@ class DocumentContext:
     """Per-document state for indexing."""
 
     telemetry_collector: TelemetryCollector | None = None
+    telemetry_by_run: dict[str, TelemetryCollector] = field(default_factory=dict)
+    run_queue: deque[str] = field(default_factory=deque)
+    run_assignments: dict[str, str] = field(default_factory=dict)
+    inflight_by_run: dict[str, int] = field(default_factory=dict)
+    job_run_ids: dict[IndexingJob, str] = field(default_factory=dict)
     completed_jobs: int = 0
     failed_jobs: int = 0
     cancelled: bool = False
@@ -305,6 +312,7 @@ class IndexingEngine:
         index_config: IndexConfig,
         openai_client: OpenAI,
         vector_index_factory: VectorIndexFactory | None = None,
+        telemetry_run_manager: TelemetryRunManager | None = None,
         max_parallelism: int = 30,
         on_document_idle: OnDocumentIdleCallback | None = None,
     ) -> None:
@@ -313,6 +321,7 @@ class IndexingEngine:
         self._index_config = index_config
         self._openai_client = openai_client
         self._vector_index_factory = vector_index_factory
+        self._telemetry_run_manager = telemetry_run_manager
         self._max_parallelism = max(1, max_parallelism)
         self._on_document_idle = on_document_idle
 
@@ -353,7 +362,7 @@ class IndexingEngine:
 
         Args:
             document_id: Document to index
-            telemetry_collector: Optional collector for timing/metrics
+            telemetry_collector: Optional legacy collector for timing/metrics
         """
         # Count leaves to calculate expected total work
         store = self._store.for_document(document_id)
@@ -369,7 +378,7 @@ class IndexingEngine:
                 )
             else:
                 ctx = self._document_contexts[document_id]
-                if telemetry_collector is not None:
+                if telemetry_collector is not None and not ctx.run_queue:
                     ctx.telemetry_collector = telemetry_collector
                 ctx.cancelled = False
                 ctx.completed_jobs = 0
@@ -379,6 +388,32 @@ class IndexingEngine:
             self._idle_event.clear()
 
         await self._find_and_start_jobs(document_id)
+
+    async def register_run(
+        self,
+        document_id: str,
+        *,
+        run_id: str,
+        telemetry_collector: TelemetryCollector | None,
+        new_leaf_ids: Sequence[str],
+    ) -> None:
+        """Attach a telemetry run to new leaves so jobs use the right collector."""
+        if telemetry_collector is None:
+            return
+
+        async with self._lock:
+            ctx = self._document_contexts.get(document_id)
+            if ctx is None:
+                ctx = DocumentContext()
+                self._document_contexts[document_id] = ctx
+
+            if run_id not in ctx.run_queue:
+                ctx.run_queue.append(run_id)
+            ctx.telemetry_by_run[run_id] = telemetry_collector
+
+            for leaf_id in new_leaf_ids:
+                if leaf_id:
+                    ctx.run_assignments[leaf_id] = run_id
 
     async def cancel_document(self, document_id: str) -> None:
         """Cancel pending work for a document.
@@ -519,6 +554,7 @@ class IndexingEngine:
                 document_id, current_active, ctx, available_slots
             )
 
+            finalize_runs = False
             # Acquire lock to add jobs and fire them all at once
             async with self._lock:
                 if not jobs:
@@ -537,37 +573,188 @@ class IndexingEngine:
                     # Fire callback outside lock - document is truly idle
                     if self._on_document_idle is not None:
                         asyncio.create_task(self._safe_on_document_idle(document_id))
-                    return
+                    finalize_runs = True
+                else:
+                    # Filter out any jobs already added by another task
+                    new_jobs = [j for j in jobs if j not in self._active_jobs]
+                    if not new_jobs:
+                        continue
 
-                # Filter out any jobs already added by another task
-                new_jobs = [j for j in jobs if j not in self._active_jobs]
-                if not new_jobs:
-                    continue
+                    # Re-check parallelism limit and trim if needed
+                    available_now = self._max_parallelism - len(self._active_jobs)
+                    if available_now <= 0:
+                        return
+                    new_jobs = new_jobs[:available_now]
 
-                # Re-check parallelism limit and trim if needed
-                available_now = self._max_parallelism - len(self._active_jobs)
-                if available_now <= 0:
-                    return
-                new_jobs = new_jobs[:available_now]
+                    # Add all jobs to active set
+                    for job in new_jobs:
+                        self._active_jobs.add(job)
 
-                # Add all jobs to active set
-                for job in new_jobs:
-                    self._active_jobs.add(job)
+                        ctx = self._document_contexts.get(document_id)
+                        if ctx is not None:
+                            run_id = self._assign_run_id_locked(
+                                ctx, self._job_node_id(job)
+                            )
+                            if run_id is not None:
+                                ctx.inflight_by_run[run_id] = (
+                                    ctx.inflight_by_run.get(run_id, 0) + 1
+                                )
+                                ctx.job_run_ids[job] = run_id
 
-                # Fire all jobs simultaneously
-                for job in new_jobs:
-                    asyncio.create_task(self._run_job(job))
+                    # Fire all jobs simultaneously
+                    for job in new_jobs:
+                        asyncio.create_task(self._run_job(job))
 
-                logger.debug(
-                    "engine: started %d jobs (active=%d)",
-                    len(new_jobs),
-                    len(self._active_jobs),
-                )
+                    logger.debug(
+                        "engine: started %d jobs (active=%d)",
+                        len(new_jobs),
+                        len(self._active_jobs),
+                    )
+
+            if finalize_runs:
+                await self._maybe_complete_runs(document_id)
+                return
 
     def _notify_state_change(self) -> None:
         """Wake up waiters after state changes. Must hold lock."""
         # Always set the event to wake up waiters so they can re-check conditions
         self._idle_event.set()
+
+    def _job_node_id(self, job: IndexingJob) -> str:
+        if isinstance(job, EmbeddingJob):
+            return job.leaf_id
+        return job.left_id
+
+    def _assign_run_id_locked(self, ctx: DocumentContext, node_id: str) -> str | None:
+        """Resolve and attach a run ID for a node. Caller must hold _lock."""
+        run_id = ctx.run_assignments.get(node_id)
+        if run_id is None and ctx.run_queue:
+            run_id = ctx.run_queue[-1]
+            ctx.run_assignments[node_id] = run_id
+        return run_id
+
+    def _telemetry_for_node_locked(
+        self, ctx: DocumentContext, node_id: str
+    ) -> TelemetryCollector | None:
+        run_id = self._assign_run_id_locked(ctx, node_id)
+        if run_id is None:
+            return ctx.telemetry_collector
+        collector = ctx.telemetry_by_run.get(run_id)
+        if collector is None:
+            raise RuntimeError(
+                f"Telemetry run {run_id} missing collector for node {node_id}"
+            )
+        return collector
+
+    async def _run_context_for_node(
+        self, document_id: str, node_id: str
+    ) -> tuple[str | None, TelemetryCollector | None]:
+        async with self._lock:
+            ctx = self._document_contexts.get(document_id)
+            if ctx is None:
+                return None, None
+            run_id = self._assign_run_id_locked(ctx, node_id)
+            telemetry = self._telemetry_for_node_locked(ctx, node_id)
+            return run_id, telemetry
+
+    def _detach_run_locked(self, ctx: DocumentContext, run_id: str) -> None:
+        try:
+            ctx.run_queue.remove(run_id)
+        except ValueError:
+            pass
+        ctx.telemetry_by_run.pop(run_id, None)
+        ctx.inflight_by_run.pop(run_id, None)
+
+        if ctx.job_run_ids:
+            for job, assigned in list(ctx.job_run_ids.items()):
+                if assigned == run_id:
+                    ctx.job_run_ids.pop(job, None)
+
+        if ctx.run_assignments:
+            for node_id, assigned in list(ctx.run_assignments.items()):
+                if assigned == run_id:
+                    ctx.run_assignments.pop(node_id, None)
+
+    async def _maybe_complete_runs(self, document_id: str) -> None:
+        if self._telemetry_run_manager is None:
+            return
+
+        while True:
+            async with self._lock:
+                ctx = self._document_contexts.get(document_id)
+                if ctx is None or not ctx.run_queue:
+                    return
+                run_id = ctx.run_queue[0]
+                inflight = ctx.inflight_by_run.get(run_id, 0)
+                active_jobs = set(self._active_jobs)
+
+            if inflight != 0:
+                return
+
+            if self._has_eligible_job_for_run(document_id, ctx, run_id, active_jobs):
+                return
+
+            await self._telemetry_run_manager.complete_run(run_id, error=None)
+
+            async with self._lock:
+                ctx = self._document_contexts.get(document_id)
+                if ctx is None:
+                    return
+                self._detach_run_locked(ctx, run_id)
+
+    def _has_eligible_job_for_run(
+        self,
+        document_id: str,
+        ctx: DocumentContext,
+        run_id: str,
+        active_jobs: set[IndexingJob],
+    ) -> bool:
+        store = self._store.for_document(document_id)
+        roots = store.nodes.get_root_nodes(document_id)
+
+        leaf_config = self._index_config.preceding_context.leaf
+        inner_config = self._index_config.preceding_context.inner
+
+        embedding_frontier = self._calculate_eligibility_frontier(
+            roots,
+            store,
+            document_id,
+            leaf_config.min_forest_completeness,
+            leaf_config.verbatim_tokens,
+        )
+        summary_frontier = self._calculate_eligibility_frontier(
+            roots,
+            store,
+            document_id,
+            inner_config.min_forest_completeness,
+            inner_config.verbatim_tokens,
+        )
+
+        embedding_jobs = self._find_next_n_embedding_jobs(
+            store,
+            document_id,
+            active_jobs,
+            ctx,
+            embedding_frontier,
+            roots,
+            leaf_config.max_forest_height_differential,
+            max_jobs=1,
+            run_id=run_id,
+        )
+        if embedding_jobs:
+            return True
+
+        summary_jobs = self._find_next_n_summary_jobs(
+            roots,
+            document_id,
+            active_jobs,
+            ctx,
+            summary_frontier,
+            inner_config.max_forest_height_differential,
+            max_jobs=1,
+            run_id=run_id,
+        )
+        return bool(summary_jobs)
 
     def _find_next_job(
         self,
@@ -670,6 +857,7 @@ class IndexingEngine:
         roots: list[TreeNode],
         max_height_diff: int | None,
         max_jobs: int,
+        run_id: str | None = None,
     ) -> list[tuple[int, EmbeddingJob]]:
         """Scan leaves for up to max_jobs eligible embedding jobs.
 
@@ -701,6 +889,10 @@ class IndexingEngine:
 
             # Check if needs embedding
             if not self._has_embedding(leaf, document_id):
+                if run_id is not None:
+                    assigned_run = ctx.run_assignments.get(leaf.id) if ctx else None
+                    if assigned_run != run_id:
+                        continue
                 embedding_job = EmbeddingJob(document_id, leaf.id)
                 if embedding_job not in active_jobs:
                     if ctx is not None and ctx.is_failed(embedding_job):
@@ -718,6 +910,7 @@ class IndexingEngine:
         frontier: int | None,
         max_height_diff: int | None,
         max_jobs: int,
+        run_id: str | None = None,
     ) -> list[tuple[int, SummaryJob]]:
         """Scan roots for up to max_jobs eligible sibling pairs to summarize.
 
@@ -759,6 +952,11 @@ class IndexingEngine:
                             parent_height = left_height + 1
                             if parent_height - min_preceding > max_height_diff:
                                 break
+
+                    if run_id is not None:
+                        assigned_run = ctx.run_assignments.get(root.id) if ctx else None
+                        if assigned_run != run_id:
+                            continue
 
                     summary_job = SummaryJob(document_id, root.id, right.id)
                     if summary_job not in active_jobs:
@@ -961,6 +1159,13 @@ class IndexingEngine:
                         ctx.mark_failed(job)
                     else:
                         ctx.completed_jobs += 1
+                    run_id = ctx.job_run_ids.pop(job, None)
+                    if run_id is not None:
+                        inflight = ctx.inflight_by_run.get(run_id, 0)
+                        if inflight > 1:
+                            ctx.inflight_by_run[run_id] = inflight - 1
+                        else:
+                            ctx.inflight_by_run.pop(run_id, None)
 
                 logger.debug(
                     "engine: finished job %s (active=%d, failed=%s)",
@@ -974,6 +1179,7 @@ class IndexingEngine:
 
                 # Request scheduling (coalesced with other job completions)
                 self._request_scheduling(document_id)
+            await self._maybe_complete_runs(document_id)
 
     async def _embed_leaf(self, job: EmbeddingJob) -> None:
         """Generate contextual embedding for a leaf node.
@@ -1012,9 +1218,9 @@ class IndexingEngine:
         span_start = int(getattr(leaf, "span_start", 0))
         span_end = int(getattr(leaf, "span_end", 0))
 
-        # Get telemetry collector for this document
-        ctx = self._document_contexts.get(job.document_id)
-        telemetry = ctx.telemetry_collector if ctx else None
+        _run_id, telemetry = await self._run_context_for_node(
+            job.document_id, job.leaf_id
+        )
 
         # Get leaf-specific preceding context config
         leaf_config = self._index_config.preceding_context.leaf
@@ -1229,9 +1435,9 @@ class IndexingEngine:
             )
             return
 
-        # Get telemetry collector if available
-        ctx = self._document_contexts.get(job.document_id)
-        telemetry = ctx.telemetry_collector if ctx else None
+        run_id, telemetry = await self._run_context_for_node(
+            job.document_id, job.left_id
+        )
 
         # Extract node properties
         left_text = left.text or ""
@@ -1387,6 +1593,12 @@ class IndexingEngine:
         # summarization). Embeddings only exist on leaf nodes for query-time
         # retrieval. Score propagation at query time computes inner node scores
         # from descendant leaf embeddings.
+
+        if run_id is not None:
+            async with self._lock:
+                ctx = self._document_contexts.get(job.document_id)
+                if ctx is not None:
+                    ctx.run_assignments[parent_id] = run_id
 
         logger.debug(
             "summarize: created parent doc=%s parent=%s left=%s right=%s h=%d",
