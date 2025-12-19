@@ -167,16 +167,12 @@ class ModelInfo:
 
         Returns:
             List of supported reasoning levels (e.g. ["none", "low", "medium", "high"]),
-            or None if the model uses temperature instead of reasoning levels.
-
-        Raises:
-            ValueError: If the model is not found
+            or None if the model uses temperature instead of reasoning levels,
+            or if the model is not found in the configuration (assumes temperature-based).
         """
         if model not in self._data.get("llms", {}):
-            available = list(self._data.get("llms", {}).keys())
-            raise ValueError(
-                f"LLM model '{model}' not found. Available models: {available}"
-            )
+            # Unknown models are assumed to use temperature (safe default)
+            return None
 
         levels = self._data["llms"][model].get("reasoning_levels")
         if levels is None:
@@ -187,15 +183,13 @@ class ModelInfo:
         """Check if an LLM supports temperature parameter.
 
         Models with reasoning_levels use reasoning effort instead of temperature.
+        Unknown models are assumed to support temperature (safe default).
 
         Args:
             model: The LLM model name
 
         Returns:
             True if the model supports temperature, False if it uses reasoning levels
-
-        Raises:
-            ValueError: If the model is not found
         """
         # Model supports temperature if it doesn't have reasoning_levels
         return self.get_reasoning_levels(model) is None
