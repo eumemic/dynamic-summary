@@ -457,12 +457,16 @@ async def indexer_runtime_harness(
     openai_client = OpenAI(
         api_key=operational_template.openai_api_key.get_secret_value()
     )
+    # Use max_parallelism=1 for SQLite to avoid connection contention.
+    # SQLite with StaticPool shares a single connection across all sessions,
+    # so concurrent async jobs can block each other.
     indexing_engine = IndexingEngine(
         store=storage_backend,
         llm_service=llm_service,
         index_config=index_config,
         openai_client=openai_client,
         vector_index_factory=_index_for_model,
+        max_parallelism=1,
     )
 
     runtime = IndexerRuntime(
