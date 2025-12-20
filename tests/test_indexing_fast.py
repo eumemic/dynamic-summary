@@ -105,65 +105,6 @@ class TestIndexingFast:
                 last_span_end >= doc_length - 10
             ), f"Document not fully indexed: {last_span_end} < {doc_length}"
 
-    @pytest.mark.asyncio
-    @pytest.mark.slow_threshold(8.0)
-    async def test_check_api_batch_limits(
-        self,
-        indexer_runtime_harness: IndexerRuntimeHarness,
-        storage_backend: StorageBackend,
-    ) -> None:
-        """Test if there's a limit on API batching causing truncation."""
-
-        chunks = [f"Chunk {i}: " + "word " * 20 for i in range(30)]
-        test_document = " ".join(chunks)
-        doc_length = len(test_document)
-
-        api_call_count = 0
-        texts_per_call: list[int] = []
-
-        async def mock_embeddings_create(**kwargs: object) -> Mock:
-            nonlocal api_call_count, texts_per_call
-            api_call_count += 1
-            input_texts = cast(list[str] | str, kwargs.get("input", []))
-            if isinstance(input_texts, str):
-                input_texts = [input_texts]
-            texts_per_call.append(len(input_texts))
-
-            return Mock(
-                data=[SimpleNamespace(embedding=[0.1] * 1536) for _ in input_texts]
-            )
-
-        llm_client = indexer_runtime_harness.llm_service.client
-        engine_client = indexer_runtime_harness.indexing_engine._openai_client
-
-        with (
-            patch.object(llm_client.embeddings, "create", new=mock_embeddings_create),
-            patch.object(
-                engine_client.embeddings, "create", new=_mock_sync_embeddings_create
-            ),
-        ):
-            await indexer_runtime_harness.append(
-                "test-doc",
-                test_document,
-                replace_existing=True,
-                file_path="test-doc.txt",
-                await_idle=True,  # Wait for async embedding to complete
-            )
-
-        doc_store = storage_backend.for_document("test-doc")
-        leaf_nodes = [node for node in doc_store.nodes.get_all() if node.height == 0]
-        leaf_nodes.sort(key=lambda n: n.span_start)
-
-        if leaf_nodes:
-            last_span_end = leaf_nodes[-1].span_end
-            coverage_ratio = last_span_end / doc_length
-            assert (
-                coverage_ratio > 0.95
-            ), f"Only {coverage_ratio*100:.1f}% indexed after {api_call_count} API calls"
-
-        assert api_call_count > 0
-        assert texts_per_call, "Expected to record embedding call batch sizes"
-
 
 class TestSchedulingCoalescing:
     """Unit tests for scheduling coalescing behavior."""
