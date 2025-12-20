@@ -26,8 +26,8 @@ class TranscribeResult:
     chars_transcribed: int
     """Total characters in all chunks (for span tracking)."""
 
-    compaction_detected: bool
-    """Whether a compaction summary was encountered."""
+    compaction_chars_offset: int | None
+    """Chars transcribed up to last compaction (None if no compaction seen)."""
 
 
 @dataclass
@@ -274,7 +274,14 @@ def transcribe_incremental(
     pending_tool_count = 0
     final_offset = start_offset
     skipping_leading_tools = skip_leading_tool_results
-    compaction_detected = False
+    compaction_chars_offset: int | None = None
+
+    def current_chars() -> int:
+        """Calculate chars transcribed so far (including separators)."""
+        total = sum(len(chunk) for chunk in chunks)
+        if len(chunks) > 1:
+            total += 2 * (len(chunks) - 1)
+        return total
 
     def flush_tools() -> None:
         nonlocal pending_tool_count
@@ -287,9 +294,9 @@ def transcribe_incremental(
     for record, offset in parse_jsonl(path, start_offset):
         final_offset = offset
 
-        # Detect compaction (but don't transcribe the summary)
+        # Detect compaction - record chars transcribed up to this point
         if record.get("isCompactSummary"):
-            compaction_detected = True
+            compaction_chars_offset = current_chars()
             continue
 
         record_type = record.get("type")
@@ -319,17 +326,11 @@ def transcribe_incremental(
 
     flush_tools()
 
-    # Calculate total characters (including separators that will be added)
-    # Chunks are joined with "\n\n" so add 2 chars per separator
-    chars = sum(len(chunk) for chunk in chunks)
-    if len(chunks) > 1:
-        chars += 2 * (len(chunks) - 1)
-
     return TranscribeResult(
         chunks=chunks,
         final_offset=final_offset,
-        chars_transcribed=chars,
-        compaction_detected=compaction_detected,
+        chars_transcribed=current_chars(),
+        compaction_chars_offset=compaction_chars_offset,
     )
 
 
@@ -373,20 +374,27 @@ def sync_transcript(jsonl_path: Path, doc_id: str, client: RagZoom) -> int:
     if not result.chunks:
         return 0
 
-    # If compaction detected, record the boundary (current indexed length)
-    if result.compaction_detected:
-        state.compaction_span_end = indexed_length
-
     # Join chunks into text for the RagZoom API
     text = "\n\n".join(result.chunks)
 
     # Create or append
     if not doc_exists:
         # First run - prepend header
-        text = _HEADER.strip() + "\n\n" + text
+        header_text = _HEADER.strip() + "\n\n"
+        text = header_text + text
         client.index(doc_id, text)
+        # Account for header in compaction offset
+        header_len = len(header_text)
     else:
         client.append(doc_id, text)
+        header_len = 0
+
+    # If compaction detected, record the boundary
+    # indexed_length (existing doc) + header (if first run) + chars up to compaction
+    if result.compaction_chars_offset is not None:
+        state.compaction_span_end = (
+            indexed_length + header_len + result.compaction_chars_offset
+        )
 
     # Update and save state
     state.byte_offset = result.final_offset
