@@ -486,6 +486,7 @@ class NodeResponse(BaseModel):  # type: ignore[explicit-any]
     following_neighbor_id: str | None
     is_pinned: bool
     created_at: datetime | None
+    preceding_context_summary: str | None
 
 
 # jscpd:ignore-end

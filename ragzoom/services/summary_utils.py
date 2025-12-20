@@ -25,12 +25,10 @@ SummaryTelemetryRecorder = Callable[[UsageInfo, int, int, float], Awaitable[None
 
 
 class SummaryRequest(TypedDict):
-    left_text: str
-    right_text: str
+    text: str
     target_tokens: int
     prev_context: str | None
-    left_token_count: int | None
-    right_token_count: int | None
+    text_tokens: int | None
     parent_id: str | None
     reporter: TelemetryCollector | None
 
@@ -53,7 +51,6 @@ class SummaryWorkflowConfig:
     """Snapshot of configuration needed for the summary workflow."""
 
     summary_model: str
-    preceding_context_tokens: int
     use_anti_verbatim_vaccine: bool
     max_retries: int
     retry_threshold: float
@@ -111,63 +108,62 @@ def append_retry_prompt(
 
 def prepare_summary_inputs(
     *,
-    left_text: str,
-    right_text: str,
+    text: str,
     target_tokens: int,
-    prev_context: str | None,
-    left_token_count: int | None,
-    right_token_count: int | None,
-    preceding_context_tokens: int,
-    use_anti_verbatim_vaccine: bool,
+    prev_context: str | None = None,
+    text_tokens: int | None = None,
+    use_anti_verbatim_vaccine: bool = False,
 ) -> SummaryPreparation:
     """Return prepared prompt messages and token counts for summarization."""
 
-    combined_text = f"{left_text} {right_text}".strip()
+    combined_text = text.strip()
 
-    if left_token_count is not None and right_token_count is not None:
-        combined_tokens = left_token_count + right_token_count
+    if text_tokens is not None:
+        combined_tokens = text_tokens
     else:
         combined_tokens = tokenizer.count_tokens(combined_text)
 
-    if left_token_count is not None and right_token_count is not None:
-        input_text_tokens = left_token_count + right_token_count
-    else:
-        input_text_tokens = tokenizer.count_tokens(left_text)
-        if right_text:
-            input_text_tokens += tokenizer.count_tokens(right_text)
-
-    trimmed_prev: str | None = None
-    if prev_context and preceding_context_tokens > 0:
-        prev_tokens = tokenizer.encode(prev_context)
-        if len(prev_tokens) > preceding_context_tokens:
-            context_tokens = prev_tokens[-preceding_context_tokens:]
-            trimmed_prev = tokenizer.decode(context_tokens)
-        else:
-            trimmed_prev = prev_context
+    input_text_tokens = combined_tokens
 
     target_words = tokens_to_words(target_tokens)
-    instruction = (
-        "You will be given a piece of content to summarize. You are to summarize ONLY the content "
-        f"between the <SUMMARIZE_TEXT> tags in AT MOST {target_words} words. Use the <PRECEDING_TEXT> content as context (when provided - this may be omitted if there is no preceding context). "
-        "You should be able to substitute your summary where the <SUMMARIZE_TEXT> content is and it should work just as well within the context as the original text did. The <PRECEDING_TEXT> should flow smoothly into your summary.\n\n"
-        "Make your summary information-dense, covering the full temporal scope of the source material. Match the voice, tense, and tone of the original text insofar as possible. "
-        "Abstract over details as necessary to fit within the word limit while preserving key events and themes.\n\n"
-        "Here's the content to summarize:"
-    )
 
-    prompt_parts: list[str] = [instruction]
-    if prev_context and preceding_context_tokens > 0 and trimmed_prev:
-        prompt_parts.append(
-            f"\n<PRECEDING_TEXT>\n...{trimmed_prev.strip()}\n</PRECEDING_TEXT>"
-        )
-    prompt_parts.append(f"\n<SUMMARIZE_TEXT>\n{combined_text}\n</SUMMARIZE_TEXT>")
+    # Build prompt explaining the compression task
+    # Key insight: output gets concatenated after preceding text, so we frame it
+    # as "compress in place" rather than "summarize with context"
+    if prev_context:
+        prompt_parts: list[str] = [
+            "You are compressing part of a document. The reader will see:",
+            "  [PRECEDING_TEXT] + [YOUR OUTPUT]",
+            "This must be semantically equivalent to reading the original:",
+            "  [PRECEDING_TEXT] + [COMPRESS_THIS_TEXT_ONLY]",
+            f"\n<PRECEDING_TEXT>\n{prev_context.strip()}\n</PRECEDING_TEXT>",
+            f"\n<COMPRESS_THIS_TEXT_ONLY>\n{combined_text}\n</COMPRESS_THIS_TEXT_ONLY>",
+            f"\nCompress <COMPRESS_THIS_TEXT_ONLY> to AT MOST {target_words} words. "
+            "Your output will be appended directly after <PRECEDING_TEXT>.\n\n"
+            "Rules:\n"
+            "- Output ONLY the compressed text - nothing else\n"
+            "- Don't repeat anything from <PRECEDING_TEXT> - it's already there\n"
+            "- You may use pronouns referencing things established earlier\n"
+            "- Preserve all key information from <COMPRESS_THIS_TEXT_ONLY>",
+        ]
+    else:
+        prompt_parts = [
+            f"Compress the following text to AT MOST {target_words} words.",
+            f"\n<TEXT>\n{combined_text}\n</TEXT>",
+            "\nRules:\n"
+            "- Output ONLY the compressed text - nothing else\n"
+            "- Preserve all key information",
+        ]
 
-    full_prompt = "\n\n".join(prompt_parts)
+    full_prompt = "\n".join(prompt_parts)
 
     messages: list[dict[str, str]] = [
         {
             "role": "system",
-            "content": "You are a precise summarizer who ONLY uses information explicitly provided in the input text. You NEVER add context or details from outside the given text.",
+            "content": (
+                "You are a text compressor. You compress sections of documents while "
+                "preserving their meaning. You output ONLY the compressed text, nothing else."
+            ),
         },
         {"role": "user", "content": full_prompt},
     ]
@@ -188,6 +184,66 @@ def prepare_summary_inputs(
         combined_text=combined_text,
         combined_tokens=combined_tokens,
         input_text_tokens=input_text_tokens,
+        messages=messages,
+    )
+
+
+def prepare_contextualization_inputs(
+    *,
+    preceding_context: str,
+    target_text: str,
+    target_tokens: int,
+) -> SummaryPreparation:
+    """Return prepared prompt messages for contextualizing target_text.
+
+    Unlike compression which preserves all information, contextualization
+    extracts only the background information relevant to understanding
+    the target text.
+    """
+    context_stripped = preceding_context.strip()
+    target_stripped = target_text.strip()
+
+    # Token count is for the preceding context (what we're summarizing)
+    context_tokens = tokenizer.count_tokens(context_stripped)
+
+    target_words = tokens_to_words(target_tokens)
+
+    # Structure prompt for optimal LLM token caching: static content first,
+    # then dynamic content. The word limit comes last since it's the only
+    # dynamic value in the instructions.
+    prompt_parts: list[str] = [
+        "Write a concise summary of the background information that is specifically "
+        "relevant to understanding the target text below. Include only details that "
+        "help explain what's happening in the target text - what led to this point, "
+        "relevant definitions, or other necessary context. Omit background "
+        "information that isn't relevant to understanding this particular text.",
+        f"\nYour summary must be AT MOST {target_words} words.",
+        "\n<BACKGROUND>",
+        context_stripped,
+        "</BACKGROUND>",
+        "\n<TARGET_TEXT>",
+        target_stripped,
+        "</TARGET_TEXT>",
+    ]
+
+    full_prompt = "\n".join(prompt_parts)
+
+    messages: list[dict[str, str]] = [
+        {
+            "role": "system",
+            "content": (
+                "You provide concise background context to help readers understand "
+                "specific text. You output ONLY the contextualizing summary, "
+                "nothing else."
+            ),
+        },
+        {"role": "user", "content": full_prompt},
+    ]
+
+    return SummaryPreparation(
+        combined_text=context_stripped,
+        combined_tokens=context_tokens,
+        input_text_tokens=context_tokens,
         messages=messages,
     )
 
@@ -350,27 +406,22 @@ async def retry_summary_correction(
 
 async def run_summary_workflow(
     *,
-    left_text: str,
-    right_text: str,
+    text: str,
     target_tokens: int,
-    prev_context: str | None,
-    left_token_count: int | None,
-    right_token_count: int | None,
-    parent_id: str | None,
-    reporter: TelemetryCollector | None,
+    prev_context: str | None = None,
+    text_tokens: int | None = None,
+    parent_id: str | None = None,
+    reporter: TelemetryCollector | None = None,
     config: SummaryWorkflowConfig,
     call_summary: SummaryCall,
 ) -> tuple[str, int, int]:
     """Execute the full summary workflow with retries and telemetry."""
 
     preparation = prepare_summary_inputs(
-        left_text=left_text,
-        right_text=right_text,
+        text=text,
         target_tokens=target_tokens,
         prev_context=prev_context,
-        left_token_count=left_token_count,
-        right_token_count=right_token_count,
-        preceding_context_tokens=config.preceding_context_tokens,
+        text_tokens=text_tokens,
         use_anti_verbatim_vaccine=config.use_anti_verbatim_vaccine,
     )
 
@@ -458,33 +509,28 @@ async def run_summary_workflow(
 async def run_summary_from_config(
     *,
     index_config: IndexConfig,
-    left_text: str,
-    right_text: str,
+    text: str,
     target_tokens: int,
-    prev_context: str | None,
-    left_token_count: int | None,
-    right_token_count: int | None,
-    parent_id: str | None,
-    reporter: TelemetryCollector | None,
+    prev_context: str | None = None,
+    text_tokens: int | None = None,
+    parent_id: str | None = None,
+    reporter: TelemetryCollector | None = None,
     call_summary: SummaryCall,
 ) -> tuple[str, int, int]:
     """Convenience wrapper building workflow config from IndexConfig."""
 
     config_snapshot = SummaryWorkflowConfig(
         summary_model=index_config.summary_model,
-        preceding_context_tokens=index_config.preceding_context_tokens,
         use_anti_verbatim_vaccine=index_config.use_anti_verbatim_vaccine,
         max_retries=index_config.max_retries,
         retry_threshold=index_config.retry_threshold,
     )
 
     return await run_summary_workflow(
-        left_text=left_text,
-        right_text=right_text,
+        text=text,
         target_tokens=target_tokens,
         prev_context=prev_context,
-        left_token_count=left_token_count,
-        right_token_count=right_token_count,
+        text_tokens=text_tokens,
         parent_id=parent_id,
         reporter=reporter,
         config=config_snapshot,
@@ -502,13 +548,163 @@ async def run_summary_request(
 
     return await run_summary_from_config(
         index_config=index_config,
-        left_text=request["left_text"],
-        right_text=request["right_text"],
+        text=request["text"],
         target_tokens=request["target_tokens"],
         prev_context=request["prev_context"],
-        left_token_count=request["left_token_count"],
-        right_token_count=request["right_token_count"],
+        text_tokens=request["text_tokens"],
         parent_id=request["parent_id"],
         reporter=request["reporter"],
         call_summary=call_summary,
+    )
+
+
+class ContextualizationRequest(TypedDict):
+    preceding_context: str
+    target_text: str
+    target_tokens: int
+    parent_id: str | None
+    reporter: TelemetryCollector | None
+
+
+async def run_contextualization_workflow(
+    *,
+    preceding_context: str,
+    target_text: str,
+    target_tokens: int,
+    parent_id: str | None = None,
+    reporter: TelemetryCollector | None = None,
+    config: SummaryWorkflowConfig,
+    call_llm: SummaryCall,
+) -> tuple[str, int, int]:
+    """Execute contextualization workflow: extract relevant background for target text.
+
+    Unlike summarization which preserves all information, contextualization
+    filters the preceding context to include only information relevant to
+    understanding the target text. No passthrough - always runs LLM.
+
+    Returns: (context_summary, retry_count, summary_tokens)
+    """
+    preparation = prepare_contextualization_inputs(
+        preceding_context=preceding_context,
+        target_text=target_text,
+        target_tokens=target_tokens,
+    )
+
+    node_id = parent_id or ""
+
+    # jscpd:ignore-start - Parallel structure to run_summary_workflow intentional
+    async def telemetry_recorder(
+        usage: UsageInfo,
+        input_text_tokens: int,
+        actual_tokens: int,
+        start_time: float,
+    ) -> None:
+        await record_summary_attempt(
+            reporter,
+            parent_id,
+            usage=usage,
+            target_tokens=target_tokens,
+            input_text_tokens=input_text_tokens,
+            actual_tokens=actual_tokens,
+            start_time=start_time,
+            default_model=config.summary_model,
+        )
+
+    # jscpd:ignore-end
+
+    start_time = time.time()
+    context_summary, usage = await call_llm(
+        preparation.messages,
+        target_tokens,
+        node_id,
+        reporter,
+    )
+    summary_tokens = tokenizer.count_tokens(context_summary)
+
+    await telemetry_recorder(
+        usage,
+        preparation.input_text_tokens,
+        summary_tokens,
+        start_time,
+    )
+
+    if not should_retry_summary(
+        context_summary,
+        summary_tokens,
+        target_tokens,
+        config.retry_threshold,
+    ):
+        mark_accepted_attempt(reporter, parent_id, 0)
+        return context_summary, 0, summary_tokens
+
+    if config.max_retries > 0:
+        final_summary, retry_count, best_attempt_index = await retry_summary_correction(
+            base_messages=preparation.messages,
+            initial_summary=context_summary,
+            initial_tokens=summary_tokens,
+            target_tokens=target_tokens,
+            max_retries=config.max_retries,
+            retry_threshold=config.retry_threshold,
+            node_id=node_id,
+            reporter=reporter,
+            call_summary=call_llm,
+            record_attempt=telemetry_recorder,
+        )
+        mark_accepted_attempt(reporter, parent_id, best_attempt_index)
+        return (
+            final_summary,
+            retry_count,
+            tokenizer.count_tokens(final_summary),
+        )
+
+    mark_accepted_attempt(reporter, parent_id, 0)
+    return context_summary, 0, summary_tokens
+
+
+async def run_contextualization_from_config(
+    *,
+    index_config: IndexConfig,
+    preceding_context: str,
+    target_text: str,
+    target_tokens: int,
+    parent_id: str | None = None,
+    reporter: TelemetryCollector | None = None,
+    call_llm: SummaryCall,
+) -> tuple[str, int, int]:
+    """Convenience wrapper building workflow config from IndexConfig."""
+
+    config_snapshot = SummaryWorkflowConfig(
+        summary_model=index_config.summary_model,
+        use_anti_verbatim_vaccine=index_config.use_anti_verbatim_vaccine,
+        max_retries=index_config.max_retries,
+        retry_threshold=index_config.retry_threshold,
+    )
+
+    return await run_contextualization_workflow(
+        preceding_context=preceding_context,
+        target_text=target_text,
+        target_tokens=target_tokens,
+        parent_id=parent_id,
+        reporter=reporter,
+        config=config_snapshot,
+        call_llm=call_llm,
+    )
+
+
+async def run_contextualization_request(
+    *,
+    index_config: IndexConfig,
+    request: ContextualizationRequest,
+    call_llm: SummaryCall,
+) -> tuple[str, int, int]:
+    """Execute contextualization workflow using a packaged request payload."""
+
+    return await run_contextualization_from_config(
+        index_config=index_config,
+        preceding_context=request["preceding_context"],
+        target_text=request["target_text"],
+        target_tokens=request["target_tokens"],
+        parent_id=request["parent_id"],
+        reporter=request["reporter"],
+        call_llm=call_llm,
     )

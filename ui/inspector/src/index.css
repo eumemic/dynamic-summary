@@ -302,6 +302,29 @@ body {
   margin: 0;
 }
 
+.node-details__context {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: rgba(100, 150, 255, 0.1);
+  border-left: 3px solid rgba(100, 150, 255, 0.5);
+  border-radius: 4px;
+}
+
+.node-details__context h3 {
+  font-size: 0.85rem;
+  margin: 0 0 0.5rem 0;
+  color: rgba(150, 180, 255, 0.9);
+}
+
+.node-details__context p {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  font-style: italic;
+  color: rgba(255, 255, 255, 0.8);
+}
+
 .node-details__text {
   margin-top: 1rem;
 }

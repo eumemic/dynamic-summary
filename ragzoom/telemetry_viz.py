@@ -57,6 +57,7 @@ matplotlib.rcParams["font.size"] = DEFAULT_FONT_SIZE
 
 # Color constants for visualization consistency
 EMBEDDINGS_COLOR = "#9333ea"  # Purple for embeddings
+RETRIEVAL_COLOR = "#06b6d4"  # Cyan for retrieval (distinct from all warm colors)
 ATTEMPT_COLORS = [
     "#2563eb",  # Blue for initial attempt
     "#10b981",  # Green for retry 1
@@ -293,21 +294,17 @@ class TelemetryVisualizer:
 
         embedding_cost = (total_embedding_tokens / 1000) * embedding_cost_per_1k
 
-        # Calculate summary cost from all attempts
+        # Calculate summary cost from all attempts (including leaf node context summaries)
         summary_cost = 0.0
         for node in nodes:
-            height = node["height"]
-            if height > 0:  # Summary nodes only
-                attempts = node.get("summary_attempts", [])
-                for attempt in attempts:
-                    prompt_tokens = attempt.get("prompt_tokens", 0)
-                    completion_tokens = attempt.get("completion_tokens", 0)
+            attempts = node.get("summary_attempts", [])
+            for attempt in attempts:
+                prompt_tokens = attempt.get("prompt_tokens", 0)
+                completion_tokens = attempt.get("completion_tokens", 0)
 
-                    input_cost = (prompt_tokens / 1000) * summary_input_cost_per_1k
-                    output_cost = (
-                        completion_tokens / 1000
-                    ) * summary_output_cost_per_1k
-                    summary_cost += input_cost + output_cost
+                input_cost = (prompt_tokens / 1000) * summary_input_cost_per_1k
+                output_cost = (completion_tokens / 1000) * summary_output_cost_per_1k
+                summary_cost += input_cost + output_cost
 
         return embedding_cost + summary_cost
 
@@ -466,9 +463,9 @@ class TelemetryVisualizer:
         ax2 = fig.add_subplot(top_gs[1])
         self._plot_summary_scatter(telemetry, ax2, bounds=summary_bounds)
 
-        # 3. Fidelity distribution
+        # 3. Retrieval tokens (preceding context) distribution
         ax3 = fig.add_subplot(top_gs[2])
-        self._plot_fidelity_scatter(telemetry, ax3, title="Summarization Fidelity")
+        self._plot_retrieval_tokens_scatter(telemetry, ax3)
 
         # 4. Tree Construction Timeline
         ax4 = fig.add_subplot(bottom_gs[0])
@@ -656,21 +653,19 @@ class TelemetryVisualizer:
         ax2_right.set_title("Summary Compression Patterns", fontsize=12)
         ax2_right.set_ylabel("")  # Remove y-axis label
 
-        # 3. Fidelity distributions
-        ax_fidelity_left = fig.add_subplot(top_gs[2, 0])
-        ax_fidelity_right = fig.add_subplot(top_gs[2, 1], sharey=ax_fidelity_left)
+        # 3. Retrieval tokens (preceding context) distribution
+        ax_retrieval_left = fig.add_subplot(top_gs[2, 0])
+        ax_retrieval_right = fig.add_subplot(top_gs[2, 1], sharey=ax_retrieval_left)
 
-        self._plot_fidelity_scatter(
+        self._plot_retrieval_tokens_scatter(
             telemetry1,
-            ax_fidelity_left,
-            title="Summary Fidelity",
+            ax_retrieval_left,
         )
-        self._plot_fidelity_scatter(
+        self._plot_retrieval_tokens_scatter(
             telemetry2,
-            ax_fidelity_right,
-            title="Summary Fidelity",
+            ax_retrieval_right,
         )
-        ax_fidelity_right.set_ylabel("")
+        ax_retrieval_right.set_ylabel("")
 
         # 4. Tree Construction Timeline (share both axes)
         ax3_left = fig.add_subplot(bottom_gs[0, 0])
@@ -803,25 +798,21 @@ class TelemetryVisualizer:
 
         embedding_cost = (total_embedding_tokens / 1000) * embedding_cost_per_1k
 
-        # Process all attempts from summary nodes
+        # Process all attempts (including leaf node context summaries)
         for node in nodes:
-            height = node["height"]
-            if height > 0:  # Summary nodes only
-                attempts = node.get("summary_attempts", [])
-                for attempt_num, attempt in enumerate(attempts, 1):
-                    prompt_tokens = attempt.get("prompt_tokens", 0)
-                    completion_tokens = attempt.get("completion_tokens", 0)
+            attempts = node.get("summary_attempts", [])
+            for attempt_num, attempt in enumerate(attempts, 1):
+                prompt_tokens = attempt.get("prompt_tokens", 0)
+                completion_tokens = attempt.get("completion_tokens", 0)
 
-                    # Calculate cost for this attempt
-                    input_cost = (prompt_tokens / 1000) * summary_input_cost_per_1k
-                    output_cost = (
-                        completion_tokens / 1000
-                    ) * summary_output_cost_per_1k
-                    attempt_cost = input_cost + output_cost
+                # Calculate cost for this attempt
+                input_cost = (prompt_tokens / 1000) * summary_input_cost_per_1k
+                output_cost = (completion_tokens / 1000) * summary_output_cost_per_1k
+                attempt_cost = input_cost + output_cost
 
-                    # Group attempts 5+ together
-                    display_num = min(attempt_num, 5)
-                    costs_by_attempt[display_num] += attempt_cost
+                # Group attempts 5+ together
+                display_num = min(attempt_num, 5)
+                costs_by_attempt[display_num] += attempt_cost
 
         # Calculate total cost (including embeddings now)
         summary_cost = sum(costs_by_attempt.values())
@@ -984,6 +975,119 @@ class TelemetryVisualizer:
         ax.legend(
             handles=legend_elements,
             loc="upper right",
+            fontsize=8,
+            frameon=True,
+        )
+
+    def _plot_retrieval_tokens_scatter(
+        self,
+        telemetry: TelemetryDataDict,
+        ax: Axes,
+        *,
+        title: str = "Preceding Context Tokens",
+    ) -> None:
+        """Plot retrieval tiling tokens per node over document position.
+
+        Shows how many tokens of preceding context were retrieved for each node,
+        with separate colors for leaves (height 0) and inner nodes (height > 0).
+        """
+        nodes = telemetry.get("nodes", [])
+
+        # Extract points: (span_start, tiling_tokens, height)
+        points: list[tuple[int, int, int]] = []
+        for node in nodes:
+            retrieval = node.get("retrieval")
+            if retrieval:
+                span = node.get("span")
+                span_start = span[0] if span else 0
+                tiling_tokens = retrieval.get("tiling_tokens", 0)
+                height = node.get("height", 0)
+                points.append((span_start, tiling_tokens, height))
+
+        if not points:
+            ax.text(
+                0.5,
+                0.5,
+                "No retrieval data available",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+                fontsize=10,
+                color="#6b7280",
+            )
+            ax.set_axis_off()
+            return
+
+        positions, tokens, heights = zip(*points)
+
+        # Color by node type: blue for leaves, red for inner nodes
+        colors = ["#2563eb" if h == 0 else "#dc2626" for h in heights]
+
+        ax.scatter(
+            positions,
+            tokens,
+            c=colors,
+            alpha=0.6,
+            s=22,
+            edgecolors="none",
+        )
+
+        # Show mean retrieval tokens
+        mean_tokens = statistics.fmean(tokens)
+        ax.axhline(
+            mean_tokens,
+            color="#6b7280",
+            linestyle="--",
+            linewidth=1.5,
+            label=f"Mean: {mean_tokens:.0f} tokens",
+        )
+
+        span_min, span_max = self._extract_span_range(telemetry)
+        ax.set_xlim(span_min, span_max)
+
+        text_x = (
+            span_max - (span_max - span_min) * 0.01 if span_max > span_min else span_max
+        )
+        ax.text(
+            text_x,
+            mean_tokens,
+            f"{mean_tokens:.0f}",
+            color="#6b7280",
+            fontsize=9,
+            fontweight="bold",
+            ha="right",
+            va="bottom",
+            bbox=dict(
+                boxstyle="round,pad=0.15",
+                facecolor="white",
+                edgecolor="none",
+                alpha=0.7,
+            ),
+        )
+
+        max_tokens = max(tokens) if tokens else 0
+        upper = max(100, max_tokens * 1.1)
+        ax.set_ylim(0, upper)
+        ax.set_xlabel("Document Position (characters)")
+        ax.set_ylabel("Tiling Tokens")
+        ax.set_title(title, fontsize=12)
+        ax.grid(True, alpha=0.2, axis="both")
+
+        legend_elements = [
+            Patch(facecolor="#2563eb", label="Leaf nodes", alpha=0.6),
+            Patch(facecolor="#dc2626", label="Inner nodes", alpha=0.6),
+            Line2D(
+                [0],
+                [0],
+                color="#6b7280",
+                linestyle="--",
+                linewidth=1.5,
+                label="Mean tokens",
+            ),
+        ]
+        ax.legend(
+            handles=legend_elements,
+            loc="upper left",
             fontsize=8,
             frameon=True,
         )
@@ -1626,47 +1730,6 @@ class TelemetryVisualizer:
         def _to_float(value: object) -> float | None:
             return float(value) if isinstance(value, numbers.Real) else None
 
-        append_chunks: list[dict[str, float | None]] = []
-        append_history = telemetry.get("append_history")
-        if isinstance(append_history, list):
-            for entry in append_history:
-                if not isinstance(entry, dict):
-                    continue
-                chunk_split = entry.get("chunk_split")
-                if not isinstance(chunk_split, dict):
-                    continue
-                start_time = _to_float(chunk_split.get("start_time"))
-                end_time = _to_float(chunk_split.get("end_time"))
-                span_start = _to_float(entry.get("span_start"))
-                span_end = _to_float(entry.get("span_end"))
-                append_chunks.append(
-                    {
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "span_start": span_start,
-                        "span_end": span_end,
-                    }
-                )
-
-        if not append_chunks:
-            chunk_split = telemetry.get("chunk_split")
-            if isinstance(chunk_split, dict):
-                start_time = _to_float(chunk_split.get("start_time"))
-                end_time = _to_float(chunk_split.get("end_time"))
-                span_start = span_end = None
-                append_meta = telemetry.get("append_metadata")
-                if isinstance(append_meta, dict):
-                    span_start = _to_float(append_meta.get("span_start"))
-                    span_end = _to_float(append_meta.get("span_end"))
-                append_chunks.append(
-                    {
-                        "start_time": start_time,
-                        "end_time": end_time,
-                        "span_start": span_start,
-                        "span_end": span_end,
-                    }
-                )
-
         # Define retry attempt colors (1=blue, 2=green, 3=yellow, 4=orange, 5+=red)
         attempt_colors = ATTEMPT_COLORS
 
@@ -1739,57 +1802,7 @@ class TelemetryVisualizer:
             node_start_time: float | None = None
             node_end_time: float | None = None
 
-            # Render leaf text generation windows using chunk split telemetry
-            if node.get("height") == 0 and append_chunks:
-                chunk_info = None
-                for info in append_chunks:
-                    start_span = info.get("span_start")
-                    end_span = info.get("span_end")
-                    if start_span is not None and end_span is not None:
-                        if span_start >= start_span and span_end <= end_span:
-                            chunk_info = info
-                            break
-                    elif info.get("start_time") is not None:
-                        chunk_info = info
-                        break
-
-                if chunk_info is not None:
-                    start_time = chunk_info.get("start_time")
-                    end_time = chunk_info.get("end_time")
-                    if isinstance(start_time, float) and isinstance(end_time, float):
-                        node_start_time = (
-                            start_time
-                            if node_start_time is None
-                            else min(node_start_time, start_time)
-                        )
-                        node_end_time = (
-                            end_time
-                            if node_end_time is None
-                            else max(node_end_time, end_time)
-                        )
-                        if indexing_start_time is None and min_time is None:
-                            min_time = start_time
-                        baseline, min_time = self._calculate_timeline_baseline(
-                            indexing_start_time, min_time, start_time
-                        )
-                        duration = max(end_time - start_time, 0.1)
-                        max_time = max(max_time, end_time)
-                        rect = Rectangle(
-                            (
-                                span_start,
-                                start_time - baseline,
-                            ),
-                            max(1, span_end - span_start - gap),
-                            duration,
-                            facecolor=attempt_colors[0],
-                            edgecolor="none",
-                            linewidth=0,
-                            alpha=0.9,
-                            zorder=1,
-                        )
-                        ax.add_patch(rect)
-
-            # First, process embedding operations for ALL nodes (including leaves)
+            # Process embedding operations for ALL nodes (including leaves)
             embedding = node.get("embedding")
             if embedding:
                 embed_start_time = embedding.get("start_time")
@@ -1832,71 +1845,32 @@ class TelemetryVisualizer:
                     )
                     ax.add_patch(rect)
 
-            # Skip leaf nodes for summary processing - they don't have summaries
-            if node["height"] == 0:
-                if node_start_time is None:
-                    created_at = _to_float(node.get("created_at"))
-                    if created_at is not None:
-                        node_start_time = created_at
-                if node_end_time is None:
-                    node_end_time = node_start_time
-                if node_start_time is not None and node_end_time is not None:
-                    max_time = max(max_time, node_end_time)
-                    _baseline, min_time = self._calculate_timeline_baseline(
-                        indexing_start_time, min_time, node_start_time
+            # Draw retrieval bar if present (orange, zorder between summary and embed)
+            retrieval_data = node.get("retrieval")
+            if retrieval_data:
+                ret_start = _to_float(retrieval_data.get("start_time"))
+                ret_end = _to_float(retrieval_data.get("end_time"))
+                if ret_start is not None and ret_end is not None:
+                    baseline, min_time = self._calculate_timeline_baseline(
+                        indexing_start_time, min_time, ret_start
                     )
-                continue
+                    rect = Rectangle(
+                        (span_start, ret_start - baseline),
+                        max(1, span_end - span_start - gap),
+                        ret_end - ret_start,
+                        facecolor=RETRIEVAL_COLOR,
+                        edgecolor="none",
+                        linewidth=0,
+                        alpha=0.7,
+                        zorder=1.5,  # Between summaries (1) and embeddings (2)
+                    )
+                    ax.add_patch(rect)
+                    max_time = max(max_time, ret_end)
 
-            # Handle passthrough nodes (no summary attempts) - draw as single pixel line
-            if not node.get("summary_attempts"):
-                # Draw a single pixel horizontal line for passthrough nodes
-                created_at = node.get("created_at", 0)
-
-                # Update max_time
-                max_time = max(max_time, float(created_at))
-                created_at_float = float(created_at)
-                node_start_time = (
-                    created_at_float
-                    if node_start_time is None
-                    else min(node_start_time, created_at_float)
-                )
-                node_end_time = (
-                    created_at_float
-                    if node_end_time is None
-                    else max(node_end_time, created_at_float)
-                )
-
-                # Calculate relative time from indexing start
-                # Three-level fallback: indexed_at -> min_time -> current node time
-                # This handles telemetry without indexed_at (older versions)
-                baseline, min_time = self._calculate_timeline_baseline(
-                    indexing_start_time, min_time, created_at
-                )
-                relative_time = created_at - baseline
-
-                # For passthrough nodes, use first attempt color (blue)
-                color = attempt_colors[0]
-
-                # Add gap between adjacent nodes for visual clarity
-                rect = Rectangle(
-                    (span_start, relative_time),  # Position at relative time from start
-                    max(
-                        1, span_end - span_start - gap
-                    ),  # Width = span coverage minus gap
-                    0.5,  # Minimal height (0.5 seconds for visibility)
-                    facecolor=color,
-                    edgecolor="none",
-                    linewidth=0,
-                    alpha=0.9,
-                    zorder=1,  # Draw beneath embeddings
-                )
-                ax.add_patch(rect)
-                continue
-
-            # Process summary nodes with attempts
-            attempts = node["summary_attempts"]
-
-            # Color will be determined per attempt
+            # Process nodes with summary attempts (inner nodes and leaves with context summarization)
+            # Note: With forest of perfect binary trees, there are no "passthrough" nodes
+            # First leaf (span_start=0) has no preceding context, so no summary_attempts
+            attempts = node.get("summary_attempts", [])
 
             cumulative_start = None
             for attempt_idx, attempt in enumerate(attempts):
@@ -1955,9 +1929,9 @@ class TelemetryVisualizer:
                 cumulative_start = end_time
 
             if node_start_time is None:
-                created_at = _to_float(node.get("created_at"))
-                if created_at is not None:
-                    node_start_time = created_at
+                created_at_fallback = _to_float(node.get("created_at"))
+                if created_at_fallback is not None:
+                    node_start_time = created_at_fallback
             if node_end_time is None:
                 node_end_time = node_start_time
 
@@ -2015,6 +1989,13 @@ class TelemetryVisualizer:
                     Patch(facecolor=EMBEDDINGS_COLOR, label="Embeddings", alpha=0.9)
                 )
 
+            # Check if any nodes have retrieval data to show
+            has_retrieval = any(node.get("retrieval") for node in nodes)
+            if has_retrieval:
+                legend_elements.append(
+                    Patch(facecolor=RETRIEVAL_COLOR, label="Retrieval", alpha=0.7)
+                )
+
             # Add summary attempt colors
             attempt_legend_elements = [
                 Patch(facecolor=attempt_colors[0], label="Initial attempt", alpha=0.9),
@@ -2048,6 +2029,70 @@ class TelemetryVisualizer:
                 )
                 legend.get_frame().set_alpha(0.85)
                 legend.get_frame().set_facecolor("white")
+
+            # Add average duration stats overlay in upper right
+            embed_durations: list[float] = []
+            retrieval_durations: list[float] = []
+            summary_durations: list[float] = []
+
+            for node in nodes:
+                # Embedding durations
+                embedding = node.get("embedding")
+                if embedding:
+                    embed_start = _to_float(embedding.get("start_time"))
+                    embed_end = _to_float(embedding.get("end_time"))
+                    if embed_start is not None and embed_end is not None:
+                        embed_durations.append(embed_end - embed_start)
+
+                # Retrieval durations
+                retrieval_data = node.get("retrieval")
+                if retrieval_data:
+                    ret_start = _to_float(retrieval_data.get("start_time"))
+                    ret_end = _to_float(retrieval_data.get("end_time"))
+                    if ret_start is not None and ret_end is not None:
+                        retrieval_durations.append(ret_end - ret_start)
+
+                # Summary durations (total across all attempts per node)
+                attempts = node.get("summary_attempts", [])
+                if attempts:
+                    node_summary_duration = 0.0
+                    for attempt in attempts:
+                        start_time = _to_float(attempt.get("start_time"))
+                        end_time = _to_float(attempt.get("end_time"))
+                        if start_time is not None and end_time is not None:
+                            node_summary_duration += end_time - start_time
+                    if node_summary_duration > 0:
+                        summary_durations.append(node_summary_duration)
+
+            # Build stats text
+            stats_lines: list[str] = []
+            if embed_durations:
+                avg_embed = sum(embed_durations) / len(embed_durations)
+                stats_lines.append(f"Embed: {avg_embed:.3f}s avg")
+            if retrieval_durations:
+                avg_retrieval = sum(retrieval_durations) / len(retrieval_durations)
+                stats_lines.append(f"Retrieval: {avg_retrieval:.3f}s avg")
+            if summary_durations:
+                avg_summary = sum(summary_durations) / len(summary_durations)
+                stats_lines.append(f"Summary: {avg_summary:.3f}s avg")
+
+            if stats_lines:
+                stats_text = "\n".join(stats_lines)
+                ax.text(
+                    0.99,
+                    0.01,
+                    stats_text,
+                    transform=ax.transAxes,
+                    fontsize=8,
+                    verticalalignment="bottom",
+                    horizontalalignment="right",
+                    bbox={
+                        "boxstyle": "round,pad=0.3",
+                        "facecolor": "white",
+                        "alpha": 0.85,
+                        "edgecolor": "gray",
+                    },
+                )
         else:
             # No valid data to plot
             ax.text(

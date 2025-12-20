@@ -30,13 +30,17 @@ For an in-depth explanation of how tilings are generated using the Dynamic Progr
 
 ### 1.3. Tree Invariants
 
-The RagZoom system maintains several critical invariants to ensure correct operation:
+The RagZoom system maintains a **forest of perfect binary trees**. Each document is represented as one or more perfect binary trees where:
 
-- **Left-Balanced Tree Requirement**: Trees must be left-balanced, where internal nodes have either one left child or two children. Parent spans must equal the union of child spans to maintain complete document coverage.
-- **Equal Leaf Depth**: All leaf nodes must be at the same (maximal) depth from the root. This ensures consistent abstraction levels throughout the tree and prevents mixing raw text with summaries at different heights. When there's an odd number of nodes at any level, a single-child parent is created rather than promoting the odd node.
-- **Sibling Adjacency**: Sibling nodes must have adjacent spans with no gaps between them. Specifically, for any node with two children, the left child's span_end must equal the right child's span_start. This ensures the tree structure directly supports gap-free tilings.
-- **Coverage Tree Completeness**: When building a coverage tree for retrieval, the system must include siblings to maintain coverage completeness. If a node is selected, its sibling must also be included (if it exists) to ensure the parent can be used as a fallback option.
-- **Span Coverage Invariant**: Every parent node's span must equal the union of its children's spans, ensuring no gaps in document coverage.
+- **Perfect Binary Tree Structure**: Every internal node has exactly two children. Leaves have no children.
+- **Forest Model**: When the number of leaves is not a power of 2, the document is represented as multiple perfect binary trees (a forest). For example, 5 leaves become a forest of trees with 4 and 1 leaves respectively.
+- **Equal Leaf Depth (per tree)**: All leaf nodes within each tree are at the same depth. Different trees in the forest may have different heights.
+- **Sibling Adjacency**: Sibling nodes have adjacent spans with no gaps. For any node with two children, the left child's span_end equals the right child's span_start.
+- **Span Coverage Invariant**: Every parent node's span equals the union of its children's spans.
+- **Coordinate Invariants**: Each node has coordinates (height, level_index) where:
+  - height = 0 for leaves, parent.height = child.height + 1
+  - Left children have even level_index, right children have odd level_index
+  - parent.level_index = left_child.level_index // 2
 
 ## 2. System Components
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import cast
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -41,7 +41,6 @@ class TestSpanCorruption:
 
         index_config = IndexConfig.load(
             target_chunk_tokens=100,
-            preceding_context_tokens=10,
         )
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(
@@ -51,6 +50,20 @@ class TestSpanCorruption:
         runtime_harness.llm_service.config = index_config
         mock_client = AsyncMock()
         runtime_harness.llm_service.client = mock_client
+
+        # Mock the sync OpenAI client used by IndexingEngine's retriever
+        mock_sync_client = MagicMock()
+
+        def sync_mock_embeddings(*args: object, **kwargs: object) -> object:
+            input_texts = cast(list[str] | str, kwargs.get("input", []))
+            if isinstance(input_texts, str):
+                input_texts = [input_texts]
+            return MagicMock(
+                data=[MagicMock(embedding=[0.1] * 1536) for _ in input_texts]
+            )
+
+        mock_sync_client.embeddings.create = sync_mock_embeddings
+        runtime_harness.indexing_engine._openai_client = mock_sync_client
 
         config = BackwardCompatibilityConfig(
             index_config, query_config, operational_config

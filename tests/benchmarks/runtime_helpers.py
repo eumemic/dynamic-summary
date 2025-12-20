@@ -9,13 +9,15 @@ import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
+from openai import OpenAI
+
+from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.indexing.runtime import IndexerRuntime
 from ragzoom.server.append_executor import AppendExecutor
+from ragzoom.server.indexing_engine import IndexingEngine
 from ragzoom.server.run_manager import TelemetryRunManager
-from ragzoom.server.worker_coordinator import WorkerCoordinator
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.services.llm_service import LLMService
 from ragzoom.telemetry_types import TelemetryDataDict
@@ -28,7 +30,7 @@ class RuntimeBundle:
     """Active runtime components for benchmark runs."""
 
     runtime: IndexerRuntime
-    worker_coordinator: WorkerCoordinator
+    indexing_engine: IndexingEngine
     telemetry_manager: TelemetryRunManager
 
 
@@ -53,42 +55,32 @@ async def create_runtime(
     append_executor = AppendExecutor(index_config, llm_service)
     telemetry_manager = TelemetryRunManager(index_config)
 
-    backend_name = os.environ.get("RAGZOOM_BACKEND", "sqlite")
-    database_url = os.environ.get("RAGZOOM_DATABASE_URL", "")
-    vector_backend = os.environ.get("RAGZOOM_VECTOR_BACKEND", "python")
+    openai_client = OpenAI(api_key=api_key)
 
-    operational_config = OperationalConfig(
-        openai_api_key=SecretStr(api_key),
-        backend=backend_name,
-        database_url=database_url,
-        vector_backend=vector_backend,
-    )
-
-    worker_coordinator = WorkerCoordinator(
+    indexing_engine = IndexingEngine(
         store=storage_backend,
-        index_config=index_config,
-        operational_config=operational_config,
         llm_service=llm_service,
-        run_manager=telemetry_manager,
-        worker_count=worker_count,
+        index_config=index_config,
+        openai_client=openai_client,
+        vector_index_factory=lambda _model_id: vector_index,
+        max_parallelism=worker_count,
     )
-    await worker_coordinator.start()
 
     runtime = IndexerRuntime(
         store=storage_backend,
         index_config=index_config,
         append_executor=append_executor,
-        worker_coordinator=worker_coordinator,
+        indexing_engine=indexing_engine,
         telemetry_manager=telemetry_manager,
         vector_index_factory=lambda _model_id: vector_index,
     )
 
     try:
-        yield RuntimeBundle(runtime, worker_coordinator, telemetry_manager)
+        yield RuntimeBundle(runtime, indexing_engine, telemetry_manager)
     finally:
         try:
             await asyncio.wait_for(
-                asyncio.shield(worker_coordinator.wait_until_idle()),
+                asyncio.shield(indexing_engine.wait_until_idle()),
                 timeout=30.0,
             )
         except asyncio.TimeoutError:
@@ -104,7 +96,7 @@ async def create_runtime(
                 "Benchmark runtime teardown: wait_until_idle failed", exc_info=exc
             )
         try:
-            await asyncio.shield(worker_coordinator.shutdown())
+            await asyncio.shield(indexing_engine.shutdown())
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.exception(
                 "Benchmark runtime teardown: shutdown failed", exc_info=exc
@@ -141,7 +133,7 @@ def append_document(
                 replace_existing=replace_existing,
                 collect_telemetry=collect_telemetry,
             )
-            await bundle.worker_coordinator.wait_until_idle(document_id)
+            await bundle.indexing_engine.wait_until_idle(document_id)
 
             telemetry_payload: TelemetryDataDict | None = None
             if collect_telemetry:

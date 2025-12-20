@@ -3,10 +3,12 @@
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 
 from ragzoom.contracts.chat_model import ChatModel, Message
 from ragzoom.evaluation.types import DimensionScore, NodeEvaluation
 from ragzoom.exceptions import LLMError
+from ragzoom.model_info import ModelInfo
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +109,7 @@ async def evaluate_node(
     source_text: str,
     preceding_context: str | None,
     chat_model: ChatModel,
+    max_retries: int = 3,
 ) -> dict[str, DimensionScore]:
     """Evaluate a single node's summary on all four dimensions.
 
@@ -115,12 +118,13 @@ async def evaluate_node(
         source_text: The original text that was summarized
         preceding_context: Text of the preceding neighbor (or None)
         chat_model: ChatModel instance for LLM calls
+        max_retries: Maximum retries on schema parse failures
 
     Returns:
         Dict mapping dimension names to DimensionScore objects
 
     Raises:
-        LLMError: If the API call fails or response is invalid
+        LLMError: If the API call fails or response is invalid after retries
     """
     user_prompt = _build_user_prompt(
         summary=summary,
@@ -133,36 +137,66 @@ async def evaluate_node(
         {"role": "user", "content": user_prompt},
     ]
 
-    try:
-        result = await chat_model.complete(messages, temperature=0.1, json_mode=True)
-        return _parse_response(result["content"])
+    last_error: LLMError | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            # Use low temperature for consistent evaluations, but only for
+            # models that support it (reasoning models use reasoning_effort)
+            model_info = ModelInfo()
+            if model_info.supports_temperature(chat_model.model_id):
+                result = await chat_model.complete(
+                    messages, json_mode=True, temperature=0.1
+                )
+            else:
+                result = await chat_model.complete(messages, json_mode=True)
+            return _parse_response(result["content"])
 
-    except json.JSONDecodeError as e:
-        raise LLMError(
-            operation="evaluate_node",
-            model=chat_model.model_id,
-            message=f"Failed to parse JSON response: {e}",
-        ) from e
-    except KeyError as e:
-        raise LLMError(
-            operation="evaluate_node",
-            model=chat_model.model_id,
-            message=f"Missing required field in response: {e}",
-        ) from e
-    except Exception as e:
-        if isinstance(e, LLMError):
-            raise
-        raise LLMError(
-            operation="evaluate_node",
-            model=chat_model.model_id,
-            message=f"Evaluation failed: {e}",
-        ) from e
+        except json.JSONDecodeError as e:
+            last_error = LLMError(
+                operation="evaluate_node",
+                model=chat_model.model_id,
+                message=f"Failed to parse JSON response: {e}",
+            )
+            if attempt < max_retries:
+                logger.debug(
+                    "Retrying evaluate_node due to JSON parse error (attempt %d/%d)",
+                    attempt + 1,
+                    max_retries + 1,
+                )
+                continue
+        except KeyError as e:
+            last_error = LLMError(
+                operation="evaluate_node",
+                model=chat_model.model_id,
+                message=f"Missing required field in response: {e}",
+            )
+            if attempt < max_retries:
+                logger.debug(
+                    "Retrying evaluate_node due to missing field %s (attempt %d/%d)",
+                    e,
+                    attempt + 1,
+                    max_retries + 1,
+                )
+                continue
+        except Exception as e:
+            if isinstance(e, LLMError):
+                raise
+            raise LLMError(
+                operation="evaluate_node",
+                model=chat_model.model_id,
+                message=f"Evaluation failed: {e}",
+            ) from e
+
+    # All retries exhausted
+    assert last_error is not None
+    raise last_error
 
 
 async def evaluate_nodes(
     nodes: list[tuple[str, str, str, str | None, int, int, int, float]],
     chat_model: ChatModel,
     max_concurrent: int = 10,
+    on_progress: Callable[[], None] | None = None,
 ) -> list[NodeEvaluation]:
     """Evaluate multiple nodes in parallel with concurrency control.
 
@@ -171,6 +205,7 @@ async def evaluate_nodes(
                preceding_context, height, level_index, span_start, compression_ratio)
         chat_model: ChatModel instance for LLM calls
         max_concurrent: Maximum concurrent API calls
+        on_progress: Optional callback invoked after each node is evaluated
 
     Returns:
         List of NodeEvaluation objects
@@ -194,7 +229,7 @@ async def evaluate_nodes(
                 preceding_context=preceding_context,
                 chat_model=chat_model,
             )
-            return NodeEvaluation(
+            result = NodeEvaluation(
                 node_id=node_id,
                 height=height,
                 level_index=level_index,
@@ -205,6 +240,9 @@ async def evaluate_nodes(
                 faithfulness=scores["faithfulness"],
                 continuity=scores["continuity"],
             )
+            if on_progress:
+                on_progress()
+            return result
 
     tasks = [
         evaluate_with_limit(

@@ -22,6 +22,16 @@ class EmbeddingTelemetryDict(TypedDict):
     end_time: float
 
 
+# Retrieval telemetry types
+class RetrievalTelemetryDict(TypedDict):
+    """Type definition for retrieval telemetry data (preceding context lookup)."""
+
+    start_time: float
+    end_time: float
+    tiling_node_count: int  # Number of nodes in result tiling
+    tiling_tokens: int  # Total tokens in tiling nodes
+
+
 # Summary attempt types
 class SummaryAttemptDict(TypedDict):
     """Type definition for a single summary attempt."""
@@ -58,6 +68,7 @@ class NodeTelemetryDict(TypedDict):
         tuple[int, int]
     ]  # Document character positions (start, end) - reintroduced in v4.2
     embedding: NotRequired[EmbeddingTelemetryDict]
+    retrieval: NotRequired[RetrievalTelemetryDict]  # Preceding context lookup timing
     summary_attempts: NotRequired[list[SummaryAttemptDict]]
     accepted_attempt: NotRequired[int]  # Index of the accepted attempt
     input_text_tokens: NotRequired[

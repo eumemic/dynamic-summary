@@ -42,6 +42,29 @@ class TestDimensionScore:
             dim.score = 4  # type: ignore[misc]
 
 
+class TestDimensionScoreSerialization:
+    """Test DimensionScore JSON serialization."""
+
+    def test_to_dict(self) -> None:
+        """to_dict should return JSON-serializable dict."""
+        dim = DimensionScore(score=4, explanation="Good")
+        result = dim.to_dict()
+        assert result == {"score": 4, "explanation": "Good"}
+
+    def test_from_dict(self) -> None:
+        """from_dict should reconstruct DimensionScore."""
+        data: dict[str, int | str] = {"score": 3, "explanation": "Minor issues"}
+        dim = DimensionScore.from_dict(data)
+        assert dim.score == 3
+        assert dim.explanation == "Minor issues"
+
+    def test_roundtrip(self) -> None:
+        """to_dict/from_dict should roundtrip correctly."""
+        original = DimensionScore(score=5, explanation="Perfect")
+        reconstructed = DimensionScore.from_dict(original.to_dict())
+        assert reconstructed == original
+
+
 class TestNodeEvaluation:
     """Test NodeEvaluation data type."""
 
@@ -73,6 +96,96 @@ class TestNodeEvaluation:
         """NodeEvaluation should be immutable."""
         with pytest.raises(AttributeError):
             sample_evaluation.height = 3  # type: ignore[misc]
+
+
+class TestNodeEvaluationSerialization:
+    """Test NodeEvaluation JSON serialization."""
+
+    def test_to_dict(self) -> None:
+        """to_dict should return JSON-serializable dict."""
+        evaluation = NodeEvaluation(
+            node_id="node-abc",
+            height=2,
+            level_index=1,
+            span_start=512,
+            compression_ratio=2.5,
+            retention=DimensionScore(score=4, explanation="Good"),
+            isolation=DimensionScore(score=5, explanation="Perfect"),
+            faithfulness=DimensionScore(score=3, explanation="Minor"),
+            continuity=DimensionScore(score=4, explanation="Smooth"),
+        )
+        result = evaluation.to_dict()
+
+        assert result["node_id"] == "node-abc"
+        assert result["height"] == 2
+        assert result["level_index"] == 1
+        assert result["span_start"] == 512
+        assert result["compression_ratio"] == 2.5
+        assert result["retention"] == {"score": 4, "explanation": "Good"}
+        assert result["isolation"] == {"score": 5, "explanation": "Perfect"}
+        assert result["faithfulness"] == {"score": 3, "explanation": "Minor"}
+        assert result["continuity"] == {"score": 4, "explanation": "Smooth"}
+
+    def test_from_dict(self) -> None:
+        """from_dict should reconstruct NodeEvaluation."""
+        data: dict[str, str | int | float | dict[str, int | str]] = {
+            "node_id": "node-xyz",
+            "height": 3,
+            "level_index": 0,
+            "span_start": 1024,
+            "compression_ratio": 1.8,
+            "retention": {"score": 5, "explanation": "Excellent"},
+            "isolation": {"score": 4, "explanation": "Good"},
+            "faithfulness": {"score": 5, "explanation": "Perfect"},
+            "continuity": {"score": 3, "explanation": "OK"},
+        }
+        evaluation = NodeEvaluation.from_dict(data)
+
+        assert evaluation.node_id == "node-xyz"
+        assert evaluation.height == 3
+        assert evaluation.level_index == 0
+        assert evaluation.span_start == 1024
+        assert evaluation.compression_ratio == 1.8
+        assert evaluation.retention.score == 5
+        assert evaluation.isolation.score == 4
+        assert evaluation.faithfulness.score == 5
+        assert evaluation.continuity.score == 3
+
+    def test_roundtrip(self) -> None:
+        """to_dict/from_dict should roundtrip correctly."""
+        original = NodeEvaluation(
+            node_id="test-roundtrip",
+            height=1,
+            level_index=2,
+            span_start=256,
+            compression_ratio=3.0,
+            retention=DimensionScore(score=4, explanation="Good retention"),
+            isolation=DimensionScore(score=5, explanation="Perfect isolation"),
+            faithfulness=DimensionScore(score=3, explanation="Minor issues"),
+            continuity=DimensionScore(score=4, explanation="Flows well"),
+        )
+        reconstructed = NodeEvaluation.from_dict(original.to_dict())
+        assert reconstructed == original
+
+    def test_json_serializable(self) -> None:
+        """to_dict output should be JSON serializable."""
+        evaluation = NodeEvaluation(
+            node_id="node-json",
+            height=2,
+            level_index=0,
+            span_start=100,
+            compression_ratio=2.0,
+            retention=DimensionScore(score=4, explanation="Good"),
+            isolation=DimensionScore(score=5, explanation="Perfect"),
+            faithfulness=DimensionScore(score=4, explanation="Faithful"),
+            continuity=DimensionScore(score=4, explanation="Smooth"),
+        )
+        # Should not raise
+        json_str = json.dumps(evaluation.to_dict())
+        # Should round-trip through JSON
+        parsed = json.loads(json_str)
+        reconstructed = NodeEvaluation.from_dict(parsed)
+        assert reconstructed == evaluation
 
 
 class TestEvaluationReport:
@@ -325,7 +438,7 @@ class TestEvaluateNode:
         # Verify API was called correctly
         mock_chat_model.complete.assert_called_once()
         call_args = mock_chat_model.complete.call_args
-        assert call_args.kwargs.get("temperature") == 0.1
+        assert call_args.kwargs.get("json_mode") is True
 
     @pytest.mark.asyncio
     async def test_evaluate_node_api_error(self) -> None:
@@ -408,10 +521,56 @@ class TestPrintReport:
         assert "Retention" in captured.out
         assert "PASSED" in captured.out
 
-    def test_print_report_shows_lowest_scores(
+    def test_print_report_shows_issue_summary(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Report should display lowest-scoring nodes."""
+        """Report should display LLM-generated issue summary when provided."""
+        evals = [
+            NodeEvaluation(
+                node_id="bad-node-123",
+                height=2,
+                compression_ratio=2.0,
+                level_index=0,
+                span_start=100,
+                retention=DimensionScore(score=1, explanation="Very poor retention"),
+                isolation=DimensionScore(score=4, explanation="OK"),
+                faithfulness=DimensionScore(score=4, explanation="OK"),
+                continuity=DimensionScore(score=4, explanation="OK"),
+            ),
+        ]
+
+        report = EvaluationReport(
+            document_id="test-doc",
+            total_inner_nodes=1,
+            nodes_evaluated=1,
+            evaluations=evals,
+        )
+
+        from ragzoom.evaluation.issue_summary import RecurringIssue
+
+        issues = [
+            RecurringIssue(
+                name="Context bleeding",
+                description="Summaries include info from outside scope",
+                node_ids=("bad-node-123", "bad-node-456"),
+                node_scores=(2.0, 3.0),
+                mean_score=2.5,
+            )
+        ]
+
+        print_report(report, threshold=3.5, issues=issues)
+
+        captured = capsys.readouterr()
+        assert "RECURRING ISSUES" in captured.out
+        assert "Context bleeding" in captured.out
+        assert "score: 2.5" in captured.out
+        assert "2 nodes" in captured.out
+        assert "FAILED" in captured.out
+
+    def test_print_report_no_issue_summary(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Report should not show RECURRING ISSUES when no summary provided."""
         evals = [
             NodeEvaluation(
                 node_id="bad-node-123",
@@ -436,13 +595,7 @@ class TestPrintReport:
         print_report(report, threshold=3.5)
 
         captured = capsys.readouterr()
-        assert "LOWEST SCORES" in captured.out
-        assert (
-            "(2, 0) @ 100" in captured.out
-        )  # Coordinate format: (height, level_index) @ span_start
-        assert "R=1" in captured.out  # Abbreviated format
-        assert "avg=" in captured.out  # Average score shown
-        assert "Very poor retention" in captured.out
+        assert "RECURRING ISSUES" not in captured.out
         assert "FAILED" in captured.out
 
     def test_print_report_empty(self, capsys: pytest.CaptureFixture[str]) -> None:

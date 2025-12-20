@@ -21,8 +21,8 @@ from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.retrieve import Retriever
 from ragzoom.rpc import dynamic_summary_pb2 as pb2
 from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
+from ragzoom.server.indexing_engine import IndexingEngine, IndexingStatus
 from ragzoom.server.state import ServerState
-from ragzoom.server.worker_coordinator import WorkerCoordinator, WorkerStatus
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.telemetry_embeddings import annotate_telemetry_fidelity
 from ragzoom.telemetry_export import (
@@ -561,29 +561,29 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
             doc_id = getattr(document, "id", None)
             if not doc_id:
                 continue
-            await self._state.worker_coordinator.enqueue_document(doc_id)
+            await self._state.indexing_engine.trigger_work(doc_id)
 
         poll_interval = 0.5
 
         while True:
-            status = await self._state.worker_coordinator.status()
+            status = await self._state.indexing_engine.status()
             message = self._format_status(status)
-            idle = status.queue_depth == 0 and status.in_flight == 0
-            doc_ids = set(status.pending_by_document)
-            doc_ids.update(status.inflight_by_document)
+            idle = status.in_flight == 0
+            doc_ids = set(status.in_flight_by_document)
             doc_ids.update(status.completed_by_document)
+            doc_ids.update(status.expected_total_by_document)
             document_progress = []
             for doc_id in sorted(doc_ids):
                 totals = DocumentProgressTotals.from_status_dicts(
                     doc_id,
-                    status.pending_by_document,
-                    status.inflight_by_document,
+                    status.in_flight_by_document,
                     status.completed_by_document,
+                    status.expected_total_by_document,
                 )
                 document_progress.append(
                     pb2.WorkerDocumentProgress(
                         document_id=doc_id,
-                        pending=totals.pending,
+                        pending=0,  # No pending queue in new model
                         inflight=totals.inflight,
                         completed=totals.completed,
                         total=totals.total,
@@ -592,7 +592,7 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
             yield pb2.RunWorkersResponse(
                 message=message,
                 idle=idle,
-                queue_depth=status.queue_depth,
+                queue_depth=0,  # No pending queue in new model
                 inflight=status.in_flight,
                 documents=document_progress,
             )
@@ -622,10 +622,9 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         root = document_store.tree.get_root()
         tree_depth = int(getattr(root, "height", 0) or 0) if root else 0
 
-        worker_status = await self._state.worker_coordinator.status()
-        pending = worker_status.pending_by_document.get(request.document_id, 0)
-        inflight = worker_status.inflight_by_document.get(request.document_id, 0)
-        has_pending_work = pending > 0 or inflight > 0
+        indexing_status = await self._state.indexing_engine.status()
+        inflight = indexing_status.in_flight_by_document.get(request.document_id, 0)
+        has_pending_work = inflight > 0
 
         doc_status = pb2.DocumentStatus(
             document_id=request.document_id,
@@ -793,21 +792,12 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         result = await session.clear()
         return result.deleted_nodes, result.document_existed
 
-    def _format_status(self, status: WorkerStatus) -> str:
-        parts = [
-            f"queue={status.queue_depth}",
-            f"inflight={status.in_flight}",
-        ]
-        if status.pending_by_document:
-            pending = ", ".join(
-                f"{doc}:{count}"
-                for doc, count in sorted(status.pending_by_document.items())
-            )
-            parts.append(f"pending=[{pending}]")
-        if status.inflight_by_document:
+    def _format_status(self, status: IndexingStatus) -> str:
+        parts = [f"inflight={status.in_flight}"]
+        if status.in_flight_by_document:
             inflight = ", ".join(
                 f"{doc}:{count}"
-                for doc, count in sorted(status.inflight_by_document.items())
+                for doc, count in sorted(status.in_flight_by_document.items())
             )
             parts.append(f"active=[{inflight}]")
         return " ".join(parts)
@@ -828,9 +818,9 @@ async def serve(state: ServerState, *, host: str, port: int) -> None:
     server.add_insecure_port(listen_addr)
     logger.info("Starting RagZoom gRPC server on %s", listen_addr)
 
-    await state.worker_coordinator.start()
+    # IndexingEngine doesn't require explicit start - it auto-discovers work
     progress_task = asyncio.create_task(
-        _render_worker_progress(state.worker_coordinator)
+        _render_indexing_progress(state.indexing_engine)
     )
     try:
         try:
@@ -839,9 +829,9 @@ async def serve(state: ServerState, *, host: str, port: int) -> None:
                 doc_id = getattr(document, "id", None)
                 if not doc_id:
                     continue
-                await state.worker_coordinator.enqueue_document(doc_id)
+                await state.indexing_engine.trigger_work(doc_id)
         except Exception:  # pragma: no cover - defensive logging
-            logger.exception("Failed to enqueue existing documents at startup")
+            logger.exception("Failed to trigger work for existing documents at startup")
 
         await server.start()
 
@@ -855,28 +845,21 @@ async def serve(state: ServerState, *, host: str, port: int) -> None:
         progress_task.cancel()
         with suppress(asyncio.CancelledError):
             await progress_task
-        await state.worker_coordinator.shutdown()
+        await state.indexing_engine.shutdown()
 
 
-async def _render_worker_progress(coordinator: WorkerCoordinator) -> None:
+async def _render_indexing_progress(engine: IndexingEngine) -> None:
     display = WorkerProgressDisplay(focus_documents=None)
     try:
         while True:
-            status = await coordinator.status()
+            status = await engine.status()
             active_doc_ids = {
                 doc_id
-                for doc_id, count in status.pending_by_document.items()
+                for doc_id, count in status.in_flight_by_document.items()
                 if count > 0
             }
-            active_doc_ids.update(
-                {
-                    doc_id
-                    for doc_id, count in status.inflight_by_document.items()
-                    if count > 0
-                }
-            )
 
-            if not active_doc_ids and status.queue_depth == 0 and status.in_flight == 0:
+            if not active_doc_ids and status.in_flight == 0:
                 display.finish()
                 await asyncio.sleep(0.5)
                 continue
@@ -884,15 +867,15 @@ async def _render_worker_progress(coordinator: WorkerCoordinator) -> None:
             documents = {
                 doc_id: DocumentProgressTotals.from_status_dicts(
                     doc_id,
-                    status.pending_by_document,
-                    status.inflight_by_document,
+                    status.in_flight_by_document,
                     status.completed_by_document,
+                    status.expected_total_by_document,
                 )
                 for doc_id in sorted(active_doc_ids)
             }
 
             display.update(
-                queue_depth=status.queue_depth,
+                queue_depth=0,  # No pending queue in new model
                 inflight=status.in_flight,
                 documents=documents,
                 message=None,
