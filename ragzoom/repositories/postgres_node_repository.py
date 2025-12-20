@@ -1160,4 +1160,7 @@ class PostgresNodeRepository(BaseRepository):
             )
             if document_id is not None:
                 query = query.filter(PostgresTreeNode.document_id == document_id)
-            return list(query.all())
+            pg_nodes = query.all()
+            for node in pg_nodes:
+                self._force_load_and_detach(session, node)
+            return list(pg_nodes)

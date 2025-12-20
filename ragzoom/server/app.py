@@ -60,6 +60,7 @@ def _apply_config_overrides(
             if min_forest_completeness is not None
             else base.min_forest_completeness
         ),
+        max_forest_height_differential=base.max_forest_height_differential,
         token_cap=(token_cap if token_cap is not None else base.token_cap),
     )
 

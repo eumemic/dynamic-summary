@@ -985,7 +985,7 @@ class SqliteNodeRepository:
             if document_id is not None:
                 stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
             rows = session.execute(stmt).scalars().all()
-            return list(rows)
+            return _detach_rows(session, list(rows))
 
     # jscpd:ignore-end
 
