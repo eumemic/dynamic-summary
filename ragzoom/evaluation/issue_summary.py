@@ -12,6 +12,7 @@ from typing import cast
 
 from ragzoom.contracts.chat_model import ChatModel, Message
 from ragzoom.evaluation.types import DIMENSIONS, EvaluationReport, NodeEvaluation
+from ragzoom.model_info import ModelInfo
 
 # Type alias for parsed JSON structure
 ParsedJSON = dict[str, list[dict[str, str | list[str]]]]
@@ -147,7 +148,12 @@ async def _identify_themes(
         {"role": "user", "content": defects_prompt},
     ]
 
-    result = await chat_model.complete(messages, temperature=0.7)
+    # Use higher temperature for diversity, but only for models that support it
+    model_info = ModelInfo()
+    if model_info.supports_temperature(chat_model.model_id):
+        result = await chat_model.complete(messages, json_mode=True, temperature=0.7)
+    else:
+        result = await chat_model.complete(messages, json_mode=True)
     content = result["content"]
 
     if on_progress:
@@ -200,7 +206,12 @@ Identify recurring themes that appeared in 3+ analyses and assign node IDs to ea
         {"role": "user", "content": user_prompt},
     ]
 
-    result = await chat_model.complete(messages, temperature=0.2)
+    # Use low temperature for consistent synthesis, but only for models that support it
+    model_info = ModelInfo()
+    if model_info.supports_temperature(chat_model.model_id):
+        result = await chat_model.complete(messages, json_mode=True, temperature=0.2)
+    else:
+        result = await chat_model.complete(messages, json_mode=True)
     content = result["content"]
 
     try:

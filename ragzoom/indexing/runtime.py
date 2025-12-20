@@ -124,7 +124,7 @@ class IndexerRuntime:
         inflight = status.in_flight_by_document.get(document_id, 0)
         completed = status.completed_by_document.get(document_id, 0)
         pending = 0  # No explicit queue in new model
-        total = inflight + completed
+        total = status.expected_total_by_document.get(document_id, inflight + completed)
 
         stage: Literal["update", "complete"]
         if inflight == 0:
