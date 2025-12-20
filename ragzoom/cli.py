@@ -114,7 +114,6 @@ def _display_worker_snapshots(
             last_snapshot = snapshot
             documents = {
                 doc_id: DocumentProgressTotals(
-                    pending=progress.pending,
                     inflight=progress.inflight,
                     completed=progress.completed,
                     total=progress.total,
@@ -684,7 +683,7 @@ def telemetry_export(document_id: str, output: str, server_address: str | None) 
 @click.option(
     "--complete",
     is_flag=True,
-    help="Require the document tree to be fully summarized (single root).",
+    help="Require forest completeness: all sibling pairs have parents, all leaves have embeddings.",
 )
 @click.option(
     "--telemetry-file",
@@ -757,7 +756,7 @@ def validate(
         else "❌ Document validation failed"
     )
     if complete and report.status == "ok":
-        heading += " (complete tree required)"
+        heading += " (complete forest required)"
 
     click.echo(heading)
     click.echo(
@@ -1134,6 +1133,104 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
         handle_cli_error(e, "clearing database")
 
 
+@cli.command("inspect")
+@click.argument("node_id")
+@click.pass_context
+def inspect_node(
+    ctx: click.Context,
+    node_id: str,
+) -> None:
+    """Inspect a node's summary, source text, and preceding context.
+
+    NODE_ID can be a prefix (e.g. first 8 characters of the UUID).
+    If multiple nodes match the prefix, they will be listed.
+
+    Examples:
+      ragzoom inspect 73d5aa10
+      ragzoom inspect 73d5aa10-1234-5678-abcd-ef1234567890
+    """
+    try:
+        operational_config = ctx.obj["operational_config"]
+        index_config: IndexConfig = ctx.obj["index_config"]
+
+        store = create_store_with_docker(
+            operational_config, embedding_model=index_config.embedding_model
+        )
+
+        # Use document-agnostic store to find nodes by prefix
+        global_store = store.for_document(None)
+        matches = global_store.nodes.get_by_prefix(node_id)
+
+        if not matches:
+            click.echo(f"No nodes found matching prefix '{node_id}'.", err=True)
+            sys.exit(1)
+
+        if len(matches) > 1:
+            click.echo(f"Multiple nodes match prefix '{node_id}':")
+            for match in matches:
+                click.echo(
+                    f"  {match.id} (height={match.height}, level={match.level_index})"
+                )
+            click.echo("\nPlease provide a more specific prefix.")
+            sys.exit(1)
+
+        # Single match - display full node details
+        node = matches[0]
+
+        # Create doc_store for this node's document
+        doc_store = store.for_document(node.document_id)
+
+        # Get children
+        left_child, right_child = doc_store.tree.get_children(node.id)
+
+        # Reconstruct source text from children
+        source_parts: list[str] = []
+        if left_child:
+            source_parts.append(left_child.text)
+        if right_child:
+            source_parts.append(right_child.text)
+        source_text = "\n".join(source_parts) if source_parts else "(no children)"
+
+        # Reconstruct preceding context from tiling node IDs
+        preceding_text: str | None = None
+        if node.preceding_context:
+            tiling_ids: list[str] = json.loads(node.preceding_context)
+            if tiling_ids:
+                tiling_texts: list[str] = []
+                for tiling_id in tiling_ids:
+                    tiling_node = doc_store.nodes.get(tiling_id)
+                    if tiling_node and tiling_node.text:
+                        tiling_texts.append(tiling_node.text)
+                if tiling_texts:
+                    preceding_text = "\n".join(tiling_texts)
+
+        # Print formatted output
+        click.echo(f"\nNODE: {node.id}")
+        click.echo(
+            f"Height: {node.height} | Level Index: {node.level_index} | "
+            f"Span: {node.span_start}-{node.span_end}"
+        )
+
+        click.echo("\n── PRECEDING CONTEXT " + "─" * 55)
+        if preceding_text:
+            click.echo(preceding_text)
+        else:
+            click.echo("(none)")
+
+        if node.preceding_context_summary:
+            click.echo("\n── PRECEDING CONTEXT SUMMARY " + "─" * 47)
+            click.echo(node.preceding_context_summary)
+
+        click.echo("\n── SOURCE TEXT (children concatenated) " + "─" * 37)
+        click.echo(source_text)
+
+        click.echo("\n── SUMMARY (this node's text) " + "─" * 45)
+        click.echo(node.text or "(empty)")
+
+    except Exception as e:
+        handle_cli_error(e, "inspecting node")
+
+
 @cli.command()
 @click.argument("output_file", type=click.Path())
 @click.option("--format", type=click.Choice(["json", "text"]), default="text")
@@ -1323,7 +1420,6 @@ def config(examples: bool, output_file: str | None) -> None:
             json.dumps(
                 {
                     "target_chunk_tokens": 300,
-                    "preceding_context_tokens": 100,
                     "embedding_model": "text-embedding-3-large",
                     "retry_threshold": 0.15,
                     "max_retries": 2,
@@ -1381,7 +1477,6 @@ def config(examples: bool, output_file: str | None) -> None:
         # Create a sample config file
         sample_config = {
             "target_chunk_tokens": 200,
-            "preceding_context_tokens": 75,
             "embedding_model": "text-embedding-3-small",
             "retry_threshold": 0.2,
             "max_retries": 0,
@@ -1443,6 +1538,59 @@ def server() -> None:
     type=click.Path(file_okay=False, path_type=Path),
     help="Directory to store telemetry events (defaults near data dir)",
 )
+@click.option(
+    "--max-parallelism",
+    type=int,
+    help="Maximum concurrent indexing jobs (default: 30)",
+)
+@click.option(
+    "--preceding-context-leaf-num-seeds",
+    "preceding_context_leaf_num_seeds",
+    type=int,
+    help="Number of seeds for leaf node preceding context",
+)
+@click.option(
+    "--preceding-context-leaf-verbatim-tokens",
+    "preceding_context_leaf_verbatim_tokens",
+    type=int,
+    help="Verbatim token budget for leaf node preceding context",
+)
+@click.option(
+    "--preceding-context-leaf-min-forest-completeness",
+    "preceding_context_leaf_min_forest_completeness",
+    type=float,
+    help="Min forest completeness for leaf nodes (0.0-1.0)",
+)
+@click.option(
+    "--preceding-context-leaf-token-cap",
+    "preceding_context_leaf_token_cap",
+    type=int,
+    help="Token cap for leaf node preceding context (select rightmost N tokens)",
+)
+@click.option(
+    "--preceding-context-inner-num-seeds",
+    "preceding_context_inner_num_seeds",
+    type=int,
+    help="Number of seeds for inner node preceding context",
+)
+@click.option(
+    "--preceding-context-inner-verbatim-tokens",
+    "preceding_context_inner_verbatim_tokens",
+    type=int,
+    help="Verbatim token budget for inner node preceding context",
+)
+@click.option(
+    "--preceding-context-inner-min-forest-completeness",
+    "preceding_context_inner_min_forest_completeness",
+    type=float,
+    help="Min forest completeness for inner nodes (0.0-1.0)",
+)
+@click.option(
+    "--preceding-context-inner-token-cap",
+    "preceding_context_inner_token_cap",
+    type=int,
+    help="Token cap for inner node preceding context (select rightmost N tokens)",
+)
 def start_server(
     host: str,
     port: int,
@@ -1450,6 +1598,15 @@ def start_server(
     debug: bool,
     collect_telemetry: bool,
     telemetry_dir: Path | None,
+    max_parallelism: int | None,
+    preceding_context_leaf_num_seeds: int | None,
+    preceding_context_leaf_verbatim_tokens: int | None,
+    preceding_context_leaf_min_forest_completeness: float | None,
+    preceding_context_leaf_token_cap: int | None,
+    preceding_context_inner_num_seeds: int | None,
+    preceding_context_inner_verbatim_tokens: int | None,
+    preceding_context_inner_min_forest_completeness: float | None,
+    preceding_context_inner_token_cap: int | None,
 ) -> None:
     """Start the RagZoom gRPC server."""
 
@@ -1460,6 +1617,15 @@ def start_server(
         config_path=str(config_path) if config_path else None,
         collect_telemetry=collect_telemetry,
         telemetry_dir=str(telemetry_dir) if telemetry_dir else None,
+        max_parallelism=max_parallelism,
+        preceding_context_leaf_num_seeds=preceding_context_leaf_num_seeds,
+        preceding_context_leaf_verbatim_tokens=preceding_context_leaf_verbatim_tokens,
+        preceding_context_leaf_min_forest_completeness=preceding_context_leaf_min_forest_completeness,
+        preceding_context_leaf_token_cap=preceding_context_leaf_token_cap,
+        preceding_context_inner_num_seeds=preceding_context_inner_num_seeds,
+        preceding_context_inner_verbatim_tokens=preceding_context_inner_verbatim_tokens,
+        preceding_context_inner_min_forest_completeness=preceding_context_inner_min_forest_completeness,
+        preceding_context_inner_token_cap=preceding_context_inner_token_cap,
     )
     run_server(options)
 
@@ -1622,7 +1788,12 @@ def doctor() -> None:
 # Usage: ragzoom-telemetry analyze|compare|visualize
 
 
-@cli.command()
+@cli.group()
+def eval() -> None:
+    """Summary quality evaluation commands."""
+
+
+@eval.command("measure")
 @click.argument("document_id")
 @click.option(
     "--num-samples",
@@ -1634,30 +1805,22 @@ def doctor() -> None:
 @click.option(
     "--model",
     "-m",
-    default="gpt-5",
+    default="gpt-5-nano",
     help="Model for evaluation",
 )
 @click.option(
-    "--threshold",
-    "-t",
-    default=3.0,
-    type=float,
-    help="Minimum mean score to pass (1-5)",
-)
-@click.option(
-    "--yes",
-    "-y",
-    is_flag=True,
-    help="Skip confirmation prompt",
+    "--output",
+    "-o",
+    type=click.Path(),
+    help="Output path for evaluation JSON (default: <document_id>.eval.json)",
 )
 @click.pass_context
-def evaluate(
+def measure(
     ctx: click.Context,
     document_id: str,
     num_samples: int,
     model: str,
-    threshold: float,
-    yes: bool,
+    output: str | None,
 ) -> None:
     """Evaluate summary quality for a document using LLM-as-judge.
 
@@ -1667,10 +1830,12 @@ def evaluate(
       - Faithfulness: No hallucination or knowledge contamination
       - Continuity: Flows smoothly from preceding context
 
+    Saves evaluations to JSON for later analysis with 'ragzoom eval report'.
+
     Examples:
-      ragzoom evaluate my-document
-      ragzoom evaluate my-document -n 50 --model gpt-4o
-      ragzoom evaluate my-document -n -1 -y  # All nodes, no confirmation
+      ragzoom eval measure my-document
+      ragzoom eval measure my-document -n 50 --model gpt-4o
+      ragzoom eval measure my-document -n -1  # All nodes
     """
     try:
         operational_config = ctx.obj["operational_config"]
@@ -1727,8 +1892,21 @@ def evaluate(
         node_data: list[tuple[str, str, str, str | None, int, int, int, float]] = []
         for node, left_child, right_child in selected_nodes:
 
-            preceding = doc_store.tree.get_preceding_neighbor(node.id)
-            preceding_text = preceding.text if preceding else None
+            # Reconstruct the preceding context that was used during summarization
+            # by fetching and concatenating the tiling node texts
+            preceding_text: str | None = None
+            if node.preceding_context:
+                import json
+
+                tiling_ids: list[str] = json.loads(node.preceding_context)
+                if tiling_ids:
+                    tiling_texts: list[str] = []
+                    for tiling_id in tiling_ids:
+                        tiling_node = doc_store.nodes.get(tiling_id)
+                        if tiling_node and tiling_node.text:
+                            tiling_texts.append(tiling_node.text)
+                    if tiling_texts:
+                        preceding_text = "\n\n".join(tiling_texts)
 
             # Concatenate children texts as the summarizer sees them
             source_text = left_child.text + right_child.text
@@ -1756,24 +1934,15 @@ def evaluate(
             click.echo("No valid inner nodes to evaluate.", err=True)
             sys.exit(1)
 
-        # Cost estimate and confirmation
-        estimated_calls = len(node_data)
-        click.echo(f"\nEvaluating {estimated_calls} of {total_inner} inner nodes")
-        click.echo(f"Model: {eval_model}")
-        click.echo(f"Threshold: {threshold}")
-
-        if not yes:
-            if not click.confirm("\nProceed with evaluation?"):
-                click.echo("Aborted.")
-                return
-
         # Run evaluation
-        click.echo("\nRunning evaluation...")
+        click.echo(f"\nEvaluating {len(node_data)} of {total_inner} inner nodes...")
+        click.echo(f"Model: {eval_model}")
 
         from openai import AsyncOpenAI
+        from tqdm import tqdm
 
         from ragzoom.adapters.openai_chat_model import OpenAIChatModel
-        from ragzoom.evaluation import EvaluationReport, evaluate_nodes, print_report
+        from ragzoom.evaluation import evaluate_nodes
         from ragzoom.evaluation.types import NodeEvaluation
 
         api_key = os.getenv("OPENAI_API_KEY")
@@ -1784,30 +1953,140 @@ def evaluate(
         async def run_evaluation() -> list[NodeEvaluation]:
             client = AsyncOpenAI(api_key=api_key)
             chat_model = OpenAIChatModel(client, eval_model)
-            return await evaluate_nodes(
-                nodes=node_data,
-                chat_model=chat_model,
-                max_concurrent=10,
-            )
+
+            def update_progress() -> None:
+                pbar.update(1)
+
+            with tqdm(total=len(node_data), unit="node", leave=False) as pbar:
+                return await evaluate_nodes(
+                    nodes=node_data,
+                    chat_model=chat_model,
+                    max_concurrent=30,
+                    on_progress=update_progress,
+                )
 
         evaluations = asyncio.run(run_evaluation())
 
-        # Generate report
-        report = EvaluationReport(
+        # Save to JSON
+        output_path = output or f"{document_id}.eval.json"
+        eval_data = {
+            "document_id": document_id,
+            "evaluations": [e.to_dict() for e in evaluations],
+        }
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(eval_data, f, indent=2)
+
+        click.echo(f"\n✅ Saved {len(evaluations)} evaluations to {output_path}")
+
+    except Exception as e:
+        handle_cli_error(e, "evaluating document")
+
+
+@eval.command("report")
+@click.argument("eval_file", type=click.Path(exists=True))
+@click.option(
+    "--threshold",
+    "-t",
+    default=3.0,
+    type=float,
+    help="Minimum mean score to pass (1-5)",
+)
+@click.option(
+    "--model",
+    "-m",
+    default="gpt-5-nano",
+    help="Model for issue synthesis",
+)
+def report(
+    eval_file: str,
+    threshold: float,
+    model: str,
+) -> None:
+    """Generate a quality report from evaluation JSON.
+
+    Loads evaluations from a JSON file created by 'ragzoom eval measure',
+    runs issue synthesis, and prints a formatted report.
+
+    Examples:
+      ragzoom eval report my-document.eval.json
+      ragzoom eval report my-document.eval.json --threshold 4.0
+    """
+    try:
+        # Load evaluations from JSON
+        with open(eval_file, encoding="utf-8") as f:
+            data = json.load(f)
+
+        document_id = data["document_id"]
+        eval_dicts = data["evaluations"]
+
+        from ragzoom.evaluation import (
+            EvaluationReport,
+            NodeEvaluation,
+            generate_issue_summary,
+        )
+        from ragzoom.evaluation import (
+            print_report as print_eval_report,
+        )
+
+        evaluations = [NodeEvaluation.from_dict(e) for e in eval_dicts]
+
+        click.echo(f"Loaded {len(evaluations)} evaluations for '{document_id}'")
+
+        # Build report
+        eval_report = EvaluationReport(
             document_id=document_id,
-            total_inner_nodes=total_inner,
+            total_inner_nodes=len(evaluations),
             nodes_evaluated=len(evaluations),
             evaluations=evaluations,
         )
 
-        print_report(report, threshold)
+        # Generate issue summary
+        from openai import AsyncOpenAI
+        from tqdm import tqdm
 
-        # Exit with appropriate code
-        if not report.passed(threshold):
+        from ragzoom.adapters.openai_chat_model import OpenAIChatModel
+        from ragzoom.evaluation.issue_summary import RecurringIssue
+
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            click.echo("OPENAI_API_KEY environment variable not set.", err=True)
             sys.exit(1)
 
+        # 10 parallel theme identification + 1 synthesis = 11 LLM calls
+        num_parallel = 10
+
+        async def run_synthesis() -> list[RecurringIssue]:
+            client = AsyncOpenAI(api_key=api_key)
+            chat_model = OpenAIChatModel(client, model)
+
+            def update_progress() -> None:
+                pbar.update(1)
+
+            with tqdm(
+                total=num_parallel + 1, unit="call", desc="Analyzing", leave=False
+            ) as pbar:
+                return await generate_issue_summary(
+                    eval_report, chat_model, num_parallel, update_progress
+                )
+
+        issues = asyncio.run(run_synthesis())
+
+        # Print report
+        print_eval_report(eval_report, threshold, issues)
+
+        # Exit with appropriate code
+        if not eval_report.passed(threshold):
+            sys.exit(1)
+
+    except json.JSONDecodeError as e:
+        click.echo(f"Invalid JSON in evaluation file: {e}", err=True)
+        sys.exit(1)
+    except KeyError as e:
+        click.echo(f"Missing required field in evaluation file: {e}", err=True)
+        sys.exit(1)
     except Exception as e:
-        handle_cli_error(e, "evaluating document")
+        handle_cli_error(e, "generating report")
 
 
 if __name__ == "__main__":

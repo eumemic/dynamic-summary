@@ -43,8 +43,8 @@ async def test_grpc_server_lifecycle(
     finally:
         client.close()
 
-    status = await state.worker_coordinator.status()
-    assert status.queue_depth == 0
+    status = await state.indexing_engine.status()
+    assert status.in_flight == 0
 
 
 @pytest.mark.asyncio
@@ -77,8 +77,8 @@ async def test_grpc_server_handles_concurrent_clients(
     finally:
         client.close()
 
-    final_status = await state.worker_coordinator.status()
-    assert final_status.queue_depth == 0
+    final_status = await state.indexing_engine.status()
+    assert final_status.in_flight == 0
 
 
 @pytest.mark.asyncio

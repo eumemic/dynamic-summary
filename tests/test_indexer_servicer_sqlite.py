@@ -12,10 +12,10 @@ from ragzoom.document_store import DocumentStore
 from ragzoom.indexing import IndexerRuntime
 from ragzoom.rpc import dynamic_summary_pb2 as pb2
 from ragzoom.server.append_executor import AppendExecutor, AppendOutcome
+from ragzoom.server.indexing_engine import IndexingEngine, IndexingStatus
 from ragzoom.server.run_manager import TelemetryRunManager
 from ragzoom.server.servicers import IndexerServicer
 from ragzoom.server.state import ServerState
-from ragzoom.server.worker_coordinator import WorkerCoordinator, WorkerStatus
 
 
 class StubAppendExecutor:
@@ -24,7 +24,6 @@ class StubAppendExecutor:
         self.calls: list[
             tuple[
                 DocumentStore,
-                VectorIndex,
                 str,
                 str,
                 object | None,
@@ -37,7 +36,6 @@ class StubAppendExecutor:
         self,
         *,
         store: DocumentStore,
-        vector_index: VectorIndex,
         document_id: str,
         new_text: str,
         reporter: object | None = None,
@@ -47,7 +45,6 @@ class StubAppendExecutor:
         self.calls.append(
             (
                 store,
-                vector_index,
                 document_id,
                 new_text,
                 reporter,
@@ -58,43 +55,20 @@ class StubAppendExecutor:
         return self.outcome
 
 
-class StubWorkerCoordinator:
+class StubIndexingEngine:
+    """Stub IndexingEngine for testing servicers without real indexing."""
+
     def __init__(self) -> None:
-        self.enqueued: list[str] = []
-        self.deleted: list[list[str] | None] = []
-        self.new_roots: list[list[str] | None] = []
+        self.triggered: list[str] = []
         self.cancelled: list[str] = []
-        self.attached_runs: list[object] = []
-        self.detached: list[str] = []
-        self.embedding_enqueued: list[tuple[str, list[str]]] = []
 
-    async def enqueue_embedding(
-        self,
-        document_id: str,
-        leaf_ids: list[str],
-        leaf_texts: list[str],
-        metadata: list[dict[str, object]],
-        run_id: str | None = None,
-    ) -> None:
-        self.embedding_enqueued.append((document_id, leaf_ids))
-
-    async def enqueue_document(
+    async def trigger_work(
         self,
         document_id: str,
         *,
-        deleted_node_ids: list[str] | None = None,
-        new_root_ids: list[str] | None = None,
-        run_context: object | None = None,
+        telemetry_collector: object | None = None,
     ) -> None:
-        self.enqueued.append(document_id)
-        self.deleted.append(deleted_node_ids)
-        self.new_roots.append(new_root_ids)
-
-    async def attach_run(self, context: object) -> None:
-        self.attached_runs.append(context)
-
-    async def detach_run(self, document_id: str, run_id: object) -> None:
-        self.detached.append(f"{document_id}:{run_id}")
+        self.triggered.append(document_id)
 
     async def cancel_document(self, document_id: str) -> None:
         self.cancelled.append(document_id)
@@ -102,14 +76,16 @@ class StubWorkerCoordinator:
     async def wait_until_idle(self, document_id: str | None = None) -> None:
         return None
 
-    async def status(self) -> WorkerStatus:
-        return WorkerStatus(
-            queue_depth=0,
+    async def status(self) -> IndexingStatus:
+        return IndexingStatus(
             in_flight=0,
-            pending_by_document={},
-            inflight_by_document={},
+            in_flight_by_document={},
             completed_by_document={},
+            expected_total_by_document={},
         )
+
+    async def shutdown(self) -> None:
+        pass
 
 
 class StubContext:
@@ -141,7 +117,7 @@ async def test_append_text_uses_append_executor() -> None:
         )
 
         append_executor = StubAppendExecutor(outcome)
-        worker_coordinator = StubWorkerCoordinator()
+        indexing_engine = StubIndexingEngine()
         telemetry_manager = TelemetryRunManager(index_config)
 
         class VectorIndexStub:
@@ -176,7 +152,7 @@ async def test_append_text_uses_append_executor() -> None:
             store=backend,
             index_config=index_config,
             append_executor=cast(AppendExecutor, append_executor),
-            worker_coordinator=cast(WorkerCoordinator, worker_coordinator),
+            indexing_engine=cast(IndexingEngine, indexing_engine),
             telemetry_manager=telemetry_manager,
             vector_index_factory=cast(Callable[[str], VectorIndex], vector_factory),
         )
@@ -193,7 +169,7 @@ async def test_append_text_uses_append_executor() -> None:
                 llm_service=None,
                 telemetry_run_manager=telemetry_manager,
                 append_executor=append_executor,
-                worker_coordinator=worker_coordinator,
+                indexing_engine=indexing_engine,
                 index_runtime=runtime,
             ),
         )
@@ -210,13 +186,11 @@ async def test_append_text_uses_append_executor() -> None:
 
         assert append_executor.calls, "Append executor was not invoked"
         call = append_executor.calls[0]
-        assert call[2] == "doc"
-        assert call[3] == "hello world"
+        assert call[1] == "doc"
+        assert call[2] == "hello world"
 
         assert backend.get_document_by_id("doc") is not None
-        assert worker_coordinator.enqueued == ["doc"]
-        assert worker_coordinator.deleted == [outcome.deleted_node_ids]
-        assert worker_coordinator.new_roots == [outcome.new_leaf_ids]
+        assert indexing_engine.triggered == ["doc"]
 
         stats = response.stats
         assert stats.document_id == "doc"
@@ -264,7 +238,7 @@ async def test_append_text_with_replace_existing_sets_flag() -> None:
         )
 
         append_executor = StubAppendExecutor(outcome)
-        worker_coordinator = StubWorkerCoordinator()
+        indexing_engine = StubIndexingEngine()
         telemetry_manager = TelemetryRunManager(index_config)
 
         state = cast(
@@ -279,7 +253,7 @@ async def test_append_text_with_replace_existing_sets_flag() -> None:
                 llm_service=None,
                 telemetry_run_manager=telemetry_manager,
                 append_executor=append_executor,
-                worker_coordinator=worker_coordinator,
+                indexing_engine=indexing_engine,
             ),
         )
 
@@ -318,7 +292,7 @@ async def test_append_text_with_replace_existing_sets_flag() -> None:
             store=backend,
             index_config=index_config,
             append_executor=cast(AppendExecutor, append_executor),
-            worker_coordinator=cast(WorkerCoordinator, worker_coordinator),
+            indexing_engine=cast(IndexingEngine, indexing_engine),
             telemetry_manager=telemetry_manager,
             vector_index_factory=cast(Callable[[str], VectorIndex], vector_factory),
         )
@@ -344,7 +318,7 @@ async def test_append_text_with_replace_existing_sets_flag() -> None:
         assert clear_mock.called
         assert delete_calls, "Vector index delete was not invoked"
         assert append_executor.calls
-        assert worker_coordinator.cancelled == [document_id]
+        assert indexing_engine.cancelled == [document_id]
     finally:
         backend.close()
 
@@ -381,7 +355,7 @@ async def test_index_document_clears_then_appends() -> None:
         )
 
         append_executor = StubAppendExecutor(outcome)
-        worker_coordinator = StubWorkerCoordinator()
+        indexing_engine = StubIndexingEngine()
         telemetry_manager = TelemetryRunManager(index_config)
 
         state = cast(
@@ -396,7 +370,7 @@ async def test_index_document_clears_then_appends() -> None:
                 llm_service=None,
                 telemetry_run_manager=telemetry_manager,
                 append_executor=append_executor,
-                worker_coordinator=worker_coordinator,
+                indexing_engine=indexing_engine,
             ),
         )
 
@@ -436,7 +410,7 @@ async def test_index_document_clears_then_appends() -> None:
             store=backend,
             index_config=index_config,
             append_executor=cast(AppendExecutor, append_executor),
-            worker_coordinator=cast(WorkerCoordinator, worker_coordinator),
+            indexing_engine=cast(IndexingEngine, indexing_engine),
             telemetry_manager=telemetry_manager,
             vector_index_factory=cast(Callable[[str], VectorIndex], vector_factory),
         )
@@ -455,8 +429,8 @@ async def test_index_document_clears_then_appends() -> None:
         assert clear_mock.called
         assert delete_calls, "Vector index delete was not invoked"
         assert append_executor.calls
-        assert worker_coordinator.cancelled == [document_id]
-        assert worker_coordinator.enqueued == [document_id]
+        assert indexing_engine.cancelled == [document_id]
+        assert indexing_engine.triggered == [document_id]
 
         stats = response.stats
         assert stats.document_id == document_id

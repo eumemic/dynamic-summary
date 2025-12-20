@@ -7,7 +7,7 @@ pinned via the transient pinning mechanism.
 """
 
 from collections.abc import Mapping
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from ragzoom.config import QueryConfig
 from ragzoom.greedy_tiling import TilingResult
@@ -313,7 +313,9 @@ class TestVerbatimTilingInvariant:
         mock_doc_store.nodes._repo = mock_repo
 
         mock_embedding_service = MagicMock()
-        mock_embedding_service.get_query_embedding.return_value = [0.1] * 1536
+        mock_embedding_service.get_query_embedding_async = AsyncMock(
+            return_value=[0.1] * 1536
+        )
         mock_budget_planner = MagicMock()
         mock_budget_planner.calculate_conservative_num_seeds.return_value = 1
         mock_vector_index = MagicMock()
@@ -466,7 +468,9 @@ class TestVerbatimBudgetIntegration:
         mock_repo.get_document_span_end.return_value = 200
         mock_doc_store.nodes._repo = mock_repo
         mock_embedding_service = MagicMock()
-        mock_embedding_service.get_query_embedding.return_value = [0.1] * 1536
+        mock_embedding_service.get_query_embedding_async = AsyncMock(
+            return_value=[0.1] * 1536
+        )
         mock_budget_planner = MagicMock()
         mock_budget_planner.calculate_conservative_num_seeds.return_value = 1
         mock_vector_index = MagicMock()
@@ -581,7 +585,9 @@ class TestVerbatimBudgetIntegration:
         mock_repo.get_document_span_end.return_value = 200
         mock_doc_store.nodes._repo = mock_repo
         mock_embedding_service = MagicMock()
-        mock_embedding_service.get_query_embedding.return_value = [0.1] * 1536
+        mock_embedding_service.get_query_embedding_async = AsyncMock(
+            return_value=[0.1] * 1536
+        )
         mock_budget_planner = MagicMock()
         mock_budget_planner.calculate_conservative_num_seeds.return_value = 1
 

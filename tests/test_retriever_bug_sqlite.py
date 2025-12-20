@@ -31,9 +31,7 @@ class TestRetrieverBugSQLite:
         self, sqlite_store_factory: Callable[[str | None], DocumentStore]
     ) -> Generator[tuple[object, DocumentStore, "Retriever"], None, None]:
         """Set up a system with a tree structure to demonstrate the bug."""
-        index_config = IndexConfig.load(
-            target_chunk_tokens=100, preceding_context_tokens=50
-        )
+        index_config = IndexConfig.load(target_chunk_tokens=100)
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 

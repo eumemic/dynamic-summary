@@ -76,6 +76,16 @@ class EmbeddingTelemetry:
 
 
 @dataclass
+class RetrievalTelemetry:
+    """Telemetry for preceding context retrieval call."""
+
+    start_time: float
+    end_time: float
+    tiling_node_count: int  # Number of nodes in result tiling
+    tiling_tokens: int  # Total tokens in tiling nodes
+
+
+@dataclass
 class SummaryAttempt:
     """Telemetry for a single summary attempt.
 
@@ -147,6 +157,9 @@ class NodeTelemetry:
     # Embedding telemetry
     embedding: EmbeddingTelemetry | None = None
 
+    # Retrieval telemetry (preceding context lookup)
+    retrieval: RetrievalTelemetry | None = None
+
     # Summary telemetry (multiple attempts for retries)
     summary_attempts: list[SummaryAttempt] = field(default_factory=list)
 
@@ -189,6 +202,15 @@ class NodeTelemetry:
                 "model": self.embedding.model,
                 "start_time": self.embedding.start_time,
                 "end_time": self.embedding.end_time,
+            }
+
+        # Add retrieval info if present
+        if self.retrieval:
+            result["retrieval"] = {
+                "start_time": self.retrieval.start_time,
+                "end_time": self.retrieval.end_time,
+                "tiling_node_count": self.retrieval.tiling_node_count,
+                "tiling_tokens": self.retrieval.tiling_tokens,
             }
 
         if self.fidelity is not None:
@@ -470,6 +492,32 @@ class TelemetryCollector:
                 start_time=start_time,
                 end_time=end_time,
             )
+
+    def record_retrieval_call(
+        self,
+        node_id: str,
+        tiling_node_count: int,
+        tiling_tokens: int,
+        start_time: float,
+    ) -> None:
+        """Record retrieval timing for preceding context lookup.
+
+        Args:
+            node_id: The node for which context was retrieved
+            tiling_node_count: Number of nodes in the result tiling
+            tiling_tokens: Total tokens in the tiling nodes
+            start_time: When the retrieval call started
+        """
+        end_time = time.time()
+        if node_id not in self.node_telemetry:
+            # Node may not be tracked yet for leaves during initial creation
+            return
+        self.node_telemetry[node_id].retrieval = RetrievalTelemetry(
+            start_time=start_time,
+            end_time=end_time,
+            tiling_node_count=tiling_node_count,
+            tiling_tokens=tiling_tokens,
+        )
 
     def record_node_fidelity(self, node_id: str, fidelity: float) -> None:
         telemetry = self.node_telemetry.get(node_id)

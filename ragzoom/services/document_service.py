@@ -52,6 +52,7 @@ class NodeSnapshot:
     following_neighbor_id: str | None
     is_pinned: bool
     created_at: datetime | None
+    preceding_context_summary: str | None
 
 
 @dataclass
@@ -205,6 +206,7 @@ class DocumentService:
             following_neighbor_id=getattr(node, "following_neighbor_id", None),
             is_pinned=bool(getattr(node, "is_pinned", 0)),
             created_at=getattr(node, "created_at", None),
+            preceding_context_summary=getattr(node, "preceding_context_summary", None),
         )
 
 

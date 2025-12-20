@@ -1,7 +1,7 @@
 """Data types for summary evaluation."""
 
 from dataclasses import dataclass, field
-from statistics import mean, stdev
+from statistics import mean, quantiles, stdev
 
 
 @dataclass(frozen=True)
@@ -14,6 +14,15 @@ class DimensionScore:
     def __post_init__(self) -> None:
         if not 1 <= self.score <= 5:
             raise ValueError(f"Score must be 1-5, got {self.score}")
+
+    def to_dict(self) -> dict[str, int | str]:
+        """Convert to JSON-serializable dict."""
+        return {"score": self.score, "explanation": self.explanation}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, int | str]) -> "DimensionScore":
+        """Create from dict."""
+        return cls(score=int(data["score"]), explanation=str(data["explanation"]))
 
 
 @dataclass(frozen=True)
@@ -51,6 +60,45 @@ class NodeEvaluation:
                 self.faithfulness.score,
                 self.continuity.score,
             ]
+        )
+
+    def to_dict(self) -> dict[str, str | int | float | dict[str, int | str]]:
+        """Convert to JSON-serializable dict."""
+        return {
+            "node_id": self.node_id,
+            "height": self.height,
+            "level_index": self.level_index,
+            "span_start": self.span_start,
+            "compression_ratio": self.compression_ratio,
+            "retention": self.retention.to_dict(),
+            "isolation": self.isolation.to_dict(),
+            "faithfulness": self.faithfulness.to_dict(),
+            "continuity": self.continuity.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(
+        cls, data: dict[str, str | int | float | dict[str, int | str]]
+    ) -> "NodeEvaluation":
+        """Create from dict."""
+        retention_data = data["retention"]
+        isolation_data = data["isolation"]
+        faithfulness_data = data["faithfulness"]
+        continuity_data = data["continuity"]
+        assert isinstance(retention_data, dict)
+        assert isinstance(isolation_data, dict)
+        assert isinstance(faithfulness_data, dict)
+        assert isinstance(continuity_data, dict)
+        return cls(
+            node_id=str(data["node_id"]),
+            height=int(data["height"]),  # type: ignore[arg-type]
+            level_index=int(data["level_index"]),  # type: ignore[arg-type]
+            span_start=int(data["span_start"]),  # type: ignore[arg-type]
+            compression_ratio=float(data["compression_ratio"]),  # type: ignore[arg-type]
+            retention=DimensionScore.from_dict(retention_data),
+            isolation=DimensionScore.from_dict(isolation_data),
+            faithfulness=DimensionScore.from_dict(faithfulness_data),
+            continuity=DimensionScore.from_dict(continuity_data),
         )
 
 
@@ -99,3 +147,32 @@ class EvaluationReport:
     def passed(self, min_mean: float) -> bool:
         """Return True if overall mean meets threshold."""
         return self.overall_mean() >= min_mean
+
+    def percentile_scores(self, percentile: int) -> dict[str, float]:
+        """Return the given percentile (0-100) for each dimension.
+
+        Uses exclusive method: percentile 5 gives the value at the 5th percentile.
+        """
+        if len(self.evaluations) < 2:
+            return {dim: 0.0 for dim in DIMENSIONS}
+
+        # quantiles(data, n=20) gives 19 cut points for 5% intervals
+        # Index 0 = p5, index 1 = p10, ..., index 18 = p95
+        result: dict[str, float] = {}
+        for dim in DIMENSIONS:
+            scores = sorted(getattr(e, dim).score for e in self.evaluations)
+            # quantiles with n=20 gives cut points at 5%, 10%, ..., 95%
+            cuts = quantiles(scores, n=20)
+            # Map percentile to index: p5->0, p10->1, ..., p95->18
+            idx = (percentile // 5) - 1
+            if idx < 0:
+                result[dim] = float(min(scores))
+            elif idx >= len(cuts):
+                result[dim] = float(max(scores))
+            else:
+                result[dim] = cuts[idx]
+        return result
+
+    def failure_count(self, threshold: float = 2.5) -> int:
+        """Count nodes with any dimension score below threshold."""
+        return sum(1 for e in self.evaluations if e.min_score < threshold)

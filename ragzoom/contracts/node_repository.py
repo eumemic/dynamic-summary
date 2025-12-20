@@ -44,6 +44,10 @@ class NodeDataDict(TypedDict, total=False):
     preceding_neighbor_id: str | None
     following_neighbor_id: str | None
 
+    # Contextual indexing fields
+    preceding_context: str | None
+    preceding_context_summary: str | None
+
 
 try:  # Optional typing import; not required at runtime
     from typing import TYPE_CHECKING
@@ -104,6 +108,9 @@ class NodeRepository(Protocol):
     def get_recent_leaves_within_budget(
         self, document_id: str | None, token_budget: int
     ) -> list[TreeNode]: ...
+    def get_recent_leaves_within_budget_before(
+        self, document_id: str, token_budget: int, before_span_end: int
+    ) -> list[TreeNode]: ...
     def max_height_for_document(self, document_id: str | None) -> int: ...
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]: ...
     def get_pinned_nodes_for_document(
@@ -156,3 +163,61 @@ class NodeRepository(Protocol):
         *,
         session: Session | None = None,
     ) -> None: ...
+
+    def update_preceding_context(
+        self,
+        node_id: str,
+        preceding_context: str | None,
+    ) -> None:
+        """Update the preceding_context field for a node."""
+        ...
+
+    def update_preceding_context_summary(
+        self,
+        node_id: str,
+        summary: str | None,
+    ) -> None:
+        """Update the preceding_context_summary field for a node."""
+        ...
+
+    def update_embedding(
+        self,
+        node_id: str,
+        embedding: list[float] | NDArray[np.float64] | None,
+    ) -> None:
+        """Update the embedding field for a node.
+
+        The embedding is stored as packed float32 bytes for efficiency.
+        """
+        ...
+
+    # Frontier tracking for contextual indexing
+    def get_tree_completion_frontier(self, document_id: str | None) -> int: ...
+
+    def get_leaves_from_span_start(
+        self, document_id: str | None, span_start: int
+    ) -> list[TreeNode]:
+        """Get leaves with span_start >= given value, ordered by span_start.
+
+        Used for computing the eligible span for contextual indexing gating.
+        """
+        ...
+
+    def get_avg_chars_per_token(self, document_id: str | None) -> float | None:
+        """Return average characters per token for leaves in a document.
+
+        Computes SUM(span_end - span_start) / SUM(token_count) for all leaves.
+        Returns None if no leaves exist yet.
+
+        Used for estimating character positions from token budgets.
+        """
+        ...
+
+    def get_nodes_by_id_prefix(
+        self, document_id: str | None, id_prefix: str
+    ) -> list[TreeNode]:
+        """Get nodes whose ID starts with the given prefix.
+
+        Used for CLI commands where users provide shortened node IDs.
+        """
+        ...

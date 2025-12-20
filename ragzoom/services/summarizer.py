@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from typing import cast
 
-from ragzoom.config import IndexConfig, is_gpt5_model
+from ragzoom.config import IndexConfig
 from ragzoom.contracts.chat_model import ChatModel, ChatResult, Message, UsageInfo
 from ragzoom.error_utils import preserve_exception_chain
 from ragzoom.exceptions import LLMError
+from ragzoom.model_info import ModelInfo
 from ragzoom.services import summary_utils
 from ragzoom.telemetry_collection import TelemetryCollector
 
@@ -30,10 +31,13 @@ class Summarizer:
     ) -> tuple[str, UsageInfo]:
         try:
             typed_messages = cast(list[Message], messages)
-            if is_gpt5_model(self.config.summary_model):
+            # Use reasoning_effort for models that support it, temperature otherwise.
+            # The adapter handles translation of unsupported reasoning levels.
+            model_info = ModelInfo()
+            if model_info.get_reasoning_levels(self.config.summary_model) is not None:
                 result: ChatResult = await self.chat_model.complete(
                     typed_messages,
-                    reasoning_effort="minimal",
+                    reasoning_effort=self.config.summary_reasoning_level,
                 )
             else:
                 result = await self.chat_model.complete(typed_messages, temperature=0.3)
@@ -62,23 +66,19 @@ class Summarizer:
 
     async def summarize(
         self,
-        left_text: str,
-        right_text: str,
+        text: str,
         target_tokens: int,
         *,
         prev_context: str | None = None,
         parent_id: str | None = None,
         reporter: TelemetryCollector | None = None,
-        left_token_count: int | None = None,
-        right_token_count: int | None = None,
+        text_tokens: int | None = None,
     ) -> tuple[str, int, int]:
         request_kwargs: summary_utils.SummaryRequest = {
-            "left_text": left_text,
-            "right_text": right_text,
+            "text": text,
             "target_tokens": target_tokens,
             "prev_context": prev_context,
-            "left_token_count": left_token_count,
-            "right_token_count": right_token_count,
+            "text_tokens": text_tokens,
             "parent_id": parent_id,
             "reporter": reporter,
         }
@@ -87,4 +87,35 @@ class Summarizer:
             index_config=self.config,
             request=request_kwargs,
             call_summary=self._make_summary_call,
+        )
+
+    async def contextualize(
+        self,
+        preceding_context: str,
+        target_text: str,
+        target_tokens: int,
+        *,
+        parent_id: str | None = None,
+        reporter: TelemetryCollector | None = None,
+    ) -> tuple[str, int, int]:
+        """Generate contextualizing summary of preceding context for target text.
+
+        Unlike summarize() which compresses text preserving all information,
+        contextualize() extracts only the background information relevant to
+        understanding the target text.
+
+        Returns: (context_summary, retry_count, summary_tokens)
+        """
+        request_kwargs: summary_utils.ContextualizationRequest = {
+            "preceding_context": preceding_context,
+            "target_text": target_text,
+            "target_tokens": target_tokens,
+            "parent_id": parent_id,
+            "reporter": reporter,
+        }
+
+        return await summary_utils.run_contextualization_request(
+            index_config=self.config,
+            request=request_kwargs,
+            call_llm=self._make_summary_call,
         )

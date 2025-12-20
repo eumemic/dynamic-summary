@@ -7,6 +7,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
 )
@@ -26,6 +27,14 @@ class TreeNodeColumnsMixin:
     span_end: Mapped[int] = mapped_column(Integer, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Contextual indexing fields (populated during context-aware indexing)
+    preceding_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    preceding_context_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Embedding vector (stored as packed float32 bytes for efficiency)
+    # 1536 dimensions * 4 bytes = 6144 bytes for text-embedding-3-small
+    embedding: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
 
 
 class PostgresTreeNode(TreeNodeColumnsMixin, Base):

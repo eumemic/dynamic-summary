@@ -232,6 +232,43 @@ class DatabaseManager:
                     )
                 )
 
+                # Add contextual indexing columns for issue #287
+                conn.execute(
+                    text(
+                        """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'tree_nodes'
+                            AND column_name = 'preceding_context'
+                        ) THEN
+                            ALTER TABLE tree_nodes
+                            ADD COLUMN preceding_context TEXT;
+                        END IF;
+                    END $$;
+                """
+                    )
+                )
+
+                conn.execute(
+                    text(
+                        """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'tree_nodes'
+                            AND column_name = 'preceding_context_summary'
+                        ) THEN
+                            ALTER TABLE tree_nodes
+                            ADD COLUMN preceding_context_summary TEXT;
+                        END IF;
+                    END $$;
+                """
+                    )
+                )
+
                 logger.debug("Database migrations completed")
         except Exception as e:
             # Migration failures are not critical - the column might already exist

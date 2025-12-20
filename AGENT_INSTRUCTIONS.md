@@ -80,13 +80,13 @@ Every agent must approach code as a master craftsperson. Each line you write is 
 - **On every commit**: All checks run via pre-commit hook (tests, linting, formatting, security, duplication)
 
 #### When to Run Checks Manually
-1. **Before committing** (if you want to verify tests pass): Use `./scripts/run-checks.sh`
-2. **To test specific functionality**: Use `./scripts/run-checks.sh` with appropriate options
-3. **NEVER use `pytest` directly unless given explicit approval by the user** - in general you should use `run-checks.sh` which ensures proper environment setup
+1. **DON'T run checks before committing** - the pre-commit hook runs all checks automatically. Just commit directly and let it fail if there are issues.
+2. **To test specific functionality during development**: Use `./scripts/run-checks.sh` with appropriate options
+3. **NEVER use `pytest` directly unless given explicit approval by the user** - use `run-checks.sh` which ensures proper environment setup
 
 #### Common Commands for Agents
 ```bash
-# Preferred: Run quality checks (excludes integration/benchmarks by default)
+# Run quality checks (excludes integration/benchmarks by default)
 ./scripts/run-checks.sh
 
 # Include integration tests
@@ -103,7 +103,7 @@ Every agent must approach code as a master craftsperson. Each line you write is 
 - If checks pass on edit → They'll likely pass on commit
 - If pre-commit fails → It will show you exactly what's wrong
 - The system is designed to give you immediate feedback without manual intervention
-- **VERY IMPORTANT**: When you have completed a task, run `./scripts/run-checks.sh` to ensure your code is correct (NOT `pytest`)
+- **Just commit when done** - don't run `run-checks.sh` first, let the pre-commit hook do its job
 
 ### 8. Type Safety Requirements
 

@@ -32,6 +32,7 @@ export interface NodeResponse {
   following_neighbor_id: string | null;
   is_pinned: boolean;
   created_at: string | null;
+  preceding_context_summary: string | null;
 }
 
 export interface NodesPageResponse {
