@@ -2089,5 +2089,47 @@ def report(
         handle_cli_error(e, "generating report")
 
 
+@cli.command("sync-claude-code-transcript")
+@click.argument("jsonl_path", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--server-address",
+    "-s",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default=DEFAULT_GRPC_ADDRESS,
+    show_default=True,
+    help=GRPC_ADDRESS_HELP,
+)
+def sync_claude_code_transcript(
+    jsonl_path: Path,
+    server_address: str,
+) -> None:
+    """Sync a Claude Code JSONL log to a RagZoom document.
+
+    Incrementally transcribes new conversation records and indexes them.
+    Uses the session ID (JSONL filename without extension) as the document ID.
+    Tracks progress via state files in data/transcript-state/.
+
+    The JSONL files are typically found in:
+    ~/.claude/projects/<project-path>/<session-id>.jsonl
+
+    Example:
+      ragzoom sync-claude-code-transcript ~/.claude/projects/.../session.jsonl
+    """
+    from ragzoom.claude_transcript import sync_transcript
+    from ragzoom.wrapper import RagZoom
+
+    doc_id = jsonl_path.stem
+    client = RagZoom(server_address=server_address)
+
+    try:
+        num_chunks = sync_transcript(jsonl_path, doc_id, client)
+        if num_chunks > 0:
+            click.echo(f"✅ Synced {num_chunks} new chunks to '{doc_id}'")
+        else:
+            click.echo(f"✅ No new content to sync for '{doc_id}'")
+    except Exception as e:
+        handle_cli_error(e, "syncing Claude Code transcript")
+
+
 if __name__ == "__main__":
     cli()
