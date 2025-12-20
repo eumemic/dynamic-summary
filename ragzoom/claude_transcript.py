@@ -26,8 +26,8 @@ class TranscribeResult:
     chars_transcribed: int
     """Total characters in all chunks (for span tracking)."""
 
-    compaction_chars_offset: int | None
-    """Chars transcribed up to last compaction (None if no compaction seen)."""
+    compaction_chunk_index: int | None
+    """Index in chunks where last compaction occurred (None if no compaction)."""
 
 
 @dataclass
@@ -274,14 +274,7 @@ def transcribe_incremental(
     pending_tool_count = 0
     final_offset = start_offset
     skipping_leading_tools = skip_leading_tool_results
-    compaction_chars_offset: int | None = None
-
-    def current_chars() -> int:
-        """Calculate chars transcribed so far (including separators)."""
-        total = sum(len(chunk) for chunk in chunks)
-        if len(chunks) > 1:
-            total += 2 * (len(chunks) - 1)
-        return total
+    compaction_chunk_index: int | None = None
 
     def flush_tools() -> None:
         nonlocal pending_tool_count
@@ -294,9 +287,10 @@ def transcribe_incremental(
     for record, offset in parse_jsonl(path, start_offset):
         final_offset = offset
 
-        # Detect compaction - record chars transcribed up to this point
+        # Detect compaction - record chunk index at this point
         if record.get("isCompactSummary"):
-            compaction_chars_offset = current_chars()
+            flush_tools()  # Flush pending tools before recording index
+            compaction_chunk_index = len(chunks)
             continue
 
         record_type = record.get("type")
@@ -326,11 +320,16 @@ def transcribe_incremental(
 
     flush_tools()
 
+    # Calculate total characters (including separators)
+    chars = sum(len(chunk) for chunk in chunks)
+    if len(chunks) > 1:
+        chars += 2 * (len(chunks) - 1)
+
     return TranscribeResult(
         chunks=chunks,
         final_offset=final_offset,
-        chars_transcribed=current_chars(),
-        compaction_chars_offset=compaction_chars_offset,
+        chars_transcribed=chars,
+        compaction_chunk_index=compaction_chunk_index,
     )
 
 
@@ -359,11 +358,6 @@ def sync_transcript(jsonl_path: Path, doc_id: str, client: RagZoom) -> int:
         # Document was deleted, start fresh
         state = SyncState(byte_offset=0)
 
-    # Get current document length for compaction boundary calculation
-    indexed_length = 0
-    if doc_exists:
-        indexed_length = _get_document_length(client, doc_id)
-
     # Transcribe new content
     result = transcribe_incremental(
         jsonl_path,
@@ -374,27 +368,38 @@ def sync_transcript(jsonl_path: Path, doc_id: str, client: RagZoom) -> int:
     if not result.chunks:
         return 0
 
-    # Join chunks into text for the RagZoom API
-    text = "\n\n".join(result.chunks)
-
-    # Create or append
-    if not doc_exists:
-        # First run - prepend header
-        header_text = _HEADER.strip() + "\n\n"
-        text = header_text + text
-        client.index(doc_id, text)
-        # Account for header in compaction offset
-        header_len = len(header_text)
+    # Split chunks at compaction boundary if detected
+    if result.compaction_chunk_index is not None:
+        pre_compaction_chunks = result.chunks[: result.compaction_chunk_index]
+        post_compaction_chunks = result.chunks[result.compaction_chunk_index :]
     else:
-        client.append(doc_id, text)
-        header_len = 0
+        pre_compaction_chunks = result.chunks
+        post_compaction_chunks = []
 
-    # If compaction detected, record the boundary
-    # indexed_length (existing doc) + header (if first run) + chars up to compaction
-    if result.compaction_chars_offset is not None:
-        state.compaction_span_end = (
-            indexed_length + header_len + result.compaction_chars_offset
-        )
+    # Index/append pre-compaction content
+    if pre_compaction_chunks:
+        text = "\n\n".join(pre_compaction_chunks)
+        if not doc_exists:
+            header_text = _HEADER.strip() + "\n\n"
+            text = header_text + text
+            client.index(doc_id, text)
+            doc_exists = True
+        else:
+            client.append(doc_id, text)
+
+    # Record compaction boundary (document length after pre-compaction append)
+    if result.compaction_chunk_index is not None:
+        state.compaction_span_end = _get_document_length(client, doc_id)
+
+    # Append post-compaction content separately (creates chunk boundary)
+    if post_compaction_chunks:
+        text = "\n\n".join(post_compaction_chunks)
+        if not doc_exists:
+            header_text = _HEADER.strip() + "\n\n"
+            text = header_text + text
+            client.index(doc_id, text)
+        else:
+            client.append(doc_id, text)
 
     # Update and save state
     state.byte_offset = result.final_offset
