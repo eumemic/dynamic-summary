@@ -8,6 +8,7 @@ from collections.abc import Callable
 from ragzoom.contracts.chat_model import ChatModel, Message
 from ragzoom.evaluation.types import DimensionScore, NodeEvaluation
 from ragzoom.exceptions import LLMError
+from ragzoom.model_info import ModelInfo
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +140,15 @@ async def evaluate_node(
     last_error: LLMError | None = None
     for attempt in range(max_retries + 1):
         try:
-            result = await chat_model.complete(messages, json_mode=True)
+            # Use low temperature for consistent evaluations, but only for
+            # models that support it (reasoning models use reasoning_effort)
+            model_info = ModelInfo()
+            if model_info.supports_temperature(chat_model.model_id):
+                result = await chat_model.complete(
+                    messages, json_mode=True, temperature=0.1
+                )
+            else:
+                result = await chat_model.complete(messages, json_mode=True)
             return _parse_response(result["content"])
 
         except json.JSONDecodeError as e:

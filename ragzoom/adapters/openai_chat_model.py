@@ -51,7 +51,7 @@ class OpenAIChatModel(ChatModel):
         model_info = ModelInfo()
         reasoning_levels = model_info.get_reasoning_levels(self._model_id)
 
-        if reasoning_levels is not None:
+        if reasoning_levels:
             # Model uses reasoning_effort - determine the appropriate value
             if reasoning_effort is not None:
                 # Caller specified a level - translate if needed
