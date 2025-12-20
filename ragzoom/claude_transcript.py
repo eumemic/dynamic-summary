@@ -5,11 +5,41 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ragzoom.wrapper import RagZoom
+
+
+@dataclass
+class TranscribeResult:
+    """Result of incremental transcription."""
+
+    chunks: list[str]
+    """Transcript chunks (each is a [USER] or [ASSISTANT] message)."""
+
+    final_offset: int
+    """JSONL byte offset after last parsed record."""
+
+    chars_transcribed: int
+    """Total characters in all chunks (for span tracking)."""
+
+    compaction_detected: bool
+    """Whether a compaction summary was encountered."""
+
+
+@dataclass
+class SyncState:
+    """Persisted state for incremental transcript syncing."""
+
+    byte_offset: int
+    """JSONL byte offset for resuming parsing."""
+
+    compaction_span_end: int | None = None
+    """Span position where last compaction occurred (for pre-compaction queries)."""
+
 
 # Patterns for system noise in user messages
 _CAVEAT_PATTERN = re.compile(
@@ -35,9 +65,9 @@ def parse_jsonl(
 ) -> Iterator[tuple[dict[str, object], int]]:
     """Parse a JSONL file that may contain embedded newlines in JSON values.
 
-    Automatically skips metadata records (file-history-snapshot) and
-    compaction summaries (isCompactSummary) that are never useful for
-    transcription.
+    Automatically skips metadata records (file-history-snapshot) that are
+    never useful for any purpose. Compaction summaries (isCompactSummary)
+    are yielded so callers can detect compaction boundaries.
 
     Args:
         path: Path to the JSONL file.
@@ -62,10 +92,8 @@ def parse_jsonl(
         obj, end = decoder.raw_decode(content_slice)
         pos += whitespace_skipped + end
 
-        # Skip metadata and compaction summaries
+        # Skip metadata (never useful)
         if obj.get("type") == "file-history-snapshot":
-            continue
-        if obj.get("isCompactSummary"):
             continue
 
         yield obj, pos
@@ -100,6 +128,10 @@ def transcribe_log(path: Path) -> str:
             pending_tool_count = 0
 
     for record, _offset in parse_jsonl(path):
+        # Skip compaction summaries (redundant for full transcript)
+        if record.get("isCompactSummary"):
+            continue
+
         record_type = record.get("type")
 
         if record_type == "user":
@@ -198,26 +230,35 @@ def _get_state_path(doc_id: str) -> Path:
     return state_dir / f"{doc_id}.json"
 
 
-def _load_state(doc_id: str) -> dict[str, int]:
-    """Load sync state for a document. Returns {"byte_offset": 0} if not found."""
+def _load_state(doc_id: str) -> SyncState:
+    """Load sync state for a document. Returns default state if not found."""
     state_path = _get_state_path(doc_id)
     if state_path.exists():
         data = json.loads(state_path.read_text())
         if isinstance(data, dict) and "byte_offset" in data:
-            return {"byte_offset": int(data["byte_offset"])}
-    return {"byte_offset": 0}
+            return SyncState(
+                byte_offset=int(data["byte_offset"]),
+                compaction_span_end=data.get("compaction_span_end"),
+            )
+    return SyncState(byte_offset=0)
 
 
-def _save_state(doc_id: str, byte_offset: int) -> None:
+def _save_state(doc_id: str, state: SyncState) -> None:
     """Save sync state for a document."""
     state_path = _get_state_path(doc_id)
-    state_path.write_text(json.dumps({"byte_offset": byte_offset}))
+    data = {"byte_offset": state.byte_offset}
+    if state.compaction_span_end is not None:
+        data["compaction_span_end"] = state.compaction_span_end
+    state_path.write_text(json.dumps(data))
 
 
 def transcribe_incremental(
     path: Path, start_offset: int = 0, skip_leading_tool_results: bool = True
-) -> tuple[list[str], int]:
+) -> TranscribeResult:
     """Transcribe new records from a JSONL log into chunks.
+
+    Detects compaction summaries and reports when one is encountered, allowing
+    callers to track the compaction boundary in transcript coordinates.
 
     Args:
         path: Path to the JSONL file.
@@ -226,13 +267,14 @@ def transcribe_incremental(
             (orphaned from a previous sync).
 
     Returns:
-        Tuple of (list of transcript chunks, final byte offset).
-        Each chunk is either a [USER] message or [ASSISTANT] message with tool count.
+        TranscribeResult with chunks, final offset, character count, and
+        compaction detection flag.
     """
     chunks: list[str] = []
     pending_tool_count = 0
     final_offset = start_offset
     skipping_leading_tools = skip_leading_tool_results
+    compaction_detected = False
 
     def flush_tools() -> None:
         nonlocal pending_tool_count
@@ -244,6 +286,12 @@ def transcribe_incremental(
 
     for record, offset in parse_jsonl(path, start_offset):
         final_offset = offset
+
+        # Detect compaction (but don't transcribe the summary)
+        if record.get("isCompactSummary"):
+            compaction_detected = True
+            continue
+
         record_type = record.get("type")
 
         if record_type == "user":
@@ -270,7 +318,19 @@ def transcribe_incremental(
                 pending_tool_count += tool_count
 
     flush_tools()
-    return chunks, final_offset
+
+    # Calculate total characters (including separators that will be added)
+    # Chunks are joined with "\n\n" so add 2 chars per separator
+    chars = sum(len(chunk) for chunk in chunks)
+    if len(chunks) > 1:
+        chars += 2 * (len(chunks) - 1)
+
+    return TranscribeResult(
+        chunks=chunks,
+        final_offset=final_offset,
+        chars_transcribed=chars,
+        compaction_detected=compaction_detected,
+    )
 
 
 def sync_transcript(jsonl_path: Path, doc_id: str, client: RagZoom) -> int:
@@ -278,6 +338,7 @@ def sync_transcript(jsonl_path: Path, doc_id: str, client: RagZoom) -> int:
 
     Incrementally transcribes new records and appends them to the document.
     Handles document deletion by resetting state and starting fresh.
+    Tracks compaction boundaries for pre-compaction queries.
 
     Args:
         jsonl_path: Path to the JSONL log file.
@@ -289,27 +350,35 @@ def sync_transcript(jsonl_path: Path, doc_id: str, client: RagZoom) -> int:
     """
     # Load state
     state = _load_state(doc_id)
-    byte_offset = state["byte_offset"]
 
     # Check if document exists by trying to query it
     # If we have state but document is gone, reset
     doc_exists = _document_exists(client, doc_id)
-    if not doc_exists and byte_offset > 0:
+    if not doc_exists and state.byte_offset > 0:
         # Document was deleted, start fresh
-        byte_offset = 0
+        state = SyncState(byte_offset=0)
+
+    # Get current document length for compaction boundary calculation
+    indexed_length = 0
+    if doc_exists:
+        indexed_length = _get_document_length(client, doc_id)
 
     # Transcribe new content
-    chunks, new_offset = transcribe_incremental(
+    result = transcribe_incremental(
         jsonl_path,
-        start_offset=byte_offset,
-        skip_leading_tool_results=(byte_offset > 0),
+        start_offset=state.byte_offset,
+        skip_leading_tool_results=(state.byte_offset > 0),
     )
 
-    if not chunks:
+    if not result.chunks:
         return 0
 
+    # If compaction detected, record the boundary (current indexed length)
+    if result.compaction_detected:
+        state.compaction_span_end = indexed_length
+
     # Join chunks into text for the RagZoom API
-    text = "\n\n".join(chunks)
+    text = "\n\n".join(result.chunks)
 
     # Create or append
     if not doc_exists:
@@ -319,10 +388,11 @@ def sync_transcript(jsonl_path: Path, doc_id: str, client: RagZoom) -> int:
     else:
         client.append(doc_id, text)
 
-    # Save state
-    _save_state(doc_id, new_offset)
+    # Update and save state
+    state.byte_offset = result.final_offset
+    _save_state(doc_id, state)
 
-    return len(chunks)
+    return len(result.chunks)
 
 
 def _document_exists(client: RagZoom, doc_id: str) -> bool:
@@ -333,3 +403,27 @@ def _document_exists(client: RagZoom, doc_id: str) -> bool:
             return status.leaf_count > 0
     except Exception:
         return False
+
+
+def _get_document_length(client: RagZoom, doc_id: str) -> int:
+    """Get the current document length (span_end of last node in tiling).
+
+    Queries with minimal parameters to get just the forest roots, then takes
+    the span_end of the last node (tiling is span-ordered).
+    """
+    with client._client() as grpc_client:
+        output = grpc_client.execute_query(
+            query="",  # Empty query, just get roots
+            document_id=doc_id,
+            budget_tokens=None,
+            num_seeds=0,
+            embedding_model=None,
+            debug=False,
+            viz_width=80,
+            use_token_coords=False,
+        )
+        tiling_ids = output.retrieval.tiling_ids
+        if not tiling_ids:
+            return 0
+        last_node = output.retrieval.nodes[tiling_ids[-1]]
+        return last_node.span_end
