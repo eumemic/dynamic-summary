@@ -7,6 +7,7 @@ for tests and development.
 
 from __future__ import annotations
 
+import struct
 from collections.abc import Sequence
 from typing import cast
 
@@ -84,6 +85,8 @@ class SqliteNodeRepository:
                     "following_neighbor_id": data.get("following_neighbor_id"),
                     "height": data["height"],
                     "level_index": data["level_index"],
+                    "preceding_context": data.get("preceding_context"),
+                    "preceding_context_summary": data.get("preceding_context_summary"),
                 }
                 for data in nodes_data
             ]
@@ -139,6 +142,8 @@ class SqliteNodeRepository:
                     following_neighbor_id=data.get("following_neighbor_id"),
                     height=data["height"],
                     level_index=data["level_index"],
+                    preceding_context=data.get("preceding_context"),
+                    preceding_context_summary=data.get("preceding_context_summary"),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=[SQLiteTreeNode.id],
@@ -154,6 +159,8 @@ class SqliteNodeRepository:
                         "preceding_neighbor_id": stmt.excluded.preceding_neighbor_id,
                         "following_neighbor_id": stmt.excluded.following_neighbor_id,
                         "level_index": stmt.excluded.level_index,
+                        "preceding_context": stmt.excluded.preceding_context,
+                        "preceding_context_summary": stmt.excluded.preceding_context_summary,
                     },
                 )
                 session.execute(stmt)
@@ -279,6 +286,65 @@ class SqliteNodeRepository:
 
     # jscpd:ignore-end
 
+    def update_preceding_context(
+        self,
+        node_id: str,
+        preceding_context: str | None,
+    ) -> None:
+        """Update the preceding_context field for a node."""
+        with self.SessionLocal() as session:
+            session.execute(
+                update(SQLiteTreeNode)
+                .where(SQLiteTreeNode.id == node_id)
+                .values(preceding_context=preceding_context)
+            )
+            session.commit()
+            self.cache_manager.invalidate(node_id)
+
+    def update_preceding_context_summary(
+        self,
+        node_id: str,
+        summary: str | None,
+    ) -> None:
+        """Update the preceding_context_summary field for a node."""
+        with self.SessionLocal() as session:
+            session.execute(
+                update(SQLiteTreeNode)
+                .where(SQLiteTreeNode.id == node_id)
+                .values(preceding_context_summary=summary)
+            )
+            session.commit()
+            self.cache_manager.invalidate(node_id)
+
+    def update_embedding(
+        self,
+        node_id: str,
+        embedding: list[float] | NDArray[np.float64] | None,
+    ) -> None:
+        """Update the embedding field for a node.
+
+        The embedding is stored as packed float32 bytes for efficiency.
+        1536 dimensions * 4 bytes = 6144 bytes for text-embedding-3-small.
+        """
+        embedding_bytes: bytes | None = None
+        if embedding is not None:
+            # Convert to list if numpy array
+            if hasattr(embedding, "tolist"):
+                embedding_list = embedding.tolist()
+            else:
+                embedding_list = list(embedding)
+            # Pack as float32 for storage efficiency
+            embedding_bytes = struct.pack(f"{len(embedding_list)}f", *embedding_list)
+
+        with self.SessionLocal() as session:
+            session.execute(
+                update(SQLiteTreeNode)
+                .where(SQLiteTreeNode.id == node_id)
+                .values(embedding=embedding_bytes)
+            )
+            session.commit()
+            self.cache_manager.invalidate(node_id)
+
     # --- Read ---
     def get_node(self, node_id: str) -> TreeNode | None:
         with self.SessionLocal() as session:
@@ -305,7 +371,11 @@ class SqliteNodeRepository:
 
     def get_root_nodes(self, document_id: str | None = None) -> list[TreeNode]:
         with self.SessionLocal() as session:
-            stmt = select(SQLiteTreeNode).where(SQLiteTreeNode.parent_id.is_(None))
+            stmt = (
+                select(SQLiteTreeNode)
+                .where(SQLiteTreeNode.parent_id.is_(None))
+                .order_by(SQLiteTreeNode.span_start)
+            )
             if document_id is not None:
                 stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
             rows = session.execute(stmt).scalars().all()
@@ -834,6 +904,90 @@ class SqliteNodeRepository:
         finally:
             if own_session:
                 session.close()
+
+    def get_tree_completion_frontier(self, document_id: str | None) -> int:
+        """Get the tree completion frontier for contextual indexing.
+
+        The frontier is defined as the span_end of the first root node
+        (ordered by span_start). This indicates how far the summary tree
+        is complete from the beginning of the document.
+
+        Args:
+            document_id: Document to get frontier for
+
+        Returns:
+            span_end of the first root, or 0 if no roots exist
+        """
+        with self.SessionLocal() as session:
+            stmt = select(SQLiteTreeNode).where(SQLiteTreeNode.parent_id.is_(None))
+            if document_id is not None:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+            stmt = stmt.order_by(SQLiteTreeNode.span_start.asc()).limit(1)
+
+            first_root = session.execute(stmt).scalars().first()
+            if first_root is None:
+                return 0
+            return int(first_root.span_end)
+
+    # jscpd:ignore-start - sync/async variant of PostgresNodeRepository
+    def get_leaves_from_span_start(
+        self, document_id: str | None, span_start: int
+    ) -> list[TreeNode]:
+        """Get leaves with span_start >= given value, ordered by span_start.
+
+        Used for computing the eligible span for contextual indexing gating.
+
+        Args:
+            document_id: Document to filter by
+            span_start: Minimum span_start value (inclusive)
+
+        Returns:
+            List of leaf nodes ordered by span_start
+        """
+        with self.SessionLocal() as session:
+            stmt = select(SQLiteTreeNode).where(
+                SQLiteTreeNode.height == 0,  # Leaves only
+                SQLiteTreeNode.span_start >= span_start,
+            )
+            if document_id is not None:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+            stmt = stmt.order_by(SQLiteTreeNode.span_start.asc())
+
+            rows = session.execute(stmt).scalars().all()
+            return _detach_rows(session, list(rows))
+
+    def get_avg_chars_per_token(self, document_id: str | None) -> float | None:
+        """Return average characters per token for leaves in a document.
+
+        Computes SUM(span_end - span_start) / SUM(token_count) for all leaves.
+        Returns None if no leaves exist yet.
+        """
+        with self.SessionLocal() as session:
+            stmt = select(
+                func.sum(SQLiteTreeNode.span_end - SQLiteTreeNode.span_start),
+                func.sum(SQLiteTreeNode.token_count),
+            ).where(SQLiteTreeNode.height == 0)
+            if document_id is not None:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+
+            result = session.execute(stmt).one()
+            total_chars, total_tokens = result
+            if total_tokens is None or total_tokens == 0:
+                return None
+            return float(total_chars) / float(total_tokens)
+
+    def get_nodes_by_id_prefix(
+        self, document_id: str | None, id_prefix: str
+    ) -> list[TreeNode]:
+        """Get nodes whose ID starts with the given prefix."""
+        with self.SessionLocal() as session:
+            stmt = select(SQLiteTreeNode).where(SQLiteTreeNode.id.startswith(id_prefix))
+            if document_id is not None:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+            rows = session.execute(stmt).scalars().all()
+            return _detach_rows(session, list(rows))
+
+    # jscpd:ignore-end
 
 
 class SqliteDocumentRepository:

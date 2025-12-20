@@ -62,6 +62,12 @@ export default function NodeDetailsPanel({ node }: NodeDetailsPanelProps) {
           <dd>{node.right_child_id ?? "—"}</dd>
         </div>
       </dl>
+      {node.preceding_context_summary && (
+        <section className="node-details__context">
+          <h3>Preceding Context Summary</h3>
+          <p>{node.preceding_context_summary}</p>
+        </section>
+      )}
       <section className="node-details__text">
         <h3>Text</h3>
         <p>{node.text || "(empty)"}</p>

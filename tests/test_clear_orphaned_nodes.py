@@ -9,7 +9,13 @@ import pytest
 from click.testing import CliRunner
 
 from ragzoom.cli import cli
-from ragzoom.config import IndexConfig, OperationalConfig, SecretStr
+from ragzoom.config import (
+    IndexConfig,
+    OperationalConfig,
+    PrecedingContextConfig,
+    PrecedingContextSettings,
+    SecretStr,
+)
 from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.services.indexing_service import IndexingResult
@@ -40,7 +46,7 @@ class TestAutomaticClearing:
         """Create a test configuration."""
         return IndexConfig(
             target_chunk_tokens=200,
-            preceding_context_tokens=75,
+            max_parallelism=30,
             embedding_model="text-embedding-3-small",
             summary_model="gpt-4o-mini",
             retry_threshold=0.2,
@@ -48,6 +54,16 @@ class TestAutomaticClearing:
             embedding_batch_size=100,
             use_anti_verbatim_vaccine=True,
             processing_strategy="bottom_to_top",
+            preceding_context=PrecedingContextSettings(
+                leaf=PrecedingContextConfig(
+                    verbatim_tokens=0, min_forest_completeness=0.5
+                ),
+                inner=PrecedingContextConfig(
+                    verbatim_tokens=0,
+                    min_forest_completeness=0.5,
+                    token_cap=0,  # Cap inner node context
+                ),
+            ),
         )
 
     @pytest.fixture

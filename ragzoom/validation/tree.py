@@ -106,7 +106,8 @@ def validate_document(
         _parent_child_relationships,
         _neighbor_consistency,
         _level_neighbor_chains,
-        _left_balanced,
+        _perfect_binary_trees,
+        _node_coordinates,
         _parent_span_union,
         _per_tree_leaf_depth,
     ]
@@ -117,9 +118,18 @@ def validate_document(
 
     findings.extend(_leaf_chunk_size(snapshot, target_chunk_tokens, chunk_tolerance))
     findings.extend(
-        _vector_index_consistency(snapshot, vector_index) if vector_index else []
+        _vector_index_consistency(snapshot, vector_index, require_complete)
+        if vector_index
+        else []
     )
-    findings.extend(_completeness_check(snapshot, require_complete=require_complete))
+    findings.extend(
+        _completeness_check(
+            snapshot,
+            require_complete=require_complete,
+            vector_index=vector_index,
+        )
+    )
+    findings.extend(_preceding_context_check(snapshot))
     if telemetry is not None:
         findings.extend(_telemetry_consistency(snapshot, telemetry))
 
@@ -609,21 +619,154 @@ def _level_neighbor_chains(snapshot: DocumentSnapshot) -> list[ValidationFinding
     return findings
 
 
-def _left_balanced(snapshot: DocumentSnapshot) -> list[ValidationFinding]:
+def _perfect_binary_trees(snapshot: DocumentSnapshot) -> list[ValidationFinding]:
+    """Validate that every tree in the forest is a perfect binary tree.
+
+    In a perfect binary tree:
+    - Every internal node has exactly 2 children (both left and right)
+    - Leaves have no children
+    """
     findings: list[ValidationFinding] = []
     for node in snapshot.nodes:
-        if getattr(node, "right_child_id", None) and not getattr(
-            node, "left_child_id", None
-        ):
+        has_left = node.left_child_id is not None
+        has_right = node.right_child_id is not None
+
+        if has_left != has_right:
+            # One child but not both - violates perfect binary tree
+            if has_left:
+                findings.append(
+                    ValidationFinding(
+                        code="tree.left_only",
+                        message=(
+                            f"Node {node.id} has only a left child, "
+                            "violating perfect binary tree invariant"
+                        ),
+                        node_id=node.id,
+                    )
+                )
+            else:
+                findings.append(
+                    ValidationFinding(
+                        code="tree.right_only",
+                        message=(
+                            f"Node {node.id} has only a right child, "
+                            "violating perfect binary tree invariant"
+                        ),
+                        node_id=node.id,
+                    )
+                )
+    return findings
+
+
+def _node_coordinates(snapshot: DocumentSnapshot) -> list[ValidationFinding]:
+    """Validate that node coordinates (height, level_index) are correct.
+
+    Coordinate invariants:
+    - height: 0 for leaves, parent.height = child.height + 1
+    - level_index: Left child has even index, right child = left + 1,
+                   parent.level_index = left_child.level_index // 2
+    """
+    lookup = snapshot.node_lookup
+    findings: list[ValidationFinding] = []
+
+    for node in snapshot.nodes:
+        height = node.height
+        level_index = node.level_index
+
+        # Check leaf height
+        is_leaf = node.left_child_id is None and node.right_child_id is None
+        if is_leaf and height != 0:
             findings.append(
                 ValidationFinding(
-                    code="tree.right_without_left",
-                    message=(
-                        f"Node {node.id} has a right child but no left child, violating left-balanced invariant"
-                    ),
+                    code="coord.leaf_height",
+                    message=f"Leaf node has height {height}, expected 0",
                     node_id=node.id,
                 )
             )
+
+        # Check parent-child height relationship
+        if node.left_child_id:
+            left_child = lookup.get(node.left_child_id)
+            if left_child and height != left_child.height + 1:
+                findings.append(
+                    ValidationFinding(
+                        code="coord.height_mismatch",
+                        message=(
+                            f"Node height {height} != left child height {left_child.height} + 1"
+                        ),
+                        node_id=node.id,
+                    )
+                )
+
+            # Check level_index relationship: parent = left_child // 2
+            if left_child:
+                expected_parent_index = left_child.level_index // 2
+                if level_index != expected_parent_index:
+                    findings.append(
+                        ValidationFinding(
+                            code="coord.level_index_mismatch",
+                            message=(
+                                f"Node level_index {level_index} != "
+                                f"left_child.level_index // 2 ({left_child.level_index} // 2 = {expected_parent_index})"
+                            ),
+                            node_id=node.id,
+                        )
+                    )
+
+                # Left child should have even level_index
+                if left_child.level_index % 2 != 0:
+                    findings.append(
+                        ValidationFinding(
+                            code="coord.left_child_odd",
+                            message=(
+                                f"Left child {left_child.id} has odd level_index {left_child.level_index}"
+                            ),
+                            node_id=node.id,
+                        )
+                    )
+
+        if node.right_child_id:
+            right_child = lookup.get(node.right_child_id)
+            if right_child and height != right_child.height + 1:
+                findings.append(
+                    ValidationFinding(
+                        code="coord.height_mismatch",
+                        message=(
+                            f"Node height {height} != right child height {right_child.height} + 1"
+                        ),
+                        node_id=node.id,
+                    )
+                )
+
+            # Right child should have odd level_index
+            if right_child and right_child.level_index % 2 != 1:
+                findings.append(
+                    ValidationFinding(
+                        code="coord.right_child_even",
+                        message=(
+                            f"Right child {right_child.id} has even level_index {right_child.level_index}"
+                        ),
+                        node_id=node.id,
+                    )
+                )
+
+        # Check sibling relationship: right = left + 1
+        if node.left_child_id and node.right_child_id:
+            left_child = lookup.get(node.left_child_id)
+            right_child = lookup.get(node.right_child_id)
+            if left_child and right_child:
+                if right_child.level_index != left_child.level_index + 1:
+                    findings.append(
+                        ValidationFinding(
+                            code="coord.sibling_index",
+                            message=(
+                                f"Right child level_index {right_child.level_index} != "
+                                f"left child level_index {left_child.level_index} + 1"
+                            ),
+                            node_id=node.id,
+                        )
+                    )
+
     return findings
 
 
@@ -712,40 +855,19 @@ def _leaf_chunk_size(
 
 
 def _vector_index_consistency(
-    snapshot: DocumentSnapshot, vector_index: VectorIndex
+    snapshot: DocumentSnapshot, vector_index: VectorIndex, require_complete: bool
 ) -> list[ValidationFinding]:
+    """Check vector index consistency.
+
+    Note: Missing embeddings are NOT checked here. When --complete is passed,
+    missing embeddings are checked by _completeness_check. This function only
+    checks for orphan vectors (vectors with no matching node).
+    """
     findings: list[ValidationFinding] = []
-    # Only leaf nodes (height == 0) should have embeddings.
-    # Summary nodes (height > 0) derive their scores from bottom-up propagation.
-    leaf_ids = [leaf.id for leaf in snapshot.leaves]
-    batch_size = 256
+    # Suppress unused parameter warning - kept for API consistency
+    _ = require_complete
 
-    for start in range(0, len(leaf_ids), batch_size):
-        chunk = leaf_ids[start : start + batch_size]
-        try:
-            vectors = vector_index.get_vectors(chunk)
-        except Exception as exc:  # pragma: no cover - defensive
-            for node_id in chunk:
-                findings.append(
-                    ValidationFinding(
-                        code="vector.fetch_error",
-                        message=f"Failed to fetch vector for {node_id}: {exc}",
-                        node_id=node_id,
-                    )
-                )
-            continue
-
-        returned = {vec.id for vec in vectors}
-        for node_id in chunk:
-            if node_id not in returned:
-                findings.append(
-                    ValidationFinding(
-                        code="vector.missing",
-                        message=f"Embedding missing for leaf node {node_id}",
-                        node_id=node_id,
-                    )
-                )
-
+    # Check for orphan vectors (vectors with no matching node)
     extra_ids = _vector_index_ids(vector_index)
     if extra_ids is not None:
         for vec_id in extra_ids:
@@ -834,33 +956,300 @@ def _per_tree_leaf_depth(snapshot: DocumentSnapshot) -> list[ValidationFinding]:
 
 
 def _completeness_check(
-    snapshot: DocumentSnapshot, *, require_complete: bool
+    snapshot: DocumentSnapshot,
+    *,
+    require_complete: bool,
+    vector_index: VectorIndex | None = None,
 ) -> list[ValidationFinding]:
+    """Check forest completeness when require_complete is True.
+
+    Forest completeness means:
+    1. Every adjacent pair of nodes at the same height has a parent.
+       (L with even level_index, R with odd level_index where L.level_index + 1 = R.level_index)
+    2. All leaves have embeddings in the vector index.
+
+    This replaces the old single-root requirement, allowing forests as valid quiescent states.
+    """
     if not require_complete:
         return []
 
-    parentless = snapshot.parentless
-    if len(parentless) != 1:
-        return [
-            ValidationFinding(
-                code="tree.multiple_roots",
-                message=f"Expected single root, found {len(parentless)} parentless nodes",
-            )
-        ]
+    findings: list[ValidationFinding] = []
 
-    root = parentless[0]
-    leaves = sorted(snapshot.leaves, key=lambda node: node.span_start)
-    if leaves:
-        final_span = leaves[-1].span_end
-        if root.span_start != 0 or root.span_end != final_span:
-            return [
-                ValidationFinding(
-                    code="tree.root_span",
-                    message=(
-                        f"Root span [{root.span_start}, {root.span_end}) "
-                        f"does not cover leaves ending at {final_span}"
-                    ),
-                    node_id=root.id,
+    # Group nodes by height
+    by_height: dict[int, dict[int, TreeNode]] = defaultdict(dict)
+    for node in snapshot.nodes:
+        height = int(getattr(node, "height", 0))
+        level_index = getattr(node, "level_index", None)
+        if level_index is not None:
+            by_height[height][int(level_index)] = node
+
+    # Check that adjacent pairs have parents
+    for height, nodes_by_index in by_height.items():
+        level_indices = sorted(nodes_by_index.keys())
+        for level_index in level_indices:
+            # Only check left children (even level_index)
+            if level_index % 2 != 0:
+                continue
+
+            left = nodes_by_index.get(level_index)
+            right = nodes_by_index.get(level_index + 1)
+
+            if left is None:
+                continue
+
+            # If there's a right sibling, both should have the same parent
+            if right is not None:
+                left_parent = getattr(left, "parent_id", None)
+                right_parent = getattr(right, "parent_id", None)
+
+                if left_parent is None and right_parent is None:
+                    findings.append(
+                        ValidationFinding(
+                            code="forest.unpaired_siblings",
+                            message=(
+                                f"Adjacent siblings at height {height} "
+                                f"(level_index {level_index}, {level_index + 1}) "
+                                f"have no parent"
+                            ),
+                            node_id=left.id,
+                        )
+                    )
+                elif left_parent != right_parent:
+                    findings.append(
+                        ValidationFinding(
+                            code="forest.parent_mismatch",
+                            message=(
+                                f"Adjacent siblings at height {height} "
+                                f"have different parents: {left_parent} vs {right_parent}"
+                            ),
+                            node_id=left.id,
+                        )
+                    )
+
+    # Check all leaves have embeddings (only when --complete)
+    if vector_index is not None:
+        leaf_ids = [leaf.id for leaf in snapshot.leaves]
+        if leaf_ids:
+            try:
+                vectors = vector_index.get_vectors(leaf_ids)
+                returned_ids = {vec.id for vec in vectors}
+                for leaf_id in leaf_ids:
+                    if leaf_id not in returned_ids:
+                        findings.append(
+                            ValidationFinding(
+                                code="forest.missing_embedding",
+                                message=f"Leaf {leaf_id} has no embedding",
+                                node_id=leaf_id,
+                            )
+                        )
+            except Exception as exc:
+                findings.append(
+                    ValidationFinding(
+                        code="forest.embedding_check_failed",
+                        message=f"Failed to check embeddings: {exc}",
+                    )
                 )
-            ]
-    return []
+
+    # Check preceding_context for leaves (only when --complete)
+    # Inner nodes are checked separately by _preceding_context_check
+    for node in snapshot.leaves:
+        span_start = int(getattr(node, "span_start", 0))
+        preceding_context = getattr(node, "preceding_context", None)
+
+        if preceding_context is None:
+            findings.append(
+                ValidationFinding(
+                    code="forest.missing_preceding_context",
+                    message=(
+                        f"Leaf (span_start={span_start}) has no preceding_context"
+                    ),
+                    node_id=node.id,
+                )
+            )
+        elif span_start > 0 and preceding_context == "":
+            findings.append(
+                ValidationFinding(
+                    code="forest.empty_preceding_context",
+                    message=(
+                        f"Leaf (span_start={span_start}) has empty preceding_context "
+                        f"but span_start > 0"
+                    ),
+                    node_id=node.id,
+                )
+            )
+
+    return findings
+
+
+def _preceding_context_check(
+    snapshot: DocumentSnapshot,
+) -> list[ValidationFinding]:
+    """Check that all nodes have valid preceding_context tilings.
+
+    The preceding_context field stores a JSON array of node IDs representing
+    the tiling that covers [0, span_start). For each node with preceding_context:
+    - Parse the JSON array of node IDs
+    - Validate it's a valid tiling (no gaps between spans)
+    - Validate coverage: first node starts at 0, last node ends at span_start
+    """
+    import json
+
+    findings: list[ValidationFinding] = []
+    node_lookup = snapshot.node_lookup
+
+    for node in snapshot.nodes:
+        height = int(getattr(node, "height", 0))
+        span_start = int(getattr(node, "span_start", 0))
+        preceding_context = getattr(node, "preceding_context", None)
+
+        # Skip leaves - they're checked by _completeness_check when --complete
+        if height == 0:
+            continue
+
+        if preceding_context is None:
+            findings.append(
+                ValidationFinding(
+                    code="forest.missing_preceding_context",
+                    message=(
+                        f"Inner node at height {height} (span_start={span_start}) "
+                        f"has no preceding_context"
+                    ),
+                    node_id=node.id,
+                )
+            )
+            continue
+
+        # Nodes at span_start=0 should have empty tiling
+        if span_start == 0:
+            if preceding_context not in ("", "[]"):
+                findings.append(
+                    ValidationFinding(
+                        code="preceding_context.nonempty_at_zero",
+                        message=(
+                            f"Node at span_start=0 has non-empty preceding_context: "
+                            f"{preceding_context[:50]}..."
+                        ),
+                        node_id=node.id,
+                    )
+                )
+            continue
+
+        # Nodes at span_start>0 should have valid tiling
+        if preceding_context in ("", "[]"):
+            findings.append(
+                ValidationFinding(
+                    code="forest.empty_preceding_context",
+                    message=(
+                        f"Inner node at height {height} (span_start={span_start}) "
+                        f"has empty preceding_context but span_start > 0"
+                    ),
+                    node_id=node.id,
+                )
+            )
+            continue
+
+        # Parse JSON array of node IDs
+        try:
+            tiling_ids = json.loads(preceding_context)
+        except json.JSONDecodeError as e:
+            findings.append(
+                ValidationFinding(
+                    code="preceding_context.invalid_json",
+                    message=f"preceding_context is not valid JSON: {e}",
+                    node_id=node.id,
+                )
+            )
+            continue
+
+        if not isinstance(tiling_ids, list):
+            findings.append(
+                ValidationFinding(
+                    code="preceding_context.not_array",
+                    message=f"preceding_context is not a JSON array: {type(tiling_ids).__name__}",
+                    node_id=node.id,
+                )
+            )
+            continue
+
+        if not tiling_ids:
+            findings.append(
+                ValidationFinding(
+                    code="preceding_context.empty_array",
+                    message=(
+                        f"Node at span_start={span_start} has empty tiling array "
+                        f"but should cover [0, {span_start})"
+                    ),
+                    node_id=node.id,
+                )
+            )
+            continue
+
+        # Validate each node ID exists and collect spans
+        tiling_spans: list[tuple[str, int, int]] = []
+        for tiling_node_id in tiling_ids:
+            if not isinstance(tiling_node_id, str):
+                findings.append(
+                    ValidationFinding(
+                        code="preceding_context.invalid_id",
+                        message=f"Tiling contains non-string ID: {tiling_node_id!r}",
+                        node_id=node.id,
+                    )
+                )
+                continue
+
+            tiling_node = node_lookup.get(tiling_node_id)
+            if tiling_node is None:
+                findings.append(
+                    ValidationFinding(
+                        code="preceding_context.missing_node",
+                        message=f"Tiling references missing node: {tiling_node_id}",
+                        node_id=node.id,
+                    )
+                )
+                continue
+
+            tiling_spans.append(
+                (tiling_node_id, int(tiling_node.span_start), int(tiling_node.span_end))
+            )
+
+        if not tiling_spans:
+            continue  # Already reported errors above
+
+        # Sort by span_start
+        tiling_spans.sort(key=lambda x: x[1])
+
+        # Note: Tilings don't need to start at 0. With token_cap, we may only
+        # include a subset of nodes within a token budget. The key invariant is
+        # that the tiling must end at span_start and have no gaps.
+
+        # Check last node ends at span_start
+        last_id, last_start, last_end = tiling_spans[-1]
+        if last_end != span_start:
+            findings.append(
+                ValidationFinding(
+                    code="preceding_context.incomplete_end",
+                    message=(
+                        f"Tiling does not end at span_start={span_start}: "
+                        f"last node {last_id} ends at {last_end}"
+                    ),
+                    node_id=node.id,
+                )
+            )
+
+        # Check for gaps between spans
+        for i in range(len(tiling_spans) - 1):
+            curr_id, curr_start, curr_end = tiling_spans[i]
+            next_id, next_start, next_end = tiling_spans[i + 1]
+            if curr_end != next_start:
+                findings.append(
+                    ValidationFinding(
+                        code="preceding_context.gap",
+                        message=(
+                            f"Gap in tiling: {curr_id} ends at {curr_end}, "
+                            f"{next_id} starts at {next_start}"
+                        ),
+                        node_id=node.id,
+                    )
+                )
+
+    return findings

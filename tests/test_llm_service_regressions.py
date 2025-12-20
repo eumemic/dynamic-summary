@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ragzoom.config import IndexConfig
+from ragzoom.services import summary_utils
 from ragzoom.services.llm_service import LLMService
 from ragzoom.telemetry_collection import TelemetryCollector
 
@@ -127,9 +128,8 @@ async def test_mark_accepted_attempt_is_called() -> None:
     with patch.object(llm_service.client.chat.completions, "create", new=mock_create):
         with patched_tokenizers():
             summary, retry_count, token_count = await llm_service._summarize_text(
-                left_text="Test left text " * 10,
-                right_text="Test right text " * 10,
-                target_tokens=100,
+                "Test left text " * 10 + " " + "Test right text " * 10,
+                100,
                 parent_id="test_node",
                 reporter=reporter,
             )
@@ -145,55 +145,62 @@ async def test_mark_accepted_attempt_is_called() -> None:
     assert attempt_index == 1, "Retry attempt (index 1) should be marked as accepted"
 
 
-@pytest.mark.asyncio
-async def test_is_better_summary_logic() -> None:
-    """Test that _is_better_summary logic correctly prioritizes under-target summaries."""
-    config = IndexConfig.load(
-        retry_threshold=0.2,
-        max_retries=3,
-        target_chunk_tokens=100,
+def test_is_better_summary_logic() -> None:
+    """Test that is_better_summary logic correctly prioritizes under-target summaries."""
+    # This tests summary_utils.is_better_summary, which prioritizes:
+    # 1. Under-target summaries over over-target summaries
+    # 2. Among under-target summaries, prefer closer to target (higher tokens)
+    # 3. Among over-target summaries, prefer closer to target (lower tokens)
+
+    target = 100
+
+    # Test case 1: New is under target and closer to target than current
+    # Should prefer 95 tokens over 85 tokens when target is 100
+    assert summary_utils.is_better_summary(
+        new_tokens=95,
+        current_best_tokens=85,
+        target_tokens=target,
     )
 
-    llm_service = LLMService(config, api_key="test-key")
+    # Test case 2: New is under target, current is over target
+    # Should prefer under-target (95) over over-target (110)
+    assert summary_utils.is_better_summary(
+        new_tokens=95,
+        current_best_tokens=110,
+        target_tokens=target,
+    )
 
-    # Test the _is_better_summary logic if it exists
-    # This should prioritize:
-    # 1. Under-target summaries that are closer to target
-    # 2. When current best is over target, prefer smaller summaries
+    # Test case 3: Both over target, new is closer (smaller)
+    # Should prefer 110 tokens over 120 tokens
+    assert summary_utils.is_better_summary(
+        new_tokens=110,
+        current_best_tokens=120,
+        target_tokens=target,
+    )
 
-    # Test case 1: New is under target and closer
-    # Original implementation should prefer 95 tokens over 85 tokens when target is 100
-    if hasattr(llm_service, "_is_better_summary"):
-        # New (95) is under target and closer than current (85)
-        assert llm_service._is_better_summary(
-            new_tokens=95,
-            new_distance=5,
-            current_best_tokens=85,
-            current_best_distance=15,
-            target_tokens=100,
-        )
+    # Test case 4: Both over target, new is not better (farther)
+    # Should NOT prefer 125 tokens over 120 tokens
+    assert not summary_utils.is_better_summary(
+        new_tokens=125,
+        current_best_tokens=120,
+        target_tokens=target,
+    )
 
-        # Test case 2: Current is over target, new is smaller
-        # Should prefer 110 tokens over 120 tokens when target is 100
-        assert llm_service._is_better_summary(
-            new_tokens=110,
-            new_distance=10,
-            current_best_tokens=120,
-            current_best_distance=20,
-            target_tokens=100,
-        )
+    # Test case 5: New is over target, current is under target
+    # Should NOT prefer over-target (110) over under-target (95)
+    assert not summary_utils.is_better_summary(
+        new_tokens=110,
+        current_best_tokens=95,
+        target_tokens=target,
+    )
 
-        # Test case 3: Both over target, but new is not better
-        # Should NOT prefer 125 tokens over 120 tokens
-        assert not llm_service._is_better_summary(
-            new_tokens=125,
-            new_distance=25,
-            current_best_tokens=120,
-            current_best_distance=20,
-            target_tokens=100,
-        )
-    else:
-        pytest.fail("_is_better_summary method is missing from LLMService")
+    # Test case 6: Both under target, new is farther from target
+    # Should NOT prefer 80 tokens over 95 tokens
+    assert not summary_utils.is_better_summary(
+        new_tokens=80,
+        current_best_tokens=95,
+        target_tokens=target,
+    )
 
 
 @pytest.mark.asyncio
@@ -237,9 +244,8 @@ async def test_retry_selection_uses_proper_logic() -> None:
     with patch.object(llm_service.client.chat.completions, "create", new=mock_create):
         with patched_tokenizers():
             summary, retry_count, token_count = await llm_service._summarize_text(
-                left_text="Test " * 50,
-                right_text="Text " * 50,
-                target_tokens=100,
+                "Test " * 50 + " " + "Text " * 50,
+                100,
                 parent_id="test_node",
             )
 

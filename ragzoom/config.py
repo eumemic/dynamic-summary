@@ -3,17 +3,34 @@
 import importlib.util
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from typing_extensions import TypedDict
 
 
-class IndexConfigDict(TypedDict):
+class PrecedingContextConfigDict(TypedDict, total=False):
+    """Type definition for per-node-type preceding context config."""
+
+    num_seeds: int | None
+    verbatim_tokens: int
+    min_forest_completeness: float
+    max_forest_height_differential: int | None
+    token_cap: int | None
+
+
+class PrecedingContextSettingsDict(TypedDict, total=False):
+    """Type definition for nested preceding context settings."""
+
+    leaf: PrecedingContextConfigDict
+    inner: PrecedingContextConfigDict
+
+
+class IndexConfigDict(TypedDict, total=False):
     """Type definition for IndexConfig dictionary representation."""
 
     target_chunk_tokens: int
-    preceding_context_tokens: int
+    max_parallelism: int
     summary_model: str
     embedding_model: str
     retry_threshold: float
@@ -21,6 +38,8 @@ class IndexConfigDict(TypedDict):
     embedding_batch_size: int
     use_anti_verbatim_vaccine: bool
     processing_strategy: str
+    preceding_context: PrecedingContextSettingsDict
+    summary_reasoning_level: str | None
 
 
 # Type for configuration values that can be primitives
@@ -136,6 +155,116 @@ def is_gpt5_model(model: str) -> bool:
 
 
 @dataclass
+class PrecedingContextConfig:
+    """Configuration for preceding context retrieval (per node type).
+
+    Controls how preceding context is retrieved for leaf nodes (during embedding)
+    or inner nodes (during summarization).
+
+    The retrieval algorithm always produces a complete tiling - a sequence of
+    adjacent, non-overlapping nodes that cover the document from start to the
+    current position. The `token_cap` parameter selects the rightmost portion
+    of this tiling.
+
+    Attributes:
+        num_seeds: Number of semantically similar nodes to use as seeds for
+            retrieval. Must be 0 for inner nodes (they don't store embeddings).
+        verbatim_tokens: Token budget for verbatim (leaf) content at the end
+            of the tiling. The retrieval ensures the rightmost nodes are leaves
+            up to this budget.
+        min_forest_completeness: Minimum completeness ratio (0.0-1.0) for the
+            preceding forest before a job becomes eligible.
+        max_forest_height_differential: Maximum allowed height difference between
+            the current node and the minimum height in the preceding forest.
+        token_cap: If set, select the smallest suffix of the tiling with total
+            tokens >= this value. Rounds up to whole nodes. None means use the
+            full tiling. Example: token_cap=400 takes the rightmost ~400 tokens.
+    """
+
+    num_seeds: int | None = None
+    verbatim_tokens: int = 2000
+    min_forest_completeness: float = 0.0
+    max_forest_height_differential: int | None = None
+    token_cap: int | None = None
+
+    def __post_init__(self) -> None:
+        """Validate configuration values."""
+        if self.num_seeds is not None and self.num_seeds < 0:
+            raise ValueError(f"num_seeds must be >= 0, got {self.num_seeds}")
+        if self.verbatim_tokens < 0:
+            raise ValueError(
+                f"verbatim_tokens must be >= 0, got {self.verbatim_tokens}"
+            )
+        if not 0.0 <= self.min_forest_completeness <= 1.0:
+            raise ValueError(
+                f"min_forest_completeness must be between 0.0 and 1.0, "
+                f"got {self.min_forest_completeness}"
+            )
+        if (
+            self.max_forest_height_differential is not None
+            and self.max_forest_height_differential < 0
+        ):
+            raise ValueError(
+                f"max_forest_height_differential must be >= 0, "
+                f"got {self.max_forest_height_differential}"
+            )
+        if self.token_cap is not None and self.token_cap < 0:
+            raise ValueError(f"token_cap must be >= 0, got {self.token_cap}")
+
+    @classmethod
+    def from_dict(cls, d: PrecedingContextConfigDict) -> "PrecedingContextConfig":
+        """Create from dictionary."""
+        return cls(
+            num_seeds=d.get("num_seeds"),
+            verbatim_tokens=d.get("verbatim_tokens", 2000),
+            min_forest_completeness=d.get("min_forest_completeness", 0.0),
+            max_forest_height_differential=d.get("max_forest_height_differential"),
+            token_cap=d.get("token_cap"),
+        )
+
+
+@dataclass
+class PrecedingContextSettings:
+    """Container for leaf and inner node preceding context configs.
+
+    Allows different retrieval strategies for embedding (leaf) vs summarization (inner).
+
+    Note: inner.num_seeds must be 0. Inner nodes don't store embeddings (to enable
+    parallel summarization), so semantic retrieval is not supported.
+    """
+
+    leaf: PrecedingContextConfig = field(default_factory=PrecedingContextConfig)
+    inner: PrecedingContextConfig = field(
+        default_factory=lambda: PrecedingContextConfig(token_cap=400)
+    )
+
+    def __post_init__(self) -> None:
+        """Validate configuration values."""
+        # Inner nodes don't store embeddings, so num_seeds must be 0.
+        if (self.inner.num_seeds or 0) > 0:
+            raise ValueError(
+                "inner.num_seeds must be 0. Inner nodes don't store embeddings, "
+                "so semantic retrieval is not supported for inner node preceding "
+                "context."
+            )
+
+    @classmethod
+    def from_dict(cls, d: PrecedingContextSettingsDict) -> "PrecedingContextSettings":
+        """Create from dictionary."""
+        leaf_dict = d.get("leaf", {})
+        inner_dict = d.get("inner", {})
+        # Inner defaults to token_cap=400 (cap output to rightmost ~400 tokens)
+        inner_dict_with_default: PrecedingContextConfigDict = {
+            "token_cap": 400,
+            **inner_dict,
+        }
+        return cls(
+            leaf=PrecedingContextConfig.from_dict(leaf_dict),
+            inner=PrecedingContextConfig.from_dict(inner_dict_with_default),
+        )
+
+
+@dataclass
 class IndexConfig:
     """Configuration for document indexing.
 
@@ -146,7 +275,7 @@ class IndexConfig:
     """
 
     target_chunk_tokens: int
-    preceding_context_tokens: int
+    max_parallelism: int
     summary_model: str
     embedding_model: str
     retry_threshold: float
@@ -154,6 +283,10 @@ class IndexConfig:
     embedding_batch_size: int
     use_anti_verbatim_vaccine: bool
     processing_strategy: str
+    preceding_context: PrecedingContextSettings = field(
+        default_factory=PrecedingContextSettings
+    )
+    summary_reasoning_level: str | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -168,7 +301,6 @@ class IndexConfig:
                 f"embedding_batch_size must be positive, got {self.embedding_batch_size}"
             )
 
-        # Validate processing strategy
         valid_strategies = {"bottom_to_top", "left_to_right"}
         if self.processing_strategy not in valid_strategies:
             raise ValueError(
@@ -177,46 +309,45 @@ class IndexConfig:
 
     @classmethod
     def from_dict(cls, config_dict: dict[str, ConfigValue]) -> "IndexConfig":
-        """Create IndexConfig from a dictionary (e.g., from telemetry JSON).
+        """Create IndexConfig from a dictionary (e.g., from config JSON).
 
         Args:
-            config_dict: Dictionary with config fields
+            config_dict: Dictionary with config fields. Must include
+                        preceding_context with leaf and inner sub-configs.
 
         Returns:
             IndexConfig instance
         """
-        # Extract only the fields that IndexConfig expects
-        index_config_fields = {
-            "target_chunk_tokens": config_dict["target_chunk_tokens"],
-            "preceding_context_tokens": config_dict["preceding_context_tokens"],
-            "summary_model": config_dict["summary_model"],
-            "embedding_model": config_dict["embedding_model"],
-            "retry_threshold": config_dict["retry_threshold"],
-            "max_retries": config_dict["max_retries"],
-            "embedding_batch_size": config_dict["embedding_batch_size"],
-            "use_anti_verbatim_vaccine": config_dict.get(
-                "use_anti_verbatim_vaccine", True
-            ),
-            "processing_strategy": config_dict.get(
-                "processing_strategy", "bottom_to_top"
-            ),
-        }
+        raw_nested = config_dict.get("preceding_context")
+        if not isinstance(raw_nested, dict):
+            raise ValueError(
+                "preceding_context must be a dict with 'leaf' and 'inner' keys"
+            )
+        nested_dict: PrecedingContextSettingsDict = raw_nested
+        preceding_context = PrecedingContextSettings.from_dict(nested_dict)
 
-        # Type-safe construction with proper field types
+        # Get optional summary_reasoning_level (may be str or None)
+        raw_reasoning = config_dict.get("summary_reasoning_level")
+        summary_reasoning_level: str | None = (
+            str(raw_reasoning) if raw_reasoning is not None else None
+        )
+
         return cls(
-            target_chunk_tokens=int(index_config_fields["target_chunk_tokens"]),
-            preceding_context_tokens=int(
-                index_config_fields["preceding_context_tokens"]
-            ),
-            summary_model=str(index_config_fields["summary_model"]),
-            embedding_model=str(index_config_fields["embedding_model"]),
-            retry_threshold=float(index_config_fields["retry_threshold"]),
-            max_retries=int(index_config_fields["max_retries"]),
-            embedding_batch_size=int(index_config_fields["embedding_batch_size"]),
+            target_chunk_tokens=int(config_dict["target_chunk_tokens"]),
+            max_parallelism=int(config_dict.get("max_parallelism", 30)),
+            summary_model=str(config_dict["summary_model"]),
+            embedding_model=str(config_dict["embedding_model"]),
+            retry_threshold=float(config_dict["retry_threshold"]),
+            max_retries=int(config_dict["max_retries"]),
+            embedding_batch_size=int(config_dict["embedding_batch_size"]),
             use_anti_verbatim_vaccine=bool(
-                index_config_fields["use_anti_verbatim_vaccine"]
+                config_dict.get("use_anti_verbatim_vaccine", True)
             ),
-            processing_strategy=str(index_config_fields["processing_strategy"]),
+            processing_strategy=str(
+                config_dict.get("processing_strategy", "bottom_to_top")
+            ),
+            preceding_context=preceding_context,
+            summary_reasoning_level=summary_reasoning_level,
         )
 
     @classmethod
@@ -235,16 +366,13 @@ class IndexConfig:
         Returns:
             IndexConfig instance
         """
-        # Load the raw config dictionary (handles defaults internally)
         config_dict = _load_index_config(config_path, **cli_options)
-
-        # Use from_dict to create the instance
         return cls.from_dict(config_dict)
 
     def replace(
         self,
         target_chunk_tokens: int | None = None,
-        preceding_context_tokens: int | None = None,
+        max_parallelism: int | None = None,
         summary_model: str | None = None,
         embedding_model: str | None = None,
         retry_threshold: float | None = None,
@@ -252,6 +380,8 @@ class IndexConfig:
         embedding_batch_size: int | None = None,
         use_anti_verbatim_vaccine: bool | None = None,
         processing_strategy: str | None = None,
+        preceding_context: PrecedingContextSettings | None = None,
+        summary_reasoning_level: str | None = None,
     ) -> "IndexConfig":
         """Create a new IndexConfig with some fields changed."""
         from dataclasses import replace
@@ -263,10 +393,8 @@ class IndexConfig:
                 if target_chunk_tokens is not None
                 else self.target_chunk_tokens
             ),
-            preceding_context_tokens=(
-                preceding_context_tokens
-                if preceding_context_tokens is not None
-                else self.preceding_context_tokens
+            max_parallelism=(
+                max_parallelism if max_parallelism is not None else self.max_parallelism
             ),
             summary_model=(
                 summary_model if summary_model is not None else self.summary_model
@@ -293,7 +421,42 @@ class IndexConfig:
                 if processing_strategy is not None
                 else self.processing_strategy
             ),
+            preceding_context=(
+                preceding_context
+                if preceding_context is not None
+                else self.preceding_context
+            ),
+            summary_reasoning_level=(
+                summary_reasoning_level
+                if summary_reasoning_level is not None
+                else self.summary_reasoning_level
+            ),
         )
+
+    # Maximum budget for preceding context retrieval.
+    # Capped to prevent excessive seed calculation (budget // chunk_tokens = num_seeds).
+    # 32K is a reasonable limit that allows substantial context while keeping
+    # retrieval performant.
+    _MAX_PRECEDING_CONTEXT_BUDGET = 32000
+
+    @property
+    def preceding_context_budget(self) -> int:
+        """Get the preceding context budget derived from the summary model's context window.
+
+        The budget is calculated as the model's context window minus overhead for:
+        - The chunk being summarized (~target_chunk_tokens)
+        - The output summary (~target_chunk_tokens)
+        - System prompt and formatting (~1000 tokens)
+
+        Capped at _MAX_PRECEDING_CONTEXT_BUDGET to prevent performance issues
+        when num_seeds is calculated from budget (budget // chunk_tokens).
+        """
+        from ragzoom.model_info import ModelInfo
+
+        context_window = ModelInfo().get_context_window(self.summary_model)
+        overhead = self.target_chunk_tokens * 2 + 1000
+        uncapped = max(context_window - overhead, self.target_chunk_tokens)
+        return min(uncapped, self._MAX_PRECEDING_CONTEXT_BUDGET)
 
 
 @dataclass

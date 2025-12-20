@@ -2,7 +2,8 @@
 
 import click
 
-from ragzoom.evaluation.types import DIMENSIONS, EvaluationReport, NodeEvaluation
+from ragzoom.evaluation.issue_summary import RecurringIssue
+from ragzoom.evaluation.types import DIMENSIONS, EvaluationReport
 
 
 def _format_histograms_side_by_side(
@@ -59,43 +60,45 @@ def _format_histograms_side_by_side(
     return lines
 
 
-def _format_score_line(dim: str, mean: float, std: float) -> str:
-    """Format a single dimension's score line."""
+def _format_score_line(dim: str, mean: float, std: float, p5: float, p10: float) -> str:
+    """Format a single dimension's score line with percentiles."""
     dim_display = dim.capitalize().ljust(12)
-    return f"  {dim_display} {mean:.2f} +/- {std:.2f}"
+    return f"  {dim_display} {mean:.2f} +/- {std:.2f}    p5={p5:.1f}  p10={p10:.1f}"
 
 
-def _format_evaluation(evaluation: NodeEvaluation) -> list[str]:
-    """Format an evaluation for display."""
+def _format_issue(issue: RecurringIssue, max_nodes: int = 5) -> list[str]:
+    """Format a recurring issue for display."""
     lines = []
-
-    # Header line with node info, all scores, and average
-    scores_str = ", ".join(
-        f"{dim[0].upper()}={getattr(evaluation, dim).score}" for dim in DIMENSIONS
+    # Header with name, score, and count
+    lines.append(
+        f"  {issue.name} (score: {issue.mean_score:.1f}, {issue.node_count} nodes)"
     )
-    coord = f"({evaluation.height}, {evaluation.level_index})"
-    header = (
-        f"  Node {coord} @ {evaluation.span_start}: "
-        f"{scores_str}, avg={evaluation.mean_score:.1f}"
-    )
-    lines.append(header)
-    lines.append(f"    id: {evaluation.node_id}")
-
-    # Show full explanation for lowest-scoring dimension
-    min_dim = min(DIMENSIONS, key=lambda d: getattr(evaluation, d).score)
-    score = getattr(evaluation, min_dim)
-    if score.explanation:
-        lines.append(f'    {min_dim}: "{score.explanation}"')
-
+    # Description
+    if issue.description:
+        lines.append(f"    {issue.description}")
+    # Show worst N nodes with scores (sorted by score ascending)
+    node_strs = [
+        f"{nid[:8]}({score:.1f})"
+        for nid, score in zip(issue.node_ids[:max_nodes], issue.node_scores[:max_nodes])
+    ]
+    remaining = issue.node_count - max_nodes
+    if remaining > 0:
+        node_strs.append(f"...+{remaining} more")
+    lines.append(f"    Worst: {', '.join(node_strs)}")
     return lines
 
 
-def print_report(report: EvaluationReport, threshold: float) -> None:
+def print_report(
+    report: EvaluationReport,
+    threshold: float,
+    issues: list[RecurringIssue] | None = None,
+) -> None:
     """Print formatted evaluation report to stdout.
 
     Args:
         report: The evaluation report to display
         threshold: Minimum mean score threshold for pass/fail
+        issues: Optional list of recurring issues with node mappings
     """
     # Header
     click.echo()
@@ -118,13 +121,25 @@ def print_report(report: EvaluationReport, threshold: float) -> None:
         click.echo("No evaluations to report.")
         return
 
-    # Aggregate scores
+    # Aggregate scores with percentiles
     click.echo()
-    click.echo("AGGREGATE SCORES (mean +/- std)")
+    click.echo("AGGREGATE SCORES (mean +/- std, percentiles)")
     means = report.mean_scores()
     stds = report.std_scores()
+    p5s = report.percentile_scores(5)
+    p10s = report.percentile_scores(10)
     for dim in DIMENSIONS:
-        click.echo(_format_score_line(dim, means[dim], stds[dim]))
+        click.echo(_format_score_line(dim, means[dim], stds[dim], p5s[dim], p10s[dim]))
+
+    # Failure count
+    failure_count = report.failure_count(threshold=2.5)
+    failure_pct = (
+        (failure_count / len(report.evaluations) * 100) if report.evaluations else 0
+    )
+    click.echo()
+    click.echo(
+        f"FAILURES: {failure_count} nodes ({failure_pct:.1f}%) have any dimension < 2.5"
+    )
 
     # Histograms for all dimensions side by side
     click.echo()
@@ -135,15 +150,14 @@ def print_report(report: EvaluationReport, threshold: float) -> None:
     for line in _format_histograms_side_by_side(all_scores):
         click.echo(f"  {line}")
 
-    # Lowest-scoring nodes (show bottom 5 by min score)
-    sorted_evals = sorted(report.evaluations, key=lambda e: (e.min_score, e.mean_score))
-    bottom_5 = sorted_evals[:5]
-    click.echo()
-    click.echo("LOWEST SCORES")
-    for evaluation in bottom_5:
-        for line in _format_evaluation(evaluation):
-            click.echo(line)
+    # Recurring issues (if provided)
+    if issues:
         click.echo()
+        click.echo("RECURRING ISSUES")
+        for issue in issues:
+            for line in _format_issue(issue):
+                click.echo(line)
+            click.echo()
 
     # Result
     click.echo()

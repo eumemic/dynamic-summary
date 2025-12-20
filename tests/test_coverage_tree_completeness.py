@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 class TestCoverageTreeCompletenessSQLite:
-    """Tests that ensure coverage trees maintain left-balanced properties with SQLite."""
+    """Tests that ensure coverage trees work correctly with forest of perfect binary trees."""
 
     @pytest.fixture
     def doc_store(self, storage_backend: StorageBackend) -> DocumentStore:
@@ -41,9 +41,7 @@ class TestCoverageTreeCompletenessSQLite:
         self, doc_store: DocumentStore
     ) -> tuple[IndexConfig, DocumentStore, Retriever, GreedyTilingGenerator]:
         """Set up a system with a tree that will produce incomplete coverage."""
-        index_config = IndexConfig.load(
-            target_chunk_tokens=100, preceding_context_tokens=50
-        )
+        index_config = IndexConfig.load(target_chunk_tokens=100)
         query_config = QueryConfig(budget_tokens=1000)
         operational_config = OperationalConfig(openai_api_key=SecretStr("test-key"))
 
@@ -170,7 +168,7 @@ class TestCoverageTreeCompletenessSQLite:
 
         return index_config, document_store, retriever, tiling_generator
 
-    def test_left_balanced_tree_single_child_handling(
+    def test_partial_coverage_map_handling(
         self,
         setup_incomplete_tree: tuple[
             IndexConfig, DocumentStore, Retriever, GreedyTilingGenerator
@@ -182,7 +180,7 @@ class TestCoverageTreeCompletenessSQLite:
         )
 
         # Simulate what happens with --num-seeds 1: only L3 is selected
-        # This creates a left-balanced coverage tree where P2 has only its left child
+        # This creates a partial coverage map where P2's subtree is incomplete
         coverage_map = {"L3": True}
 
         # Add ancestors (this is what current retriever does)
@@ -204,14 +202,13 @@ class TestCoverageTreeCompletenessSQLite:
             if node:
                 nodes[node_id] = node
 
-        # This should have L3, P2, and root, but not L4 (sibling of L3)
+        # Coverage map has L3, P2, and root, but not L4 (sibling of L3)
         assert "L3" in nodes
         assert "P2" in nodes
         assert "root" in nodes
-        assert "L4" not in nodes  # P2 has only its left child in coverage
+        assert "L4" not in nodes  # Not in coverage map (sibling not selected)
 
-        # With left-balanced trees, this is a valid configuration
-        # The DP algorithm correctly handles P2 having only its left child
+        # The DP algorithm handles partial coverage maps correctly
         # Provide scores for all nodes in coverage to ensure L3 is selected
         scores = {node_id: 0.1 for node_id in nodes}  # Base score for all
         scores["L3"] = 1.0  # L3 has high relevance
@@ -223,13 +220,7 @@ class TestCoverageTreeCompletenessSQLite:
             nodes=nodes,
         )
 
-        # The DP algorithm may choose root over the subtree with single child
-        # This is correct behavior - it's choosing the option with best quality score
-        # The algorithm now supports P2 having only its left child and makes
-        # the optimal choice based on relevance scores and token budgets
-
-        # This test verifies that the algorithm handles left-balanced trees correctly
-        # The actual tiling choice depends on the quality scores and budget
+        # The DP algorithm makes the optimal choice based on relevance and budget
         assert result.tiling.node_ids  # Should have some result
         assert result.total_quality >= 0  # Should have non-negative quality
 
@@ -351,7 +342,7 @@ class TestCoverageTreeCompletenessSQLite:
             if node:
                 incomplete_nodes[node_id] = node
 
-        # This represents a left-balanced tree where P2 only has left child
+        # This represents a partial coverage map where P2's subtree is incomplete
         # DP algorithm should handle this gracefully
         scores = {"L3": 1.0, "P2": 0.5, "root": 0.3}
 

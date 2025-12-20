@@ -18,7 +18,7 @@ The core idea is to pre-process a long document into a structure that is easy to
 2.  **Summarization Tree**: The algorithm constructs a binary tree on top of these leaves. Adjacent pairs of leaf nodes are summarized into a parent node containing a more concise version of their combined text. This process is applied recursively up the hierarchy, with each level representing a more compressed summary. This continues until a single root node, containing a synopsis of the entire document, is created.
 3.  **Embedding**: Every node in the tree—both leaf chunks and summary nodes—is processed through an embedding model. The resulting vector, along with metadata (ID, depth, text), is stored in a vector database for efficient similarity searching.
 
-This results in a left-balanced, append-only binary tree where each node provides a summary of the entire sub-tree beneath it. Because new data is simply appended as new leaves, index updates are efficient, typically requiring only $O(\\log n)$ operations per new chunk.
+This results in a forest of perfect binary trees where each node provides a summary of the entire sub-tree beneath it. Because new data is simply appended as new leaves, index updates are efficient, typically requiring only $O(\\log n)$ operations per new chunk.
 
 ### 1.2. Query-Time Stitching: Crafting the Narrative
 
@@ -46,7 +46,7 @@ The final stitched prompt is a single, coherent stream that allows the LLM to pr
 | **VecDB** | Vector index storing embeddings for all nodes | Chroma / pgvector |
 | **PQ** | Min-priority queue for budget eviction, keyed by `priority = sim · 0.9^Δturns` | Size ≤ few × $N\_{max}$ |
 
-The tree is **left-balanced** and **append-only**. The root is at `depth = 0`. The total depth is approximately $\\log\_2(\\text{\# of leaf chunks})$.
+The tree structure is a **forest of perfect binary trees** and is **append-only**. The root is at `depth = 0`. The total depth is approximately $\\log\_2(\\text{\# of leaf chunks})$.
 
 ### 2.2. Index-Build Process (Append-Only)
 

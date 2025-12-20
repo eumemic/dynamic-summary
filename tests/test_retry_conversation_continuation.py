@@ -34,12 +34,12 @@ def _configure_runtime(
     harness.runtime._append_executor._splitter = (
         harness.runtime._append_executor._splitter.__class__(config)
     )
-    harness.worker_coordinator._index_config = config
+    harness.indexing_engine._index_config = config
     harness.llm_service.config = config
     harness.telemetry_manager._index_config = config
     vector_factory = lambda _model: vector_index  # noqa: E731
     harness.runtime._vector_index_factory = vector_factory
-    harness.worker_coordinator._vector_index_factory = vector_factory
+    harness.indexing_engine._vector_index_factory = vector_factory
 
 
 def create_test_reporter(config: IndexConfig) -> TelemetryCollector:
@@ -110,9 +110,8 @@ async def test_retry_maintains_conversation_history(
     with patched_tokenizers(lambda text: [0] * len(text)):
         summary, retry_count, _ = (
             await indexer_runtime_harness.llm_service._summarize_text(
-                left_text="Left text" * 10,
-                right_text="Right text" * 10,
-                target_tokens=100,
+                "Left text" * 10 + " " + "Right text" * 10,
+                100,
                 parent_id="test_node",
                 reporter=reporter,
             )
@@ -163,9 +162,8 @@ async def test_retry_preserves_original_context(
 
     with patched_tokenizers(lambda text: [0] * len(text)):
         summary, _, _ = await indexer_runtime_harness.llm_service._summarize_text(
-            left_text=original_text[: len(original_text) // 2],
-            right_text=original_text[len(original_text) // 2 :],
-            target_tokens=100,
+            original_text,
+            100,
             parent_id="test",
         )
 
@@ -208,9 +206,8 @@ async def test_multiple_retries_build_conversation(
     with patched_tokenizers(lambda text: [0] * len(text)):
         summary, retry_count, _ = (
             await indexer_runtime_harness.llm_service._summarize_text(
-                left_text="Test content" * 10,
-                right_text="More content" * 10,
-                target_tokens=100,
+                "Test content" * 10 + " " + "More content" * 10,
+                100,
                 parent_id="test",
             )
         )
@@ -246,9 +243,8 @@ async def test_no_retry_when_within_threshold(
     with patched_tokenizers(lambda text: [0] * len(text)):
         summary, retry_count, token_count = (
             await indexer_runtime_harness.llm_service._summarize_text(
-                left_text="Test content" * 10,
-                right_text="More content" * 10,
-                target_tokens=100,
+                "Test content" * 10 + " " + "More content" * 10,
+                100,
                 parent_id="test",
             )
         )
@@ -287,9 +283,8 @@ async def test_accept_retry_within_threshold_immediately(
     with patched_tokenizers(lambda text: [0] * len(text)):
         summary, retry_count, token_count = (
             await indexer_runtime_harness.llm_service._summarize_text(
-                left_text="Test content" * 10,
-                right_text="More content" * 10,
-                target_tokens=100,
+                "Test content" * 10 + " " + "More content" * 10,
+                100,
                 parent_id="test",
             )
         )
@@ -324,9 +319,8 @@ async def test_passthrough_for_text_under_target(
     ):
         summary, retry_count, token_count = (
             await indexer_runtime_harness.llm_service._summarize_text(
-                left_text="Short",
-                right_text="Text",
-                target_tokens=100,
+                "Short Text",
+                100,
                 parent_id="test",
                 reporter=reporter,
             )

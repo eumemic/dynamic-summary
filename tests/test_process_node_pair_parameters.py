@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -13,6 +13,44 @@ from tests.conftest import IndexerRuntimeHarness
 from tests.vector_index_stubs import RecordingVectorIndex
 
 
+def _create_mock_sync_openai_client() -> MagicMock:
+    """Create a mock sync OpenAI client for IndexingEngine's retriever."""
+    mock_client = MagicMock()
+
+    def sync_mock_embeddings(*args: object, **kwargs: object) -> object:
+        from typing import cast
+
+        input_texts = cast(list[str] | str, kwargs.get("input", []))
+        if isinstance(input_texts, str):
+            input_texts = [input_texts]
+        embedding_value = [0.1] * 1536
+        return MagicMock(
+            data=[MagicMock(embedding=embedding_value) for _ in input_texts]
+        )
+
+    mock_client.embeddings.create = sync_mock_embeddings
+    return mock_client
+
+
+def _create_mock_async_openai_client() -> AsyncMock:
+    """Create a mock async OpenAI client for IndexingEngine's retriever."""
+    mock_client = AsyncMock()
+
+    async def async_mock_embeddings(*args: object, **kwargs: object) -> object:
+        from typing import cast
+
+        input_texts = cast(list[str] | str, kwargs.get("input", []))
+        if isinstance(input_texts, str):
+            input_texts = [input_texts]
+        embedding_value = [0.1] * 1536
+        return MagicMock(
+            data=[MagicMock(embedding=embedding_value) for _ in input_texts]
+        )
+
+    mock_client.embeddings.create = async_mock_embeddings
+    return mock_client
+
+
 def _configure_runtime(
     harness: IndexerRuntimeHarness,
     config: IndexConfig,
@@ -21,12 +59,14 @@ def _configure_runtime(
     harness.runtime._index_config = config
     harness.runtime._append_executor._config = config
     harness.runtime._append_executor._splitter = TextSplitter(config)
-    harness.worker_coordinator._index_config = config
+    harness.indexing_engine._index_config = config
     harness.llm_service.config = config
     harness.telemetry_manager._index_config = config
     vector_factory = lambda _model: vector_index  # noqa: E731
     harness.runtime._vector_index_factory = vector_factory
-    harness.worker_coordinator._vector_index_factory = vector_factory
+    harness.indexing_engine._vector_index_factory = vector_factory
+    # Mock the sync OpenAI client used by IndexingEngine's retriever
+    harness.indexing_engine._openai_client = _create_mock_sync_openai_client()
 
 
 def _document_text(chunks: int) -> str:
@@ -42,7 +82,6 @@ async def test_worker_coordinator_passes_token_counts(
 ) -> None:
     index_config = IndexConfig.load(
         target_chunk_tokens=120,
-        preceding_context_tokens=40,
     )
     vector_index = RecordingVectorIndex()
     _configure_runtime(indexer_runtime_harness, index_config, vector_index)
@@ -63,7 +102,7 @@ async def test_worker_coordinator_passes_token_counts(
 
     embed_mock = AsyncMock(side_effect=embed_side_effect)
 
-    indexer_runtime_harness.llm_service.client = AsyncMock()
+    indexer_runtime_harness.llm_service.client = _create_mock_async_openai_client()
     with (
         patch.object(
             indexer_runtime_harness.llm_service,
@@ -88,10 +127,14 @@ async def test_worker_coordinator_passes_token_counts(
     assert summary_mock.await_count > 0
     for call in summary_mock.await_args_list:
         args, kwargs = call
-        left_text, right_text, target_tokens = args
+        # New unified API: text, target_tokens (instead of left_text, right_text, target_tokens)
+        text, target_tokens = args
+        assert isinstance(text, str)
         assert target_tokens == index_config.target_chunk_tokens
-        assert isinstance(kwargs.get("left_token_count"), int)
-        assert isinstance(kwargs.get("right_token_count"), int)
+        # Token count is now passed as text_tokens (optional, may be None or int)
+        assert kwargs.get("text_tokens") is None or isinstance(
+            kwargs.get("text_tokens"), int
+        )
         assert kwargs["parent_id"] is not None
         assert "reporter" in kwargs
 
@@ -103,7 +146,6 @@ async def test_prev_context_present_when_preceding_neighbor_exists(
 ) -> None:
     index_config = IndexConfig.load(
         target_chunk_tokens=90,
-        preceding_context_tokens=45,
     )
     vector_index = RecordingVectorIndex()
     _configure_runtime(indexer_runtime_harness, index_config, vector_index)
@@ -124,7 +166,7 @@ async def test_prev_context_present_when_preceding_neighbor_exists(
 
     embed_mock = AsyncMock(side_effect=embed_side_effect)
 
-    indexer_runtime_harness.llm_service.client = AsyncMock()
+    indexer_runtime_harness.llm_service.client = _create_mock_async_openai_client()
     with (
         patch.object(
             indexer_runtime_harness.llm_service,
@@ -149,8 +191,20 @@ async def test_prev_context_present_when_preceding_neighbor_exists(
     contexts = [
         kwargs.get("prev_context") for _, kwargs in summary_mock.await_args_list
     ]
-    assert None in contexts
-    assert any(isinstance(ctx, str) and ctx.strip() for ctx in contexts)
+    # With the new unified API:
+    # - Leaf context summarization calls pass prev_context=None
+    # - Inner node pair summarization calls pass prev_context as a string:
+    #   - Empty string ("") for first node (span_start=0)
+    #   - Non-empty string for nodes with preceding context
+    assert (
+        None in contexts or "" in contexts
+    )  # At least one call without preceding context
+    assert any(
+        isinstance(ctx, str) and ctx.strip() for ctx in contexts
+    )  # Some calls have context
     for ctx in contexts:
-        if ctx is not None:
-            assert isinstance(ctx, str) and ctx.strip()
+        # Contexts should be strings or None (for leaf context summarization)
+        assert ctx is None or isinstance(ctx, str)
+        # Non-empty string contexts should have content
+        if isinstance(ctx, str) and ctx != "":
+            assert ctx.strip()

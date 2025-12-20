@@ -88,7 +88,7 @@ def _configure_runtime(harness: IndexerRuntimeHarness, config: IndexConfig) -> N
     harness.runtime._index_config = config
     harness.runtime._append_executor._config = config
     harness.runtime._append_executor._splitter = TextSplitter(config)
-    harness.worker_coordinator._index_config = config
+    harness.indexing_engine._index_config = config
     harness.llm_service.config = config
     harness.telemetry_manager._index_config = config
 
@@ -163,7 +163,7 @@ async def _build_full_and_incremental_documents(
 
     full_factory = lambda _model: full_vector_index  # noqa: E731
     runtime.runtime._vector_index_factory = full_factory
-    runtime.worker_coordinator._vector_index_factory = full_factory
+    runtime.indexing_engine._vector_index_factory = full_factory
 
     await runtime.clear(full_doc_id)
     await runtime.clear(incremental_doc_id)
@@ -175,7 +175,7 @@ async def _build_full_and_incremental_documents(
     )
     incremental_factory = lambda _model: incremental_vector_index  # noqa: E731
     runtime.runtime._vector_index_factory = incremental_factory
-    runtime.worker_coordinator._vector_index_factory = incremental_factory
+    runtime.indexing_engine._vector_index_factory = incremental_factory
 
     for idx, segment in enumerate(segments):
         stats = await runtime.append(
@@ -226,45 +226,59 @@ def _collect_leaf_depths(doc_store: DocumentStore) -> list[int]:
     return depths
 
 
-def _assert_left_balanced(doc_store: DocumentStore) -> None:
+def _assert_perfect_binary_trees(doc_store: DocumentStore) -> None:
+    """Assert that the forest consists of perfect binary trees.
+
+    In a perfect binary tree:
+    - Every internal node has exactly 2 children
+    - All children at same height
+    """
     nodes = {node.id: node for node in doc_store.nodes.get_all()}
 
     for node in nodes.values():
         left_id = node.left_child_id
         right_id = node.right_child_id
 
+        # Leaf nodes have no children
         if not left_id and not right_id:
             continue
 
+        # Internal nodes must have exactly 2 children
         left = nodes.get(left_id) if left_id else None
         right = nodes.get(right_id) if right_id else None
 
-        if right is None:
-            assert left is not None
-            assert int(node.height) == int(left.height) + 1
-            continue
+        assert (
+            left is not None and right is not None
+        ), f"Node {node.id} has only one child - violates perfect binary tree"
 
-        assert left is not None
         left_height = int(left.height)
         right_height = int(right.height)
 
-        assert left_height >= right_height
-        assert left_height - right_height <= 1
-        assert int(node.height) == max(left_height, right_height) + 1
+        # Both children should have same height in a perfect binary tree
+        assert (
+            left_height == right_height
+        ), f"Node {node.id} children have different heights: {left_height} vs {right_height}"
+        assert int(node.height) == left_height + 1
 
 
 class TestIncrementalAppend:
     @pytest.mark.asyncio
     @pytest.mark.slow_threshold(10.0)
-    async def test_incremental_equivalence(
+    async def test_incremental_text_equivalence(
         self,
         base_config: BackwardCompatibilityConfig,
         storage_backend: StorageBackend,
         indexer_runtime_harness: IndexerRuntimeHarness,
     ) -> None:
+        """Incremental appends reconstruct the same document text as full indexing.
+
+        Note: Incremental appending uses append-only semantics - each segment is
+        split independently without merging with existing content. This means chunk
+        boundaries may differ from full indexing, but the reconstructed text is
+        identical.
+        """
         config = base_config.index_config.replace(
             target_chunk_tokens=32,
-            preceding_context_tokens=0,
             embedding_batch_size=4,
         )
 
@@ -288,15 +302,12 @@ class TestIncrementalAppend:
             segments,
         )
 
-        full_snapshot = _snapshot_document(full_store)
-        incremental_snapshot = _snapshot_document(incremental_store)
-        full_leaves = [entry for entry in full_snapshot if entry[0] == 0]
-        incremental_leaves = [entry for entry in incremental_snapshot if entry[0] == 0]
-        assert incremental_leaves == full_leaves
-
+        # Reconstructed text must be identical
         full_doc = _reconstruct_document(full_store)
         incremental_doc = _reconstruct_document(incremental_store)
         assert incremental_doc == full_doc == full_text
+
+        # Both should have valid tree structures
         assert _collect_leaf_depths(full_store)
         assert _collect_leaf_depths(incremental_store)
 
@@ -340,7 +351,6 @@ class TestIncrementalAppend:
     ) -> None:
         config = base_config.index_config.replace(
             target_chunk_tokens=32,
-            preceding_context_tokens=0,
             embedding_batch_size=4,
         )
 

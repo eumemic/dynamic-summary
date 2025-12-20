@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import struct
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
@@ -61,6 +62,9 @@ class PostgresNodeRepository(BaseRepository):
             node.following_neighbor_id,
             node.height,
             node.level_index,
+            node.preceding_context,
+            node.preceding_context_summary,
+            node.embedding,
         )
         session.expunge(node)
 
@@ -173,6 +177,8 @@ class PostgresNodeRepository(BaseRepository):
                     following_neighbor_id=data.get("following_neighbor_id"),
                     height=data["height"],
                     level_index=data["level_index"],
+                    preceding_context=data.get("preceding_context"),
+                    preceding_context_summary=data.get("preceding_context_summary"),
                 )
                 nodes_pg.append(node)
                 out.append(node)
@@ -226,8 +232,10 @@ class PostgresNodeRepository(BaseRepository):
                 token_count,
                 height,
                 preceding_neighbor_id,
-                following_neighbor_id
-                , level_index
+                following_neighbor_id,
+                level_index,
+                preceding_context,
+                preceding_context_summary
             ) VALUES (
                 :id,
                 :text,
@@ -241,7 +249,9 @@ class PostgresNodeRepository(BaseRepository):
                 :height,
                 :preceding_neighbor_id,
                 :following_neighbor_id,
-                :level_index
+                :level_index,
+                :preceding_context,
+                :preceding_context_summary
             )
             ON CONFLICT (id) DO UPDATE SET
                 text = EXCLUDED.text,
@@ -254,7 +264,9 @@ class PostgresNodeRepository(BaseRepository):
                 token_count = EXCLUDED.token_count,
                 preceding_neighbor_id = EXCLUDED.preceding_neighbor_id,
                 following_neighbor_id = EXCLUDED.following_neighbor_id,
-                level_index = EXCLUDED.level_index
+                level_index = EXCLUDED.level_index,
+                preceding_context = EXCLUDED.preceding_context,
+                preceding_context_summary = EXCLUDED.preceding_context_summary
             """
         )
 
@@ -277,6 +289,8 @@ class PostgresNodeRepository(BaseRepository):
                     "preceding_neighbor_id": data.get("preceding_neighbor_id"),
                     "following_neighbor_id": data.get("following_neighbor_id"),
                     "level_index": data["level_index"],
+                    "preceding_context": data.get("preceding_context"),
+                    "preceding_context_summary": data.get("preceding_context_summary"),
                 }
                 db_session.execute(insert_sql, params)
                 self.cache_manager.invalidate(node_id)
@@ -343,6 +357,63 @@ class PostgresNodeRepository(BaseRepository):
                 self.cache_manager.invalidate(node_id)
 
     # jscpd:ignore-end
+
+    def update_preceding_context(
+        self,
+        node_id: str,
+        preceding_context: str | None,
+    ) -> None:
+        """Update the preceding_context field for a node."""
+        with self._session_scope() as db_session:
+            db_session.execute(
+                update(PostgresTreeNode)
+                .where(PostgresTreeNode.id == node_id)
+                .values(preceding_context=preceding_context)
+            )
+            self.cache_manager.invalidate(node_id)
+
+    def update_preceding_context_summary(
+        self,
+        node_id: str,
+        summary: str | None,
+    ) -> None:
+        """Update the preceding_context_summary field for a node."""
+        with self._session_scope() as db_session:
+            db_session.execute(
+                update(PostgresTreeNode)
+                .where(PostgresTreeNode.id == node_id)
+                .values(preceding_context_summary=summary)
+            )
+            self.cache_manager.invalidate(node_id)
+
+    def update_embedding(
+        self,
+        node_id: str,
+        embedding: list[float] | NDArray[np.float64] | None,
+    ) -> None:
+        """Update the embedding field for a node.
+
+        The embedding is stored as packed float32 bytes for efficiency.
+        1536 dimensions * 4 bytes = 6144 bytes for text-embedding-3-small.
+        """
+        embedding_bytes: bytes | None = None
+        if embedding is not None:
+            # Convert to list if numpy array
+            if hasattr(embedding, "tolist"):
+                embedding_list = embedding.tolist()
+            else:
+                embedding_list = list(embedding)
+            # Pack as float32 for storage efficiency
+            embedding_bytes = struct.pack(f"{len(embedding_list)}f", *embedding_list)
+
+        with self._session_scope() as db_session:
+            db_session.execute(
+                update(PostgresTreeNode)
+                .where(PostgresTreeNode.id == node_id)
+                .values(embedding=embedding_bytes)
+            )
+            self.cache_manager.invalidate(node_id)
+
     def get_node(self, node_id: str) -> TreeNode | None:
         """Get a node by ID.
 
@@ -413,8 +484,10 @@ class PostgresNodeRepository(BaseRepository):
         """Return all nodes whose parent is null, optionally filtered by document."""
 
         with self.SessionLocal() as session:
-            query = session.query(PostgresTreeNode).filter(
-                PostgresTreeNode.parent_id.is_(None)
+            query = (
+                session.query(PostgresTreeNode)
+                .filter(PostgresTreeNode.parent_id.is_(None))
+                .order_by(PostgresTreeNode.span_start)
             )
             if document_id is not None:
                 query = query.filter(PostgresTreeNode.document_id == document_id)
@@ -1003,3 +1076,91 @@ class PostgresNodeRepository(BaseRepository):
             else:
                 count_val = session.query(func.count(PostgresTreeNode.id)).scalar()
             return int(count_val or 0)
+
+    def get_tree_completion_frontier(self, document_id: str | None) -> int:
+        """Get the tree completion frontier for contextual indexing.
+
+        The frontier is defined as the span_end of the first root node
+        (ordered by span_start). This indicates how far the summary tree
+        is complete from the beginning of the document.
+
+        Args:
+            document_id: Document to get frontier for
+
+        Returns:
+            span_end of the first root, or 0 if no roots exist
+        """
+        with self.SessionLocal() as session:
+            query = session.query(PostgresTreeNode).filter(
+                PostgresTreeNode.parent_id.is_(None)
+            )
+            if document_id is not None:
+                query = query.filter(PostgresTreeNode.document_id == document_id)
+
+            first_root = query.order_by(PostgresTreeNode.span_start.asc()).first()
+            if first_root is None:
+                return 0
+            return int(first_root.span_end)
+
+    def get_leaves_from_span_start(
+        self, document_id: str | None, span_start: int
+    ) -> list[TreeNode]:
+        """Get leaves with span_start >= given value, ordered by span_start.
+
+        Used for computing the eligible span for contextual indexing gating.
+
+        Args:
+            document_id: Document to filter by
+            span_start: Minimum span_start value (inclusive)
+
+        Returns:
+            List of leaf nodes ordered by span_start
+        """
+        with self.SessionLocal() as session:
+            query = session.query(PostgresTreeNode).filter(
+                PostgresTreeNode.height == 0,  # Leaves only
+                PostgresTreeNode.span_start >= span_start,
+            )
+            if document_id is not None:
+                query = query.filter(PostgresTreeNode.document_id == document_id)
+
+            rows = query.order_by(PostgresTreeNode.span_start.asc()).all()
+            # Detach from session
+            for row in rows:
+                session.expunge(row)
+            return list(rows)
+
+    def get_avg_chars_per_token(self, document_id: str | None) -> float | None:
+        """Return average characters per token for leaves in a document.
+
+        Computes SUM(span_end - span_start) / SUM(token_count) for all leaves.
+        Returns None if no leaves exist yet.
+        """
+        with self.SessionLocal() as session:
+            query = session.query(
+                func.sum(PostgresTreeNode.span_end - PostgresTreeNode.span_start),
+                func.sum(PostgresTreeNode.token_count),
+            ).filter(PostgresTreeNode.height == 0)
+            if document_id is not None:
+                query = query.filter(PostgresTreeNode.document_id == document_id)
+
+            result = query.one()
+            total_chars, total_tokens = result
+            if total_tokens is None or total_tokens == 0:
+                return None
+            return float(total_chars) / float(total_tokens)
+
+    def get_nodes_by_id_prefix(
+        self, document_id: str | None, id_prefix: str
+    ) -> list[TreeNode]:
+        """Get nodes whose ID starts with the given prefix."""
+        with self.SessionLocal() as session:
+            query = session.query(PostgresTreeNode).filter(
+                PostgresTreeNode.id.startswith(id_prefix)
+            )
+            if document_id is not None:
+                query = query.filter(PostgresTreeNode.document_id == document_id)
+            pg_nodes = query.all()
+            for node in pg_nodes:
+                self._force_load_and_detach(session, node)
+            return list(pg_nodes)

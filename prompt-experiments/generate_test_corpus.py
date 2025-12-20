@@ -46,12 +46,14 @@ def generate_corpus():
         # Create config with this chunk size
         config = IndexConfig(
             target_chunk_tokens=chunk_size,
-            preceding_context_tokens=0,  # No context needed
+            max_parallelism=30,
             summary_model="gpt-5-nano",
             embedding_model="text-embedding-3-small",
             retry_threshold=0.2,
             max_retries=0,
             embedding_batch_size=100,
+            use_anti_verbatim_vaccine=True,
+            processing_strategy="bottom_to_top",
         )
 
         # Create splitter

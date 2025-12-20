@@ -169,28 +169,18 @@ class TextSplitter:
     def get_adjacent_context(
         self, chunks: list[str], chunk_index: int
     ) -> tuple[str | None, str | None]:
-        """Get adjacent context for a chunk (for summarization)."""
+        """Get adjacent context for a chunk (for summarization).
+
+        Returns full adjacent chunk text. Context trimming (if needed) is handled
+        by the caller via contextual indexing's retrieve_for_context().
+        """
         prev_context = None
         next_context = None
 
         if chunk_index > 0 and chunks[chunk_index - 1]:
-            prev_text = chunks[chunk_index - 1]
-            prev_tokens = self.tokenizer.encode(prev_text)
-            if len(prev_tokens) > self.config.preceding_context_tokens:
-                # Take last N tokens
-                context_tokens = prev_tokens[-self.config.preceding_context_tokens :]
-                prev_context = self.tokenizer.decode(context_tokens)
-            else:
-                prev_context = prev_text
+            prev_context = chunks[chunk_index - 1]
 
         if chunk_index < len(chunks) - 1 and chunks[chunk_index + 1]:
-            next_text = chunks[chunk_index + 1]
-            next_tokens = self.tokenizer.encode(next_text)
-            if len(next_tokens) > self.config.preceding_context_tokens:
-                # Take first N tokens
-                context_tokens = next_tokens[: self.config.preceding_context_tokens]
-                next_context = self.tokenizer.decode(context_tokens)
-            else:
-                next_context = next_text
+            next_context = chunks[chunk_index + 1]
 
         return prev_context, next_context

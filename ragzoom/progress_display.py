@@ -15,7 +15,6 @@ from ragzoom.progress import get_progress_config
 class DocumentProgressTotals:
     """Aggregated progress numbers for a single document."""
 
-    pending: int
     inflight: int
     completed: int
     total: int
@@ -24,19 +23,29 @@ class DocumentProgressTotals:
     def from_status_dicts(
         cls,
         doc_id: str,
-        pending_by_document: Mapping[str, int],
         inflight_by_document: Mapping[str, int],
         completed_by_document: Mapping[str, int],
+        expected_total_by_document: Mapping[str, int],
     ) -> DocumentProgressTotals:
-        """Create progress totals from status dictionaries for a given document."""
-        pending = pending_by_document.get(doc_id, 0)
+        """Create progress totals from status dictionaries for a given document.
+
+        Args:
+            doc_id: Document identifier
+            inflight_by_document: In-flight jobs per document
+            completed_by_document: Completed jobs per document
+            expected_total_by_document: Pre-calculated expected total per document.
+        """
         inflight = inflight_by_document.get(doc_id, 0)
         completed = completed_by_document.get(doc_id, 0)
+        total = expected_total_by_document.get(doc_id, 0)
+        # Ensure total is at least as large as completed (handles edge cases)
+        if total < completed:
+            total = completed
+
         return cls(
-            pending=pending,
             inflight=inflight,
             completed=completed,
-            total=pending + inflight + completed,
+            total=total,
         )
 
 
@@ -154,7 +163,7 @@ class WorkerProgressDisplay:
             progress = self._last_documents.get(doc_id)
             if progress is None:
                 return False
-            if progress.pending > 0 or progress.inflight > 0:
+            if progress.inflight > 0:
                 return False
         return True
 
@@ -179,7 +188,7 @@ class WorkerProgressDisplay:
             progress = documents[doc_id]
             total = max(
                 progress.total,
-                progress.completed + progress.pending + progress.inflight,
+                progress.completed + progress.inflight,
             )
             if total <= 0:
                 total = 1
@@ -198,6 +207,7 @@ class WorkerProgressDisplay:
                     leave=False,
                     dynamic_ncols=True,
                     miniters=1,
+                    smoothing=0.05,
                 )
                 self._bars[doc_id] = bar
             else:
@@ -220,18 +230,14 @@ class WorkerProgressDisplay:
                 if callable(update):
                     update(completed - current_n)
 
-            postfix = f"pending={progress.pending} inflight={progress.inflight}"
+            postfix = f"inflight={progress.inflight}"
             set_postfix = getattr(bar, "set_postfix_str", None)
             if callable(set_postfix):
                 set_postfix(postfix)
 
             active_docs.add(doc_id)
 
-            if (
-                progress.pending == 0
-                and progress.inflight == 0
-                and completed >= getattr(bar, "total", completed)
-            ):
+            if progress.inflight == 0 and completed >= getattr(bar, "total", completed):
                 completed_docs.append(doc_id)
 
         for doc_id in completed_docs:
@@ -270,7 +276,6 @@ class WorkerProgressDisplay:
                         _format_progress_line(
                             doc_id,
                             progress,
-                            queue_depth=self._last_queue_depth,
                             inflight_total=self._last_inflight,
                         )
                     )
@@ -284,7 +289,6 @@ class WorkerProgressDisplay:
                     _format_progress_line(
                         doc_id,
                         progress,
-                        queue_depth=self._last_queue_depth,
                         inflight_total=self._last_inflight,
                     )
                 )
@@ -294,13 +298,10 @@ def _format_progress_line(
     doc_id: str,
     progress: DocumentProgressTotals,
     *,
-    queue_depth: int,
     inflight_total: int,
 ) -> str:
     total = (
-        progress.total
-        if progress.total > 0
-        else progress.completed + progress.pending + progress.inflight
+        progress.total if progress.total > 0 else progress.completed + progress.inflight
     )
     if total <= 0:
         total_str = "?"
@@ -308,6 +309,5 @@ def _format_progress_line(
         total_str = str(total)
     return (
         f"{doc_id}: completed={progress.completed}/{total_str} "
-        f"pending={progress.pending} inflight={progress.inflight} "
-        f"(queue={queue_depth}, workers={inflight_total})"
+        f"inflight={progress.inflight} (workers={inflight_total})"
     )
