@@ -178,3 +178,120 @@ def _get_ancestors(uuid: str, parent_map: dict[str, str | None]) -> set[str]:
         ancestors.add(current)
         current = parent_map.get(current)
     return ancestors
+
+
+def get_ancestor_chain(
+    target: str, ancestor: str | None, parent_map: dict[str, str | None]
+) -> list[str]:
+    """Get ordered chain from ancestor to target (exclusive of ancestor).
+
+    Args:
+        target: The endpoint uuid
+        ancestor: The starting point uuid (exclusive), or None for root
+        parent_map: uuid -> parentUuid mapping
+
+    Returns:
+        List of uuids from ancestor's child to target, in forward order.
+        Empty list if target == ancestor.
+
+    Raises:
+        ValueError: If ancestor is not actually an ancestor of target
+    """
+    if target == ancestor:
+        return []
+
+    # Walk backwards from target to ancestor, collecting the chain
+    chain: list[str] = []
+    current: str | None = target
+
+    while current is not None and current != ancestor:
+        chain.append(current)
+        current = parent_map.get(current)
+
+    # If ancestor is not None but we hit None without finding it, it's not an ancestor
+    if ancestor is not None and current != ancestor:
+        raise ValueError(f"{ancestor!r} is not an ancestor of {target!r}")
+
+    # Reverse to get forward order (ancestor's child first, target last)
+    chain.reverse()
+    return chain
+
+
+@dataclass
+class SyncPlan:
+    """Plan for syncing a transcript to the indexed document."""
+
+    uuids_to_transcribe: list[str]
+    """UUIDs to transcribe and append, in order."""
+
+    truncate_to_span: int | None
+    """If set, truncate document to this span before appending."""
+
+    truncate_to_uuid: str | None
+    """UUID of the valid prefix entry (for truncating append log)."""
+
+
+def compute_sync_plan(
+    current_head: str,
+    append_log: AppendLog,
+    parent_map: dict[str, str | None],
+) -> SyncPlan:
+    """Compute what operations are needed to sync transcript to document.
+
+    Args:
+        current_head: UUID of the current transcript head
+        append_log: The append log tracking what we've indexed
+        parent_map: uuid -> parentUuid mapping from transcript
+
+    Returns:
+        SyncPlan describing truncation and transcription needed
+    """
+    last_entry = append_log.last_entry()
+
+    # Empty append log: transcribe entire ancestor chain from root
+    if last_entry is None:
+        chain = get_ancestor_chain(current_head, None, parent_map)
+        return SyncPlan(
+            uuids_to_transcribe=chain,
+            truncate_to_span=None,
+            truncate_to_uuid=None,
+        )
+
+    # Already synced: nothing to do
+    if last_entry.last_uuid == current_head:
+        return SyncPlan(
+            uuids_to_transcribe=[],
+            truncate_to_span=None,
+            truncate_to_uuid=None,
+        )
+
+    # Find valid prefix (handles revert detection)
+    valid_prefix = append_log.find_valid_prefix(current_head, parent_map)
+
+    if valid_prefix is None:
+        # Disjoint branches: truncate everything and start fresh
+        chain = get_ancestor_chain(current_head, None, parent_map)
+        return SyncPlan(
+            uuids_to_transcribe=chain,
+            truncate_to_span=0,
+            truncate_to_uuid=None,
+        )
+
+    # Get chain from valid prefix to current head
+    chain = get_ancestor_chain(current_head, valid_prefix.last_uuid, parent_map)
+
+    # Determine if truncation is needed
+    if valid_prefix.last_uuid == last_entry.last_uuid:
+        # No revert, just append new messages
+        return SyncPlan(
+            uuids_to_transcribe=chain,
+            truncate_to_span=None,
+            truncate_to_uuid=None,
+        )
+    else:
+        # Revert happened: truncate to valid prefix
+        return SyncPlan(
+            uuids_to_transcribe=chain,
+            truncate_to_span=valid_prefix.span_end,
+            truncate_to_uuid=valid_prefix.last_uuid,
+        )

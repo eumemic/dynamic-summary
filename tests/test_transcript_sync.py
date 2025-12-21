@@ -389,3 +389,208 @@ class TestAppendLog:
         # None means: no valid prefix, caller should transcribe ancestor chain
         # from root (alt1) to current head (alt2), and truncate entire document
         assert log.find_valid_prefix("alt2", parent_map) is None
+
+
+class TestGetAncestorChain:
+    """Tests for getting ordered ancestor chain between two nodes."""
+
+    def test_gets_chain_exclusive_of_ancestor(self) -> None:
+        """Should return chain from ancestor to target, exclusive of ancestor."""
+        from ragzoom.transcript_sync import get_ancestor_chain
+
+        # msg1 -> msg2 -> msg3 -> msg4
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+            "msg4": "msg3",
+        }
+
+        # Get chain from msg1 to msg4 (exclusive of msg1)
+        chain = get_ancestor_chain("msg4", "msg1", parent_map)
+
+        assert chain == ["msg2", "msg3", "msg4"]
+
+    def test_gets_chain_to_root(self) -> None:
+        """When ancestor is None, returns full chain from root."""
+        from ragzoom.transcript_sync import get_ancestor_chain
+
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+        }
+
+        chain = get_ancestor_chain("msg3", None, parent_map)
+
+        assert chain == ["msg1", "msg2", "msg3"]
+
+    def test_immediate_child(self) -> None:
+        """Chain from parent to child is just the child."""
+        from ragzoom.transcript_sync import get_ancestor_chain
+
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+        }
+
+        chain = get_ancestor_chain("msg2", "msg1", parent_map)
+
+        assert chain == ["msg2"]
+
+    def test_same_node_returns_empty(self) -> None:
+        """When target equals ancestor, returns empty list."""
+        from ragzoom.transcript_sync import get_ancestor_chain
+
+        parent_map: dict[str, str | None] = {"msg1": None, "msg2": "msg1"}
+
+        chain = get_ancestor_chain("msg2", "msg2", parent_map)
+
+        assert chain == []
+
+    def test_raises_if_ancestor_not_in_chain(self) -> None:
+        """Should raise if claimed ancestor isn't actually an ancestor."""
+        from ragzoom.transcript_sync import get_ancestor_chain
+
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "other": None,
+        }
+
+        with pytest.raises(ValueError, match="not an ancestor"):
+            get_ancestor_chain("msg2", "other", parent_map)
+
+
+class TestComputeSyncPlan:
+    """Tests for computing what sync operations are needed."""
+
+    def test_no_op_when_already_synced(self, tmp_path: Path) -> None:
+        """When transcript head matches last indexed, nothing to do."""
+        from ragzoom.transcript_sync import AppendEntry, AppendLog, compute_sync_plan
+
+        log_path = tmp_path / "append.log"
+        log = AppendLog(log_path)
+        log.append(AppendEntry("msg3", 300))
+
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+        }
+
+        plan = compute_sync_plan(
+            current_head="msg3",
+            append_log=log,
+            parent_map=parent_map,
+        )
+
+        assert plan.uuids_to_transcribe == []
+        assert plan.truncate_to_span is None
+
+    def test_append_new_messages(self, tmp_path: Path) -> None:
+        """When new messages added, transcribe them."""
+        from ragzoom.transcript_sync import AppendEntry, AppendLog, compute_sync_plan
+
+        log_path = tmp_path / "append.log"
+        log = AppendLog(log_path)
+        log.append(AppendEntry("msg2", 200))
+
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+            "msg4": "msg3",
+        }
+
+        plan = compute_sync_plan(
+            current_head="msg4",
+            append_log=log,
+            parent_map=parent_map,
+        )
+
+        assert plan.uuids_to_transcribe == ["msg3", "msg4"]
+        assert plan.truncate_to_span is None
+
+    def test_revert_and_new_branch(self, tmp_path: Path) -> None:
+        """When user reverted and continued, truncate and re-transcribe."""
+        from ragzoom.transcript_sync import AppendEntry, AppendLog, compute_sync_plan
+
+        log_path = tmp_path / "append.log"
+        log = AppendLog(log_path)
+        log.append(AppendEntry("msg1", 100))
+        log.append(AppendEntry("msg2", 200))
+        log.append(AppendEntry("msg3", 300))
+        log.append(AppendEntry("msg4", 400))
+
+        # msg1 -> msg2 -> msg3 -> msg4 (indexed)
+        #              \-> msg3' -> msg4' (current)
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+            "msg4": "msg3",
+            "msg3-alt": "msg2",
+            "msg4-alt": "msg3-alt",
+        }
+
+        plan = compute_sync_plan(
+            current_head="msg4-alt",
+            append_log=log,
+            parent_map=parent_map,
+        )
+
+        # Should truncate to msg2's span_end and transcribe the new branch
+        assert plan.truncate_to_span == 200
+        assert plan.truncate_to_uuid == "msg2"
+        assert plan.uuids_to_transcribe == ["msg3-alt", "msg4-alt"]
+
+    def test_empty_log_transcribes_full_chain(self, tmp_path: Path) -> None:
+        """When append log is empty, transcribe from root."""
+        from ragzoom.transcript_sync import AppendLog, compute_sync_plan
+
+        log_path = tmp_path / "append.log"
+        log = AppendLog(log_path)
+
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+        }
+
+        plan = compute_sync_plan(
+            current_head="msg3",
+            append_log=log,
+            parent_map=parent_map,
+        )
+
+        assert plan.uuids_to_transcribe == ["msg1", "msg2", "msg3"]
+        assert plan.truncate_to_span is None
+
+    def test_disjoint_branches_truncates_all(self, tmp_path: Path) -> None:
+        """When branches are disjoint, truncate everything and start fresh."""
+        from ragzoom.transcript_sync import AppendEntry, AppendLog, compute_sync_plan
+
+        log_path = tmp_path / "append.log"
+        log = AppendLog(log_path)
+        log.append(AppendEntry("msg1", 100))
+        log.append(AppendEntry("msg2", 200))
+
+        # Completely separate conversation tree
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "alt1": None,
+            "alt2": "alt1",
+        }
+
+        plan = compute_sync_plan(
+            current_head="alt2",
+            append_log=log,
+            parent_map=parent_map,
+        )
+
+        # Should truncate from span 0 (delete everything) and transcribe new chain
+        assert plan.truncate_to_span == 0
+        assert plan.truncate_to_uuid is None
+        assert plan.uuids_to_transcribe == ["alt1", "alt2"]
