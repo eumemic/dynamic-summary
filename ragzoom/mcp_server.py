@@ -140,8 +140,10 @@ def remember(
     # Default span_end to compaction boundary (pre-compaction only)
     if span_end is None:
         state = _load_state(doc_id)
-        if state.compaction_span_end is not None:
-            span_end = state.compaction_span_end
+        if state.compaction_span_end is None:
+            # No compaction yet - nothing to remember (all content is in context)
+            return "No pre-compaction history available yet. All conversation content is still in your context."
+        span_end = state.compaction_span_end
 
     # Query RagZoom via gRPC
     server_address = os.environ.get("RAGZOOM_SERVER_ADDRESS", "localhost:50051")
