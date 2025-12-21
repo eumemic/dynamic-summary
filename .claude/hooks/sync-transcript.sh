@@ -4,6 +4,10 @@
 # Input: JSON on stdin with session info including transcript_path
 # Output: Silent on success (sync runs in background)
 
+# DISABLED: Current implementation too slow for hook timeout
+# TODO: Re-enable after implementing fast line-by-line parsing
+exit 0
+
 set -euo pipefail
 
 # Read JSON input from stdin
