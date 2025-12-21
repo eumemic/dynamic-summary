@@ -174,6 +174,42 @@ class DocumentRepository(BaseRepository):
 
             return deleted_count
 
+    def delete_nodes_from_span(
+        self, document_id: str, span_start: int, *, session: Optional["Session"] = None
+    ) -> list[str]:
+        """Delete all nodes where span_start >= given position.
+
+        Used for truncating a document after a conversation revert.
+
+        Args:
+            document_id: Document identifier
+            span_start: Delete all nodes where node.span_start >= this value
+            session: Optional session for transaction support
+
+        Returns:
+            List of deleted node IDs (for vector index cleanup)
+        """
+        with self._session_scope(session) as db_session:
+            from sqlalchemy import text
+
+            # Delete nodes with span_start >= given position
+            # RETURNING gives us the IDs for cache/vector cleanup
+            result = db_session.execute(
+                text(
+                    "DELETE FROM tree_nodes "
+                    "WHERE document_id = :document_id AND span_start >= :span_start "
+                    "RETURNING id"
+                ),
+                {"document_id": document_id, "span_start": span_start},
+            )
+
+            deleted_node_ids = [str(row[0]) for row in result]
+
+            if deleted_node_ids:
+                self.cache_manager.remove_batch(deleted_node_ids)
+
+            return deleted_node_ids
+
     def get_document_token_stats(self, document_id: str) -> dict[str, float | int]:
         """Get token statistics for a document using efficient SQL aggregation.
 

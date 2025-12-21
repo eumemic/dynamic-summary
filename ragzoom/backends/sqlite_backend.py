@@ -157,8 +157,12 @@ class SQLiteStorageBackend(StorageBackend):
         )
         return self.for_document(document_id)
 
+    # jscpd:ignore-start - StorageBackend protocol delegation (matches postgres_backend.py)
     def clear_document(self, document_id: str) -> int:
         return self.doc_repo.clear_document(document_id)
+
+    def delete_nodes_from_span(self, document_id: str, span_start: int) -> list[str]:
+        return self.node_repo.delete_nodes_from_span(document_id, span_start)
 
     def get_document_by_id(self, document_id: str) -> Document | None:
         row = self.doc_repo.get_document_by_id(document_id)
@@ -167,6 +171,8 @@ class SQLiteStorageBackend(StorageBackend):
     def get_document_by_path(self, file_path: str) -> Document | None:
         row = self.doc_repo.get_document_by_path(file_path)
         return row  # type: ignore[return-value]
+
+    # jscpd:ignore-end
 
     def close(self) -> None:
         self.db.close()
