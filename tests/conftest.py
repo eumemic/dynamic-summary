@@ -20,7 +20,11 @@ from ragzoom.contracts.storage_backend import StorageBackend as _StorageBackendP
 from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.db_utils import create_temp_database, get_temp_db_name
 from ragzoom.document_store import DocumentStore
-from ragzoom.indexing.runtime import ClearedDocumentResult, IndexerRuntime
+from ragzoom.indexing.runtime import (
+    ClearedDocumentResult,
+    IndexerRuntime,
+    TruncateResult,
+)
 from ragzoom.progress import configure_progress, get_progress_config
 from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
 from ragzoom.server.append_executor import AppendExecutor
@@ -111,6 +115,12 @@ class IndexerRuntimeHarness:
     async def clear(self, document_id: str) -> ClearedDocumentResult:
         session = self.runtime.get_session(document_id)
         result = await session.clear()
+        await self.indexing_engine.wait_until_idle(document_id)
+        return result
+
+    async def truncate(self, document_id: str, span_start: int) -> TruncateResult:
+        session = self.runtime.get_session(document_id)
+        result = await session.truncate_from_span(span_start)
         await self.indexing_engine.wait_until_idle(document_id)
         return result
 

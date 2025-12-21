@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.indexing import TruncateResult
+from tests.conftest import IndexerRuntimeHarness
 
 
 class TestDeleteNodesFromSpan:
@@ -250,3 +254,113 @@ class TestDeleteNodesFromSpan:
         # doc2's node should still exist
         doc2_store = storage_backend.for_document(doc2_id)
         assert doc2_store.nodes.get_node(f"{doc2_id}-node") is not None
+
+
+class TestRuntimeTruncate:
+    """Tests for DocumentIndexSession.truncate_from_span."""
+
+    @pytest.mark.asyncio
+    async def test_truncate_deletes_nodes_and_returns_result(
+        self,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+        storage_backend: StorageBackend,
+    ) -> None:
+        """Truncate should delete nodes and return TruncateResult."""
+        doc_id = "test-runtime-truncate"
+
+        # Index a document
+        await indexer_runtime_harness.append(
+            doc_id,
+            "First part. " * 20 + "\n\n" + "Second part. " * 20,
+            replace_existing=True,
+            await_idle=True,
+        )
+
+        doc_store = storage_backend.for_document(doc_id)
+        leaves_before = list(doc_store.nodes.get_leaves())
+        assert len(leaves_before) >= 2, "Need at least 2 leaves for meaningful test"
+
+        # Find a span_start in the middle
+        leaves_sorted = sorted(leaves_before, key=lambda n: n.span_start)
+        mid_leaf = leaves_sorted[len(leaves_sorted) // 2]
+        truncate_point = mid_leaf.span_start
+
+        # Truncate from the midpoint
+        result = await indexer_runtime_harness.truncate(doc_id, truncate_point)
+
+        assert isinstance(result, TruncateResult)
+        assert result.document_id == doc_id
+        assert result.span_start == truncate_point
+        assert len(result.deleted_node_ids) > 0
+
+        # Verify nodes were actually deleted
+        leaves_after = list(doc_store.nodes.get_leaves())
+        assert len(leaves_after) < len(leaves_before)
+
+        # All remaining leaves should have span_start < truncate_point
+        for leaf in leaves_after:
+            assert leaf.span_start < truncate_point
+
+    @pytest.mark.asyncio
+    async def test_truncate_returns_empty_when_nothing_to_delete(
+        self,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+        storage_backend: StorageBackend,
+    ) -> None:
+        """Truncate past all nodes should return empty list."""
+        doc_id = "test-truncate-empty"
+
+        await indexer_runtime_harness.append(
+            doc_id,
+            "Short content.",
+            replace_existing=True,
+            await_idle=True,
+        )
+
+        doc_store = storage_backend.for_document(doc_id)
+        leaves = list(doc_store.nodes.get_leaves())
+        max_span_end = max(leaf.span_end for leaf in leaves)
+
+        # Truncate beyond all content
+        result = await indexer_runtime_harness.truncate(doc_id, max_span_end + 1000)
+
+        assert result.deleted_node_ids == []
+        # Original nodes should still exist
+        assert len(list(doc_store.nodes.get_leaves())) == len(leaves)
+
+    @pytest.mark.asyncio
+    async def test_truncate_from_zero_deletes_all(
+        self,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+        storage_backend: StorageBackend,
+    ) -> None:
+        """Truncate from span 0 should delete all nodes."""
+        doc_id = "test-truncate-all"
+
+        await indexer_runtime_harness.append(
+            doc_id,
+            "Some content here.",
+            replace_existing=True,
+            await_idle=True,
+        )
+
+        doc_store = storage_backend.for_document(doc_id)
+        leaves_before = list(doc_store.nodes.get_leaves())
+        assert len(leaves_before) > 0
+
+        result = await indexer_runtime_harness.truncate(doc_id, span_start=0)
+
+        assert len(result.deleted_node_ids) > 0
+        assert list(doc_store.nodes.get_leaves()) == []
+
+    @pytest.mark.asyncio
+    async def test_truncate_nonexistent_document(
+        self,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        """Truncate on nonexistent document should return empty result."""
+        result = await indexer_runtime_harness.truncate("nonexistent-doc", span_start=0)
+
+        assert result.deleted_node_ids == []
+        assert result.document_id == "nonexistent-doc"
+        assert result.span_start == 0
