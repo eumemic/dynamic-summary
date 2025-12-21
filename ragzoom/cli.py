@@ -2131,5 +2131,26 @@ def sync_claude_code_transcript(
         handle_cli_error(e, "syncing Claude Code transcript")
 
 
+@cli.command("set-session-pid")
+@click.argument("session_id")
+@click.argument("pid", type=int)
+def set_session_pid_cmd(session_id: str, pid: int) -> None:
+    """Register a Claude Code session's PID for MCP server lookup.
+
+    Called by SessionStart hook to associate the session with its process.
+    Creates the state file if it doesn't exist, preserving other fields if it does.
+
+    Example:
+      ragzoom set-session-pid e0d9b972-3bad-472f-a570-a4e02d0a1ff4 12345
+    """
+    from ragzoom.claude_transcript import set_session_pid
+
+    try:
+        set_session_pid(session_id, pid)
+        click.echo(f"✅ Registered PID {pid} for session '{session_id}'")
+    except Exception as e:
+        handle_cli_error(e, "setting session PID")
+
+
 if __name__ == "__main__":
     cli()

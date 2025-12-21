@@ -40,6 +40,9 @@ class SyncState:
     compaction_span_end: int | None = None
     """Span position where last compaction occurred (for pre-compaction queries)."""
 
+    last_pid: int | None = None
+    """PID of the Claude Code process that last synced this transcript."""
+
 
 # Patterns for system noise in user messages
 _CAVEAT_PATTERN = re.compile(
@@ -235,10 +238,11 @@ def _load_state(doc_id: str) -> SyncState:
     state_path = _get_state_path(doc_id)
     if state_path.exists():
         data = json.loads(state_path.read_text())
-        if isinstance(data, dict) and "byte_offset" in data:
+        if isinstance(data, dict):
             return SyncState(
-                byte_offset=int(data["byte_offset"]),
+                byte_offset=int(data.get("byte_offset", 0)),
                 compaction_span_end=data.get("compaction_span_end"),
+                last_pid=data.get("last_pid"),
             )
     return SyncState(byte_offset=0)
 
@@ -246,10 +250,23 @@ def _load_state(doc_id: str) -> SyncState:
 def _save_state(doc_id: str, state: SyncState) -> None:
     """Save sync state for a document."""
     state_path = _get_state_path(doc_id)
-    data = {"byte_offset": state.byte_offset}
+    data: dict[str, int] = {"byte_offset": state.byte_offset}
     if state.compaction_span_end is not None:
         data["compaction_span_end"] = state.compaction_span_end
+    if state.last_pid is not None:
+        data["last_pid"] = state.last_pid
     state_path.write_text(json.dumps(data))
+
+
+def set_session_pid(doc_id: str, pid: int) -> None:
+    """Set the PID for a session, creating state file if needed.
+
+    Called by SessionStart hook to register the Claude Code PID before
+    any tool calls. Preserves existing state fields if the file exists.
+    """
+    state = _load_state(doc_id)
+    state.last_pid = pid
+    _save_state(doc_id, state)
 
 
 def transcribe_incremental(
@@ -339,6 +356,9 @@ def sync_transcript(jsonl_path: Path, doc_id: str, client: RagZoom) -> int:
     Incrementally transcribes new records and appends them to the document.
     Handles document deletion by resetting state and starting fresh.
     Tracks compaction boundaries for pre-compaction queries.
+
+    Note: The session PID should be set separately via set_session_pid()
+    during SessionStart, before this function is called.
 
     Args:
         jsonl_path: Path to the JSONL log file.

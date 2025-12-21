@@ -21,6 +21,16 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$(git rev-parse --show-toplevel)/.claude/hooks/session-start.sh"
+          }
+        ]
+      }
     ]
   }
 }
