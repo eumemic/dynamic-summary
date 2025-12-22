@@ -568,11 +568,78 @@ def transcribe_uuid_from_map(
     return chunk if chunk else ""
 
 
+def _is_tool_only_assistant(record: dict[str, object]) -> bool:
+    """Check if record is an assistant message with only tool use (no text)."""
+    if record.get("type") != "assistant":
+        return False
+    text, tools = _extract_assistant_content(record)
+    return bool(tools) and not text.strip()
+
+
+def _format_tool_batch(tools: list[str]) -> str:
+    """Format a batch of tools into a single message."""
+    count = len(tools)
+    tools_str = ", ".join(tools)
+    return f"[Used {count} tool{'s' if count > 1 else ''}: {tools_str}]"
+
+
+def transcribe_uuids_from_map(
+    uuids: list[str],
+    records_by_uuid: dict[str, dict[str, object]],
+) -> str:
+    """Transcribe UUIDs using a pre-built records map with tool batching.
+
+    Consecutive tool-only assistant messages are batched into a single
+    "[Used N tools: ...]" line.
+
+    Args:
+        uuids: UUIDs to transcribe, in order
+        records_by_uuid: Pre-built UUID -> record lookup
+
+    Returns:
+        Concatenated transcript text
+    """
+    if not uuids:
+        return ""
+
+    chunks: list[str] = []
+    pending_tools: list[str] = []
+
+    for uuid in uuids:
+        record = records_by_uuid.get(uuid)
+        if record is None:
+            continue
+
+        # Skip tool results
+        if record.get("type") == "user" and "toolUseResult" in record:
+            continue
+
+        if _is_tool_only_assistant(record):
+            _, tools = _extract_assistant_content(record)
+            pending_tools.extend(tools)
+        else:
+            if pending_tools:
+                chunks.append(_format_tool_batch(pending_tools))
+                pending_tools = []
+
+            chunk = _transcribe_record(record)
+            if chunk:
+                chunks.append(chunk)
+
+    if pending_tools:
+        chunks.append(_format_tool_batch(pending_tools))
+
+    return "\n\n".join(chunks)
+
+
 def transcribe_uuids(
     transcript_path: Path,
     uuids: list[str],
 ) -> str:
     """Transcribe specific messages by UUID into readable text.
+
+    Consecutive tool-only assistant messages are batched into a single
+    "[Used N tools: ...]" line.
 
     Args:
         transcript_path: Path to the JSONL transcript
@@ -586,12 +653,37 @@ def transcribe_uuids(
 
     records_by_uuid = build_records_map(transcript_path, set(uuids))
 
-    # Transcribe in order
+    # Transcribe with tool batching
     chunks: list[str] = []
+    pending_tools: list[str] = []  # Accumulate consecutive tool-only messages
+
     for uuid in uuids:
-        chunk = transcribe_uuid_from_map(uuid, records_by_uuid)
-        if chunk:
-            chunks.append(chunk)
+        record = records_by_uuid.get(uuid)
+        if record is None:
+            continue
+
+        # Skip tool results
+        if record.get("type") == "user" and "toolUseResult" in record:
+            continue
+
+        if _is_tool_only_assistant(record):
+            # Accumulate tools from tool-only messages
+            _, tools = _extract_assistant_content(record)
+            pending_tools.extend(tools)
+        else:
+            # Flush any pending tools before this message
+            if pending_tools:
+                chunks.append(_format_tool_batch(pending_tools))
+                pending_tools = []
+
+            # Transcribe this record
+            chunk = _transcribe_record(record)
+            if chunk:
+                chunks.append(chunk)
+
+    # Flush remaining pending tools
+    if pending_tools:
+        chunks.append(_format_tool_batch(pending_tools))
 
     return "\n\n".join(chunks)
 
@@ -609,12 +701,16 @@ def _transcribe_record(record: dict[str, object]) -> str | None:
             return f"[USER]\n{text}"
 
     elif record_type == "assistant":
-        text, tool_count = _extract_assistant_content(record)
+        text, tools = _extract_assistant_content(record)
         parts: list[str] = []
         if text.strip():
             parts.append(f"[ASSISTANT]\n{text}")
-        if tool_count > 0:
-            parts.append(f"[Used {tool_count} tool{'s' if tool_count > 1 else ''}]")
+        if tools:
+            tool_count = len(tools)
+            tools_str = ", ".join(tools)
+            parts.append(
+                f"[Used {tool_count} tool{'s' if tool_count > 1 else ''}: {tools_str}]"
+            )
         if parts:
             return "\n\n".join(parts)
 
@@ -662,18 +758,70 @@ def _extract_user_text(record: dict[str, object]) -> str:
     return _clean_user_text(str(content))
 
 
-def _extract_assistant_content(record: dict[str, object]) -> tuple[str, int]:
-    """Extract text and tool count from an assistant message."""
+def _format_tool_summary(name: str, input_data: dict[str, object]) -> str:
+    """Format a tool invocation as Name(summary)."""
+    # Extract a brief summary based on tool type
+    summary = ""
+    if name == "Bash":
+        cmd = input_data.get("command", "")
+        if isinstance(cmd, str):
+            # Truncate long commands
+            summary = cmd[:40] + "..." if len(cmd) > 43 else cmd
+    elif name == "Read":
+        path = input_data.get("file_path", "")
+        if isinstance(path, str):
+            summary = path
+    elif name == "Grep":
+        pattern = input_data.get("pattern", "")
+        if isinstance(pattern, str):
+            summary = pattern[:30] + "..." if len(pattern) > 33 else pattern
+    elif name == "Glob":
+        pattern = input_data.get("pattern", "")
+        if isinstance(pattern, str):
+            summary = pattern
+    elif name == "Edit":
+        path = input_data.get("file_path", "")
+        if isinstance(path, str):
+            summary = path
+    elif name == "Write":
+        path = input_data.get("file_path", "")
+        if isinstance(path, str):
+            summary = path
+    elif name == "Task":
+        desc = input_data.get("description", "")
+        if isinstance(desc, str):
+            summary = desc
+    else:
+        # For other tools, try common input keys
+        for key in ("query", "url", "path", "file_path", "pattern"):
+            val = input_data.get(key, "")
+            if isinstance(val, str) and val:
+                summary = val[:30] + "..." if len(val) > 33 else val
+                break
+
+    if summary:
+        return f"{name}({summary})"
+    return name
+
+
+def _extract_assistant_content(
+    record: dict[str, object],
+) -> tuple[str, list[str]]:
+    """Extract text and tool summaries from an assistant message.
+
+    Returns:
+        Tuple of (text content, list of tool summaries like "Bash(git status)")
+    """
     message = record.get("message", {})
     if not isinstance(message, dict):
-        return str(message), 0
+        return str(message), []
 
     content = message.get("content", [])
     if not isinstance(content, list):
-        return str(content), 0
+        return str(content), []
 
     texts: list[str] = []
-    tool_count = 0
+    tools: list[str] = []
 
     for block in content:
         if not isinstance(block, dict):
@@ -685,9 +833,15 @@ def _extract_assistant_content(record: dict[str, object]) -> tuple[str, int]:
             if isinstance(text, str) and text.strip():
                 texts.append(text)
         elif block_type == "tool_use":
-            tool_count += 1
+            name = block.get("name", "unknown")
+            if not isinstance(name, str):
+                name = "unknown"
+            input_data = block.get("input", {})
+            if not isinstance(input_data, dict):
+                input_data = {}
+            tools.append(_format_tool_summary(name, input_data))
 
-    return "\n\n".join(texts), tool_count
+    return "\n\n".join(texts), tools
 
 
 # jscpd:ignore-end
@@ -814,33 +968,36 @@ def execute_sync(
 
         # Append each segment
         for segment_uuids in segments:
-            text_parts: list[str] = []
-            segment_appended_uuids: list[str] = []
+            # Use batching transcription for tool consolidation
+            combined_text = transcribe_uuids_from_map(segment_uuids, records_by_uuid)
 
-            for uuid in segment_uuids:
-                text = transcribe_uuid_from_map(uuid, records_by_uuid)
-                if text:
-                    text_parts.append(text)
-                    segment_appended_uuids.append(uuid)
-
-            if text_parts:
-                # Join with double newlines for readability
-                combined_text = "\n\n".join(text_parts)
+            if combined_text:
                 result = append_method(document_id, combined_text)
-
-                # Use the actual span_end from the append result
-                current_span_end = getattr(result, "span_end", 0)
-
-                # Record entry for this segment with last UUID
-                append_log.append(
-                    AppendEntry(
-                        last_uuid=segment_appended_uuids[-1],
-                        span_end=current_span_end,
+                # Track the last uuid that produced content
+                segment_appended_uuids = [
+                    u
+                    for u in segment_uuids
+                    if u in records_by_uuid
+                    and not (
+                        records_by_uuid[u].get("type") == "user"
+                        and "toolUseResult" in records_by_uuid[u]
                     )
-                )
+                ]
 
-                appended_uuids.extend(segment_appended_uuids)
-                new_span_end = current_span_end
+                if segment_appended_uuids:
+                    # Use the actual span_end from the append result
+                    current_span_end = getattr(result, "span_end", 0)
+
+                    # Record entry for this segment with last UUID
+                    append_log.append(
+                        AppendEntry(
+                            last_uuid=segment_appended_uuids[-1],
+                            span_end=current_span_end,
+                        )
+                    )
+
+                    appended_uuids.extend(segment_appended_uuids)
+                    new_span_end = current_span_end
 
         if not appended_uuids:
             last_entry = append_log.last_entry()

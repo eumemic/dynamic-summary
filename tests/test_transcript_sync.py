@@ -779,7 +779,7 @@ class TestTranscribeUuids:
 
         text = transcribe_uuids(jsonl, ["msg1"])
         assert "[ASSISTANT]\nHere's my response" in text
-        assert "[Used 2 tools]" in text
+        assert "[Used 2 tools: read, write]" in text
 
     def test_transcribes_multiple_in_order(self, tmp_path: Path) -> None:
         """Should transcribe multiple UUIDs in specified order."""

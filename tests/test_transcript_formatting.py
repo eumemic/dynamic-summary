@@ -371,3 +371,327 @@ class TestCompactionSegmentBatching:
         # Second segment's span_end should be cumulative
         second_text = client.appends[1][1]
         assert state.entries[1].span_end == len(first_text) + len(second_text)
+
+
+class TestToolUsageBatching:
+    """Tests for batching consecutive tool usage messages."""
+
+    def test_tool_only_with_text_between_not_batched(self, tmp_path: Path) -> None:
+        """Tool-only messages separated by text messages should not batch."""
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        # This mirrors real transcript pattern: tool, result, text, tool, result
+        transcript_path.write_text(
+            "\n".join(
+                [
+                    # First tool use
+                    json.dumps(
+                        {
+                            "uuid": "msg1",
+                            "parentUuid": None,
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "name": "Bash",
+                                        "input": {"command": "git status"},
+                                    },
+                                ]
+                            },
+                        }
+                    ),
+                    # Tool result
+                    json.dumps(
+                        {
+                            "uuid": "msg2",
+                            "parentUuid": "msg1",
+                            "type": "user",
+                            "toolUseResult": "output",
+                            "message": {"content": "..."},
+                        }
+                    ),
+                    # Text response (breaks the chain)
+                    json.dumps(
+                        {
+                            "uuid": "msg3",
+                            "parentUuid": "msg2",
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {"type": "text", "text": "The status shows..."},
+                                ]
+                            },
+                        }
+                    ),
+                    # Second tool use
+                    json.dumps(
+                        {
+                            "uuid": "msg4",
+                            "parentUuid": "msg3",
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "name": "Read",
+                                        "input": {"file_path": "README.md"},
+                                    },
+                                ]
+                            },
+                        }
+                    ),
+                    # Tool result
+                    json.dumps(
+                        {
+                            "uuid": "msg5",
+                            "parentUuid": "msg4",
+                            "type": "user",
+                            "toolUseResult": "content",
+                            "message": {"content": "..."},
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        client = FakeClient()
+        execute_sync(transcript_path, state_path, client)
+
+        text = client.appends[0][1]
+
+        # Should have two separate tool entries because text message broke the chain
+        assert text.count("[Used 1 tool:") == 2
+        assert "Bash(git status)" in text
+        assert "Read(README.md)" in text
+        assert "The status shows" in text
+
+    def test_consecutive_tool_uses_batched(self, tmp_path: Path) -> None:
+        """Consecutive tool-only messages should be batched into one line."""
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        # Simulate consecutive tool-only assistant messages
+        transcript_path.write_text(
+            "\n".join(
+                [
+                    # First tool use (tool-only, no text)
+                    json.dumps(
+                        {
+                            "uuid": "msg1",
+                            "parentUuid": None,
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "name": "Bash",
+                                        "input": {"command": "git status"},
+                                    },
+                                ]
+                            },
+                        }
+                    ),
+                    # Tool result (user type)
+                    json.dumps(
+                        {
+                            "uuid": "msg2",
+                            "parentUuid": "msg1",
+                            "type": "user",
+                            "toolUseResult": "some output",
+                            "message": {"content": "..."},
+                        }
+                    ),
+                    # Second tool use (tool-only)
+                    json.dumps(
+                        {
+                            "uuid": "msg3",
+                            "parentUuid": "msg2",
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "name": "Read",
+                                        "input": {"file_path": "README.md"},
+                                    },
+                                ]
+                            },
+                        }
+                    ),
+                    # Tool result
+                    json.dumps(
+                        {
+                            "uuid": "msg4",
+                            "parentUuid": "msg3",
+                            "type": "user",
+                            "toolUseResult": "file content",
+                            "message": {"content": "..."},
+                        }
+                    ),
+                    # Third tool use (tool-only)
+                    json.dumps(
+                        {
+                            "uuid": "msg5",
+                            "parentUuid": "msg4",
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "name": "Grep",
+                                        "input": {"pattern": "TODO"},
+                                    },
+                                ]
+                            },
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        client = FakeClient()
+        execute_sync(transcript_path, state_path, client)
+
+        assert len(client.appends) == 1
+        text = client.appends[0][1]
+
+        # Should have a single batched message with all tool names
+        assert "[Used 3 tools:" in text
+        assert "Bash(git status)" in text
+        assert "Read(README.md)" in text
+        assert "Grep(TODO)" in text
+
+        # Should NOT have multiple separate tool lines
+        assert text.count("[Used") == 1
+
+    def test_tool_names_include_summary(self, tmp_path: Path) -> None:
+        """Tool names should include a brief summary of the invocation."""
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        transcript_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "uuid": "msg1",
+                            "parentUuid": None,
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "name": "Bash",
+                                        "input": {
+                                            "command": "python -m ragzoom.cli query --debug"
+                                        },
+                                    },
+                                ]
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "uuid": "msg2",
+                            "parentUuid": "msg1",
+                            "type": "user",
+                            "toolUseResult": "output",
+                            "message": {"content": "..."},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "uuid": "msg3",
+                            "parentUuid": "msg2",
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "name": "Read",
+                                        "input": {"file_path": "ragzoom/db_utils.py"},
+                                    },
+                                ]
+                            },
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        client = FakeClient()
+        execute_sync(transcript_path, state_path, client)
+
+        text = client.appends[0][1]
+
+        # Should show tool with argument summary
+        assert "Bash(python -m ragzoom" in text or "Bash(ragzoom" in text
+        assert "Read(ragzoom/db_utils.py)" in text
+
+    def test_single_tool_use_not_batched(self, tmp_path: Path) -> None:
+        """A single tool use followed by text should not be batched."""
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        transcript_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "uuid": "msg1",
+                            "parentUuid": None,
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {"type": "text", "text": "Let me check."},
+                                    {
+                                        "type": "tool_use",
+                                        "name": "Bash",
+                                        "input": {"command": "ls"},
+                                    },
+                                ]
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "uuid": "msg2",
+                            "parentUuid": "msg1",
+                            "type": "user",
+                            "toolUseResult": "output",
+                            "message": {"content": "..."},
+                        }
+                    ),
+                    # Assistant responds with text (breaking the tool-only chain)
+                    json.dumps(
+                        {
+                            "uuid": "msg3",
+                            "parentUuid": "msg2",
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {"type": "text", "text": "Here's what I found."},
+                                ]
+                            },
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        client = FakeClient()
+        execute_sync(transcript_path, state_path, client)
+
+        text = client.appends[0][1]
+
+        # Should have the tool usage
+        assert "[Used 1 tool: Bash(ls)]" in text
+
+        # And the follow-up text
+        assert "Here's what I found" in text
