@@ -7,17 +7,21 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from ragzoom.claude_transcript import _load_state
 from ragzoom.client.grpc_client import GrpcRagzoomClient
+from ragzoom.jsonl_reader import iter_jsonl_reversed
+from ragzoom.transcript_sync import SessionState
 
 mcp = FastMCP(name="RagZoom Memory")
 
 
-def _get_session_id() -> str:
+def _get_session_id() -> tuple[str, SessionState]:
     """Find the session ID by matching our parent PID to transcript state files.
 
     The sync hook writes Claude Code's PID to the state file. We find our session
     by scanning state files for one whose last_pid matches our parent process.
+
+    Returns:
+        Tuple of (document_id, session_state)
     """
     claude_code_pid = os.getppid()
 
@@ -28,17 +32,62 @@ def _get_session_id() -> str:
             "Has the transcript been synced yet?"
         )
 
-    for state_file in state_dir.glob("*.json"):
-        doc_id = state_file.stem
-        state = _load_state(doc_id)
-        if state.last_pid == claude_code_pid:
-            return doc_id
+    for state_file in state_dir.glob("*.jsonl"):
+        state = SessionState.load(state_file)
+        if state is not None and state.header.last_pid == claude_code_pid:
+            return state.header.document_id, state
 
     raise ValueError(
         f"No session found for PID {claude_code_pid}. "
-        "The UserPromptSubmit hook should have synced the transcript. "
+        "The Stop hook should have synced the transcript. "
         "Check that hooks are configured correctly."
     )
+
+
+def _get_transcript_path(document_id: str) -> Path:
+    """Get the transcript path for a session."""
+    projects_dir = Path.home() / ".claude" / "projects"
+    # The project path is encoded in the document_id filename convention
+    # For now, scan for the matching transcript
+    for project_dir in projects_dir.iterdir():
+        if not project_dir.is_dir():
+            continue
+        transcript_path = project_dir / f"{document_id}.jsonl"
+        if transcript_path.exists():
+            return transcript_path
+    raise ValueError(f"Transcript not found for document {document_id}")
+
+
+def _get_compaction_span_end(state: SessionState) -> int | None:
+    """Compute the compaction boundary span_end on-demand.
+
+    Scans the transcript backwards. The last UUID seen before hitting
+    the compaction record is the first message after compaction (chronologically).
+    We look that up in our append log to get its span_end.
+
+    Returns:
+        span_end of the compaction point, or None if no compaction.
+    """
+    transcript_path = _get_transcript_path(state.header.document_id)
+
+    # Build a set of known UUIDs for fast lookup
+    known_uuids = {entry.last_uuid: entry.span_end for entry in state.entries}
+
+    # Scan backwards - when we hit compaction, the last UUID we saw
+    # is the first message after compaction (in chronological order)
+    last_uuid: str | None = None
+    for record in iter_jsonl_reversed(transcript_path):
+        if record.get("isCompactSummary"):
+            # Found compaction - check if the message right after it is in our log
+            if last_uuid is not None and last_uuid in known_uuids:
+                return known_uuids[last_uuid]
+            return None
+
+        uuid = record.get("uuid")
+        if isinstance(uuid, str):
+            last_uuid = uuid
+
+    return None
 
 
 def _format_response(
@@ -135,15 +184,11 @@ def remember(
     - **Recent content:** Spans near the compaction boundary are often
       already height=0 (verbatim) since they haven't been summarized yet.
     """
-    doc_id = _get_session_id()
+    doc_id, state = _get_session_id()
 
-    # Default span_end to compaction boundary (pre-compaction only)
+    # Compute compaction boundary on-demand if span_end not specified
     if span_end is None:
-        state = _load_state(doc_id)
-        if state.compaction_span_end is None:
-            # No compaction yet - nothing to remember (all content is in context)
-            return "No pre-compaction history available yet. All conversation content is still in your context."
-        span_end = state.compaction_span_end
+        span_end = _get_compaction_span_end(state)
 
     # Query RagZoom via gRPC
     server_address = os.environ.get("RAGZOOM_SERVER_ADDRESS", "localhost:50051")
