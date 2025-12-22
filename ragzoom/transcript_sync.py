@@ -513,3 +513,124 @@ def _extract_assistant_content(record: dict[str, object]) -> tuple[str, int]:
             tool_count += 1
 
     return "\n\n".join(texts), tool_count
+
+
+@dataclass
+class SyncResult:
+    """Result from executing a sync operation."""
+
+    document_id: str
+    truncated: bool
+    truncate_span: int | None
+    appended_uuids: list[str]
+    new_span_end: int
+
+
+def execute_sync(
+    transcript_path: Path,
+    state_path: Path,
+    client: object,
+) -> SyncResult:
+    """Execute a complete sync operation.
+
+    Args:
+        transcript_path: Path to the JSONL transcript
+        state_path: Path to the session state file
+        client: RagZoom client with append() and truncate() methods
+
+    Returns:
+        SyncResult describing what was done
+    """
+    # Load or create session state
+    state = SessionState.load(state_path)
+    if state is None:
+        # Generate document_id from transcript filename
+        document_id = transcript_path.stem
+        state = SessionState(header=SessionStateHeader(document_id=document_id))
+
+    document_id = state.header.document_id
+
+    # Get current transcript head
+    current_head = get_current_head(transcript_path)
+    if current_head is None:
+        # Empty transcript, nothing to sync
+        return SyncResult(
+            document_id=document_id,
+            truncated=False,
+            truncate_span=None,
+            appended_uuids=[],
+            new_span_end=0,
+        )
+
+    # Build parent map and compute sync plan
+    parent_map = build_parent_map(transcript_path)
+    append_log = state.append_log()
+    plan = compute_sync_plan(current_head, append_log, parent_map)
+
+    # Nothing to do
+    if not plan.uuids_to_transcribe and plan.truncate_to_span is None:
+        last_entry = append_log.last_entry()
+        span_end = last_entry.span_end if last_entry else 0
+        return SyncResult(
+            document_id=document_id,
+            truncated=False,
+            truncate_span=None,
+            appended_uuids=[],
+            new_span_end=span_end,
+        )
+
+    truncated = False
+    truncate_span: int | None = None
+
+    # Execute truncation if needed
+    if plan.truncate_to_span is not None:
+        truncate_method = getattr(client, "truncate")
+        truncate_method(document_id, plan.truncate_to_span)
+        truncated = True
+        truncate_span = plan.truncate_to_span
+
+        # Truncate the append log
+        if plan.truncate_to_uuid is not None:
+            append_log.truncate_to(plan.truncate_to_uuid)
+        else:
+            # Disjoint branches - clear the state entries
+            state.entries = []
+
+    # Transcribe and append
+    if plan.uuids_to_transcribe:
+        text = transcribe_uuids(transcript_path, plan.uuids_to_transcribe)
+        if text:
+            append_method = getattr(client, "append")
+            result = append_method(document_id, text)
+            # Get span_end from result
+            # The append result should contain document stats that tell us the new position
+            # For now, we estimate based on token count (rough approximation)
+            # TODO: Add span_end to IndexingResult when available
+            last_entry = append_log.last_entry()
+            prev_span_end = last_entry.span_end if last_entry else 0
+            if truncate_span is not None:
+                prev_span_end = truncate_span
+            # Use chunks_created as a proxy for new span extent
+            new_span_end = prev_span_end + getattr(result, "chunks_created", 0)
+
+            # Record in append log
+            append_log.append(
+                AppendEntry(
+                    last_uuid=plan.uuids_to_transcribe[-1],
+                    span_end=new_span_end,
+                )
+            )
+    else:
+        last_entry = append_log.last_entry()
+        new_span_end = last_entry.span_end if last_entry else 0
+
+    # Save state
+    state.save(state_path)
+
+    return SyncResult(
+        document_id=document_id,
+        truncated=truncated,
+        truncate_span=truncate_span,
+        appended_uuids=plan.uuids_to_transcribe,
+        new_span_end=new_span_end,
+    )

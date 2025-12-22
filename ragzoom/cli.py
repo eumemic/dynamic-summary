@@ -2106,6 +2106,7 @@ def sync_claude_code_transcript(
     """Sync a Claude Code JSONL log to a RagZoom document.
 
     Incrementally transcribes new conversation records and indexes them.
+    Uses UUID-based ancestry tracking to detect and handle reverts.
     Uses the session ID (JSONL filename without extension) as the document ID.
     Tracks progress via state files in data/transcript-state/.
 
@@ -2115,18 +2116,28 @@ def sync_claude_code_transcript(
     Example:
       ragzoom sync-claude-code-transcript ~/.claude/projects/.../session.jsonl
     """
-    from ragzoom.claude_transcript import sync_transcript
+    from ragzoom.transcript_sync import execute_sync
     from ragzoom.wrapper import RagZoom
 
-    doc_id = jsonl_path.stem
+    # State file uses same naming convention but with .jsonl extension
+    state_dir = Path("data/transcript-state")
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_path = state_dir / f"{jsonl_path.stem}.jsonl"
+
     client = RagZoom(server_address=server_address)
 
     try:
-        num_chunks = sync_transcript(jsonl_path, doc_id, client)
-        if num_chunks > 0:
-            click.echo(f"✅ Synced {num_chunks} new chunks to '{doc_id}'")
+        result = execute_sync(jsonl_path, state_path, client)
+        if result.truncated:
+            click.echo(
+                f"🔄 Reverted document '{result.document_id}' to span {result.truncate_span}"
+            )
+        if result.appended_uuids:
+            click.echo(
+                f"✅ Synced {len(result.appended_uuids)} messages to '{result.document_id}'"
+            )
         else:
-            click.echo(f"✅ No new content to sync for '{doc_id}'")
+            click.echo(f"✅ No new content to sync for '{result.document_id}'")
     except Exception as e:
         handle_cli_error(e, "syncing Claude Code transcript")
 
