@@ -4,10 +4,33 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ragzoom.jsonl_reader import iter_jsonl
+
+STATE_VERSION = 2
+
+
+@dataclass
+class SessionStateHeader:
+    """Header line of session state file."""
+
+    document_id: str
+    version: int = STATE_VERSION
+
+    def to_json(self) -> dict[str, object]:
+        return {"document_id": self.document_id, "version": self.version}
+
+    @classmethod
+    def from_json(cls, data: dict[str, object]) -> SessionStateHeader:
+        doc_id = data.get("document_id")
+        if not isinstance(doc_id, str):
+            raise TypeError(f"document_id must be str, got {type(doc_id)}")
+        version = data.get("version", 1)
+        if not isinstance(version, int):
+            raise TypeError(f"version must be int, got {type(version)}")
+        return cls(document_id=doc_id, version=version)
 
 
 @dataclass
@@ -121,6 +144,71 @@ class AppendLog:
 
         for record, _ in iter_jsonl(self._path):
             yield AppendEntry.from_json(record)
+
+
+@dataclass
+class SessionState:
+    """Session state with header and append log."""
+
+    header: SessionStateHeader
+    entries: list[AppendEntry] = field(default_factory=list)
+
+    @classmethod
+    def load(cls, path: Path) -> SessionState | None:
+        """Load session state from JSONL file.
+
+        Returns None if file doesn't exist.
+        """
+        if not path.exists():
+            return None
+
+        lines = path.read_text().strip().split("\n")
+        if not lines or not lines[0]:
+            return None
+
+        header = SessionStateHeader.from_json(json.loads(lines[0]))
+        entries = [
+            AppendEntry.from_json(json.loads(line)) for line in lines[1:] if line
+        ]
+        return cls(header=header, entries=entries)
+
+    def save(self, path: Path) -> None:
+        """Save session state to JSONL file."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [json.dumps(self.header.to_json())]
+        lines.extend(json.dumps(entry.to_json()) for entry in self.entries)
+        path.write_text("\n".join(lines) + "\n")
+
+    def append_log(self) -> AppendLog:
+        """Get an AppendLog view backed by this state's entries."""
+        return _SessionAppendLog(self)
+
+
+class _SessionAppendLog(AppendLog):
+    """AppendLog backed by SessionState entries (in-memory)."""
+
+    def __init__(self, state: SessionState) -> None:
+        # Dummy path - not used for in-memory operations
+        super().__init__(Path("/dev/null"))
+        self._state = state
+
+    def append(self, entry: AppendEntry) -> None:
+        self._state.entries.append(entry)
+
+    def last_entry(self) -> AppendEntry | None:
+        if not self._state.entries:
+            return None
+        return self._state.entries[-1]
+
+    def truncate_to(self, last_uuid: str) -> None:
+        for i, entry in enumerate(self._state.entries):
+            if entry.last_uuid == last_uuid:
+                self._state.entries = self._state.entries[: i + 1]
+                return
+        raise ValueError(f"uuid {last_uuid!r} not found in append log")
+
+    def __iter__(self) -> Iterator[AppendEntry]:
+        return iter(self._state.entries)
 
 
 def build_parent_map(transcript_path: Path) -> dict[str, str | None]:
@@ -295,3 +383,133 @@ def compute_sync_plan(
             truncate_to_span=valid_prefix.span_end,
             truncate_to_uuid=valid_prefix.last_uuid,
         )
+
+
+def get_current_head(transcript_path: Path) -> str | None:
+    """Get the UUID of the most recent message in the transcript.
+
+    Reads the transcript forward, returning the last uuid seen.
+    Returns None if no messages with uuid found.
+    """
+    last_uuid: str | None = None
+
+    for record, _ in iter_jsonl(transcript_path):
+        uuid = record.get("uuid")
+        if isinstance(uuid, str):
+            last_uuid = uuid
+
+    return last_uuid
+
+
+def transcribe_uuids(
+    transcript_path: Path,
+    uuids: list[str],
+) -> str:
+    """Transcribe specific messages by UUID into readable text.
+
+    Args:
+        transcript_path: Path to the JSONL transcript
+        uuids: UUIDs to transcribe, in order
+
+    Returns:
+        Concatenated transcript text for the specified messages
+    """
+    if not uuids:
+        return ""
+
+    # Build uuid -> record lookup
+    uuid_set = set(uuids)
+    records_by_uuid: dict[str, dict[str, object]] = {}
+
+    for record, _ in iter_jsonl(transcript_path):
+        uuid = record.get("uuid")
+        if isinstance(uuid, str) and uuid in uuid_set:
+            records_by_uuid[uuid] = record
+
+    # Transcribe in order
+    chunks: list[str] = []
+    for uuid in uuids:
+        if uuid not in records_by_uuid:
+            continue
+        record = records_by_uuid[uuid]
+
+        chunk = _transcribe_record(record)
+        if chunk:
+            chunks.append(chunk)
+
+    return "\n\n".join(chunks)
+
+
+def _transcribe_record(record: dict[str, object]) -> str | None:
+    """Transcribe a single record to readable text."""
+    record_type = record.get("type")
+
+    if record_type == "user":
+        # Skip tool results
+        if "toolUseResult" in record:
+            return None
+        text = _extract_user_text(record)
+        if text.strip():
+            return f"[USER]\n{text}"
+
+    elif record_type == "assistant":
+        text, tool_count = _extract_assistant_content(record)
+        parts: list[str] = []
+        if text.strip():
+            parts.append(f"[ASSISTANT]\n{text}")
+        if tool_count > 0:
+            parts.append(f"[Used {tool_count} tool{'s' if tool_count > 1 else ''}]")
+        if parts:
+            return "\n\n".join(parts)
+
+    return None
+
+
+def _extract_user_text(record: dict[str, object]) -> str:
+    """Extract text content from a user message."""
+    message = record.get("message", {})
+    if not isinstance(message, dict):
+        return str(message)
+
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content.strip()
+
+    if isinstance(content, list):
+        texts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                texts.append(str(block.get("text", "")))
+            elif isinstance(block, str):
+                texts.append(block)
+        return "".join(texts).strip()
+
+    return str(content).strip()
+
+
+def _extract_assistant_content(record: dict[str, object]) -> tuple[str, int]:
+    """Extract text and tool count from an assistant message."""
+    message = record.get("message", {})
+    if not isinstance(message, dict):
+        return str(message), 0
+
+    content = message.get("content", [])
+    if not isinstance(content, list):
+        return str(content), 0
+
+    texts: list[str] = []
+    tool_count = 0
+
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+
+        block_type = block.get("type")
+        if block_type == "text":
+            text = block.get("text", "")
+            if isinstance(text, str) and text.strip():
+                texts.append(text)
+        elif block_type == "tool_use":
+            tool_count += 1
+
+    return "\n\n".join(texts), tool_count

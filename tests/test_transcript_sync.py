@@ -594,3 +594,262 @@ class TestComputeSyncPlan:
         assert plan.truncate_to_span == 0
         assert plan.truncate_to_uuid is None
         assert plan.uuids_to_transcribe == ["alt1", "alt2"]
+
+
+class TestSessionState:
+    """Tests for SessionState JSONL format."""
+
+    def test_save_and_load(self, tmp_path: Path) -> None:
+        """Should persist and restore state."""
+        from ragzoom.transcript_sync import (
+            AppendEntry,
+            SessionState,
+            SessionStateHeader,
+        )
+
+        state_path = tmp_path / "session.jsonl"
+        state = SessionState(
+            header=SessionStateHeader(document_id="doc-123"),
+            entries=[
+                AppendEntry("msg1", 100),
+                AppendEntry("msg2", 200),
+            ],
+        )
+
+        state.save(state_path)
+        loaded = SessionState.load(state_path)
+
+        assert loaded is not None
+        assert loaded.header.document_id == "doc-123"
+        assert loaded.header.version == 2
+        assert len(loaded.entries) == 2
+        assert loaded.entries[0].last_uuid == "msg1"
+        assert loaded.entries[1].span_end == 200
+
+    def test_load_nonexistent_returns_none(self, tmp_path: Path) -> None:
+        """Should return None for missing file."""
+        from ragzoom.transcript_sync import SessionState
+
+        state = SessionState.load(tmp_path / "missing.jsonl")
+        assert state is None
+
+    def test_append_log_view(self, tmp_path: Path) -> None:
+        """append_log() should return working AppendLog."""
+        from ragzoom.transcript_sync import (
+            AppendEntry,
+            SessionState,
+            SessionStateHeader,
+        )
+
+        state = SessionState(
+            header=SessionStateHeader(document_id="doc-123"),
+            entries=[AppendEntry("msg1", 100)],
+        )
+
+        log = state.append_log()
+        log.append(AppendEntry("msg2", 200))
+
+        assert len(state.entries) == 2
+        assert state.entries[1].last_uuid == "msg2"
+
+        last = log.last_entry()
+        assert last is not None
+        assert last.last_uuid == "msg2"
+
+    def test_append_log_truncate(self, tmp_path: Path) -> None:
+        """append_log().truncate_to() should modify state entries."""
+        from ragzoom.transcript_sync import (
+            AppendEntry,
+            SessionState,
+            SessionStateHeader,
+        )
+
+        state = SessionState(
+            header=SessionStateHeader(document_id="doc-123"),
+            entries=[
+                AppendEntry("msg1", 100),
+                AppendEntry("msg2", 200),
+                AppendEntry("msg3", 300),
+            ],
+        )
+
+        log = state.append_log()
+        log.truncate_to("msg2")
+
+        assert len(state.entries) == 2
+        assert state.entries[-1].last_uuid == "msg2"
+
+
+class TestGetCurrentHead:
+    """Tests for getting current head UUID from transcript."""
+
+    def test_gets_last_uuid(self, tmp_path: Path) -> None:
+        """Should return the last UUID in the transcript."""
+        from ragzoom.transcript_sync import get_current_head
+
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text(
+            "\n".join(
+                [
+                    json.dumps({"uuid": "msg1", "parentUuid": None, "type": "user"}),
+                    json.dumps(
+                        {"uuid": "msg2", "parentUuid": "msg1", "type": "assistant"}
+                    ),
+                    json.dumps({"uuid": "msg3", "parentUuid": "msg2", "type": "user"}),
+                ]
+            )
+            + "\n"
+        )
+
+        head = get_current_head(jsonl)
+        assert head == "msg3"
+
+    def test_empty_transcript_returns_none(self, tmp_path: Path) -> None:
+        """Should return None for empty transcript."""
+        from ragzoom.transcript_sync import get_current_head
+
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text("")
+
+        head = get_current_head(jsonl)
+        assert head is None
+
+    def test_skips_records_without_uuid(self, tmp_path: Path) -> None:
+        """Should skip non-message records."""
+        from ragzoom.transcript_sync import get_current_head
+
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text(
+            "\n".join(
+                [
+                    json.dumps({"uuid": "msg1", "type": "user"}),
+                    json.dumps({"type": "system", "data": "ignored"}),
+                ]
+            )
+            + "\n"
+        )
+
+        head = get_current_head(jsonl)
+        assert head == "msg1"
+
+
+class TestTranscribeUuids:
+    """Tests for transcribing specific UUIDs."""
+
+    def test_transcribes_user_message(self, tmp_path: Path) -> None:
+        """Should transcribe user messages."""
+        from ragzoom.transcript_sync import transcribe_uuids
+
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text(
+            json.dumps(
+                {
+                    "uuid": "msg1",
+                    "type": "user",
+                    "message": {"content": "Hello world"},
+                }
+            )
+            + "\n"
+        )
+
+        text = transcribe_uuids(jsonl, ["msg1"])
+        assert text == "[USER]\nHello world"
+
+    def test_transcribes_assistant_message(self, tmp_path: Path) -> None:
+        """Should transcribe assistant messages with tool count."""
+        from ragzoom.transcript_sync import transcribe_uuids
+
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text(
+            json.dumps(
+                {
+                    "uuid": "msg1",
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "Here's my response"},
+                            {"type": "tool_use", "name": "read"},
+                            {"type": "tool_use", "name": "write"},
+                        ]
+                    },
+                }
+            )
+            + "\n"
+        )
+
+        text = transcribe_uuids(jsonl, ["msg1"])
+        assert "[ASSISTANT]\nHere's my response" in text
+        assert "[Used 2 tools]" in text
+
+    def test_transcribes_multiple_in_order(self, tmp_path: Path) -> None:
+        """Should transcribe multiple UUIDs in specified order."""
+        from ragzoom.transcript_sync import transcribe_uuids
+
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "uuid": "msg1",
+                            "type": "user",
+                            "message": {"content": "First"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "uuid": "msg2",
+                            "type": "assistant",
+                            "message": {
+                                "content": [{"type": "text", "text": "Second"}]
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "uuid": "msg3",
+                            "type": "user",
+                            "message": {"content": "Third"},
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        text = transcribe_uuids(jsonl, ["msg1", "msg3"])
+        assert "[USER]\nFirst" in text
+        assert "[USER]\nThird" in text
+        assert "Second" not in text
+        # Verify order
+        assert text.index("First") < text.index("Third")
+
+    def test_empty_uuids_returns_empty(self, tmp_path: Path) -> None:
+        """Should return empty string for empty UUID list."""
+        from ragzoom.transcript_sync import transcribe_uuids
+
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text(
+            json.dumps(
+                {"uuid": "msg1", "type": "user", "message": {"content": "Hello"}}
+            )
+            + "\n"
+        )
+
+        text = transcribe_uuids(jsonl, [])
+        assert text == ""
+
+    def test_skips_missing_uuids(self, tmp_path: Path) -> None:
+        """Should skip UUIDs not found in transcript."""
+        from ragzoom.transcript_sync import transcribe_uuids
+
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text(
+            json.dumps(
+                {"uuid": "msg1", "type": "user", "message": {"content": "Hello"}}
+            )
+            + "\n"
+        )
+
+        text = transcribe_uuids(jsonl, ["msg1", "missing", "also-missing"])
+        assert text == "[USER]\nHello"
