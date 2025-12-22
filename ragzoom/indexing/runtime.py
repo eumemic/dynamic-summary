@@ -389,6 +389,8 @@ class DocumentIndexSession:
                     document_id=outcome.document_id,
                     chunks_created=outcome.total_leaves,
                     tree_depth=tree_depth,
+                    span_start=outcome.appended_span_start,
+                    span_end=outcome.appended_span_end,
                     mutated_nodes=mutated_nodes,
                     resummarized_nodes=0,
                     new_leaves=new_leaves,

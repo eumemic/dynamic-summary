@@ -38,6 +38,8 @@ message AppendTextRequest {
 message AppendTextResponse {
   DocumentStats stats = 1;
   string telemetry_run_id = 2;
+  int32 span_start = 3;
+  int32 span_end = 4;
 }
 
 message RetrieveRequest {

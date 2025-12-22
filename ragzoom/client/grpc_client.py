@@ -40,13 +40,19 @@ def _extract_telemetry_and_error(
 
 
 def _document_stats_to_result(
-    stats: pb2.DocumentStats, *, telemetry_run_id: str | None = None
+    stats: pb2.DocumentStats,
+    *,
+    telemetry_run_id: str | None = None,
+    span_start: int = 0,
+    span_end: int = 0,
 ) -> IndexingResult:
     telemetry = _decode_telemetry(stats.telemetry_json)
     return IndexingResult(
         document_id=stats.document_id,
         chunks_created=stats.chunks_created,
         tree_depth=stats.tree_depth,
+        span_start=span_start,
+        span_end=span_end,
         mutated_nodes=stats.mutated_nodes,
         resummarized_nodes=stats.resummarized_nodes,
         new_leaves=stats.new_leaves,
@@ -248,6 +254,8 @@ class GrpcRagzoomClient:
         return _document_stats_to_result(
             response.stats,
             telemetry_run_id=telemetry_run_id,
+            span_start=response.span_start,
+            span_end=response.span_end,
         )
 
     def execute_query(

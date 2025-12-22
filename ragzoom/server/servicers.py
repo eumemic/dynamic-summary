@@ -292,7 +292,11 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
             collect_telemetry=request.collect_telemetry,
         )
 
-        response = pb2.AppendTextResponse(stats=_stats_to_proto(result))
+        response = pb2.AppendTextResponse(
+            stats=_stats_to_proto(result),
+            span_start=result.span_start,
+            span_end=result.span_end,
+        )
         setattr(response, "telemetry_run_id", result.telemetry_run_id or "")
         return response
 

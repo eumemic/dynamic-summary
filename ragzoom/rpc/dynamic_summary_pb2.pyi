@@ -59,8 +59,18 @@ class AppendTextRequest:
 
 class AppendTextResponse:
     stats: DocumentStats
+    telemetry_run_id: str
+    span_start: int
+    span_end: int
 
-    def __init__(self, *, stats: DocumentStats) -> None: ...
+    def __init__(
+        self,
+        *,
+        stats: DocumentStats,
+        telemetry_run_id: str = ...,
+        span_start: int = ...,
+        span_end: int = ...,
+    ) -> None: ...
 
 class RetrieveRequest:
     query: str
