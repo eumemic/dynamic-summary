@@ -401,6 +401,49 @@ def get_current_head(transcript_path: Path) -> str | None:
     return last_uuid
 
 
+def build_records_map(
+    transcript_path: Path,
+    uuids: set[str],
+) -> dict[str, dict[str, object]]:
+    """Build a UUID -> record lookup for the specified UUIDs.
+
+    Args:
+        transcript_path: Path to the JSONL transcript
+        uuids: Set of UUIDs to extract
+
+    Returns:
+        Dict mapping UUID to record
+    """
+    records_by_uuid: dict[str, dict[str, object]] = {}
+
+    for record, _ in iter_jsonl(transcript_path):
+        uuid = record.get("uuid")
+        if isinstance(uuid, str) and uuid in uuids:
+            records_by_uuid[uuid] = record
+
+    return records_by_uuid
+
+
+def transcribe_uuid_from_map(
+    uuid: str,
+    records_by_uuid: dict[str, dict[str, object]],
+) -> str:
+    """Transcribe a single UUID using a pre-built records map.
+
+    Args:
+        uuid: The UUID to transcribe
+        records_by_uuid: Pre-built UUID -> record lookup
+
+    Returns:
+        Transcribed text, or empty string if UUID not found or produces no text
+    """
+    if uuid not in records_by_uuid:
+        return ""
+    record = records_by_uuid[uuid]
+    chunk = _transcribe_record(record)
+    return chunk if chunk else ""
+
+
 def transcribe_uuids(
     transcript_path: Path,
     uuids: list[str],
@@ -417,23 +460,12 @@ def transcribe_uuids(
     if not uuids:
         return ""
 
-    # Build uuid -> record lookup
-    uuid_set = set(uuids)
-    records_by_uuid: dict[str, dict[str, object]] = {}
-
-    for record, _ in iter_jsonl(transcript_path):
-        uuid = record.get("uuid")
-        if isinstance(uuid, str) and uuid in uuid_set:
-            records_by_uuid[uuid] = record
+    records_by_uuid = build_records_map(transcript_path, set(uuids))
 
     # Transcribe in order
     chunks: list[str] = []
     for uuid in uuids:
-        if uuid not in records_by_uuid:
-            continue
-        record = records_by_uuid[uuid]
-
-        chunk = _transcribe_record(record)
+        chunk = transcribe_uuid_from_map(uuid, records_by_uuid)
         if chunk:
             chunks.append(chunk)
 
@@ -600,30 +632,40 @@ def execute_sync(
             # Disjoint branches - clear the state entries
             state.entries = []
 
-    # Transcribe and append
+    # Transcribe and append per-turn for precise UUID→span mapping
+    appended_uuids: list[str] = []
     if plan.uuids_to_transcribe:
-        text = transcribe_uuids(transcript_path, plan.uuids_to_transcribe)
-        if text:
-            append_method = getattr(client, "append")
-            result = append_method(document_id, text)
-            # Get span_end from result
-            # The append result should contain document stats that tell us the new position
-            # For now, we estimate based on token count (rough approximation)
-            # TODO: Add span_end to IndexingResult when available
-            last_entry = append_log.last_entry()
-            prev_span_end = last_entry.span_end if last_entry else 0
-            if truncate_span is not None:
-                prev_span_end = truncate_span
-            # Use chunks_created as a proxy for new span extent
-            new_span_end = prev_span_end + getattr(result, "chunks_created", 0)
+        append_method = getattr(client, "append")
 
-            # Record in append log
+        # Build records map once for all UUIDs
+        records_map = build_records_map(transcript_path, set(plan.uuids_to_transcribe))
+
+        # Get current span position
+        last_entry = append_log.last_entry()
+        current_span_end = last_entry.span_end if last_entry else 0
+        if truncate_span is not None:
+            current_span_end = truncate_span
+
+        for uuid in plan.uuids_to_transcribe:
+            text = transcribe_uuid_from_map(uuid, records_map)
+            if not text:
+                continue
+
+            result = append_method(document_id, text)
+            appended_uuids.append(uuid)
+
+            # Track span position (chunks_created as proxy until we have exact span_end)
+            current_span_end = current_span_end + getattr(result, "chunks_created", 0)
+
+            # Record each turn in append log for precise rollback
             append_log.append(
                 AppendEntry(
-                    last_uuid=plan.uuids_to_transcribe[-1],
-                    span_end=new_span_end,
+                    last_uuid=uuid,
+                    span_end=current_span_end,
                 )
             )
+
+        new_span_end = current_span_end
     else:
         last_entry = append_log.last_entry()
         new_span_end = last_entry.span_end if last_entry else 0
@@ -635,6 +677,6 @@ def execute_sync(
         document_id=document_id,
         truncated=truncated,
         truncate_span=truncate_span,
-        appended_uuids=plan.uuids_to_transcribe,
+        appended_uuids=appended_uuids,
         new_span_end=new_span_end,
     )
