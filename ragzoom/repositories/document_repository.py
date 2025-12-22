@@ -177,13 +177,16 @@ class DocumentRepository(BaseRepository):
     def delete_nodes_from_span(
         self, document_id: str, span_start: int, *, session: Optional["Session"] = None
     ) -> list[str]:
-        """Delete all nodes where span_start >= given position.
+        """Delete all nodes whose span extends beyond the given position.
 
-        Used for truncating a document after a conversation revert.
+        Used for truncating a document after a conversation revert. Deletes any
+        node where span_end > span_start, which includes:
+        - Leaf nodes starting at or after the truncation point
+        - Internal (summary) nodes whose span covers content beyond the point
 
         Args:
             document_id: Document identifier
-            span_start: Delete all nodes where node.span_start >= this value
+            span_start: Truncation point - delete nodes where span_end > this value
             session: Optional session for transaction support
 
         Returns:
@@ -192,12 +195,13 @@ class DocumentRepository(BaseRepository):
         with self._session_scope(session) as db_session:
             from sqlalchemy import text
 
-            # Delete nodes with span_start >= given position
-            # RETURNING gives us the IDs for cache/vector cleanup
+            # Delete nodes whose span extends beyond the truncation point
+            # This catches both leaves starting after the point AND internal
+            # nodes that summarize content beyond the point
             result = db_session.execute(
                 text(
                     "DELETE FROM tree_nodes "
-                    "WHERE document_id = :document_id AND span_start >= :span_start "
+                    "WHERE document_id = :document_id AND span_end > :span_start "
                     "RETURNING id"
                 ),
                 {"document_id": document_id, "span_start": span_start},

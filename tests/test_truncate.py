@@ -159,8 +159,10 @@ class TestDeleteNodesFromSpan:
 
         assert deleted_ids == []
 
-    def test_deletes_internal_nodes_too(self, storage_backend: StorageBackend) -> None:
-        """Should delete both leaf and internal nodes."""
+    def test_deletes_internal_nodes_spanning_truncation_point(
+        self, storage_backend: StorageBackend
+    ) -> None:
+        """Should delete internal nodes whose span extends beyond truncation point."""
         doc_id = "test-truncate-tree"
         doc_store = storage_backend.for_document(doc_id)
         doc_store.set_metadata(
@@ -206,15 +208,18 @@ class TestDeleteNodesFromSpan:
         ]
         doc_store.nodes.add_batch(nodes)
 
-        # Delete from span 100 - should get leaf-100-200 but NOT internal-0-200
-        # (internal has span_start=0)
+        # Delete from span 100 - should delete leaf-100-200 AND internal-0-200
+        # The internal node spans [0, 200] which extends beyond 100
         deleted_ids = storage_backend.delete_nodes_from_span(doc_id, span_start=100)
 
-        assert len(deleted_ids) == 1
+        assert len(deleted_ids) == 2
         assert "leaf-100-200" in deleted_ids
+        assert "internal-0-200" in deleted_ids
 
-        # Internal node should still exist (span_start=0 < 100)
-        assert doc_store.nodes.get_node("internal-0-200") is not None
+        # Only leaf-0-100 should remain (its span [0, 100] doesn't extend beyond 100)
+        assert doc_store.nodes.get_node("leaf-0-100") is not None
+        assert doc_store.nodes.get_node("leaf-100-200") is None
+        assert doc_store.nodes.get_node("internal-0-200") is None
 
     def test_only_affects_specified_document(
         self, storage_backend: StorageBackend
@@ -364,3 +369,63 @@ class TestRuntimeTruncate:
         assert result.deleted_node_ids == []
         assert result.document_id == "nonexistent-doc"
         assert result.span_start == 0
+
+    @pytest.mark.asyncio
+    async def test_truncate_leaves_consistent_tree(
+        self,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+        storage_backend: StorageBackend,
+    ) -> None:
+        """After truncation, tree should have no orphaned parents or gaps."""
+        doc_id = "test-truncate-consistency"
+
+        # Index enough content to create a multi-level tree
+        await indexer_runtime_harness.append(
+            doc_id,
+            "Section one. " * 50
+            + "\n\n"
+            + "Section two. " * 50
+            + "\n\n"
+            + "Section three. " * 50,
+            replace_existing=True,
+            await_idle=True,
+        )
+
+        doc_store = storage_backend.for_document(doc_id)
+        all_nodes_before = list(doc_store.nodes.get_all())
+        leaves_before = [n for n in all_nodes_before if n.height == 0]
+        assert len(leaves_before) >= 3, "Need multiple leaves for meaningful test"
+
+        # Find a truncation point that will leave some content
+        leaves_sorted = sorted(leaves_before, key=lambda n: n.span_start)
+        truncate_point = leaves_sorted[1].span_start  # After first leaf
+
+        # Truncate
+        await indexer_runtime_harness.truncate(doc_id, truncate_point)
+
+        # Verify tree consistency
+        all_nodes_after = list(doc_store.nodes.get_all())
+        leaves_after = [n for n in all_nodes_after if n.height == 0]
+
+        # All remaining nodes should have span_end <= truncate_point
+        for node in all_nodes_after:
+            assert (
+                node.span_end <= truncate_point
+            ), f"Node {node.id} has span_end={node.span_end} > {truncate_point}"
+
+        # All remaining leaves should be within bounds
+        for leaf in leaves_after:
+            assert leaf.span_start < truncate_point
+            assert leaf.span_end <= truncate_point
+
+        # No internal node should reference a deleted child
+        node_ids = {n.id for n in all_nodes_after}
+        for node in all_nodes_after:
+            if node.left_child_id:
+                assert (
+                    node.left_child_id in node_ids
+                ), f"Node {node.id} references missing left child {node.left_child_id}"
+            if node.right_child_id:
+                assert (
+                    node.right_child_id in node_ids
+                ), f"Node {node.id} references missing right child {node.right_child_id}"

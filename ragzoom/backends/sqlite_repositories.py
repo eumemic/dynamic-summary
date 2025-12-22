@@ -910,22 +910,25 @@ class SqliteNodeRepository:
         document_id: str,
         span_start: int,
     ) -> list[str]:
-        """Delete all nodes where span_start >= given position.
+        """Delete all nodes whose span extends beyond the given position.
 
-        Used for truncating a document after a conversation revert.
+        Used for truncating a document after a conversation revert. Deletes any
+        node where span_end > span_start, which includes:
+        - Leaf nodes starting at or after the truncation point
+        - Internal (summary) nodes whose span covers content beyond the point
 
         Args:
             document_id: Document identifier
-            span_start: Delete all nodes where node.span_start >= this value
+            span_start: Truncation point - delete nodes where span_end > this value
 
         Returns:
             List of deleted node IDs (for vector index cleanup)
         """
         with self.SessionLocal() as session:
-            # First get the IDs we'll delete
+            # Delete nodes whose span extends beyond the truncation point
             stmt = select(SQLiteTreeNode.id).where(
                 SQLiteTreeNode.document_id == document_id,
-                SQLiteTreeNode.span_start >= span_start,
+                SQLiteTreeNode.span_end > span_start,
             )
             node_ids = [str(row) for row in session.execute(stmt).scalars().all()]
 

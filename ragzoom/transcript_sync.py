@@ -465,6 +465,7 @@ def _transcribe_record(record: dict[str, object]) -> str | None:
     return None
 
 
+# jscpd:ignore-start - Similar to claude_transcript.py; will consolidate after migration
 def _extract_user_text(record: dict[str, object]) -> str:
     """Extract text content from a user message."""
     message = record.get("message", {})
@@ -513,6 +514,9 @@ def _extract_assistant_content(record: dict[str, object]) -> tuple[str, int]:
             tool_count += 1
 
     return "\n\n".join(texts), tool_count
+
+
+# jscpd:ignore-end
 
 
 @dataclass
