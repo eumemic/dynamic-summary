@@ -336,6 +336,25 @@ class ClearDocumentResponse:
 
     def __init__(self, *, results: Iterable[ClearDocumentResult]) -> None: ...
 
+class TruncateDocumentRequest:
+    document_id: str
+    span_start: int
+
+    def __init__(self, *, document_id: str, span_start: int) -> None: ...
+
+class TruncateDocumentResponse:
+    document_id: str
+    deleted_node_ids: Sequence[str]
+    span_start: int
+
+    def __init__(
+        self,
+        *,
+        document_id: str,
+        deleted_node_ids: Iterable[str],
+        span_start: int,
+    ) -> None: ...
+
 class ExportTelemetryRequest:
     document_id: str
 

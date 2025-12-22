@@ -154,6 +154,15 @@ class TelemetryExportResult:
 
 
 @dataclass
+class TruncateResult:
+    """Result from truncating a document at a span position."""
+
+    document_id: str
+    deleted_node_ids: list[str]
+    span_start: int
+
+
+@dataclass
 class DocumentStatusView:
     document_id: str
     leaf_count: int
@@ -481,4 +490,34 @@ class GrpcRagzoomClient:
         return TelemetryExportResult(
             telemetry=telemetry,
             error=error_msg,
+        )
+
+    def truncate_document(
+        self,
+        *,
+        document_id: str,
+        span_start: int,
+    ) -> TruncateResult:
+        """Truncate a document by deleting all nodes at or after span_start.
+
+        Args:
+            document_id: The document to truncate
+            span_start: Delete all nodes with span_start >= this value
+
+        Returns:
+            TruncateResult with deleted node IDs and final span position
+        """
+        request = pb2.TruncateDocumentRequest(
+            document_id=document_id,
+            span_start=span_start,
+        )
+        try:
+            response = self._indexer.TruncateDocument(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        return TruncateResult(
+            document_id=response.document_id,
+            deleted_node_ids=list(response.deleted_node_ids),
+            span_start=response.span_start,
         )

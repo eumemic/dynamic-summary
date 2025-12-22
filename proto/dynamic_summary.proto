@@ -191,6 +191,17 @@ message ClearDocumentResponse {
   repeated ClearDocumentResult results = 1;
 }
 
+message TruncateDocumentRequest {
+  string document_id = 1;
+  int32 span_start = 2;
+}
+
+message TruncateDocumentResponse {
+  string document_id = 1;
+  repeated string deleted_node_ids = 2;
+  int32 span_start = 3;
+}
+
 message ExportTelemetryRequest {
   string document_id = 1;
 }
@@ -203,6 +214,7 @@ message ExportTelemetryResponse {
 service IndexerService {
   rpc IndexDocument(IndexDocumentRequest) returns (IndexDocumentResponse);
   rpc AppendText(AppendTextRequest) returns (AppendTextResponse);
+  rpc TruncateDocument(TruncateDocumentRequest) returns (TruncateDocumentResponse);
 }
 
 service RetrievalService {
