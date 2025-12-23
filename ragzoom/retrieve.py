@@ -289,6 +289,13 @@ class Retriever:
                 verbatim_leaves = repo.get_recent_leaves_within_budget_before(
                     effective_doc_id, recent_verbatim_budget, actual_end
                 )
+                # Filter out leaves that start before the window
+                if actual_start is not None:
+                    verbatim_leaves = [
+                        leaf
+                        for leaf in verbatim_leaves
+                        if leaf.span_start >= actual_start
+                    ]
             else:
                 verbatim_leaves = (
                     self.document_store.nodes.get_recent_leaves_within_budget(

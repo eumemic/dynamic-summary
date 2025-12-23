@@ -7,8 +7,9 @@ from unittest.mock import patch
 import pytest
 
 from ragzoom.indexing import ClearedDocumentResult
+from ragzoom.indexing.runtime import TruncateResult
 from ragzoom.services.indexing_service import IndexingResult
-from ragzoom.wrapper import AsyncRagZoom, RagZoom
+from ragzoom.wrapper import AsyncRagZoom, RagZoom, _SessionProtocol
 
 
 class _StubSession:
@@ -42,6 +43,13 @@ class _StubSession:
             document_existed=True,
         )
 
+    async def truncate_from_span(self, span_start: int) -> TruncateResult:
+        return TruncateResult(
+            document_id=self.document_id or "unknown",
+            deleted_node_ids=[],
+            span_start=span_start,
+        )
+
 
 class _StubRuntime:
     def __init__(self, session: _StubSession) -> None:
@@ -50,7 +58,7 @@ class _StubRuntime:
 
     def get_session(
         self, document_id: str, *, file_path: str | None = None
-    ) -> _StubSession:
+    ) -> _SessionProtocol:
         self.requests.append((document_id, file_path))
         self._session.document_id = document_id
         return self._session

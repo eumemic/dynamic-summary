@@ -6,6 +6,7 @@ from .runtime import (
     IndexerRuntime,
     ProgressEvent,
     ProgressHandle,
+    TruncateResult,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "IndexerRuntime",
     "ProgressEvent",
     "ProgressHandle",
+    "TruncateResult",
 ]
