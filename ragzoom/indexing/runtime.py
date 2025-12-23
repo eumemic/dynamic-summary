@@ -36,6 +36,15 @@ class ClearedDocumentResult:
 
 
 @dataclass
+class TruncateResult:
+    """Outcome from truncating a document at a span position."""
+
+    document_id: str
+    deleted_node_ids: list[str]
+    span_start: int
+
+
+@dataclass
 class ProgressEvent:
     """Snapshot of worker progress for a document."""
 
@@ -380,6 +389,8 @@ class DocumentIndexSession:
                     document_id=outcome.document_id,
                     chunks_created=outcome.total_leaves,
                     tree_depth=tree_depth,
+                    span_start=outcome.appended_span_start,
+                    span_end=outcome.appended_span_end,
                     mutated_nodes=mutated_nodes,
                     resummarized_nodes=0,
                     new_leaves=new_leaves,
@@ -462,6 +473,61 @@ class DocumentIndexSession:
             document_id=self._document_id,
             deleted_nodes=deleted_nodes,
             document_existed=True,
+        )
+
+    async def truncate_from_span(self, span_start: int) -> TruncateResult:
+        """Delete all nodes with span_start >= given position.
+
+        Used for rolling back a document after a conversation revert.
+        Cancels any in-flight indexing, deletes nodes from storage,
+        and removes corresponding vectors from the vector index.
+
+        Args:
+            span_start: Delete all nodes where node.span_start >= this value
+
+        Returns:
+            TruncateResult with document_id, deleted node IDs, and span_start
+        """
+        await self._runtime._indexing_engine.cancel_document(self._document_id)
+
+        store = self._runtime._store
+        lock_cm = self._lock_document(store)
+
+        with lock_cm:
+            doc_record = store.get_document_by_id(self._document_id)
+            if doc_record is None:
+                return TruncateResult(
+                    document_id=self._document_id,
+                    deleted_node_ids=[],
+                    span_start=span_start,
+                )
+
+            embedding_model = (
+                getattr(doc_record, "embedding_model", None)
+                or self._runtime._index_config.embedding_model
+            )
+
+            # Delete nodes from storage
+            deleted_node_ids = store.delete_nodes_from_span(
+                self._document_id, span_start
+            )
+
+            # Delete vectors for those nodes
+            if deleted_node_ids:
+                try:
+                    vector_index = self._runtime._vector_index_factory(embedding_model)
+                    vector_index.delete(filter={"node_id": {"$in": deleted_node_ids}})
+                except Exception:
+                    logger.exception(
+                        "Failed to delete vectors for truncated nodes in document %s",
+                        self._document_id,
+                    )
+
+        await self._runtime._emit_status(self._document_id)
+        return TruncateResult(
+            document_id=self._document_id,
+            deleted_node_ids=deleted_node_ids,
+            span_start=span_start,
         )
 
     def register_progress_listener(self, callback: ProgressCallback) -> ProgressHandle:

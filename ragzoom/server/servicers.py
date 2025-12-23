@@ -292,9 +292,34 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
             collect_telemetry=request.collect_telemetry,
         )
 
-        response = pb2.AppendTextResponse(stats=_stats_to_proto(result))
+        response = pb2.AppendTextResponse(
+            stats=_stats_to_proto(result),
+            span_start=result.span_start,
+            span_end=result.span_end,
+        )
         setattr(response, "telemetry_run_id", result.telemetry_run_id or "")
         return response
+
+    async def TruncateDocument(  # noqa: N802
+        self,
+        request: pb2.TruncateDocumentRequest,
+        context: ServicerContextProto,
+    ) -> pb2.TruncateDocumentResponse:
+        if not request.document_id:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="TruncateDocument requires `document_id`.",
+            )
+
+        session = self._runtime.get_session(request.document_id)
+        result = await session.truncate_from_span(request.span_start)
+
+        return pb2.TruncateDocumentResponse(
+            document_id=result.document_id,
+            deleted_node_ids=result.deleted_node_ids,
+            span_start=result.span_start,
+        )
 
 
 class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):

@@ -47,6 +47,10 @@ class IndexingResult:
     document_id: str
     chunks_created: int
     tree_depth: int
+    span_start: int = 0
+    """Character offset where appended content starts."""
+    span_end: int = 0
+    """Character offset where appended content ends."""
     mutated_nodes: int | None = None
     resummarized_nodes: int | None = None
     new_leaves: int | None = None
