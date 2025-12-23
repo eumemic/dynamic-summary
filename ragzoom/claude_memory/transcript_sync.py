@@ -982,11 +982,11 @@ def execute_sync(
         segments: list[list[str]] = []
         current_segment: list[str] = []
 
-        for i, uuid in enumerate(plan.uuids_to_transcribe):
-            record = records_by_uuid.get(uuid, {})
+        for uuid in plan.uuids_to_transcribe:
+            record = records_by_uuid.get(uuid)
 
-            # Check if this is a compaction summary - skip it
-            if record.get("isCompactSummary"):
+            # Skip UUIDs not in records map (compaction summaries are filtered out)
+            if record is None:
                 continue
 
             # Check if this starts a new segment (system message with no parent)

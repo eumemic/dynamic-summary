@@ -68,32 +68,42 @@ def _get_transcript_path(document_id: str) -> Path:
 def _get_compaction_span_end(state: SessionState) -> int | None:
     """Compute the compaction boundary span_end on-demand.
 
-    Scans the transcript backwards. The last UUID seen before hitting
-    the compaction record is the first message after compaction (chronologically).
-    We look that up in our append log to get its span_end.
+    Scans the transcript to find UUIDs that appear after compaction,
+    then finds the first segment containing post-compaction content.
+    Returns the previous segment's span_end as the compaction boundary.
 
     Returns:
-        span_end of the compaction point, or None if no compaction.
+        span_end of the last pre-compaction segment, or None if no compaction.
     """
     transcript_path = _get_transcript_path(state.header.document_id)
 
-    # Build a set of known UUIDs for fast lookup
-    known_uuids = {entry.last_uuid: entry.span_end for entry in state.entries}
+    # Collect all UUIDs that appear after compaction
+    post_compaction_uuids: set[str] = set()
+    found_compaction = False
 
-    # Scan backwards - when we hit compaction, the last UUID we saw
-    # is the first message after compaction (in chronological order)
-    last_uuid: str | None = None
     for record in iter_jsonl_reversed(transcript_path):
         if record.get("isCompactSummary"):
-            # Found compaction - check if the message right after it is in our log
-            if last_uuid is not None and last_uuid in known_uuids:
-                return known_uuids[last_uuid]
-            return None
+            found_compaction = True
+            break
 
         uuid = record.get("uuid")
         if isinstance(uuid, str):
-            last_uuid = uuid
+            post_compaction_uuids.add(uuid)
 
+    if not found_compaction:
+        return None
+
+    # Find the first segment whose last_uuid is post-compaction
+    # Return the previous segment's span_end
+    prev_span_end = 0
+    for entry in state.entries:
+        if entry.last_uuid in post_compaction_uuids:
+            # This segment contains post-compaction content
+            # Return the boundary before this segment
+            return prev_span_end
+        prev_span_end = entry.span_end
+
+    # All segments are pre-compaction (shouldn't happen normally)
     return None
 
 
