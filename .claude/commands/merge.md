@@ -9,7 +9,7 @@ argument-hint: [PR number]
 ## Context
 - Current branch: !`git branch --show-current`
 - PR status: !`gh pr list --head $(git branch --show-current) --state open --json state -q 'if length > 0 then .[0].state else "No PR" end'`
-- CI checks: !`gh pr checks --json state --jq 'if length == 0 then "No checks" else map(.state) | unique | join(", ") end'`
+- CI checks: !`gh pr checks --json state --jq 'if length == 0 then "No checks" else map(.state) | unique | join(", ") end' 2>/dev/null || echo "No checks"`
 
 ## Strategic Guidance
 Merging completes the feature cycle. Use squash merge to maintain a clean commit history on master. For worktree branches, we don't delete the branch - just sync with master for the next cycle.
