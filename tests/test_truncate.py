@@ -371,6 +371,7 @@ class TestRuntimeTruncate:
         assert result.span_start == 0
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(6.0)
     async def test_truncate_leaves_consistent_tree(
         self,
         indexer_runtime_harness: IndexerRuntimeHarness,
