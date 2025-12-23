@@ -16,6 +16,12 @@ from typing import Literal
 
 import matplotlib
 
+from ragzoom.cost import (
+    calculate_completion_cost,
+    calculate_embedding_cost,
+    calculate_prompt_cost_with_cache,
+)
+
 # Force non-interactive backend in headless/test environments to avoid GUI stalls
 if not os.environ.get("MPLBACKEND"):
     matplotlib.use("Agg")
@@ -30,7 +36,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from typing_extensions import TypedDict
 
-from ragzoom.config import get_embedding_cost, get_llm_costs
+from ragzoom.config import get_cache_discount, get_embedding_cost, get_llm_costs
 from ragzoom.telemetry_analysis import (
     compute_batch_efficiency,
     get_accepted_attempt,
@@ -277,10 +283,13 @@ class TelemetryVisualizer:
         Returns:
             Total cost in USD
         """
-        # Get cost functions for models in telemetry
-        embedding_cost_per_1k, summary_input_cost_per_1k, summary_output_cost_per_1k = (
-            self._get_cost_functions(telemetry)
-        )
+        # Get cost parameters for models in telemetry
+        (
+            embedding_cost_per_1k,
+            summary_input_cost_per_1k,
+            summary_output_cost_per_1k,
+            cache_discount,
+        ) = self._get_cost_functions(telemetry)
 
         # Extract nodes from telemetry data
         nodes = self._extract_nodes_from_telemetry(telemetry)
@@ -292,7 +301,9 @@ class TelemetryVisualizer:
             if embedding:
                 total_embedding_tokens += embedding.get("text_tokens", 0)
 
-        embedding_cost = (total_embedding_tokens / 1000) * embedding_cost_per_1k
+        embedding_cost = calculate_embedding_cost(
+            total_embedding_tokens, embedding_cost_per_1k
+        )
 
         # Calculate summary cost from all attempts (including leaf node context summaries)
         summary_cost = 0.0
@@ -301,9 +312,17 @@ class TelemetryVisualizer:
             for attempt in attempts:
                 prompt_tokens = attempt.get("prompt_tokens", 0)
                 completion_tokens = attempt.get("completion_tokens", 0)
+                cached_tokens = attempt.get("cached_tokens", 0)
 
-                input_cost = (prompt_tokens / 1000) * summary_input_cost_per_1k
-                output_cost = (completion_tokens / 1000) * summary_output_cost_per_1k
+                input_cost = calculate_prompt_cost_with_cache(
+                    prompt_tokens,
+                    cached_tokens,
+                    summary_input_cost_per_1k,
+                    cache_discount,
+                )
+                output_cost = calculate_completion_cost(
+                    completion_tokens, summary_output_cost_per_1k
+                )
                 summary_cost += input_cost + output_cost
 
         return embedding_cost + summary_cost
@@ -494,8 +513,13 @@ class TelemetryVisualizer:
 
     def _get_cost_functions(
         self, telemetry: TelemetryDataDict
-    ) -> tuple[float, float, float]:
-        """Get cost calculation functions for models in telemetry."""
+    ) -> tuple[float, float, float, float]:
+        """Get cost calculation parameters for models in telemetry.
+
+        Returns:
+            Tuple of (embedding_cost_per_1k, summary_input_cost_per_1k,
+                     summary_output_cost_per_1k, cache_discount)
+        """
         # Get models from config
         config = telemetry.get("config", {})
         embedding_model = config.get("embedding_model")
@@ -512,11 +536,13 @@ class TelemetryVisualizer:
         summary_input_cost_per_1k, summary_output_cost_per_1k = get_llm_costs(
             summary_model
         )
+        cache_discount = get_cache_discount(summary_model)
 
         return (
             embedding_cost_per_1k,
             summary_input_cost_per_1k,
             summary_output_cost_per_1k,
+            cache_discount,
         )
 
     def _calculate_histogram_bins(
@@ -778,10 +804,13 @@ class TelemetryVisualizer:
         bounds: PlotBoundsDict | None = None,
     ) -> None:
         """Plot cost breakdown by attempt number as vertical stacked bar."""
-        # Get cost functions for models in telemetry
-        embedding_cost_per_1k, summary_input_cost_per_1k, summary_output_cost_per_1k = (
-            self._get_cost_functions(telemetry)
-        )
+        # Get cost parameters for models in telemetry
+        (
+            embedding_cost_per_1k,
+            summary_input_cost_per_1k,
+            summary_output_cost_per_1k,
+            cache_discount,
+        ) = self._get_cost_functions(telemetry)
 
         # Calculate costs by attempt number
         costs_by_attempt = {1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0}  # 5 = 5+
@@ -796,7 +825,9 @@ class TelemetryVisualizer:
             if embedding:
                 total_embedding_tokens += embedding.get("text_tokens", 0)
 
-        embedding_cost = (total_embedding_tokens / 1000) * embedding_cost_per_1k
+        embedding_cost = calculate_embedding_cost(
+            total_embedding_tokens, embedding_cost_per_1k
+        )
 
         # Process all attempts (including leaf node context summaries)
         for node in nodes:
@@ -804,10 +835,18 @@ class TelemetryVisualizer:
             for attempt_num, attempt in enumerate(attempts, 1):
                 prompt_tokens = attempt.get("prompt_tokens", 0)
                 completion_tokens = attempt.get("completion_tokens", 0)
+                cached_tokens = attempt.get("cached_tokens", 0)
 
                 # Calculate cost for this attempt
-                input_cost = (prompt_tokens / 1000) * summary_input_cost_per_1k
-                output_cost = (completion_tokens / 1000) * summary_output_cost_per_1k
+                input_cost = calculate_prompt_cost_with_cache(
+                    prompt_tokens,
+                    cached_tokens,
+                    summary_input_cost_per_1k,
+                    cache_discount,
+                )
+                output_cost = calculate_completion_cost(
+                    completion_tokens, summary_output_cost_per_1k
+                )
                 attempt_cost = input_cost + output_cost
 
                 # Group attempts 5+ together
