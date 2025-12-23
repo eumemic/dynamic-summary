@@ -20,5 +20,3 @@ if [[ -n "$SESSION_ID" ]]; then
     cd "$GIT_ROOT"
     python -m ragzoom.cli set-session-pid "$SESSION_ID" "$PPID"
 fi
-
-exit 0

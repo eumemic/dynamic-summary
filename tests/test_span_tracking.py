@@ -7,9 +7,7 @@ flow correctly from AppendExecutor through gRPC to the transcript sync layer.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 
 from ragzoom.claude_memory.transcript_sync import (
     AppendEntry,
@@ -18,48 +16,7 @@ from ragzoom.claude_memory.transcript_sync import (
     execute_sync,
     get_compaction_uuid,
 )
-
-
-class MockAppendResult(Protocol):
-    """Protocol for append result with span info."""
-
-    span_start: int
-    span_end: int
-
-
-@dataclass
-class FakeAppendResult:
-    """Fake append result that mimics IndexingResult."""
-
-    span_start: int
-    span_end: int
-    chunks_created: int = 1
-
-
-class FakeClient:
-    """Fake client that tracks appends and returns span positions."""
-
-    def __init__(self) -> None:
-        self.appends: list[tuple[str, str]] = []
-        self.truncates: list[tuple[str, int]] = []
-        self._current_span: int = 0
-
-    def append(self, document_id: str, text: str) -> FakeAppendResult:
-        """Append text and return span positions."""
-        self.appends.append((document_id, text))
-        span_start = self._current_span
-        span_end = self._current_span + len(text)
-        self._current_span = span_end
-        return FakeAppendResult(
-            span_start=span_start,
-            span_end=span_end,
-            chunks_created=1,
-        )
-
-    def truncate(self, document_id: str, span_start: int) -> None:
-        """Truncate document to span."""
-        self.truncates.append((document_id, span_start))
-        self._current_span = span_start
+from tests.conftest import FakeTranscriptClient
 
 
 class TestSpanTrackingInSync:
@@ -101,7 +58,7 @@ class TestSpanTrackingInSync:
         )
 
         state_path = tmp_path / "state.jsonl"
-        client = FakeClient()
+        client = FakeTranscriptClient()
 
         result = execute_sync(transcript_path, state_path, client)
 
@@ -128,7 +85,7 @@ class TestSpanTrackingInSync:
         """Incremental syncs should continue from previous span_end."""
         transcript_path = tmp_path / "transcript.jsonl"
         state_path = tmp_path / "state.jsonl"
-        client = FakeClient()
+        client = FakeTranscriptClient()
 
         # First sync with one message
         transcript_path.write_text(
@@ -392,7 +349,7 @@ class TestEndToEndSpanAccuracy:
         )
 
         # Use fake client that returns actual text lengths
-        client = FakeClient()
+        client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
         # Verify single batched append happened
@@ -517,7 +474,7 @@ class TestCompactionSegmentBridging:
             + "\n"
         )
 
-        client = FakeClient()
+        client = FakeTranscriptClient()
         result = execute_sync(transcript_path, state_path, client)
 
         # Should have synced messages from BOTH sides of compaction
@@ -627,7 +584,7 @@ class TestCompactionSegmentBridging:
             + "\n"
         )
 
-        client = FakeClient()
+        client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
         state = SessionState.load(state_path)

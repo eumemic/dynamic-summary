@@ -14,6 +14,12 @@ from ragzoom.client.grpc_client import GrpcRagzoomClient
 mcp = FastMCP(name="RagZoom Memory")
 
 
+def _get_state_dir() -> Path:
+    """Get the transcript state directory from environment or default."""
+    state_dir_str = os.environ.get("RAGZOOM_STATE_DIR", "data/transcript-state")
+    return Path(state_dir_str)
+
+
 def _get_session_id() -> tuple[str, SessionState]:
     """Find the session ID by matching our parent PID to transcript state files.
 
@@ -25,10 +31,11 @@ def _get_session_id() -> tuple[str, SessionState]:
     """
     claude_code_pid = os.getppid()
 
-    state_dir = Path("data/transcript-state")
+    state_dir = _get_state_dir()
     if not state_dir.exists():
         raise ValueError(
             f"No transcript state directory found at {state_dir}. "
+            "Set RAGZOOM_STATE_DIR environment variable if using a custom location. "
             "Has the transcript been synced yet?"
         )
 

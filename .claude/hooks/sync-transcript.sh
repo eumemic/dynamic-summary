@@ -20,5 +20,3 @@ if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
     cd "$GIT_ROOT"
     python -m ragzoom.cli sync-claude-code-transcript "$TRANSCRIPT_PATH"
 fi
-
-exit 0

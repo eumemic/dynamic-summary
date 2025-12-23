@@ -496,17 +496,16 @@ def get_compaction_uuid(transcript_path: Path) -> str | None:
 def get_current_head(transcript_path: Path) -> str | None:
     """Get the UUID of the most recent message in the transcript.
 
-    Reads the transcript forward, returning the last uuid seen.
+    Scans backwards from the end for efficiency, since the head is at the end.
     Returns None if no messages with uuid found.
     """
-    last_uuid: str | None = None
-    for record, _ in iter_jsonl(transcript_path):
+    for record in iter_jsonl_reversed(transcript_path):
         if record.get("isCompactSummary"):
             continue
         uuid = record.get("uuid")
         if isinstance(uuid, str):
-            last_uuid = uuid
-    return last_uuid
+            return uuid
+    return None
 
 
 def build_records_map(

@@ -981,3 +981,49 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
             signal.signal(signal.SIGALRM, prev_handler)
         except Exception:
             pass
+
+
+# ============================================================================
+# Transcript Sync Test Fixtures
+# ============================================================================
+
+
+@dataclass
+class FakeAppendResult:
+    """Fake append result that mimics IndexingResult for transcript sync tests."""
+
+    span_start: int
+    span_end: int
+    chunks_created: int = 1
+
+
+class FakeTranscriptClient:
+    """Fake client for transcript sync tests that tracks appends and truncations."""
+
+    def __init__(self) -> None:
+        self.appends: list[tuple[str, str]] = []
+        self.truncates: list[tuple[str, int]] = []
+        self._current_span: int = 0
+
+    def append(self, document_id: str, text: str) -> FakeAppendResult:
+        """Append text and return span positions."""
+        self.appends.append((document_id, text))
+        span_start = self._current_span
+        span_end = self._current_span + len(text)
+        self._current_span = span_end
+        return FakeAppendResult(
+            span_start=span_start,
+            span_end=span_end,
+            chunks_created=1,
+        )
+
+    def truncate(self, document_id: str, span_start: int) -> None:
+        """Truncate document to span."""
+        self.truncates.append((document_id, span_start))
+        self._current_span = span_start
+
+
+@pytest.fixture
+def fake_transcript_client() -> FakeTranscriptClient:
+    """Create a fake client for transcript sync tests."""
+    return FakeTranscriptClient()

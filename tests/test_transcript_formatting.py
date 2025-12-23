@@ -9,37 +9,7 @@ from ragzoom.claude_memory.transcript_sync import (
     SessionState,
     execute_sync,
 )
-
-
-class FakeAppendResult:
-    """Fake append result that mimics IndexingResult."""
-
-    def __init__(self, span_start: int, span_end: int) -> None:
-        self.span_start = span_start
-        self.span_end = span_end
-        self.chunks_created = 1
-
-
-class FakeClient:
-    """Fake client that tracks appends and returns span positions."""
-
-    def __init__(self) -> None:
-        self.appends: list[tuple[str, str]] = []
-        self.truncates: list[tuple[str, int]] = []
-        self._current_span: int = 0
-
-    def append(self, document_id: str, text: str) -> FakeAppendResult:
-        """Append text and return span positions."""
-        self.appends.append((document_id, text))
-        span_start = self._current_span
-        span_end = self._current_span + len(text)
-        self._current_span = span_end
-        return FakeAppendResult(span_start=span_start, span_end=span_end)
-
-    def truncate(self, document_id: str, span_start: int) -> None:
-        """Truncate document to span."""
-        self.truncates.append((document_id, span_start))
-        self._current_span = span_start
+from tests.conftest import FakeTranscriptClient
 
 
 class TestTranscriptFormatting:
@@ -84,7 +54,7 @@ class TestTranscriptFormatting:
             + "\n"
         )
 
-        client = FakeClient()
+        client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
         assert len(client.appends) == 1
@@ -130,7 +100,7 @@ class TestTranscriptFormatting:
             + "\n"
         )
 
-        client = FakeClient()
+        client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
         assert len(client.appends) == 1
@@ -164,7 +134,7 @@ class TestTranscriptFormatting:
             + "\n"
         )
 
-        client = FakeClient()
+        client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
         # Empty messages should result in no append
@@ -255,7 +225,7 @@ class TestCompactionSegmentBatching:
             + "\n"
         )
 
-        client = FakeClient()
+        client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
         # Should have 3 appends (one per segment)
@@ -306,7 +276,7 @@ class TestCompactionSegmentBatching:
             + "\n"
         )
 
-        client = FakeClient()
+        client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
         state = SessionState.load(state_path)
@@ -357,7 +327,7 @@ class TestCompactionSegmentBatching:
             + "\n"
         )
 
-        client = FakeClient()
+        client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
         state = SessionState.load(state_path)
@@ -457,7 +427,7 @@ class TestToolUsageBatching:
             + "\n"
         )
 
-        client = FakeClient()
+        client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
         text = client.appends[0][1]
@@ -553,7 +523,7 @@ class TestToolUsageBatching:
             + "\n"
         )
 
-        client = FakeClient()
+        client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
         assert len(client.appends) == 1
@@ -624,7 +594,7 @@ class TestToolUsageBatching:
             + "\n"
         )
 
-        client = FakeClient()
+        client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
         text = client.appends[0][1]
@@ -685,7 +655,7 @@ class TestToolUsageBatching:
             + "\n"
         )
 
-        client = FakeClient()
+        client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
         text = client.appends[0][1]
@@ -746,7 +716,7 @@ class TestCommandHandling:
             + "\n"
         )
 
-        client = FakeClient()
+        client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
         text = client.appends[0][1]
@@ -814,7 +784,7 @@ class TestCommandHandling:
             + "\n"
         )
 
-        client = FakeClient()
+        client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
         text = client.appends[0][1]
@@ -867,7 +837,7 @@ class TestCommandHandling:
             + "\n"
         )
 
-        client = FakeClient()
+        client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
         text = client.appends[0][1]
