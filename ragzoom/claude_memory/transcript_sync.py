@@ -208,9 +208,17 @@ class SessionState:
         return _SessionAppendLog(self)
 
 
+def _get_state_dir() -> Path:
+    """Get the transcript state directory from environment or default."""
+    import os
+
+    state_dir_str = os.environ.get("RAGZOOM_STATE_DIR", "data/transcript-state")
+    return Path(state_dir_str)
+
+
 def get_state_path(document_id: str) -> Path:
     """Get the path to the state file for a document."""
-    state_dir = Path("data/transcript-state")
+    state_dir = _get_state_dir()
     state_dir.mkdir(parents=True, exist_ok=True)
     return state_dir / f"{document_id}.jsonl"
 

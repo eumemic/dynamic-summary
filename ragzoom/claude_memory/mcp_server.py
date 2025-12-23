@@ -8,16 +8,10 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from ragzoom.claude_memory.jsonl_reader import iter_jsonl_reversed
-from ragzoom.claude_memory.transcript_sync import SessionState
+from ragzoom.claude_memory.transcript_sync import SessionState, _get_state_dir
 from ragzoom.client.grpc_client import GrpcRagzoomClient
 
 mcp = FastMCP(name="RagZoom Memory")
-
-
-def _get_state_dir() -> Path:
-    """Get the transcript state directory from environment or default."""
-    state_dir_str = os.environ.get("RAGZOOM_STATE_DIR", "data/transcript-state")
-    return Path(state_dir_str)
 
 
 def _get_session_id() -> tuple[str, SessionState]:
