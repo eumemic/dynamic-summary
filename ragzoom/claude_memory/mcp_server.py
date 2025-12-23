@@ -7,9 +7,9 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+from ragzoom.claude_memory.jsonl_reader import iter_jsonl_reversed
+from ragzoom.claude_memory.transcript_sync import SessionState
 from ragzoom.client.grpc_client import GrpcRagzoomClient
-from ragzoom.jsonl_reader import iter_jsonl_reversed
-from ragzoom.transcript_sync import SessionState
 
 mcp = FastMCP(name="RagZoom Memory")
 
