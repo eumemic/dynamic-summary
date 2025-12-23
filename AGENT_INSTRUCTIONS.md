@@ -121,7 +121,7 @@ For detailed understanding of the core tiling algorithm:
 
 @include docs/deep-dives/tiling-algorithm.md
 
-### 9. Custom Claude Commands
+### 10. Custom Claude Commands
 
 Custom slash commands are stored in `.claude/commands/` as markdown files:
 - `/commit` - Create atomic commits and push to origin
@@ -131,11 +131,11 @@ Custom slash commands are stored in `.claude/commands/` as markdown files:
 - `/review` - Code review
 To modify: edit `.claude/commands/<command-name>.md`
 
-### 10. Subagent Management
+### 11. Subagent Management
 
 Claude Code subagents can be either local custom agents or symlinks to external agents via git submodule. See `docs/subagent-management.md` for details.
 
-### 11. Agent Slots for Parallel Development
+### 12. Agent Slots for Parallel Development
 
 This repository uses persistent worktree "agent slots" for isolated Claude sessions. Each slot provides:
 - Separate conversation history (stored in ~/.claude/projects/)
@@ -155,7 +155,13 @@ cd worktrees/worktree-N && claude
 - Use `/merge` to merge PR and sync with master
 - The same branch is reused for multiple sequential PRs
 
-### 13. Agent-Specific Troubleshooting
+### 13. Memory Usage
+
+When this agent has access to the RagZoom memory tool (`remember`), use it proactively to recall details from earlier in the conversation.
+
+@include docs/memory-usage.md
+
+### 14. Agent-Specific Troubleshooting
 
 - **Pre-commit Hook Issues:** If pre-commit hooks fail, they'll automatically fix most issues. Just re-commit after they run.
 - **Testing Issues:** Always use `./scripts/run-checks.sh` instead of `pytest` directly - it handles environment setup correctly.
