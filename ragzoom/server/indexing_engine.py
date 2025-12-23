@@ -1185,12 +1185,12 @@ class IndexingEngine:
         """Generate contextual embedding for a leaf node.
 
         Steps:
-        1. Retrieve preceding context
+        1. Retrieve preceding context (with query embedding for cost tracking)
         2. Summarize context into prefix (LLM call)
         3. Generate embedding with context prefix
         4. Write to vector index
         """
-        from ragzoom.utils.tokenization import tokenizer
+        from ragzoom.contracts.embedding_model import EmbeddingUsageInfo
 
         store = self._store.for_document(job.document_id)
         leaf = store.nodes.get(job.leaf_id)
@@ -1225,14 +1225,29 @@ class IndexingEngine:
         # Get leaf-specific preceding context config
         leaf_config = self._index_config.preceding_context.leaf
 
-        # Retrieve preceding context (unified function handles span_start=0 case)
+        # Pre-compute query embedding with usage tracking (only if we need retrieval)
+        retrieval_embedding_usage: EmbeddingUsageInfo = {"total_tokens": 0, "model": ""}
+        query_embedding: list[float] | None = None
         retrieval_start_time = time.time()
+
+        if span_start > 0:
+            # Get retrieval embedding with usage info
+            retriever = self._create_retriever(job.document_id)
+            if retriever is not None:
+                query_embedding, retrieval_embedding_usage = (
+                    await retriever.embedding_service.get_query_embedding_async_with_usage(
+                        leaf_text, job.document_id
+                    )
+                )
+
+        # Retrieve preceding context (pass pre-computed embedding to skip API call)
         context_result = await self._get_preceding_context(
             store=store,
             document_id=job.document_id,
             span_start=span_start,
             config=leaf_config,
             query_text=leaf_text,
+            query_embedding=query_embedding,
         )
         tiling_ids = context_result.tiling_ids
         context_nodes = context_result.nodes
@@ -1290,7 +1305,9 @@ class IndexingEngine:
 
         # Record embedding start time for telemetry
         embed_start_time = time.time()
-        embeddings = await self._llm_service.embed_texts([text_to_embed])
+        embed_result = await self._llm_service.embed_texts_with_usage([text_to_embed])
+        embeddings = embed_result["embeddings"]
+        leaf_embedding_usage = embed_result["usage"]
         if not embeddings:
             logger.error(
                 "embed: no embedding returned doc=%s leaf=%s",
@@ -1299,12 +1316,16 @@ class IndexingEngine:
             )
             return
 
-        # Record embedding telemetry
-        text_tokens = tokenizer.count_tokens(text_to_embed)
+        # Combine retrieval and leaf embedding tokens for telemetry and cost
+        retrieval_tokens = retrieval_embedding_usage.get("total_tokens", 0)
+        leaf_tokens = leaf_embedding_usage.get("total_tokens", 0)
+        total_embedding_tokens = retrieval_tokens + leaf_tokens
+
+        # Record embedding telemetry (combined for both API calls)
         if telemetry is not None:
             telemetry.record_embedding_call_v2(
-                node_embeddings=[(job.leaf_id, text_tokens)],
-                batch_size=1,
+                node_embeddings=[(job.leaf_id, total_embedding_tokens)],
+                batch_size=2 if retrieval_tokens > 0 else 1,
                 model=self._index_config.embedding_model,
                 start_time=embed_start_time,
             )
@@ -1319,7 +1340,9 @@ class IndexingEngine:
         from ragzoom.model_info import ModelInfo
 
         embedding_cost_per_1k = get_embedding_cost(self._index_config.embedding_model)
-        leaf_cost = calculate_embedding_cost(text_tokens, embedding_cost_per_1k)
+        leaf_cost = calculate_embedding_cost(
+            total_embedding_tokens, embedding_cost_per_1k
+        )
 
         # Add contextualization LLM cost if we made that call
         if contextualization_result is not None:
@@ -1713,6 +1736,7 @@ class IndexingEngine:
         span_start: int,
         config: PrecedingContextConfig,
         query_text: str | None,
+        query_embedding: list[float] | None = None,
     ) -> PrecedingContextResult:
         """Retrieve preceding context for a node.
 
@@ -1725,6 +1749,8 @@ class IndexingEngine:
             config: Preceding context configuration (leaf or inner)
             query_text: Query text for semantic retrieval. Pass the node's text for
                 leaves, or None for inner nodes (which use minimal tiling).
+            query_embedding: Pre-computed query embedding. If provided, skips the
+                embedding API call in retrieval.
 
         Returns:
             PrecedingContextResult with tiling node IDs, node data, and token count.
@@ -1745,6 +1771,7 @@ class IndexingEngine:
                 document_id=document_id,
                 recent_verbatim_token_budget=config.verbatim_tokens,
                 num_seeds=config.num_seeds,
+                query_embedding=query_embedding,
             )
             if (
                 context_result is not None

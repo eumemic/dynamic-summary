@@ -8,6 +8,22 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
+from typing_extensions import TypedDict
+
+
+class EmbeddingUsageInfo(TypedDict, total=False):
+    """Usage information from an embedding API call."""
+
+    total_tokens: int
+    model: str
+
+
+class EmbeddingResult(TypedDict):
+    """Result from embedding API call with usage info."""
+
+    embeddings: list[list[float]]
+    usage: EmbeddingUsageInfo
+
 
 class EmbeddingProvider(Protocol):
     """Protocol for async embedding providers used in indexing and telemetry."""
