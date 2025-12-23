@@ -2108,7 +2108,7 @@ def sync_claude_code_transcript(
     Incrementally transcribes new conversation records and indexes them.
     Uses UUID-based ancestry tracking to detect and handle reverts.
     Uses the session ID (JSONL filename without extension) as the document ID.
-    Tracks progress via state files in data/transcript-state/.
+    Tracks progress via state files (configurable via RAGZOOM_STATE_DIR env var).
 
     The JSONL files are typically found in:
     ~/.claude/projects/<project-path>/<session-id>.jsonl
@@ -2116,13 +2116,11 @@ def sync_claude_code_transcript(
     Example:
       ragzoom sync-claude-code-transcript ~/.claude/projects/.../session.jsonl
     """
-    from ragzoom.claude_memory.transcript_sync import execute_sync
+    from ragzoom.claude_memory.transcript_sync import execute_sync, get_state_path
     from ragzoom.wrapper import RagZoom
 
     # State file uses same naming convention but with .jsonl extension
-    state_dir = Path("data/transcript-state")
-    state_dir.mkdir(parents=True, exist_ok=True)
-    state_path = state_dir / f"{jsonl_path.stem}.jsonl"
+    state_path = get_state_path(jsonl_path.stem)
 
     client = RagZoom(server_address=server_address)
 
