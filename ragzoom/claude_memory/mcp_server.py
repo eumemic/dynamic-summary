@@ -6,10 +6,28 @@ import os
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel
 
 from ragzoom.claude_memory.jsonl_reader import iter_jsonl_reversed
 from ragzoom.claude_memory.transcript_sync import SessionState, _get_state_dir
 from ragzoom.client.grpc_client import GrpcRagzoomClient
+
+
+class RememberNode(BaseModel):  # type: ignore[explicit-any]
+    """A node from the tiling result."""
+
+    text: str
+    span_start: int
+    span_end: int
+    height: int
+    token_count: int
+
+
+class RememberResult(BaseModel):  # type: ignore[explicit-any]
+    """Structured result from the remember tool."""
+
+    nodes: list[RememberNode]
+
 
 mcp = FastMCP(name="RagZoom Memory")
 
@@ -101,36 +119,13 @@ def _get_compaction_span_end(state: SessionState) -> int | None:
     return None
 
 
-def _format_response(
-    summary: str,
-    nodes: list[tuple[int, int, int]],
-) -> str:
-    """Format query response with node metadata for follow-up queries.
-
-    Args:
-        summary: The summary text from the query
-        nodes: List of (span_start, span_end, height) tuples
-
-    Returns:
-        Formatted string with summary and node spans
-    """
-    result = summary
-
-    if nodes:
-        result += "\n\n---\nNode spans (for zooming):\n"
-        for span_start, span_end, height in nodes:
-            result += f"  [{span_start}-{span_end}] height={height}\n"
-
-    return result
-
-
 @mcp.tool()
 def remember(
     query: str,
     token_budget: int = 2000,
     span_start: int = 0,
     span_end: int | None = None,
-) -> str:
+) -> RememberResult:
     """Search pre-compaction conversation history.
 
     Use keyword/phrase queries that match content semantically.
@@ -143,11 +138,12 @@ def remember(
         span_end: End of span range (defaults to compaction boundary)
 
     Returns:
-        Summary text with node spans for follow-up zoom queries
+        RememberResult with array of nodes, each containing text, span info, and height.
+        Height 0 = verbatim original text, higher heights = progressively compressed.
 
     ## How It Works
 
-    The tool returns a "tiling" of nodes that fit within your token budget.
+    The tool returns a structured array of nodes that fit within your token budget.
     Each node has a height: height=0 are verbatim leaves (original text),
     higher heights are progressively more compressed summaries.
 
@@ -162,23 +158,23 @@ def remember(
 
         remember(query="authentication bug", token_budget=2000)
 
-        # Returns summaries + node spans like:
-        # [0-45000] height=5
-        # [45000-72000] height=4
-        # [72000-89000] height=3  <-- mentions auth bug here
-        # [89000-95000] height=1
+        # Returns structured nodes like:
+        # {"nodes": [
+        #   {"text": "...", "span_start": 0, "span_end": 45000, "height": 5, ...},
+        #   {"text": "...", "span_start": 45000, "span_end": 72000, "height": 4, ...},
+        #   {"text": "mentions auth bug...", "span_start": 72000, "span_end": 89000, "height": 3, ...},
+        # ]}
 
     **Step 2 - Zoom:** Drill into the relevant span for more detail:
 
         remember(query="authentication bug", token_budget=2000,
                  span_start=72000, span_end=89000)
 
-        # Same budget, smaller region = more verbatim content
-        # Returns nodes like:
-        # [72000-75000] height=1
-        # [75000-78500] height=0  <-- verbatim leaf!
-        # [78500-82000] height=0
-        # [82000-89000] height=2
+        # Same budget, smaller region = more verbatim (height=0) content
+        # {"nodes": [
+        #   {"text": "...", "span_start": 72000, "span_end": 75000, "height": 1, ...},
+        #   {"text": "verbatim details...", "span_start": 75000, "span_end": 78500, "height": 0, ...},
+        # ]}
 
     **Step 3 - Repeat:** Continue zooming for full detail if needed.
 
@@ -217,19 +213,24 @@ def remember(
             span_end=span_end,
         )
 
-    # Extract summary from tiling
+    # Extract nodes from tiling
     retrieval = output.retrieval
-    summary_parts = []
-    node_info = []
+    nodes: list[RememberNode] = []
 
     for node_id in retrieval.tiling_ids:
         node = retrieval.nodes.get(node_id)
         if node and node.text:
-            summary_parts.append(node.text)
-            node_info.append((node.span_start, node.span_end, node.height))
+            nodes.append(
+                RememberNode(
+                    text=node.text,
+                    span_start=node.span_start,
+                    span_end=node.span_end,
+                    height=node.height,
+                    token_count=node.token_count,
+                )
+            )
 
-    summary = "\n\n".join(summary_parts)
-    return _format_response(summary, node_info)
+    return RememberResult(nodes=nodes)
 
 
 if __name__ == "__main__":
