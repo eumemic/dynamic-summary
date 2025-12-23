@@ -1265,18 +1265,18 @@ class IndexingEngine:
 
         # Contextualize preceding context if present, then build embedding text
         context_summary = ""
+        contextualization_result = None
         if context_prefix:
             # Generate a contextualizing summary of preceding context
             # (extracts only information relevant to understanding the leaf)
-            context_summary, _retry_count, _summary_tokens = (
-                await self._llm_service._contextualize_text(
-                    preceding_context=context_prefix,
-                    target_text=leaf_text,
-                    target_tokens=self._index_config.target_chunk_tokens,
-                    parent_id=job.leaf_id,
-                    reporter=telemetry,
-                )
+            contextualization_result = await self._llm_service._contextualize_text(
+                preceding_context=context_prefix,
+                target_text=leaf_text,
+                target_tokens=self._index_config.target_chunk_tokens,
+                parent_id=job.leaf_id,
+                reporter=telemetry,
             )
+            context_summary = contextualization_result.summary
             # Store the summary in the database
             store.nodes._repo.update_preceding_context_summary(
                 job.leaf_id, context_summary
@@ -1300,14 +1300,45 @@ class IndexingEngine:
             return
 
         # Record embedding telemetry
+        text_tokens = tokenizer.count_tokens(text_to_embed)
         if telemetry is not None:
-            text_tokens = tokenizer.count_tokens(text_to_embed)
             telemetry.record_embedding_call_v2(
                 node_embeddings=[(job.leaf_id, text_tokens)],
                 batch_size=1,
                 model=self._index_config.embedding_model,
                 start_time=embed_start_time,
             )
+
+        # Compute and store leaf cost (embedding + contextualization if present)
+        from ragzoom.config import get_embedding_cost, get_llm_costs
+        from ragzoom.cost import (
+            calculate_completion_cost,
+            calculate_embedding_cost,
+            calculate_prompt_cost_with_cache,
+        )
+        from ragzoom.model_info import ModelInfo
+
+        embedding_cost_per_1k = get_embedding_cost(self._index_config.embedding_model)
+        leaf_cost = calculate_embedding_cost(text_tokens, embedding_cost_per_1k)
+
+        # Add contextualization LLM cost if we made that call
+        if contextualization_result is not None:
+            input_cost_per_1k, output_cost_per_1k = get_llm_costs(
+                self._index_config.summary_model
+            )
+            model_info = ModelInfo()
+            cache_discount = model_info.get_cache_discount(
+                self._index_config.summary_model
+            )
+            usage = contextualization_result.usage
+            leaf_cost += calculate_prompt_cost_with_cache(
+                usage.prompt_tokens,
+                usage.cached_tokens,
+                input_cost_per_1k,
+                cache_discount,
+            ) + calculate_completion_cost(usage.completion_tokens, output_cost_per_1k)
+
+        store.nodes._repo.update_cost(job.leaf_id, leaf_cost)
 
         # Store embedding on the node for algorithmic access
         embedding_array = np.asarray(embeddings[0], dtype=np.float64)
@@ -1510,7 +1541,7 @@ class IndexingEngine:
             if left_tokens is not None and right_tokens is not None
             else None
         )
-        summary, _retry_count, summary_tokens = await self._llm_service._summarize_text(
+        summary_result = await self._llm_service._summarize_text(
             combined_text,
             self._index_config.target_chunk_tokens,
             parent_id=parent_id,
@@ -1518,6 +1549,31 @@ class IndexingEngine:
             prev_context=context_text,
             text_tokens=combined_tokens,
         )
+        summary = summary_result.summary
+        summary_tokens = summary_result.summary_tokens
+
+        # Compute summary cost using actual token counts from API response
+        from ragzoom.config import get_llm_costs
+        from ragzoom.cost import (
+            calculate_completion_cost,
+            calculate_prompt_cost_with_cache,
+        )
+        from ragzoom.model_info import ModelInfo
+
+        input_cost_per_1k, output_cost_per_1k = get_llm_costs(
+            self._index_config.summary_model
+        )
+        model_info = ModelInfo()
+        cache_discount = model_info.get_cache_discount(self._index_config.summary_model)
+
+        # Use actual token counts from accumulated usage across all attempts
+        usage = summary_result.usage
+        summary_cost = calculate_prompt_cost_with_cache(
+            usage.prompt_tokens,
+            usage.cached_tokens,
+            input_cost_per_1k,
+            cache_discount,
+        ) + calculate_completion_cost(usage.completion_tokens, output_cost_per_1k)
 
         # Determine neighbor IDs at parent level
         preceding_parent_id: str | None = None
@@ -1554,6 +1610,7 @@ class IndexingEngine:
             "following_neighbor_id": following_parent_id,
             "level_index": parent_level_index,
             "preceding_context": preceding_context_json,
+            "cost": summary_cost,
         }
 
         # Commit to database - each operation auto-commits

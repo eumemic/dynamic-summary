@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 from openai import AsyncOpenAI
 
 from ragzoom.config import IndexConfig, SecretStr
+from ragzoom.services.summary_utils import SummaryResult
 from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
 
@@ -305,7 +306,7 @@ class LLMService:
         reporter: TelemetryCollector | None = None,
         prev_context: str | None = None,
         text_tokens: int | None = None,
-    ) -> tuple[str, int, int]:
+    ) -> SummaryResult:
         """Summarize text to approximately the target token count."""
         return await self._summarizer.summarize(
             text,
@@ -324,14 +325,16 @@ class LLMService:
         *,
         parent_id: str | None = None,
         reporter: TelemetryCollector | None = None,
-    ) -> tuple[str, int, int]:
+    ) -> SummaryResult:
         """Generate contextualizing summary of preceding context for target text.
 
         Unlike _summarize_text which compresses preserving all information,
         this extracts only background information relevant to understanding
         the target text.
 
-        Returns: (context_summary, retry_count, summary_tokens)
+        Returns:
+            SummaryResult containing the context summary, retry count, token count,
+            and accumulated usage across all LLM attempts for cost calculation.
         """
         return await self._summarizer.contextualize(
             preceding_context,

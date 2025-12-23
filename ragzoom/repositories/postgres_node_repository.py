@@ -65,6 +65,7 @@ class PostgresNodeRepository(BaseRepository):
             node.preceding_context,
             node.preceding_context_summary,
             node.embedding,
+            node.cost,
         )
         session.expunge(node)
 
@@ -179,6 +180,7 @@ class PostgresNodeRepository(BaseRepository):
                     level_index=data["level_index"],
                     preceding_context=data.get("preceding_context"),
                     preceding_context_summary=data.get("preceding_context_summary"),
+                    cost=data.get("cost"),
                 )
                 nodes_pg.append(node)
                 out.append(node)
@@ -235,7 +237,8 @@ class PostgresNodeRepository(BaseRepository):
                 following_neighbor_id,
                 level_index,
                 preceding_context,
-                preceding_context_summary
+                preceding_context_summary,
+                cost
             ) VALUES (
                 :id,
                 :text,
@@ -251,7 +254,8 @@ class PostgresNodeRepository(BaseRepository):
                 :following_neighbor_id,
                 :level_index,
                 :preceding_context,
-                :preceding_context_summary
+                :preceding_context_summary,
+                :cost
             )
             ON CONFLICT (id) DO UPDATE SET
                 text = EXCLUDED.text,
@@ -266,7 +270,8 @@ class PostgresNodeRepository(BaseRepository):
                 following_neighbor_id = EXCLUDED.following_neighbor_id,
                 level_index = EXCLUDED.level_index,
                 preceding_context = EXCLUDED.preceding_context,
-                preceding_context_summary = EXCLUDED.preceding_context_summary
+                preceding_context_summary = EXCLUDED.preceding_context_summary,
+                cost = EXCLUDED.cost
             """
         )
 
@@ -291,6 +296,7 @@ class PostgresNodeRepository(BaseRepository):
                     "level_index": data["level_index"],
                     "preceding_context": data.get("preceding_context"),
                     "preceding_context_summary": data.get("preceding_context_summary"),
+                    "cost": data.get("cost"),
                 }
                 db_session.execute(insert_sql, params)
                 self.cache_manager.invalidate(node_id)
@@ -411,6 +417,20 @@ class PostgresNodeRepository(BaseRepository):
                 update(PostgresTreeNode)
                 .where(PostgresTreeNode.id == node_id)
                 .values(embedding=embedding_bytes)
+            )
+            self.cache_manager.invalidate(node_id)
+
+    def update_cost(
+        self,
+        node_id: str,
+        cost: float | None,
+    ) -> None:
+        """Update the cost field for a node."""
+        with self._session_scope() as db_session:
+            db_session.execute(
+                update(PostgresTreeNode)
+                .where(PostgresTreeNode.id == node_id)
+                .values(cost=cost)
             )
             self.cache_manager.invalidate(node_id)
 
@@ -1164,3 +1184,39 @@ class PostgresNodeRepository(BaseRepository):
             for node in pg_nodes:
                 self._force_load_and_detach(session, node)
             return list(pg_nodes)
+
+    def get_cost_stats(self, document_id: str | None) -> tuple[float, int, int, int]:
+        """Get cost statistics for a document."""
+        with self.SessionLocal() as session:
+            # Build base query filter
+            base_filter = []
+            if document_id:
+                base_filter.append(PostgresTreeNode.document_id == document_id)
+
+            # Total cost
+            cost_query = session.query(
+                func.coalesce(func.sum(PostgresTreeNode.cost), 0.0)
+            )
+            if base_filter:
+                cost_query = cost_query.filter(*base_filter)
+            cost_result = cost_query.scalar()
+            total_cost = float(cost_result) if cost_result is not None else 0.0
+
+            # Total nodes
+            total_query = session.query(func.count(PostgresTreeNode.id))
+            if base_filter:
+                total_query = total_query.filter(*base_filter)
+            total_nodes = int(total_query.scalar() or 0)
+
+            # Leaf nodes (height = 0)
+            leaf_query = session.query(func.count(PostgresTreeNode.id)).filter(
+                PostgresTreeNode.height == 0
+            )
+            if base_filter:
+                leaf_query = leaf_query.filter(*base_filter)
+            leaf_nodes = int(leaf_query.scalar() or 0)
+
+            # Summary nodes = total - leaves
+            summary_nodes = total_nodes - leaf_nodes
+
+            return total_cost, total_nodes, leaf_nodes, summary_nodes

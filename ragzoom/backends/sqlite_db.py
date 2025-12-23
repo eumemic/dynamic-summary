@@ -153,6 +153,11 @@ class SqliteDatabaseManager:
                     )
                 except Exception:
                     pass
+                # Add cost column for issue #310
+                try:
+                    conn.exec_driver_sql("ALTER TABLE tree_nodes ADD COLUMN cost REAL")
+                except Exception:
+                    pass
         except Exception:
             # Columns already dropped or table newly created; ignore
             pass
