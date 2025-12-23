@@ -60,11 +60,18 @@ def _build_test_openai_client(model_id: str) -> "OpenAIAsyncType":
                 def __init__(self, embedding: list[float]) -> None:
                     self.embedding = embedding
 
-            class _Resp:
-                def __init__(self, items: list[_Item]) -> None:
-                    self.data = items
+            class _EmbeddingUsage:
+                def __init__(self, total_tokens: int) -> None:
+                    self.total_tokens = total_tokens
 
-            return _Resp([_Item(list(self._vector)) for _ in texts])
+            class _Resp:
+                def __init__(self, items: list[_Item], total_tokens: int) -> None:
+                    self.data = items
+                    self.usage = _EmbeddingUsage(total_tokens)
+
+            # Estimate ~1 token per 4 chars for stub
+            total_tokens = sum(len(t) // 4 + 1 for t in texts)
+            return _Resp([_Item(list(self._vector)) for _ in texts], total_tokens)
 
     class _StubCompletions:
         async def create(self, **kwargs: object) -> object:
