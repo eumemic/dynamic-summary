@@ -637,7 +637,6 @@ class TestSessionState:
 
         assert loaded is not None
         assert loaded.header.document_id == "doc-123"
-        assert loaded.header.version == 2
         assert len(loaded.entries) == 2
         assert loaded.entries[0].last_uuid == "msg1"
         assert loaded.entries[1].span_end == 200

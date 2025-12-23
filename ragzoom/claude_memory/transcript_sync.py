@@ -28,24 +28,18 @@ _LOCAL_STDOUT_PATTERN = re.compile(
     re.DOTALL,
 )
 
-STATE_VERSION = 2
-
 
 @dataclass
 class SessionStateHeader:
     """Header line of session state file."""
 
     document_id: str
-    version: int = STATE_VERSION
 
     last_pid: int | None = None
     """PID of the Claude Code process for this session."""
 
     def to_json(self) -> dict[str, object]:
-        result: dict[str, object] = {
-            "document_id": self.document_id,
-            "version": self.version,
-        }
+        result: dict[str, object] = {"document_id": self.document_id}
         if self.last_pid is not None:
             result["last_pid"] = self.last_pid
         return result
@@ -55,17 +49,10 @@ class SessionStateHeader:
         doc_id = data.get("document_id")
         if not isinstance(doc_id, str):
             raise TypeError(f"document_id must be str, got {type(doc_id)}")
-        version = data.get("version", 1)
-        if not isinstance(version, int):
-            raise TypeError(f"version must be int, got {type(version)}")
         last_pid = data.get("last_pid")
         if last_pid is not None and not isinstance(last_pid, int):
             raise TypeError(f"last_pid must be int or None, got {type(last_pid)}")
-        return cls(
-            document_id=doc_id,
-            version=version,
-            last_pid=last_pid,
-        )
+        return cls(document_id=doc_id, last_pid=last_pid)
 
 
 @dataclass
