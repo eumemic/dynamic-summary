@@ -18,8 +18,8 @@ _CAVEAT_PATTERN = re.compile(
     re.DOTALL,
 )
 _COMMAND_PATTERN = re.compile(
-    r"<command-name>(/\w+)</command-name>\s*"
-    r"<command-message>\w*</command-message>\s*"
+    r"<command-name>(/[\w-]+)</command-name>\s*"
+    r"<command-message>[\w-]*</command-message>\s*"
     r"<command-args>[^<]*</command-args>\s*",
     re.DOTALL,
 )

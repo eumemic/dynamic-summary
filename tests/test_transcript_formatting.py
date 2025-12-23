@@ -846,3 +846,52 @@ class TestCommandHandling:
         assert "[User issued /clear command]" in text
         # Should have the assistant response
         assert "Context cleared." in text
+
+    def test_hyphenated_command_cleaned_properly(self, tmp_path: Path) -> None:
+        """Commands with hyphens like /review-pr should be cleaned properly."""
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        transcript_path.write_text(
+            "\n".join(
+                [
+                    # Hyphenated command invocation
+                    json.dumps(
+                        {
+                            "uuid": "cmd1",
+                            "parentUuid": None,
+                            "type": "user",
+                            "message": {
+                                "content": "<command-name>/review-pr</command-name>\n"
+                                "<command-message>review-pr</command-message>\n"
+                                "<command-args></command-args>"
+                            },
+                        }
+                    ),
+                    # Assistant responds
+                    json.dumps(
+                        {
+                            "uuid": "resp1",
+                            "parentUuid": "cmd1",
+                            "type": "assistant",
+                            "message": {
+                                "content": [{"type": "text", "text": "Reviewing PR."}]
+                            },
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        client = FakeTranscriptClient()
+        execute_sync(transcript_path, state_path, client)
+
+        text = client.appends[0][1]
+
+        # Should have the hyphenated command
+        assert "[User issued /review-pr command]" in text
+        # Should NOT have any raw XML
+        assert "<command-name>" not in text
+        assert "<command-message>" not in text
+        assert "Reviewing PR." in text
