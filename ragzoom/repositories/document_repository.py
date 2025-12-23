@@ -174,6 +174,46 @@ class DocumentRepository(BaseRepository):
 
             return deleted_count
 
+    def delete_nodes_from_span(
+        self, document_id: str, span_start: int, *, session: Optional["Session"] = None
+    ) -> list[str]:
+        """Delete all nodes whose span extends beyond the given position.
+
+        Used for truncating a document after a conversation revert. Deletes any
+        node where span_end > span_start, which includes:
+        - Leaf nodes starting at or after the truncation point
+        - Internal (summary) nodes whose span covers content beyond the point
+
+        Args:
+            document_id: Document identifier
+            span_start: Truncation point - delete nodes where span_end > this value
+            session: Optional session for transaction support
+
+        Returns:
+            List of deleted node IDs (for vector index cleanup)
+        """
+        with self._session_scope(session) as db_session:
+            from sqlalchemy import text
+
+            # Delete nodes whose span extends beyond the truncation point
+            # This catches both leaves starting after the point AND internal
+            # nodes that summarize content beyond the point
+            result = db_session.execute(
+                text(
+                    "DELETE FROM tree_nodes "
+                    "WHERE document_id = :document_id AND span_end > :span_start "
+                    "RETURNING id"
+                ),
+                {"document_id": document_id, "span_start": span_start},
+            )
+
+            deleted_node_ids = [str(row[0]) for row in result]
+
+            if deleted_node_ids:
+                self.cache_manager.remove_batch(deleted_node_ids)
+
+            return deleted_node_ids
+
     def get_document_token_stats(self, document_id: str) -> dict[str, float | int]:
         """Get token statistics for a document using efficient SQL aggregation.
 

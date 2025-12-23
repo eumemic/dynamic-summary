@@ -142,17 +142,21 @@ class PostgresStorageBackend(StorageBackend):
             embedding_model,
             summary_model,
         )
-        # jscpd:ignore-end
         return self.for_document(document_id)
 
     def clear_document(self, document_id: str) -> int:
         return self.doc_repo.clear_document(document_id)
+
+    def delete_nodes_from_span(self, document_id: str, span_start: int) -> list[str]:
+        return self.doc_repo.delete_nodes_from_span(document_id, span_start)
 
     def get_document_by_id(self, document_id: str) -> Document | None:
         return self.doc_repo.get_document_by_id(document_id)
 
     def get_document_by_path(self, file_path: str) -> Document | None:
         return self.doc_repo.get_document_by_path(file_path)
+
+    # jscpd:ignore-end
 
     def close(self) -> None:
         self.db_manager.close()

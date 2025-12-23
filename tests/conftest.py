@@ -20,7 +20,11 @@ from ragzoom.contracts.storage_backend import StorageBackend as _StorageBackendP
 from ragzoom.contracts.vector_index import VectorIndex as _VectorIndexProtocol
 from ragzoom.db_utils import create_temp_database, get_temp_db_name
 from ragzoom.document_store import DocumentStore
-from ragzoom.indexing.runtime import ClearedDocumentResult, IndexerRuntime
+from ragzoom.indexing.runtime import (
+    ClearedDocumentResult,
+    IndexerRuntime,
+    TruncateResult,
+)
 from ragzoom.progress import configure_progress, get_progress_config
 from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
 from ragzoom.server.append_executor import AppendExecutor
@@ -111,6 +115,12 @@ class IndexerRuntimeHarness:
     async def clear(self, document_id: str) -> ClearedDocumentResult:
         session = self.runtime.get_session(document_id)
         result = await session.clear()
+        await self.indexing_engine.wait_until_idle(document_id)
+        return result
+
+    async def truncate(self, document_id: str, span_start: int) -> TruncateResult:
+        session = self.runtime.get_session(document_id)
+        result = await session.truncate_from_span(span_start)
         await self.indexing_engine.wait_until_idle(document_id)
         return result
 
@@ -971,3 +981,49 @@ def pytest_runtest_call(item: pytest.Item) -> Generator[None, None, None]:
             signal.signal(signal.SIGALRM, prev_handler)
         except Exception:
             pass
+
+
+# ============================================================================
+# Transcript Sync Test Fixtures
+# ============================================================================
+
+
+@dataclass
+class FakeAppendResult:
+    """Fake append result that mimics IndexingResult for transcript sync tests."""
+
+    span_start: int
+    span_end: int
+    chunks_created: int = 1
+
+
+class FakeTranscriptClient:
+    """Fake client for transcript sync tests that tracks appends and truncations."""
+
+    def __init__(self) -> None:
+        self.appends: list[tuple[str, str]] = []
+        self.truncates: list[tuple[str, int]] = []
+        self._current_span: int = 0
+
+    def append(self, document_id: str, text: str) -> FakeAppendResult:
+        """Append text and return span positions."""
+        self.appends.append((document_id, text))
+        span_start = self._current_span
+        span_end = self._current_span + len(text)
+        self._current_span = span_end
+        return FakeAppendResult(
+            span_start=span_start,
+            span_end=span_end,
+            chunks_created=1,
+        )
+
+    def truncate(self, document_id: str, span_start: int) -> None:
+        """Truncate document to span."""
+        self.truncates.append((document_id, span_start))
+        self._current_span = span_start
+
+
+@pytest.fixture
+def fake_transcript_client() -> FakeTranscriptClient:
+    """Create a fake client for transcript sync tests."""
+    return FakeTranscriptClient()

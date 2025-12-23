@@ -905,6 +905,45 @@ class SqliteNodeRepository:
             if own_session:
                 session.close()
 
+    def delete_nodes_from_span(
+        self,
+        document_id: str,
+        span_start: int,
+    ) -> list[str]:
+        """Delete all nodes whose span extends beyond the given position.
+
+        Used for truncating a document after a conversation revert. Deletes any
+        node where span_end > span_start, which includes:
+        - Leaf nodes starting at or after the truncation point
+        - Internal (summary) nodes whose span covers content beyond the point
+
+        Args:
+            document_id: Document identifier
+            span_start: Truncation point - delete nodes where span_end > this value
+
+        Returns:
+            List of deleted node IDs (for vector index cleanup)
+        """
+        with self.SessionLocal() as session:
+            # Delete nodes whose span extends beyond the truncation point
+            stmt = select(SQLiteTreeNode.id).where(
+                SQLiteTreeNode.document_id == document_id,
+                SQLiteTreeNode.span_end > span_start,
+            )
+            node_ids = [str(row) for row in session.execute(stmt).scalars().all()]
+
+            if node_ids:
+                # Delete the nodes
+                session.execute(
+                    delete(SQLiteTreeNode).where(SQLiteTreeNode.id.in_(node_ids))
+                )
+                session.commit()
+                # Clear from cache
+                for node_id in node_ids:
+                    self.cache_manager.invalidate(node_id)
+
+            return node_ids
+
     def get_tree_completion_frontier(self, document_id: str | None) -> int:
         """Get the tree completion frontier for contextual indexing.
 

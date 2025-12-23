@@ -8,12 +8,17 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ParamSpec, Protocol, TypeVar
 
-from ragzoom.client.grpc_client import ExecuteQueryOutput, GrpcRagzoomClient
+from ragzoom.client.grpc_client import (
+    ExecuteQueryOutput,
+    GrpcRagzoomClient,
+    TruncateResult,
+)
 from ragzoom.constants import DEFAULT_GRPC_ADDRESS
 from ragzoom.services.indexing_service import IndexingResult
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ragzoom.indexing import ClearedDocumentResult
+    from ragzoom.indexing.runtime import TruncateResult as RuntimeTruncateResult
 
 
 def _resolve_address(explicit: str | None) -> str:
@@ -49,6 +54,8 @@ class _SessionProtocol(Protocol):
     ) -> IndexingResult: ...
 
     async def clear(self) -> ClearedDocumentResult: ...
+
+    async def truncate_from_span(self, span_start: int) -> RuntimeTruncateResult: ...
 
 
 class _RuntimeProtocol(Protocol):
@@ -172,6 +179,29 @@ class RagZoom:
         with self._client() as client:
             client.clear_document(document_id)
 
+    def truncate(self, document_id: str, span_start: int) -> TruncateResult:
+        """Delete all nodes at or after the given span position."""
+
+        if not document_id:
+            raise ValueError("document_id is required")
+        if span_start < 0:
+            raise ValueError("span_start must be non-negative")
+
+        if self._runtime is not None:
+            session = self._runtime.get_session(document_id)
+            runtime_result = self._run_runtime(session.truncate_from_span(span_start))
+            return TruncateResult(
+                document_id=runtime_result.document_id,
+                deleted_node_ids=runtime_result.deleted_node_ids,
+                span_start=runtime_result.span_start,
+            )
+
+        with self._client() as client:
+            return client.truncate_document(
+                document_id=document_id,
+                span_start=span_start,
+            )
+
     # ------------------------------------------------------------------
     # Retrieval helpers
     # ------------------------------------------------------------------
@@ -270,6 +300,9 @@ class AsyncRagZoom:
 
     async def clear(self, document_id: str) -> None:
         await self._call(self._sync.clear, document_id)
+
+    async def truncate(self, document_id: str, span_start: int) -> TruncateResult:
+        return await self._call(self._sync.truncate, document_id, span_start)
 
     async def query(
         self,
