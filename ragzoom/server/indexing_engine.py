@@ -1225,12 +1225,15 @@ class IndexingEngine:
         # Get leaf-specific preceding context config
         leaf_config = self._index_config.preceding_context.leaf
 
-        # Pre-compute query embedding with usage tracking (only if we need retrieval)
+        # Pre-compute query embedding with usage tracking (only if we need semantic retrieval)
         retrieval_embedding_usage: EmbeddingUsageInfo = {"total_tokens": 0, "model": ""}
         query_embedding: list[float] | None = None
         retrieval_start_time = time.time()
 
-        if span_start > 0:
+        # Only compute query embedding if span_start > 0 AND num_seeds != 0
+        # (num_seeds=0 means skip semantic search, so no embedding needed)
+        needs_semantic_retrieval = span_start > 0 and (leaf_config.num_seeds or 0) != 0
+        if needs_semantic_retrieval:
             # Get retrieval embedding with usage info
             retriever = self._create_retriever(job.document_id)
             if retriever is not None:
