@@ -695,3 +695,184 @@ class TestToolUsageBatching:
 
         # And the follow-up text
         assert "Here's what I found" in text
+
+
+class TestCommandHandling:
+    """Tests for slash command transcription."""
+
+    def test_builtin_command_transcribed_simply(self, tmp_path: Path) -> None:
+        """Built-in commands like /compact should be transcribed as [User issued /compact command]."""
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        transcript_path.write_text(
+            "\n".join(
+                [
+                    # Command invocation
+                    json.dumps(
+                        {
+                            "uuid": "cmd1",
+                            "parentUuid": None,
+                            "type": "user",
+                            "message": {
+                                "content": "<command-name>/compact</command-name>\n"
+                                "<command-message>compact</command-message>\n"
+                                "<command-args></command-args>"
+                            },
+                        }
+                    ),
+                    # Command output (should be skipped)
+                    json.dumps(
+                        {
+                            "uuid": "out1",
+                            "parentUuid": "cmd1",
+                            "type": "user",
+                            "message": {
+                                "content": "<local-command-stdout>Compacted</local-command-stdout>"
+                            },
+                        }
+                    ),
+                    # Assistant response
+                    json.dumps(
+                        {
+                            "uuid": "resp1",
+                            "parentUuid": "out1",
+                            "type": "assistant",
+                            "message": {"content": [{"type": "text", "text": "Done."}]},
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        client = FakeClient()
+        execute_sync(transcript_path, state_path, client)
+
+        text = client.appends[0][1]
+
+        # Should have the command as a simple notation
+        assert "[User issued /compact command]" in text
+        # Should NOT have the raw command output
+        assert "Compacted" not in text
+        assert "<local-command-stdout>" not in text
+        # Should have the assistant response
+        assert "Done." in text
+
+    def test_custom_command_expansion_skipped(self, tmp_path: Path) -> None:
+        """Custom commands like /commit should skip the expanded file content."""
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        transcript_path.write_text(
+            "\n".join(
+                [
+                    # Command invocation
+                    json.dumps(
+                        {
+                            "uuid": "cmd1",
+                            "parentUuid": None,
+                            "type": "user",
+                            "message": {
+                                "content": "<command-message>commit</command-message>\n"
+                                "<command-name>/commit</command-name>"
+                            },
+                        }
+                    ),
+                    # Command expansion (the .md file content - should be skipped)
+                    json.dumps(
+                        {
+                            "uuid": "exp1",
+                            "parentUuid": "cmd1",
+                            "type": "user",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "# /commit\n## Context\n- Current branch: main\n"
+                                        "## Task\nClean up and commit...",
+                                    }
+                                ]
+                            },
+                        }
+                    ),
+                    # Assistant response
+                    json.dumps(
+                        {
+                            "uuid": "resp1",
+                            "parentUuid": "exp1",
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {"type": "text", "text": "Committed changes."}
+                                ]
+                            },
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        client = FakeClient()
+        execute_sync(transcript_path, state_path, client)
+
+        text = client.appends[0][1]
+
+        # Should have the command as a simple notation
+        assert "[User issued /commit command]" in text
+        # Should NOT have the expanded command file content
+        assert "# /commit" not in text
+        assert "Current branch" not in text
+        assert "Clean up and commit" not in text
+        # Should have the assistant response
+        assert "Committed changes." in text
+
+    def test_command_followed_by_assistant(self, tmp_path: Path) -> None:
+        """Command directly followed by assistant (no expansion) should work."""
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        transcript_path.write_text(
+            "\n".join(
+                [
+                    # Command invocation
+                    json.dumps(
+                        {
+                            "uuid": "cmd1",
+                            "parentUuid": None,
+                            "type": "user",
+                            "message": {
+                                "content": "<command-name>/clear</command-name>\n"
+                                "<command-message>clear</command-message>\n"
+                                "<command-args></command-args>"
+                            },
+                        }
+                    ),
+                    # Assistant responds directly (no user message in between)
+                    json.dumps(
+                        {
+                            "uuid": "resp1",
+                            "parentUuid": "cmd1",
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {"type": "text", "text": "Context cleared."}
+                                ]
+                            },
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        client = FakeClient()
+        execute_sync(transcript_path, state_path, client)
+
+        text = client.appends[0][1]
+
+        # Should have the command
+        assert "[User issued /clear command]" in text
+        # Should have the assistant response
+        assert "Context cleared." in text

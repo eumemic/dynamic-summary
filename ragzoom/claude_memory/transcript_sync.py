@@ -27,6 +27,8 @@ _LOCAL_STDOUT_PATTERN = re.compile(
     r"<local-command-stdout>[^<]*</local-command-stdout>\s*",
     re.DOTALL,
 )
+# Pattern to extract command name from invocation message
+_COMMAND_NAME_PATTERN = re.compile(r"<command-name>(/[\w-]+)</command-name>")
 
 
 @dataclass
@@ -568,6 +570,37 @@ def _format_tool_batch(tools: list[str]) -> str:
     return f"[Used {count} tool{'s' if count > 1 else ''}: {tools_str}]"
 
 
+def _is_command_invocation(record: dict[str, object]) -> str | None:
+    """Check if record is a command invocation, return command name if so."""
+    if record.get("type") != "user":
+        return None
+    text = _extract_user_text_raw(record)
+    match = _COMMAND_NAME_PATTERN.search(text)
+    return match.group(1) if match else None
+
+
+def _extract_user_text_raw(record: dict[str, object]) -> str:
+    """Extract raw text from a user message without cleaning."""
+    message = record.get("message", {})
+    if not isinstance(message, dict):
+        return str(message)
+
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        texts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                texts.append(str(block.get("text", "")))
+            elif isinstance(block, str):
+                texts.append(block)
+        return "".join(texts)
+
+    return str(content)
+
+
 def transcribe_uuids_from_map(
     uuids: list[str],
     records_by_uuid: dict[str, dict[str, object]],
@@ -575,7 +608,8 @@ def transcribe_uuids_from_map(
     """Transcribe UUIDs using a pre-built records map with tool batching.
 
     Consecutive tool-only assistant messages are batched into a single
-    "[Used N tools: ...]" line.
+    "[Used N tools: ...]" line. Command invocations are simplified to
+    "[User issued /foo command]" and their expansion messages are skipped.
 
     Args:
         uuids: UUIDs to transcribe, in order
@@ -587,6 +621,13 @@ def transcribe_uuids_from_map(
     if not uuids:
         return ""
 
+    # Build set of command UUIDs so we can skip their child user messages
+    command_uuids: set[str] = set()
+    for uuid in uuids:
+        record = records_by_uuid.get(uuid)
+        if record is not None and _is_command_invocation(record) is not None:
+            command_uuids.add(uuid)
+
     chunks: list[str] = []
     pending_tools: list[str] = []
 
@@ -597,6 +638,25 @@ def transcribe_uuids_from_map(
 
         # Skip tool results
         if record.get("type") == "user" and "toolUseResult" in record:
+            continue
+
+        # Check if this is a user message whose parent is a command invocation
+        parent_uuid = record.get("parentUuid")
+        if (
+            record.get("type") == "user"
+            and isinstance(parent_uuid, str)
+            and parent_uuid in command_uuids
+        ):
+            # Skip command expansion/output messages
+            continue
+
+        # Check if this is a command invocation
+        cmd_name = _is_command_invocation(record)
+        if cmd_name is not None:
+            if pending_tools:
+                chunks.append(_format_tool_batch(pending_tools))
+                pending_tools = []
+            chunks.append(f"[User issued {cmd_name} command]")
             continue
 
         if _is_tool_only_assistant(record):
