@@ -139,8 +139,9 @@ class EmbeddingService:
 
         # Always call API to get accurate usage - don't use cache
         if self.async_client is None:
-            # Fall back to sync version
-            response = self.client.embeddings.create(
+            # Fall back to sync version in thread pool to avoid blocking
+            response = await asyncio.to_thread(
+                self.client.embeddings.create,
                 model=embedding_model,
                 input=query,
             )
