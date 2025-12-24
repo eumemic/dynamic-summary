@@ -640,7 +640,7 @@ async def run_contextualization_workflow(
 
     Unlike summarization which preserves all information, contextualization
     filters the preceding context to include only information relevant to
-    understanding the target text. No passthrough - always runs LLM.
+    understanding the target text.
 
     Returns:
         SummaryResult containing the context summary, retry count, token count,
@@ -651,6 +651,21 @@ async def run_contextualization_workflow(
         target_text=target_text,
         target_tokens=target_tokens,
     )
+
+    # Passthrough: if context is already under target, use it directly
+    if preparation.combined_tokens <= target_tokens:
+        record_passthrough_attempt(
+            reporter,
+            parent_id,
+            target_tokens=target_tokens,
+            combined_tokens=preparation.combined_tokens,
+        )
+        return SummaryResult(
+            summary=preparation.combined_text,
+            retry_count=0,
+            summary_tokens=preparation.combined_tokens,
+            usage=AccumulatedUsage(),
+        )
 
     node_id = parent_id or ""
     accumulated_usage = AccumulatedUsage()
