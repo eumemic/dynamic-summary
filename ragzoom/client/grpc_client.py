@@ -258,6 +258,50 @@ class GrpcRagzoomClient:
             span_end=response.span_end,
         )
 
+    # jscpd:ignore-start - Parallel structure to append_text intentional (batch vs single)
+    def batch_append_text(
+        self,
+        *,
+        document_id: str,
+        units: list[str],
+        collect_telemetry: bool = False,
+    ) -> IndexingResult:
+        """Append multiple text units with forced split boundaries between them.
+
+        Each unit in the batch creates a forced split boundary, meaning text is
+        never merged across unit boundaries. This is semantically equivalent to
+        calling append_text() for each unit sequentially, but executed in a single
+        transaction for efficiency.
+
+        Args:
+            document_id: The document to append to
+            units: List of text units, each creating a forced boundary
+            collect_telemetry: Whether to collect telemetry data
+
+        Returns:
+            IndexingResult with combined stats for all appended units
+        """
+        # Encode each unit as bytes
+        encoded_units = [u.encode("utf-8") for u in units]
+        request = pb2.BatchAppendTextRequest(
+            document_id=document_id,
+            units=encoded_units,
+            collect_telemetry=collect_telemetry,
+        )
+        try:
+            response = self._indexer.BatchAppendText(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+        telemetry_run_id = getattr(response, "telemetry_run_id", "") or None
+        return _document_stats_to_result(
+            response.stats,
+            telemetry_run_id=telemetry_run_id,
+            span_start=response.span_start,
+            span_end=response.span_end,
+        )
+
+    # jscpd:ignore-end
+
     def execute_query(
         self,
         *,

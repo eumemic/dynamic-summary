@@ -16,7 +16,7 @@ class TestTranscriptFormatting:
     """Tests for transcript formatting issues."""
 
     def test_double_newlines_between_messages(self, tmp_path: Path) -> None:
-        """Messages should be separated by double newlines."""
+        """Messages should be separated by double newlines within a turn."""
         transcript_path = tmp_path / "transcript.jsonl"
         state_path = tmp_path / "state.jsonl"
 
@@ -57,21 +57,26 @@ class TestTranscriptFormatting:
         client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
-        assert len(client.appends) == 1
-        combined_text = client.appends[0][1]
+        # With turn-based batching: turn 1 = msg1+msg2, turn 2 = msg3
+        assert len(client.appends) == 2
 
-        # Should have double newlines between messages
-        assert "\n\n[USER]" in combined_text or combined_text.startswith("[USER]")
-        assert "\n\n[ASSISTANT]" in combined_text
+        # First turn should have user and assistant with double newlines between
+        first_turn = client.appends[0][1]
+        assert first_turn.startswith("[USER]")
+        assert "\n\n[ASSISTANT]" in first_turn
 
-        # Should NOT have single newline followed by [USER]/[ASSISTANT]
-        # (i.e., messages should not be run together)
-        lines = combined_text.split("\n")
+        # Check formatting within first turn
+        lines = first_turn.split("\n")
         for i, line in enumerate(lines):
             if line.startswith("[USER]") or line.startswith("[ASSISTANT]"):
                 # Either it's the first line, or preceded by empty line
                 if i > 0:
                     assert lines[i - 1] == "", f"Missing blank line before {line}"
+
+        # Second turn should be just the user message
+        second_turn = client.appends[1][1]
+        assert "[USER]" in second_turn
+        assert "Second message" in second_turn
 
     def test_slash_commands_simplified(self, tmp_path: Path) -> None:
         """Slash commands should be simplified from XML format."""
@@ -144,24 +149,28 @@ class TestTranscriptFormatting:
             assert "<local-command-stdout>" not in text
 
 
-class TestCompactionSegmentBatching:
-    """Tests for batching at compaction boundaries."""
+class TestTurnBasedBatching:
+    """Tests for batching at turn boundaries.
 
-    def test_one_append_per_compaction_segment(self, tmp_path: Path) -> None:
-        """Each compaction segment should be a separate append."""
+    A turn = user message(s) + subsequent assistant/tool messages.
+    Each turn becomes a separate append with forced split boundaries.
+    """
+
+    def test_one_append_per_turn(self, tmp_path: Path) -> None:
+        """Each turn should be a separate append."""
         transcript_path = tmp_path / "transcript.jsonl"
         state_path = tmp_path / "state.jsonl"
 
         transcript_path.write_text(
             "\n".join(
                 [
-                    # First segment (pre-compaction)
+                    # Turn 1: user + assistant
                     json.dumps(
                         {
                             "uuid": "a1",
                             "parentUuid": None,
                             "type": "user",
-                            "message": {"content": "Segment 1 message 1"},
+                            "message": {"content": "Turn 1 user message"},
                         }
                     ),
                     json.dumps(
@@ -170,26 +179,17 @@ class TestCompactionSegmentBatching:
                             "parentUuid": "a1",
                             "type": "assistant",
                             "message": {
-                                "content": [{"type": "text", "text": "Segment 1 reply"}]
+                                "content": [{"type": "text", "text": "Turn 1 reply"}]
                             },
                         }
                     ),
-                    # First compaction boundary
-                    json.dumps({"uuid": "sys1", "parentUuid": None, "type": "system"}),
-                    json.dumps(
-                        {
-                            "uuid": "c1",
-                            "parentUuid": "sys1",
-                            "isCompactSummary": True,
-                        }
-                    ),
-                    # Second segment
+                    # Turn 2: user + assistant
                     json.dumps(
                         {
                             "uuid": "b1",
-                            "parentUuid": "c1",
+                            "parentUuid": "a2",
                             "type": "user",
-                            "message": {"content": "Segment 2 message 1"},
+                            "message": {"content": "Turn 2 user message"},
                         }
                     ),
                     json.dumps(
@@ -198,26 +198,17 @@ class TestCompactionSegmentBatching:
                             "parentUuid": "b1",
                             "type": "assistant",
                             "message": {
-                                "content": [{"type": "text", "text": "Segment 2 reply"}]
+                                "content": [{"type": "text", "text": "Turn 2 reply"}]
                             },
                         }
                     ),
-                    # Second compaction boundary
-                    json.dumps({"uuid": "sys2", "parentUuid": None, "type": "system"}),
+                    # Turn 3: user only (no assistant yet)
                     json.dumps(
                         {
-                            "uuid": "c2",
-                            "parentUuid": "sys2",
-                            "isCompactSummary": True,
-                        }
-                    ),
-                    # Third segment
-                    json.dumps(
-                        {
-                            "uuid": "d1",
-                            "parentUuid": "c2",
+                            "uuid": "c1",
+                            "parentUuid": "b2",
                             "type": "user",
-                            "message": {"content": "Segment 3 message 1"},
+                            "message": {"content": "Turn 3 user message"},
                         }
                     ),
                 ]
@@ -228,27 +219,23 @@ class TestCompactionSegmentBatching:
         client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
-        # Should have 3 appends (one per segment)
+        # Should have 3 appends (one per turn)
         assert len(client.appends) == 3
 
-        # First append should contain segment 1 content
-        assert "Segment 1" in client.appends[0][1]
+        # Each append should contain its turn's content
+        assert "Turn 1" in client.appends[0][1]
+        assert "Turn 2" in client.appends[1][1]
+        assert "Turn 3" in client.appends[2][1]
 
-        # Second append should contain segment 2 content
-        assert "Segment 2" in client.appends[1][1]
-
-        # Third append should contain segment 3 content
-        assert "Segment 3" in client.appends[2][1]
-
-    def test_state_has_entry_per_segment(self, tmp_path: Path) -> None:
-        """State should have one entry per compaction segment for rollback."""
+    def test_state_has_entry_per_turn(self, tmp_path: Path) -> None:
+        """State should have one entry per turn for rollback."""
         transcript_path = tmp_path / "transcript.jsonl"
         state_path = tmp_path / "state.jsonl"
 
         transcript_path.write_text(
             "\n".join(
                 [
-                    # First segment
+                    # Turn 1
                     json.dumps(
                         {
                             "uuid": "a1",
@@ -257,16 +244,21 @@ class TestCompactionSegmentBatching:
                             "message": {"content": "First"},
                         }
                     ),
-                    # Compaction
-                    json.dumps({"uuid": "sys1", "parentUuid": None, "type": "system"}),
                     json.dumps(
-                        {"uuid": "c1", "parentUuid": "sys1", "isCompactSummary": True}
+                        {
+                            "uuid": "a2",
+                            "parentUuid": "a1",
+                            "type": "assistant",
+                            "message": {
+                                "content": [{"type": "text", "text": "Reply 1"}]
+                            },
+                        }
                     ),
-                    # Second segment
+                    # Turn 2
                     json.dumps(
                         {
                             "uuid": "b1",
-                            "parentUuid": "c1",
+                            "parentUuid": "a2",
                             "type": "user",
                             "message": {"content": "Second"},
                         }
@@ -282,44 +274,47 @@ class TestCompactionSegmentBatching:
         state = SessionState.load(state_path)
         assert state is not None
 
-        # Should have 2 entries (one per segment)
+        # Should have 2 entries (one per turn)
         assert len(state.entries) == 2
 
-        # First entry should be for last UUID in first segment
-        assert state.entries[0].last_uuid == "a1"
+        # First entry should be for last UUID in first turn (assistant)
+        assert state.entries[0].last_uuid == "a2"
 
-        # Second entry should be for last UUID in second segment
+        # Second entry should be for last UUID in second turn
         assert state.entries[1].last_uuid == "b1"
 
-    def test_compaction_boundary_spans_are_correct(self, tmp_path: Path) -> None:
-        """Each segment's span_end should be the boundary for that segment."""
+    def test_turn_boundary_spans_are_correct(self, tmp_path: Path) -> None:
+        """Each turn's span_end should be cumulative."""
         transcript_path = tmp_path / "transcript.jsonl"
         state_path = tmp_path / "state.jsonl"
 
         transcript_path.write_text(
             "\n".join(
                 [
-                    # First segment
+                    # Turn 1
                     json.dumps(
                         {
                             "uuid": "a1",
                             "parentUuid": None,
                             "type": "user",
-                            "message": {"content": "First segment content"},
+                            "message": {"content": "First turn content"},
                         }
                     ),
-                    # Compaction
-                    json.dumps({"uuid": "sys1", "parentUuid": None, "type": "system"}),
                     json.dumps(
-                        {"uuid": "c1", "parentUuid": "sys1", "isCompactSummary": True}
+                        {
+                            "uuid": "a2",
+                            "parentUuid": "a1",
+                            "type": "assistant",
+                            "message": {"content": [{"type": "text", "text": "Reply"}]},
+                        }
                     ),
-                    # Second segment
+                    # Turn 2
                     json.dumps(
                         {
                             "uuid": "b1",
-                            "parentUuid": "c1",
+                            "parentUuid": "a2",
                             "type": "user",
-                            "message": {"content": "Second segment content"},
+                            "message": {"content": "Second turn content"},
                         }
                     ),
                 ]
@@ -334,13 +329,61 @@ class TestCompactionSegmentBatching:
         assert state is not None
         assert len(state.entries) == 2
 
-        # First segment's span_end should be length of first append
+        # First turn's span_end should be length of first append
         first_text = client.appends[0][1]
         assert state.entries[0].span_end == len(first_text)
 
-        # Second segment's span_end should be cumulative
+        # Second turn's span_end should be cumulative
         second_text = client.appends[1][1]
         assert state.entries[1].span_end == len(first_text) + len(second_text)
+
+    def test_consecutive_user_messages_same_turn(self, tmp_path: Path) -> None:
+        """Consecutive user messages should stay in the same turn."""
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        transcript_path.write_text(
+            "\n".join(
+                [
+                    # Turn 1: multiple user messages, then assistant
+                    json.dumps(
+                        {
+                            "uuid": "u1",
+                            "parentUuid": None,
+                            "type": "user",
+                            "message": {"content": "First user message"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "uuid": "u2",
+                            "parentUuid": "u1",
+                            "type": "user",
+                            "message": {"content": "Second user message"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "uuid": "a1",
+                            "parentUuid": "u2",
+                            "type": "assistant",
+                            "message": {"content": [{"type": "text", "text": "Reply"}]},
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        client = FakeTranscriptClient()
+        execute_sync(transcript_path, state_path, client)
+
+        # All in one turn
+        assert len(client.appends) == 1
+        text = client.appends[0][1]
+        assert "First user message" in text
+        assert "Second user message" in text
+        assert "Reply" in text
 
 
 class TestToolUsageBatching:
@@ -895,3 +938,310 @@ class TestCommandHandling:
         assert "<command-name>" not in text
         assert "<command-message>" not in text
         assert "Reviewing PR." in text
+
+    def test_quoted_command_xml_not_transformed(self, tmp_path: Path) -> None:
+        """User messages that QUOTE command XML should not be transformed.
+
+        This tests the bug where a user message like:
+        "transform this: <command-name>/clear</command-name>..."
+        was being incorrectly transformed to "[User issued /clear command]"
+        instead of preserving the user's actual message content.
+        """
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        # User message that quotes/discusses command XML (not an actual command)
+        user_message = (
+            "yes, we should filter and transform things like this:\n\n"
+            "[USER]\n"
+            "<command-name>/clear</command-name>\n"
+            "<command-message>clear</command-message>\n"
+            "<command-args></command-args>\n\n"
+            "to simply:\n\n"
+            "[USER]\n"
+            "/clear"
+        )
+
+        transcript_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "uuid": "msg1",
+                            "parentUuid": None,
+                            "type": "user",
+                            "message": {"content": user_message},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "uuid": "msg2",
+                            "parentUuid": "msg1",
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {"type": "text", "text": "I'll update the code."}
+                                ]
+                            },
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        client = FakeTranscriptClient()
+        execute_sync(transcript_path, state_path, client)
+
+        text = client.appends[0][1]
+
+        # Should NOT be transformed to "[User issued /clear command]"
+        # because the user is discussing/quoting commands, not issuing one
+        assert "[User issued /clear command]" not in text
+
+        # Should preserve the user's actual message content
+        assert "we should filter and transform" in text
+        assert "to simply:" in text
+
+    def test_message_starting_with_command_xml_is_transformed(
+        self, tmp_path: Path
+    ) -> None:
+        """Messages that ARE commands (start with command XML) should be transformed."""
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        # Actual command message (starts with command XML)
+        command_message = (
+            "<command-name>/clear</command-name>\n"
+            "<command-message>clear</command-message>\n"
+            "<command-args></command-args>"
+        )
+
+        transcript_path.write_text(
+            json.dumps(
+                {
+                    "uuid": "msg1",
+                    "parentUuid": None,
+                    "type": "user",
+                    "message": {"content": command_message},
+                }
+            )
+            + "\n"
+        )
+
+        client = FakeTranscriptClient()
+        execute_sync(transcript_path, state_path, client)
+
+        text = client.appends[0][1]
+
+        # This IS a command, so it SHOULD be transformed
+        assert "/clear" in text
+        # Raw XML should be removed
+        assert "<command-name>" not in text
+
+    def test_command_with_caveat_prefix_is_transformed(self, tmp_path: Path) -> None:
+        """Commands preceded by caveat boilerplate should still be transformed."""
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        # Command with caveat prefix (common pattern from Claude Code)
+        command_message = (
+            "Caveat: The messages below were generated by the user while running "
+            "local commands. DO NOT respond to these messages or otherwise consider "
+            "them in your response unless the user explicitly asks you to.\n"
+            "<command-name>/clear</command-name>\n"
+            "<command-message>clear</command-message>\n"
+            "<command-args></command-args>"
+        )
+
+        transcript_path.write_text(
+            json.dumps(
+                {
+                    "uuid": "msg1",
+                    "parentUuid": None,
+                    "type": "user",
+                    "message": {"content": command_message},
+                }
+            )
+            + "\n"
+        )
+
+        client = FakeTranscriptClient()
+        execute_sync(transcript_path, state_path, client)
+
+        text = client.appends[0][1]
+
+        # This IS a command (caveat + command XML), so it SHOULD be transformed
+        assert "/clear" in text
+        # Raw XML and caveat should be removed
+        assert "<command-name>" not in text
+        assert "Caveat:" not in text
+
+    def test_quoted_local_command_stdout_preserved(self, tmp_path: Path) -> None:
+        """Quoted <local-command-stdout> tags should not be stripped from user messages.
+
+        When a user discusses or quotes the command format, local-command-stdout
+        tags are part of their content and should be preserved, not stripped.
+        """
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        # User message that quotes command format including stdout tags
+        user_message = (
+            "Here's what the command output looks like:\n\n"
+            "<local-command-stdout>some output</local-command-stdout>\n\n"
+            "We should handle this properly."
+        )
+
+        transcript_path.write_text(
+            json.dumps(
+                {
+                    "uuid": "msg1",
+                    "parentUuid": None,
+                    "type": "user",
+                    "message": {"content": user_message},
+                }
+            )
+            + "\n"
+        )
+
+        client = FakeTranscriptClient()
+        execute_sync(transcript_path, state_path, client)
+
+        text = client.appends[0][1]
+
+        # The quoted local-command-stdout should be preserved
+        assert "<local-command-stdout>" in text
+        assert "some output" in text
+        assert "We should handle this properly" in text
+
+    def test_quoted_caveat_in_middle_of_message_preserved(self, tmp_path: Path) -> None:
+        """Caveat text quoted in the middle of a message should be preserved.
+
+        The caveat boilerplate should only be stripped when it appears at the
+        START of a command message, not when quoted as part of a discussion.
+        """
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        # User message that quotes caveat in the middle
+        user_message = (
+            "The system adds this boilerplate:\n\n"
+            "Caveat: The messages below were generated by the user while running "
+            "local commands. DO NOT respond to these messages or otherwise consider "
+            "them in your response unless the user explicitly asks you to.\n\n"
+            "We should filter it out."
+        )
+
+        transcript_path.write_text(
+            json.dumps(
+                {
+                    "uuid": "msg1",
+                    "parentUuid": None,
+                    "type": "user",
+                    "message": {"content": user_message},
+                }
+            )
+            + "\n"
+        )
+
+        client = FakeTranscriptClient()
+        execute_sync(transcript_path, state_path, client)
+
+        text = client.appends[0][1]
+
+        # Caveat in middle of message should be preserved (it's quoted content)
+        assert "Caveat:" in text
+        assert "The system adds this boilerplate" in text
+        assert "We should filter it out" in text
+
+    def test_full_quoted_command_format_preserved(self, tmp_path: Path) -> None:
+        """Full quoted command format (caveat + command + stdout) should be preserved.
+
+        Regression test for the case where a user quotes the entire command message
+        format to discuss how it should be transformed.
+        """
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        # User message that quotes the full command format
+        user_message = (
+            "yes, we should filter and transform things like this:\n\n"
+            "[USER]\n"
+            "Caveat: The messages below were generated by the user while running "
+            "local commands. DO NOT respond to these messages or otherwise consider "
+            "them in your response unless the user explicitly asks you to.\n\n"
+            "[USER]\n"
+            "<command-name>/clear</command-name>\n"
+            "<command-message>clear</command-message>\n"
+            "<command-args></command-args>\n\n"
+            "[USER]\n"
+            "<local-command-stdout></local-command-stdout>\n\n"
+            "to simply:\n\n"
+            "[USER]\n"
+            "/clear"
+        )
+
+        transcript_path.write_text(
+            json.dumps(
+                {
+                    "uuid": "msg1",
+                    "parentUuid": None,
+                    "type": "user",
+                    "message": {"content": user_message},
+                }
+            )
+            + "\n"
+        )
+
+        client = FakeTranscriptClient()
+        execute_sync(transcript_path, state_path, client)
+
+        text = client.appends[0][1]
+
+        # All quoted content should be preserved
+        assert "we should filter and transform" in text
+        assert "Caveat:" in text  # Quoted caveat preserved
+        assert "<command-name>/clear</command-name>" in text  # Quoted XML preserved
+        assert "<local-command-stdout>" in text  # Quoted stdout tags preserved
+        assert "to simply:" in text
+
+    def test_command_with_stdout_transformed(self, tmp_path: Path) -> None:
+        """Actual command messages with stdout should be transformed to just command."""
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        # Actual command with caveat and stdout (system-generated format)
+        command_message = (
+            "Caveat: The messages below were generated by the user while running "
+            "local commands. DO NOT respond to these messages or otherwise consider "
+            "them in your response unless the user explicitly asks you to.\n"
+            "<command-name>/bash</command-name>\n"
+            "<command-message>echo hello</command-message>\n"
+            "<command-args></command-args>\n"
+            "<local-command-stdout>hello</local-command-stdout>"
+        )
+
+        transcript_path.write_text(
+            json.dumps(
+                {
+                    "uuid": "msg1",
+                    "parentUuid": None,
+                    "type": "user",
+                    "message": {"content": command_message},
+                }
+            )
+            + "\n"
+        )
+
+        client = FakeTranscriptClient()
+        execute_sync(transcript_path, state_path, client)
+
+        text = client.appends[0][1]
+
+        # Should be transformed to just the command
+        assert "/bash" in text
+        # System boilerplate should be removed
+        assert "Caveat:" not in text
+        assert "<command-name>" not in text
+        assert "<local-command-stdout>" not in text

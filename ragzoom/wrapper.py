@@ -53,6 +53,13 @@ class _SessionProtocol(Protocol):
         collect_telemetry: bool,
     ) -> IndexingResult: ...
 
+    async def batch_append_text(
+        self,
+        units: list[str],
+        *,
+        collect_telemetry: bool,
+    ) -> IndexingResult: ...
+
     async def clear(self) -> ClearedDocumentResult: ...
 
     async def truncate_from_span(self, span_start: int) -> RuntimeTruncateResult: ...
@@ -134,6 +141,40 @@ class RagZoom:
             collect_telemetry=collect_telemetry,
             replace_existing=False,
         )
+
+    def batch_append(
+        self,
+        document_id: str,
+        units: list[str],
+        *,
+        collect_telemetry: bool = False,
+    ) -> IndexingResult:
+        """Append multiple text units with forced split boundaries between them.
+
+        Each unit creates a forced boundary, meaning text is never merged across
+        unit boundaries. Semantically equivalent to calling append() for each unit
+        sequentially, but executed in a single transaction for efficiency.
+        """
+        if not document_id:
+            raise ValueError("document_id is required")
+        if not units:
+            raise ValueError("units must be non-empty")
+
+        if self._runtime is not None:
+            session = self._runtime.get_session(document_id)
+            return self._run_runtime(
+                session.batch_append_text(
+                    units,
+                    collect_telemetry=collect_telemetry,
+                )
+            )
+
+        with self._client() as client:
+            return client.batch_append_text(
+                document_id=document_id,
+                units=units,
+                collect_telemetry=collect_telemetry,
+            )
 
     def _append(
         self,
@@ -295,6 +336,20 @@ class AsyncRagZoom:
             self._sync.append,
             document_id,
             text,
+            collect_telemetry=collect_telemetry,
+        )
+
+    async def batch_append(
+        self,
+        document_id: str,
+        units: list[str],
+        *,
+        collect_telemetry: bool = False,
+    ) -> IndexingResult:
+        return await self._call(
+            self._sync.batch_append,
+            document_id,
+            units,
             collect_telemetry=collect_telemetry,
         )
 
