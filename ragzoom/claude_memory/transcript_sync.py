@@ -977,8 +977,6 @@ def execute_sync(
     appended_uuids: list[str] = []
     new_span_end = 0
     if plan.uuids_to_transcribe:
-        append_method = getattr(client, "append")
-
         # Build records map once for all UUIDs
         records_by_uuid = build_records_map(
             transcript_path, set(plan.uuids_to_transcribe)
@@ -1010,13 +1008,16 @@ def execute_sync(
         if current_segment:
             segments.append(current_segment)
 
-        # Append each segment
+        # Transcribe each segment and collect for batch append
+        segment_texts: list[str] = []
+        segment_last_uuids: list[str] = []  # Last uuid from each segment
+
         for segment_uuids in segments:
             # Use batching transcription for tool consolidation
             combined_text = transcribe_uuids_from_map(segment_uuids, records_by_uuid)
 
             if combined_text:
-                result = append_method(document_id, combined_text)
+                segment_texts.append(combined_text)
                 # Track the last uuid that produced content
                 segment_appended_uuids = [
                     u
@@ -1027,21 +1028,30 @@ def execute_sync(
                         and "toolUseResult" in records_by_uuid[u]
                     )
                 ]
-
                 if segment_appended_uuids:
-                    # Use the actual span_end from the append result
-                    current_span_end = getattr(result, "span_end", 0)
-
-                    # Record entry for this segment with last UUID
-                    append_log.append(
-                        AppendEntry(
-                            last_uuid=segment_appended_uuids[-1],
-                            span_end=current_span_end,
-                        )
-                    )
-
+                    segment_last_uuids.append(segment_appended_uuids[-1])
                     appended_uuids.extend(segment_appended_uuids)
-                    new_span_end = current_span_end
+
+        # Use batch_append to send all segments in one gRPC call
+        if segment_texts:
+            batch_append_method = getattr(client, "batch_append")
+            result = batch_append_method(document_id, segment_texts)
+            final_span_end = getattr(result, "span_end", 0)
+
+            # Record an append log entry per segment for revert detection granularity
+            # Calculate cumulative span positions for each segment
+            span_cursor = getattr(result, "span_start", 0)
+            for i, (text, last_uuid) in enumerate(
+                zip(segment_texts, segment_last_uuids)
+            ):
+                span_cursor += len(text)
+                append_log.append(
+                    AppendEntry(
+                        last_uuid=last_uuid,
+                        span_end=span_cursor,
+                    )
+                )
+            new_span_end = final_span_end
 
         if not appended_uuids:
             last_entry = append_log.last_entry()

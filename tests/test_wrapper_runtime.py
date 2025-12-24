@@ -35,6 +35,20 @@ class _StubSession:
         )
         return self._result
 
+    async def batch_append_text(
+        self,
+        units: list[str],
+        *,
+        collect_telemetry: bool,
+    ) -> IndexingResult:
+        self.append_calls.append(
+            {
+                "units": units,
+                "collect_telemetry": collect_telemetry,
+            }
+        )
+        return self._result
+
     async def clear(self) -> ClearedDocumentResult:
         self.clear_calls += 1
         return ClearedDocumentResult(

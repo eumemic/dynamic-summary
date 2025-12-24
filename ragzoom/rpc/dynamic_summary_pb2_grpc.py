@@ -56,6 +56,12 @@ class IndexerServiceStub(object):
             response_deserializer=dynamic__summary__pb2.AppendTextResponse.FromString,
             _registered_method=True,
         )
+        self.BatchAppendText = channel.unary_unary(
+            "/ragzoom.rpc.IndexerService/BatchAppendText",
+            request_serializer=dynamic__summary__pb2.BatchAppendTextRequest.SerializeToString,
+            response_deserializer=dynamic__summary__pb2.BatchAppendTextResponse.FromString,
+            _registered_method=True,
+        )
         self.TruncateDocument = channel.unary_unary(
             "/ragzoom.rpc.IndexerService/TruncateDocument",
             request_serializer=dynamic__summary__pb2.TruncateDocumentRequest.SerializeToString,
@@ -79,6 +85,12 @@ class IndexerServiceServicer(object):
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
 
+    def BatchAppendText(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
     def TruncateDocument(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -97,6 +109,11 @@ def add_IndexerServiceServicer_to_server(servicer, server):
             servicer.AppendText,
             request_deserializer=dynamic__summary__pb2.AppendTextRequest.FromString,
             response_serializer=dynamic__summary__pb2.AppendTextResponse.SerializeToString,
+        ),
+        "BatchAppendText": grpc.unary_unary_rpc_method_handler(
+            servicer.BatchAppendText,
+            request_deserializer=dynamic__summary__pb2.BatchAppendTextRequest.FromString,
+            response_serializer=dynamic__summary__pb2.BatchAppendTextResponse.SerializeToString,
         ),
         "TruncateDocument": grpc.unary_unary_rpc_method_handler(
             servicer.TruncateDocument,
@@ -166,6 +183,36 @@ class IndexerService(object):
             "/ragzoom.rpc.IndexerService/AppendText",
             dynamic__summary__pb2.AppendTextRequest.SerializeToString,
             dynamic__summary__pb2.AppendTextResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def BatchAppendText(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/ragzoom.rpc.IndexerService/BatchAppendText",
+            dynamic__summary__pb2.BatchAppendTextRequest.SerializeToString,
+            dynamic__summary__pb2.BatchAppendTextResponse.FromString,
             options,
             channel_credentials,
             insecure,

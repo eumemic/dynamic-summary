@@ -1017,6 +1017,18 @@ class FakeTranscriptClient:
             chunks_created=1,
         )
 
+    def batch_append(self, document_id: str, units: list[str]) -> FakeAppendResult:
+        """Batch append multiple units and return span positions."""
+        span_start = self._current_span
+        for unit in units:
+            self.appends.append((document_id, unit))
+            self._current_span += len(unit)
+        return FakeAppendResult(
+            span_start=span_start,
+            span_end=self._current_span,
+            chunks_created=len(units),
+        )
+
     def truncate(self, document_id: str, span_start: int) -> None:
         """Truncate document to span."""
         self.truncates.append((document_id, span_start))
