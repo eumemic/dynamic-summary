@@ -7,10 +7,16 @@ from typing import TYPE_CHECKING
 
 from openai import AsyncOpenAI, OpenAI
 
+from ragzoom.contracts.embedding_model import EmbeddingUsageInfo
+
 if TYPE_CHECKING:
     from ragzoom.document_store import DocumentStore
 
 logger = logging.getLogger(__name__)
+
+
+# Type alias for embedding result with usage info
+QueryEmbeddingResult = tuple[list[float], EmbeddingUsageInfo]
 
 
 class EmbeddingService:
@@ -113,6 +119,49 @@ class EmbeddingService:
                 f"Error getting query embedding with model {embedding_model}: {e}"
             )
             raise
+
+    async def get_query_embedding_async_with_usage(
+        self, query: str, document_id: str | None = None
+    ) -> QueryEmbeddingResult:
+        """Get embedding for query text with usage info (async version).
+
+        Note: This method bypasses the cache to ensure accurate usage tracking.
+        For cost accounting, we need the actual API-reported token count.
+
+        Args:
+            query: Query text to embed
+            document_id: Optional document ID to auto-detect embedding model
+
+        Returns:
+            Tuple of (embedding vector, usage info)
+        """
+        embedding_model = self._detect_embedding_model(document_id)
+
+        # Always call API to get accurate usage - don't use cache
+        if self.async_client is None:
+            # Fall back to sync version in thread pool to avoid blocking
+            response = await asyncio.to_thread(
+                self.client.embeddings.create,
+                model=embedding_model,
+                input=query,
+            )
+        else:
+            response = await self.async_client.embeddings.create(
+                model=embedding_model,
+                input=query,
+            )
+
+        embedding = list(response.data[0].embedding)
+        usage: EmbeddingUsageInfo = {
+            "total_tokens": response.usage.total_tokens if response.usage else 0,
+            "model": embedding_model,
+        }
+
+        # Still update cache for future non-usage calls
+        cache_key = (embedding_model, query)
+        self._cache[cache_key] = embedding
+
+        return list(embedding), usage
 
     def embed_texts(
         self, texts: Sequence[str], document_id: str | None = None

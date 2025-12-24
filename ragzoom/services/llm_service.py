@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, cast
 from openai import AsyncOpenAI
 
 from ragzoom.config import IndexConfig, SecretStr
+from ragzoom.contracts.embedding_model import EmbeddingResult, EmbeddingUsageInfo
+from ragzoom.services.summary_utils import SummaryResult
 from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
 
@@ -58,11 +60,18 @@ def _build_test_openai_client(model_id: str) -> "OpenAIAsyncType":
                 def __init__(self, embedding: list[float]) -> None:
                     self.embedding = embedding
 
-            class _Resp:
-                def __init__(self, items: list[_Item]) -> None:
-                    self.data = items
+            class _EmbeddingUsage:
+                def __init__(self, total_tokens: int) -> None:
+                    self.total_tokens = total_tokens
 
-            return _Resp([_Item(list(self._vector)) for _ in texts])
+            class _Resp:
+                def __init__(self, items: list[_Item], total_tokens: int) -> None:
+                    self.data = items
+                    self.usage = _EmbeddingUsage(total_tokens)
+
+            # Estimate ~1 token per 4 chars for stub
+            total_tokens = sum(len(t) // 4 + 1 for t in texts)
+            return _Resp([_Item(list(self._vector)) for _ in texts], total_tokens)
 
     class _StubCompletions:
         async def create(self, **kwargs: object) -> object:
@@ -202,11 +211,18 @@ class LLMService:
             )
             raise preserve_exception_chain(llm_error, e)
 
-    async def _get_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
-        """Get embeddings for multiple texts in batches to respect API limits."""
-        if not texts:
-            return []
+    def _prepare_embedding_batches(self, texts: list[str]) -> list[list[str]]:
+        """Split texts into batches respecting token and item limits.
 
+        Args:
+            texts: List of texts to batch
+
+        Returns:
+            List of batches, each batch is a list of texts
+
+        Raises:
+            ValueError: If any text is empty or exceeds token limit
+        """
         token_limit = getattr(self, "_embedding_batch_token_limit", None)
         max_items = getattr(self, "_provider_max_embedding_batch_size", 1000)
 
@@ -220,9 +236,8 @@ class LLMService:
                     f"Empty text at index {i} in embedding batch. This should be filtered by the caller."
                 )
 
-        batches: list[tuple[list[str], list[int]]] = []
+        batches: list[list[str]] = []
         current_batch: list[str] = []
-        current_token_counts: list[int] = []
         current_tokens = 0
 
         for idx, text in enumerate(texts):
@@ -243,28 +258,33 @@ class LLMService:
             if current_batch and (
                 would_exceed_tokens or len(current_batch) >= max_items
             ):
-                batches.append((current_batch, current_token_counts))
+                batches.append(current_batch)
                 current_batch = []
-                current_token_counts = []
                 current_tokens = 0
 
             current_batch.append(text)
-            current_token_counts.append(token_count)
             current_tokens += token_count
 
             if len(current_batch) >= max_items:
-                batches.append((current_batch, current_token_counts))
+                batches.append(current_batch)
                 current_batch = []
-                current_token_counts = []
                 current_tokens = 0
 
         if current_batch:
-            batches.append((current_batch, current_token_counts))
+            batches.append(current_batch)
 
+        return batches
+
+    async def _get_embeddings_batch(self, texts: list[str]) -> list[list[float]]:
+        """Get embeddings for multiple texts in batches to respect API limits."""
+        if not texts:
+            return []
+
+        batches = self._prepare_embedding_batches(texts)
         results: list[list[float]] = []
 
         try:
-            for batch_idx, (batch, token_counts) in enumerate(batches, start=1):
+            for batch_idx, batch in enumerate(batches, start=1):
                 response = await self.client.embeddings.create(
                     model=self.config.embedding_model,
                     input=batch,
@@ -272,10 +292,9 @@ class LLMService:
                 results.extend(data.embedding for data in response.data)
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(
-                        "Processed embedding batch %s size=%s tokens=%s",
+                        "Processed embedding batch %s size=%s",
                         batch_idx,
                         len(batch),
-                        sum(token_counts),
                     )
         except Exception as e:
             from ragzoom.error_utils import preserve_exception_chain
@@ -296,6 +315,56 @@ class LLMService:
 
         return await self._get_embeddings_batch(texts)
 
+    async def embed_texts_with_usage(self, texts: list[str]) -> EmbeddingResult:
+        """Get embeddings with usage information from the API response.
+
+        Unlike embed_texts(), this method returns the actual token count
+        reported by the embedding API, which is needed for accurate cost
+        calculation.
+
+        Args:
+            texts: List of texts to embed
+
+        Returns:
+            EmbeddingResult with embeddings and aggregated usage info
+        """
+        if not texts:
+            return {
+                "embeddings": [],
+                "usage": {"total_tokens": 0, "model": self.config.embedding_model},
+            }
+
+        batches = self._prepare_embedding_batches(texts)
+        results: list[list[float]] = []
+        total_tokens = 0
+
+        try:
+            for batch in batches:
+                response = await self.client.embeddings.create(
+                    model=self.config.embedding_model,
+                    input=batch,
+                )
+                results.extend(data.embedding for data in response.data)
+                if response.usage:
+                    total_tokens += response.usage.total_tokens
+        except Exception as e:
+            from ragzoom.error_utils import preserve_exception_chain
+            from ragzoom.exceptions import LLMError
+
+            llm_error = LLMError(
+                operation="get_batch_embeddings_with_usage",
+                model=self.config.embedding_model,
+                message=f"Failed to get batch embeddings: {e}",
+                batch_size=len(texts),
+            )
+            raise preserve_exception_chain(llm_error, e)
+
+        usage: EmbeddingUsageInfo = {
+            "total_tokens": total_tokens,
+            "model": self.config.embedding_model,
+        }
+        return {"embeddings": results, "usage": usage}
+
     async def _summarize_text(
         self,
         text: str,
@@ -305,7 +374,7 @@ class LLMService:
         reporter: TelemetryCollector | None = None,
         prev_context: str | None = None,
         text_tokens: int | None = None,
-    ) -> tuple[str, int, int]:
+    ) -> SummaryResult:
         """Summarize text to approximately the target token count."""
         return await self._summarizer.summarize(
             text,
@@ -324,14 +393,16 @@ class LLMService:
         *,
         parent_id: str | None = None,
         reporter: TelemetryCollector | None = None,
-    ) -> tuple[str, int, int]:
+    ) -> SummaryResult:
         """Generate contextualizing summary of preceding context for target text.
 
         Unlike _summarize_text which compresses preserving all information,
         this extracts only background information relevant to understanding
         the target text.
 
-        Returns: (context_summary, retry_count, summary_tokens)
+        Returns:
+            SummaryResult containing the context summary, retry count, token count,
+            and accumulated usage across all LLM attempts for cost calculation.
         """
         return await self._summarizer.contextualize(
             preceding_context,

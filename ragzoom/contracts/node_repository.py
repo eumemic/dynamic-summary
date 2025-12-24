@@ -48,6 +48,9 @@ class NodeDataDict(TypedDict, total=False):
     preceding_context: str | None
     preceding_context_summary: str | None
 
+    # Cost in USD for creating this node
+    cost: float | None
+
 
 try:  # Optional typing import; not required at runtime
     from typing import TYPE_CHECKING
@@ -191,6 +194,17 @@ class NodeRepository(Protocol):
         """
         ...
 
+    def update_cost(
+        self,
+        node_id: str,
+        cost: float | None,
+    ) -> None:
+        """Update the cost field for a node.
+
+        Cost is in USD for creating this node (embedding + summarization).
+        """
+        ...
+
     # Frontier tracking for contextual indexing
     def get_tree_completion_frontier(self, document_id: str | None) -> int: ...
 
@@ -219,5 +233,14 @@ class NodeRepository(Protocol):
         """Get nodes whose ID starts with the given prefix.
 
         Used for CLI commands where users provide shortened node IDs.
+        """
+        ...
+
+    def get_cost_stats(self, document_id: str | None) -> tuple[float, int, int, int]:
+        """Get cost statistics for a document.
+
+        Returns:
+            Tuple of (total_cost, total_nodes, leaf_nodes, summary_nodes)
+            where total_cost is the sum of all node costs (or 0 if no costs recorded).
         """
         ...
