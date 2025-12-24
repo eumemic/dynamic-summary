@@ -72,6 +72,34 @@ class AppendTextResponse:
         span_end: int = ...,
     ) -> None: ...
 
+class BatchAppendTextRequest:
+    document_id: str
+    units: Sequence[bytes]
+    collect_telemetry: bool
+
+    def __init__(
+        self,
+        *,
+        document_id: str,
+        units: Iterable[bytes] = ...,
+        collect_telemetry: bool = ...,
+    ) -> None: ...
+
+class BatchAppendTextResponse:
+    stats: DocumentStats
+    telemetry_run_id: str
+    span_start: int
+    span_end: int
+
+    def __init__(
+        self,
+        *,
+        stats: DocumentStats,
+        telemetry_run_id: str = ...,
+        span_start: int = ...,
+        span_end: int = ...,
+    ) -> None: ...
+
 class RetrieveRequest:
     query: str
     document_id: str

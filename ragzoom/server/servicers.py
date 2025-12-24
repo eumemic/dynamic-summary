@@ -300,6 +300,44 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
         setattr(response, "telemetry_run_id", result.telemetry_run_id or "")
         return response
 
+    async def BatchAppendText(  # noqa: N802
+        self,
+        request: pb2.BatchAppendTextRequest,
+        context: ServicerContextProto,
+    ) -> pb2.BatchAppendTextResponse:
+        if not request.document_id:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="BatchAppendText requires `document_id`.",
+            )
+
+        # Decode each unit from bytes to string
+        units: list[str] = []
+        for i, unit_bytes in enumerate(request.units):
+            try:
+                units.append(unit_bytes.decode("utf-8"))
+            except UnicodeDecodeError as exc:
+                await _abort(
+                    context,
+                    code=grpc.StatusCode.INVALID_ARGUMENT,
+                    message=f"Invalid UTF-8 in unit {i}: {exc}",
+                )
+
+        session = self._runtime.get_session(request.document_id)
+        result = await session.batch_append_text(
+            units,
+            collect_telemetry=request.collect_telemetry,
+        )
+
+        response = pb2.BatchAppendTextResponse(
+            stats=_stats_to_proto(result),
+            span_start=result.span_start,
+            span_end=result.span_end,
+        )
+        setattr(response, "telemetry_run_id", result.telemetry_run_id or "")
+        return response
+
     async def TruncateDocument(  # noqa: N802
         self,
         request: pb2.TruncateDocumentRequest,

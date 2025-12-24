@@ -42,6 +42,19 @@ message AppendTextResponse {
   int32 span_end = 4;
 }
 
+message BatchAppendTextRequest {
+  string document_id = 1;
+  repeated bytes units = 2;
+  bool collect_telemetry = 3;
+}
+
+message BatchAppendTextResponse {
+  DocumentStats stats = 1;
+  string telemetry_run_id = 2;
+  int32 span_start = 3;
+  int32 span_end = 4;
+}
+
 message RetrieveRequest {
   string query = 1;
   string document_id = 2;
@@ -216,6 +229,7 @@ message ExportTelemetryResponse {
 service IndexerService {
   rpc IndexDocument(IndexDocumentRequest) returns (IndexDocumentResponse);
   rpc AppendText(AppendTextRequest) returns (AppendTextResponse);
+  rpc BatchAppendText(BatchAppendTextRequest) returns (BatchAppendTextResponse);
   rpc TruncateDocument(TruncateDocumentRequest) returns (TruncateDocumentResponse);
 }
 
