@@ -5,23 +5,23 @@
   "summary_reasoning_level": "minimal",
   "embedding_model": "text-embedding-3-small",
   "retry_threshold": 0.2,
-  "max_retries": 4,
+  "max_retries": 3,
   "embedding_batch_size": 100,
   "use_anti_verbatim_vaccine": true,
   "preceding_context": {
     "leaf": {
       "num_seeds": 0,
-      "verbatim_tokens": 300,
-      "token_cap": null,
-      "min_forest_completeness": 0.7,
+      "verbatim_tokens": 0,
+      "token_cap": 0,
+      "min_forest_completeness": 0.0,
       "max_forest_height_differential": null
     },
     "inner": {
       "num_seeds": 0,
       "verbatim_tokens": 0,
-      "token_cap": 300,
+      "token_cap": 100,
       "min_forest_completeness": 0.0,
-      "max_forest_height_differential": 3
+      "max_forest_height_differential": 2
     }
   }
 }
