@@ -542,17 +542,19 @@ class TestCompactionSegmentBridging:
         assert "b2" in chain
         assert "d1" in chain
 
-    def test_compaction_boundary_is_at_start_of_post_compaction_content(
-        self, tmp_path: Path
-    ) -> None:
-        """Compaction boundary span should be 0 when starting fresh from compaction."""
+    def test_compaction_messages_skipped_but_turn_intact(self, tmp_path: Path) -> None:
+        """Compaction messages are skipped but the turn stays intact.
+
+        With turn-based batching, user + assistant stay in one turn even
+        if there's a compaction in between (compaction messages are filtered).
+        """
         transcript_path = tmp_path / "transcript.jsonl"
         state_path = tmp_path / "state.jsonl"
 
         transcript_path.write_text(
             "\n".join(
                 [
-                    # Pre-compaction
+                    # User message starts turn
                     json.dumps(
                         {
                             "uuid": "msg1",
@@ -561,7 +563,7 @@ class TestCompactionSegmentBridging:
                             "message": {"content": "Before compaction"},
                         }
                     ),
-                    # System + compaction
+                    # System + compaction (these are filtered/skipped)
                     json.dumps({"uuid": "sys1", "parentUuid": None, "type": "system"}),
                     json.dumps(
                         {
@@ -570,7 +572,7 @@ class TestCompactionSegmentBridging:
                             "isCompactSummary": True,
                         }
                     ),
-                    # Post-compaction
+                    # Assistant response (same turn as msg1)
                     json.dumps(
                         {
                             "uuid": "msg2",
@@ -590,18 +592,14 @@ class TestCompactionSegmentBridging:
         state = SessionState.load(state_path)
         assert state is not None
 
-        # With per-segment batching, we have one entry per segment
-        assert len(state.entries) == 2
+        # With turn-based batching: user + assistant = 1 turn
+        assert len(state.entries) == 1
 
-        # First entry is for pre-compaction segment
-        assert state.entries[0].last_uuid == "msg1"
+        # The entry is for the last UUID in the turn (assistant)
+        assert state.entries[0].last_uuid == "msg2"
         assert state.entries[0].span_end > 0
 
-        # Second entry is for post-compaction segment
-        assert state.entries[1].last_uuid == "msg2"
-        assert state.entries[1].span_end > state.entries[0].span_end
-
-        # Verify both segments were indexed separately
-        assert len(client.appends) == 2
+        # Single append contains both messages
+        assert len(client.appends) == 1
         assert "Before compaction" in client.appends[0][1]
-        assert "After" in client.appends[1][1]
+        assert "After" in client.appends[0][1]

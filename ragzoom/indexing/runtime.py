@@ -433,6 +433,161 @@ class DocumentIndexSession:
                     )
             raise
 
+    # jscpd:ignore-start - Parallel structure to append_text intentional (batch vs single)
+    async def batch_append_text(
+        self,
+        units: list[str],
+        *,
+        collect_telemetry: bool = False,
+    ) -> IndexingResult:
+        """Append multiple text units with forced split boundaries between them.
+
+        Each unit creates a forced split boundary, meaning text is never merged
+        across unit boundaries. This is semantically equivalent to calling
+        append_text() for each unit sequentially, but executed in a single
+        transaction for efficiency.
+
+        Args:
+            units: List of text units, each creating a forced boundary
+            collect_telemetry: Whether to collect telemetry data
+
+        Returns:
+            IndexingResult with combined stats for all appended units
+        """
+        store = self._runtime._store
+        telemetry_manager = self._runtime._telemetry_manager
+        lock_cm = self._lock_document(store)
+
+        run_context: IndexRunContext | None = None
+        outcome: AppendOutcome | None = None
+        result: IndexingResult | None = None
+        previous_leaf_count = 0
+
+        try:
+            with lock_cm:
+                doc_record = store.get_document_by_id(self._document_id)
+                embedding_model = (
+                    getattr(doc_record, "embedding_model", None)
+                    if doc_record is not None
+                    else None
+                ) or self._runtime._index_config.embedding_model
+                summary_model = (
+                    getattr(doc_record, "summary_model", None)
+                    if doc_record is not None
+                    else None
+                ) or self._runtime._index_config.summary_model
+                stored_path = getattr(doc_record, "file_path", None)
+                resolved_path = (
+                    self._file_path if self._file_path is not None else stored_path
+                )
+
+                if doc_record is None:
+                    store.add_document(
+                        document_id=self._document_id,
+                        file_path=resolved_path,
+                        embedding_model=embedding_model,
+                        summary_model=summary_model,
+                    )
+                    doc_record = store.get_document_by_id(self._document_id)
+
+                document_store = store.for_document(self._document_id)
+                previous_leaf_count = document_store.nodes.leaf_count()
+
+                if collect_telemetry and telemetry_manager is not None:
+                    existing_tokens = sum(
+                        int(getattr(node, "token_count", 0))
+                        for node in document_store.nodes.get_leaves()
+                    )
+                    new_tokens = sum(tokenizer.count_tokens(u) for u in units if u)
+                    source_tokens = existing_tokens + new_tokens
+                    run_context = await telemetry_manager.start_run(
+                        self._document_id,
+                        collect=True,
+                        source_tokens=source_tokens,
+                        document_path=(
+                            self._file_path
+                            if self._file_path is not None
+                            else getattr(doc_record, "file_path", None)
+                        ),
+                        replace_existing=False,
+                    )
+
+                outcome = await self._runtime._append_executor.append_batch(
+                    store=document_store,
+                    document_id=self._document_id,
+                    units=units,
+                    reporter=run_context.telemetry_collector if run_context else None,
+                    run_context=run_context,
+                    telemetry_manager=telemetry_manager,
+                )
+
+                if (
+                    telemetry_manager is not None
+                    and run_context is not None
+                    and outcome.deleted_node_ids
+                ):
+                    await telemetry_manager.record_nodes_deleted(
+                        run_context,
+                        node_ids=outcome.deleted_node_ids,
+                    )
+
+                root = document_store.tree.get_root()
+                tree_depth = int(getattr(root, "height", 0) or 0) if root else 0
+                mutated_nodes = len(outcome.new_leaf_ids) + len(
+                    outcome.deleted_node_ids
+                )
+                new_leaves = len(outcome.new_leaf_ids)
+
+                result = IndexingResult(
+                    document_id=outcome.document_id,
+                    chunks_created=outcome.total_leaves,
+                    tree_depth=tree_depth,
+                    span_start=outcome.appended_span_start,
+                    span_end=outcome.appended_span_end,
+                    mutated_nodes=mutated_nodes,
+                    resummarized_nodes=0,
+                    new_leaves=new_leaves,
+                    telemetry=None,
+                    telemetry_run_id=run_context.run_id if run_context else None,
+                )
+
+                if run_context is not None:
+                    run_context.register_append_outcome(
+                        span_start=outcome.appended_span_start,
+                        span_end=outcome.appended_span_end,
+                        mutated_nodes=mutated_nodes,
+                        new_leaves=new_leaves,
+                        previous_leaf_count=previous_leaf_count,
+                        total_leaves=outcome.total_leaves,
+                    )
+
+            if run_context is not None:
+                await self._runtime._indexing_engine.register_run(
+                    self._document_id,
+                    run_id=run_context.run_id,
+                    telemetry_collector=run_context.telemetry_collector,
+                    new_leaf_ids=outcome.new_leaf_ids,
+                )
+
+            # Trigger indexing work - engine discovers leaves and sibling pairs
+            await self._runtime._indexing_engine.trigger_work(self._document_id)
+
+            await self._runtime._emit_status(self._document_id)
+            assert result is not None
+            return result
+        except Exception as exc:
+            logger.exception(
+                "Batch append failed for document %s", self._document_id, exc_info=True
+            )
+            if run_context is not None and telemetry_manager is not None:
+                with suppress(Exception):
+                    await telemetry_manager.complete_run(
+                        run_context.run_id, error=str(exc)
+                    )
+            raise
+
+    # jscpd:ignore-end
+
     async def clear(self) -> ClearedDocumentResult:
         await self._runtime._indexing_engine.cancel_document(self._document_id)
 
