@@ -108,18 +108,16 @@ async def test_retry_maintains_conversation_history(
     reporter = create_test_reporter(config)
 
     with patched_tokenizers(lambda text: [0] * len(text)):
-        summary, retry_count, _ = (
-            await indexer_runtime_harness.llm_service._summarize_text(
-                "Left text" * 10 + " " + "Right text" * 10,
-                100,
-                parent_id="test_node",
-                reporter=reporter,
-            )
+        result = await indexer_runtime_harness.llm_service._summarize_text(
+            "Left text" * 10 + " " + "Right text" * 10,
+            100,
+            parent_id="test_node",
+            reporter=reporter,
         )
 
     assert len(api_calls) == 2
-    assert retry_count == 1
-    assert summary == "B" * 95
+    assert result.retry_count == 1
+    assert result.summary == "B" * 95
 
     first_messages = api_calls[0]["messages"]
     assert len(first_messages) == 4
@@ -161,14 +159,14 @@ async def test_retry_preserves_original_context(
     indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
 
     with patched_tokenizers(lambda text: [0] * len(text)):
-        summary, _, _ = await indexer_runtime_harness.llm_service._summarize_text(
+        result = await indexer_runtime_harness.llm_service._summarize_text(
             original_text,
             100,
             parent_id="test",
         )
 
     assert len(api_calls) == 2
-    assert summary == "B" * 100
+    assert result.summary == "B" * 100
 
 
 @pytest.mark.asyncio
@@ -204,17 +202,15 @@ async def test_multiple_retries_build_conversation(
     indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
 
     with patched_tokenizers(lambda text: [0] * len(text)):
-        summary, retry_count, _ = (
-            await indexer_runtime_harness.llm_service._summarize_text(
-                "Test content" * 10 + " " + "More content" * 10,
-                100,
-                parent_id="test",
-            )
+        result = await indexer_runtime_harness.llm_service._summarize_text(
+            "Test content" * 10 + " " + "More content" * 10,
+            100,
+            parent_id="test",
         )
 
     assert len(api_calls) == 3
-    assert retry_count == 2
-    assert summary == "C" * 105
+    assert result.retry_count == 2
+    assert result.summary == "C" * 105
 
     final_messages = api_calls[-1]["messages"]
     assert len(final_messages) == 8
@@ -241,18 +237,16 @@ async def test_no_retry_when_within_threshold(
     indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
 
     with patched_tokenizers(lambda text: [0] * len(text)):
-        summary, retry_count, token_count = (
-            await indexer_runtime_harness.llm_service._summarize_text(
-                "Test content" * 10 + " " + "More content" * 10,
-                100,
-                parent_id="test",
-            )
+        result = await indexer_runtime_harness.llm_service._summarize_text(
+            "Test content" * 10 + " " + "More content" * 10,
+            100,
+            parent_id="test",
         )
 
     assert len(api_calls) == 1
-    assert retry_count == 0
-    assert summary == "A" * 105
-    assert token_count == 105
+    assert result.retry_count == 0
+    assert result.summary == "A" * 105
+    assert result.summary_tokens == 105
 
 
 @pytest.mark.asyncio
@@ -281,18 +275,16 @@ async def test_accept_retry_within_threshold_immediately(
     indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
 
     with patched_tokenizers(lambda text: [0] * len(text)):
-        summary, retry_count, token_count = (
-            await indexer_runtime_harness.llm_service._summarize_text(
-                "Test content" * 10 + " " + "More content" * 10,
-                100,
-                parent_id="test",
-            )
+        result = await indexer_runtime_harness.llm_service._summarize_text(
+            "Test content" * 10 + " " + "More content" * 10,
+            100,
+            parent_id="test",
         )
 
     assert len(api_calls) == 2
-    assert retry_count == 1
-    assert summary == "B" * 115
-    assert token_count == 115
+    assert result.retry_count == 1
+    assert result.summary == "B" * 115
+    assert result.summary_tokens == 115
 
 
 @pytest.mark.asyncio
@@ -317,19 +309,17 @@ async def test_passthrough_for_text_under_target(
     with patched_tokenizers(
         lambda text: [0] * min(len(text), 50), lambda text: min(len(text), 50)
     ):
-        summary, retry_count, token_count = (
-            await indexer_runtime_harness.llm_service._summarize_text(
-                "Short Text",
-                100,
-                parent_id="test",
-                reporter=reporter,
-            )
+        result = await indexer_runtime_harness.llm_service._summarize_text(
+            "Short Text",
+            100,
+            parent_id="test",
+            reporter=reporter,
         )
 
     assert len(api_calls) == 0
-    assert retry_count == 0
-    assert summary == "Short Text"
-    assert token_count == len("Short Text")
+    assert result.retry_count == 0
+    assert result.summary == "Short Text"
+    assert result.summary_tokens == len("Short Text")
 
     data = reporter.get_telemetry_data("test_doc", config.target_chunk_tokens)
     attempts = data["nodes"][0]["summary_attempts"]

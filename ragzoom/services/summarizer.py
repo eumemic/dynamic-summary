@@ -73,7 +73,7 @@ class Summarizer:
         parent_id: str | None = None,
         reporter: TelemetryCollector | None = None,
         text_tokens: int | None = None,
-    ) -> tuple[str, int, int]:
+    ) -> summary_utils.SummaryResult:
         request_kwargs: summary_utils.SummaryRequest = {
             "text": text,
             "target_tokens": target_tokens,
@@ -97,14 +97,16 @@ class Summarizer:
         *,
         parent_id: str | None = None,
         reporter: TelemetryCollector | None = None,
-    ) -> tuple[str, int, int]:
+    ) -> summary_utils.SummaryResult:
         """Generate contextualizing summary of preceding context for target text.
 
         Unlike summarize() which compresses text preserving all information,
         contextualize() extracts only the background information relevant to
         understanding the target text.
 
-        Returns: (context_summary, retry_count, summary_tokens)
+        Returns:
+            SummaryResult containing the context summary, retry count, token count,
+            and accumulated usage across all LLM attempts for cost calculation.
         """
         request_kwargs: summary_utils.ContextualizationRequest = {
             "preceding_context": preceding_context,

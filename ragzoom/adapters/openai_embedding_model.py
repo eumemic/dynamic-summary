@@ -6,7 +6,11 @@ from collections.abc import Sequence
 
 from openai import AsyncOpenAI
 
-from ragzoom.contracts.embedding_model import EmbeddingModel
+from ragzoom.contracts.embedding_model import (
+    EmbeddingModel,
+    EmbeddingResult,
+    EmbeddingUsageInfo,
+)
 
 
 # jscpd:ignore-start - Class boilerplate mirrors chat adapter by design
@@ -27,3 +31,17 @@ class OpenAIEmbeddingModel(EmbeddingModel):
             model=self._model_id, input=list(texts)
         )
         return [d.embedding for d in resp.data]
+
+    async def embed_with_usage(self, texts: Sequence[str]) -> EmbeddingResult:
+        """Embed texts and return usage information from the API response."""
+        resp = await self._client.embeddings.create(
+            model=self._model_id, input=list(texts)
+        )
+        usage: EmbeddingUsageInfo = {
+            "total_tokens": resp.usage.total_tokens if resp.usage else 0,
+            "model": self._model_id,
+        }
+        return {
+            "embeddings": [d.embedding for d in resp.data],
+            "usage": usage,
+        }

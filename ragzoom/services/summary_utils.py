@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Awaitable, Callable, MutableSequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Final, TypedDict
 
 from ragzoom.config import IndexConfig
@@ -14,6 +14,39 @@ from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AccumulatedUsage:
+    """Accumulated token usage across all LLM attempts in a workflow.
+
+    Used for accurate cost calculation that includes all retry attempts.
+    """
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cached_tokens: int = 0
+    embedding_tokens: int = 0
+
+    def add_llm_usage(self, usage: UsageInfo) -> None:
+        """Add token counts from an LLM call."""
+        self.prompt_tokens += int(usage.get("prompt_tokens", 0) or 0)
+        self.completion_tokens += int(usage.get("completion_tokens", 0) or 0)
+        self.cached_tokens += int(usage.get("cached_tokens", 0) or 0)
+
+    def add_embedding_tokens(self, tokens: int) -> None:
+        """Add token count from an embedding call."""
+        self.embedding_tokens += tokens
+
+
+@dataclass
+class SummaryResult:
+    """Result of a summary workflow including usage for cost calculation."""
+
+    summary: str
+    retry_count: int
+    summary_tokens: int
+    usage: AccumulatedUsage = field(default_factory=AccumulatedUsage)
 
 
 SummaryMessages = MutableSequence[dict[str, str]]
@@ -342,6 +375,7 @@ async def retry_summary_correction(
     reporter: TelemetryCollector | None,
     call_summary: SummaryCall,
     record_attempt: SummaryTelemetryRecorder | None = None,
+    accumulated_usage: AccumulatedUsage | None = None,
 ) -> tuple[str, int, int]:
     """Execute retry attempts to steer a summary toward the target length."""
 
@@ -369,6 +403,10 @@ async def retry_summary_correction(
             )
             actual_retries = attempt
             retry_tokens = tokenizer.count_tokens(retry_summary)
+
+            # Accumulate usage for cost calculation
+            if accumulated_usage is not None:
+                accumulated_usage.add_llm_usage(usage)
 
             if record_attempt is not None:
                 await record_attempt(usage, best_tokens, retry_tokens, retry_start)
@@ -414,9 +452,13 @@ async def run_summary_workflow(
     reporter: TelemetryCollector | None = None,
     config: SummaryWorkflowConfig,
     call_summary: SummaryCall,
-) -> tuple[str, int, int]:
-    """Execute the full summary workflow with retries and telemetry."""
+) -> SummaryResult:
+    """Execute the full summary workflow with retries and telemetry.
 
+    Returns:
+        SummaryResult containing the summary text, retry count, token count,
+        and accumulated usage across all LLM attempts for cost calculation.
+    """
     preparation = prepare_summary_inputs(
         text=text,
         target_tokens=target_tokens,
@@ -432,13 +474,16 @@ async def run_summary_workflow(
             target_tokens=target_tokens,
             combined_tokens=preparation.combined_tokens,
         )
-        return (
-            preparation.combined_text,
-            0,
-            preparation.combined_tokens,
+        # Passthrough: no LLM usage, just return the text as-is
+        return SummaryResult(
+            summary=preparation.combined_text,
+            retry_count=0,
+            summary_tokens=preparation.combined_tokens,
+            usage=AccumulatedUsage(),
         )
 
     node_id = parent_id or ""
+    accumulated_usage = AccumulatedUsage()
 
     async def telemetry_recorder(
         usage: UsageInfo,
@@ -466,6 +511,9 @@ async def run_summary_workflow(
     )
     summary_tokens = tokenizer.count_tokens(summary)
 
+    # Accumulate initial attempt usage
+    accumulated_usage.add_llm_usage(usage)
+
     await telemetry_recorder(
         usage,
         preparation.input_text_tokens,
@@ -480,7 +528,12 @@ async def run_summary_workflow(
         config.retry_threshold,
     ):
         mark_accepted_attempt(reporter, parent_id, 0)
-        return summary, 0, summary_tokens
+        return SummaryResult(
+            summary=summary,
+            retry_count=0,
+            summary_tokens=summary_tokens,
+            usage=accumulated_usage,
+        )
 
     if config.max_retries > 0:
         final_summary, retry_count, best_attempt_index = await retry_summary_correction(
@@ -494,16 +547,23 @@ async def run_summary_workflow(
             reporter=reporter,
             call_summary=call_summary,
             record_attempt=telemetry_recorder,
+            accumulated_usage=accumulated_usage,
         )
         mark_accepted_attempt(reporter, parent_id, best_attempt_index)
-        return (
-            final_summary,
-            retry_count,
-            tokenizer.count_tokens(final_summary),
+        return SummaryResult(
+            summary=final_summary,
+            retry_count=retry_count,
+            summary_tokens=tokenizer.count_tokens(final_summary),
+            usage=accumulated_usage,
         )
 
     mark_accepted_attempt(reporter, parent_id, 0)
-    return summary, 0, summary_tokens
+    return SummaryResult(
+        summary=summary,
+        retry_count=0,
+        summary_tokens=summary_tokens,
+        usage=accumulated_usage,
+    )
 
 
 async def run_summary_from_config(
@@ -516,7 +576,7 @@ async def run_summary_from_config(
     parent_id: str | None = None,
     reporter: TelemetryCollector | None = None,
     call_summary: SummaryCall,
-) -> tuple[str, int, int]:
+) -> SummaryResult:
     """Convenience wrapper building workflow config from IndexConfig."""
 
     config_snapshot = SummaryWorkflowConfig(
@@ -543,7 +603,7 @@ async def run_summary_request(
     index_config: IndexConfig,
     request: SummaryRequest,
     call_summary: SummaryCall,
-) -> tuple[str, int, int]:
+) -> SummaryResult:
     """Execute the summary workflow using a packaged request payload."""
 
     return await run_summary_from_config(
@@ -575,14 +635,16 @@ async def run_contextualization_workflow(
     reporter: TelemetryCollector | None = None,
     config: SummaryWorkflowConfig,
     call_llm: SummaryCall,
-) -> tuple[str, int, int]:
+) -> SummaryResult:
     """Execute contextualization workflow: extract relevant background for target text.
 
     Unlike summarization which preserves all information, contextualization
     filters the preceding context to include only information relevant to
     understanding the target text. No passthrough - always runs LLM.
 
-    Returns: (context_summary, retry_count, summary_tokens)
+    Returns:
+        SummaryResult containing the context summary, retry count, token count,
+        and accumulated usage across all LLM attempts for cost calculation.
     """
     preparation = prepare_contextualization_inputs(
         preceding_context=preceding_context,
@@ -591,6 +653,7 @@ async def run_contextualization_workflow(
     )
 
     node_id = parent_id or ""
+    accumulated_usage = AccumulatedUsage()
 
     # jscpd:ignore-start - Parallel structure to run_summary_workflow intentional
     async def telemetry_recorder(
@@ -621,6 +684,9 @@ async def run_contextualization_workflow(
     )
     summary_tokens = tokenizer.count_tokens(context_summary)
 
+    # Accumulate initial attempt usage
+    accumulated_usage.add_llm_usage(usage)
+
     await telemetry_recorder(
         usage,
         preparation.input_text_tokens,
@@ -635,8 +701,14 @@ async def run_contextualization_workflow(
         config.retry_threshold,
     ):
         mark_accepted_attempt(reporter, parent_id, 0)
-        return context_summary, 0, summary_tokens
+        return SummaryResult(
+            summary=context_summary,
+            retry_count=0,
+            summary_tokens=summary_tokens,
+            usage=accumulated_usage,
+        )
 
+    # jscpd:ignore-start - Parallel structure to run_summary_workflow intentional
     if config.max_retries > 0:
         final_summary, retry_count, best_attempt_index = await retry_summary_correction(
             base_messages=preparation.messages,
@@ -649,16 +721,24 @@ async def run_contextualization_workflow(
             reporter=reporter,
             call_summary=call_llm,
             record_attempt=telemetry_recorder,
+            accumulated_usage=accumulated_usage,
         )
         mark_accepted_attempt(reporter, parent_id, best_attempt_index)
-        return (
-            final_summary,
-            retry_count,
-            tokenizer.count_tokens(final_summary),
+        return SummaryResult(
+            summary=final_summary,
+            retry_count=retry_count,
+            summary_tokens=tokenizer.count_tokens(final_summary),
+            usage=accumulated_usage,
         )
 
     mark_accepted_attempt(reporter, parent_id, 0)
-    return context_summary, 0, summary_tokens
+    return SummaryResult(
+        summary=context_summary,
+        retry_count=0,
+        summary_tokens=summary_tokens,
+        usage=accumulated_usage,
+    )
+    # jscpd:ignore-end
 
 
 async def run_contextualization_from_config(
@@ -670,7 +750,7 @@ async def run_contextualization_from_config(
     parent_id: str | None = None,
     reporter: TelemetryCollector | None = None,
     call_llm: SummaryCall,
-) -> tuple[str, int, int]:
+) -> SummaryResult:
     """Convenience wrapper building workflow config from IndexConfig."""
 
     config_snapshot = SummaryWorkflowConfig(
@@ -696,7 +776,7 @@ async def run_contextualization_request(
     index_config: IndexConfig,
     request: ContextualizationRequest,
     call_llm: SummaryCall,
-) -> tuple[str, int, int]:
+) -> SummaryResult:
     """Execute contextualization workflow using a packaged request payload."""
 
     return await run_contextualization_from_config(

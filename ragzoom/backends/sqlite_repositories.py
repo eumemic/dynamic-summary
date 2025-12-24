@@ -87,6 +87,7 @@ class SqliteNodeRepository:
                     "level_index": data["level_index"],
                     "preceding_context": data.get("preceding_context"),
                     "preceding_context_summary": data.get("preceding_context_summary"),
+                    "cost": data.get("cost"),
                 }
                 for data in nodes_data
             ]
@@ -144,6 +145,7 @@ class SqliteNodeRepository:
                     level_index=data["level_index"],
                     preceding_context=data.get("preceding_context"),
                     preceding_context_summary=data.get("preceding_context_summary"),
+                    cost=data.get("cost"),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=[SQLiteTreeNode.id],
@@ -161,6 +163,7 @@ class SqliteNodeRepository:
                         "level_index": stmt.excluded.level_index,
                         "preceding_context": stmt.excluded.preceding_context,
                         "preceding_context_summary": stmt.excluded.preceding_context_summary,
+                        "cost": stmt.excluded.cost,
                     },
                 )
                 session.execute(stmt)
@@ -341,6 +344,21 @@ class SqliteNodeRepository:
                 update(SQLiteTreeNode)
                 .where(SQLiteTreeNode.id == node_id)
                 .values(embedding=embedding_bytes)
+            )
+            session.commit()
+            self.cache_manager.invalidate(node_id)
+
+    def update_cost(
+        self,
+        node_id: str,
+        cost: float | None,
+    ) -> None:
+        """Update the cost field for a node."""
+        with self.SessionLocal() as session:
+            session.execute(
+                update(SQLiteTreeNode)
+                .where(SQLiteTreeNode.id == node_id)
+                .values(cost=cost)
             )
             session.commit()
             self.cache_manager.invalidate(node_id)
@@ -864,6 +882,42 @@ class SqliteNodeRepository:
             if document_id:
                 stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
             return int(session.execute(stmt).scalar_one())
+
+    def get_cost_stats(self, document_id: str | None) -> tuple[float, int, int, int]:
+        """Get cost statistics for a document."""
+        with self.SessionLocal() as session:
+            # Build base filter
+            base_filter = []
+            if document_id:
+                base_filter.append(SQLiteTreeNode.document_id == document_id)
+
+            # Total cost
+            cost_stmt = select(func.coalesce(func.sum(SQLiteTreeNode.cost), 0.0))
+            if base_filter:
+                cost_stmt = cost_stmt.where(*base_filter)
+            cost_result = session.execute(cost_stmt).scalar_one()
+            total_cost = float(cost_result) if cost_result is not None else 0.0
+
+            # Total nodes
+            total_stmt = select(func.count()).select_from(SQLiteTreeNode)
+            if base_filter:
+                total_stmt = total_stmt.where(*base_filter)
+            total_nodes = int(session.execute(total_stmt).scalar_one())
+
+            # Leaf nodes (height = 0)
+            leaf_stmt = (
+                select(func.count())
+                .select_from(SQLiteTreeNode)
+                .where(SQLiteTreeNode.height == 0)
+            )
+            if base_filter:
+                leaf_stmt = leaf_stmt.where(*base_filter)
+            leaf_nodes = int(session.execute(leaf_stmt).scalar_one())
+
+            # Summary nodes = total - leaves
+            summary_nodes = total_nodes - leaf_nodes
+
+            return total_cost, total_nodes, leaf_nodes, summary_nodes
 
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]:
         with self.SessionLocal() as session:

@@ -127,7 +127,7 @@ async def test_mark_accepted_attempt_is_called() -> None:
 
     with patch.object(llm_service.client.chat.completions, "create", new=mock_create):
         with patched_tokenizers():
-            summary, retry_count, token_count = await llm_service._summarize_text(
+            result = await llm_service._summarize_text(
                 "Test left text " * 10 + " " + "Test right text " * 10,
                 100,
                 parent_id="test_node",
@@ -135,8 +135,8 @@ async def test_mark_accepted_attempt_is_called() -> None:
             )
 
     # Verify summarization worked
-    assert summary == "B" * 105
-    assert retry_count == 1  # One retry was made
+    assert result.summary == "B" * 105
+    assert result.retry_count == 1  # One retry was made
 
     # CRITICAL: Verify mark_accepted_attempt was called
     assert len(mark_accepted_calls) == 1, "mark_accepted_attempt should be called once"
@@ -243,7 +243,7 @@ async def test_retry_selection_uses_proper_logic() -> None:
 
     with patch.object(llm_service.client.chat.completions, "create", new=mock_create):
         with patched_tokenizers():
-            summary, retry_count, token_count = await llm_service._summarize_text(
+            result = await llm_service._summarize_text(
                 "Test " * 50 + " " + "Text " * 50,
                 100,
                 parent_id="test_node",
@@ -256,7 +256,7 @@ async def test_retry_selection_uses_proper_logic() -> None:
 
     # The final summary should be "B" * 85 (first acceptable result)
     assert (
-        summary == "B" * 85
-    ), f"Should select first acceptable summary, got {summary[:10]}..."
-    assert token_count == 85
-    assert retry_count == 1  # Only one retry needed to get acceptable result
+        result.summary == "B" * 85
+    ), f"Should select first acceptable summary, got {result.summary[:10]}..."
+    assert result.summary_tokens == 85
+    assert result.retry_count == 1  # Only one retry needed to get acceptable result
