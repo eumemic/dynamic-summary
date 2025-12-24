@@ -13,7 +13,7 @@
       "num_seeds": 0,
       "verbatim_tokens": 0,
       "token_cap": 0,
-      "min_forest_completeness": 0,
+      "min_forest_completeness": 0.0,
       "max_forest_height_differential": null
     },
     "inner": {
@@ -21,7 +21,7 @@
       "verbatim_tokens": 0,
       "token_cap": 100,
       "min_forest_completeness": 0.0,
-      "max_forest_height_differential": 3
+      "max_forest_height_differential": 2
     }
   }
 }
