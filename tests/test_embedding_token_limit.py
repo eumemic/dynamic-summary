@@ -110,16 +110,23 @@ async def test_indexing_engine_limits_embedding_text() -> None:
     # Create mock LLM service
     mock_llm_service = MagicMock()
 
-    # Track what text is passed to embed_texts
+    # Track what text is passed to embed_texts_with_usage
     embed_texts_received: list[str] = []
 
-    async def capture_embed_texts(texts: list[str]) -> list[list[float]]:
-        embed_texts_received.extend(texts)
-        return [[0.1] * 1536 for _ in texts]
+    from ragzoom.contracts.embedding_model import EmbeddingResult
 
-    mock_llm_service.embed_texts = capture_embed_texts
+    async def capture_embed_texts_with_usage(texts: list[str]) -> EmbeddingResult:
+        embed_texts_received.extend(texts)
+        return {
+            "embeddings": [[0.1] * 1536 for _ in texts],
+            "usage": {"total_tokens": 100, "model": "text-embedding-3-small"},
+        }
+
+    mock_llm_service.embed_texts_with_usage = capture_embed_texts_with_usage
 
     # Mock _contextualize_text to return a short summary (simulating context summarization)
+    from ragzoom.services.summary_utils import AccumulatedUsage, SummaryResult
+
     async def mock_contextualize(
         preceding_context: str,
         target_text: str,
@@ -127,9 +134,14 @@ async def test_indexing_engine_limits_embedding_text() -> None:
         *,
         parent_id: str | None = None,
         reporter: object = None,
-    ) -> tuple[str, int, int]:
+    ) -> SummaryResult:
         # Return a short summary instead of the full context
-        return ("summarized context", 0, 50)
+        return SummaryResult(
+            summary="summarized context",
+            retry_count=0,
+            summary_tokens=50,
+            usage=AccumulatedUsage(),
+        )
 
     mock_llm_service._contextualize_text = mock_contextualize
 
@@ -159,6 +171,18 @@ async def test_indexing_engine_limits_embedding_text() -> None:
 
     mock_retriever = AsyncMock()
     mock_retriever.retrieve_for_context = AsyncMock(return_value=context_result)
+    # Mock embedding_service for query embedding with usage
+    mock_embedding_service = MagicMock()
+
+    async def mock_get_query_embedding_with_usage(
+        query: str, document_id: str | None = None
+    ) -> tuple[list[float], dict[str, object]]:
+        return [0.1] * 1536, {"total_tokens": 50, "model": "text-embedding-3-small"}
+
+    mock_embedding_service.get_query_embedding_async_with_usage = (
+        mock_get_query_embedding_with_usage
+    )
+    mock_retriever.embedding_service = mock_embedding_service
 
     # Create engine
     engine = IndexingEngine(
@@ -224,10 +248,15 @@ async def test_embed_leaf_records_telemetry() -> None:
     # Create mock LLM service
     mock_llm_service = MagicMock()
 
-    async def mock_embed_texts(texts: list[str]) -> list[list[float]]:
-        return [[0.1] * 1536 for _ in texts]
+    from ragzoom.contracts.embedding_model import EmbeddingResult
 
-    mock_llm_service.embed_texts = mock_embed_texts
+    async def mock_embed_texts_with_usage(texts: list[str]) -> EmbeddingResult:
+        return {
+            "embeddings": [[0.1] * 1536 for _ in texts],
+            "usage": {"total_tokens": 50, "model": "text-embedding-3-small"},
+        }
+
+    mock_llm_service.embed_texts_with_usage = mock_embed_texts_with_usage
 
     # Create telemetry collector and pre-register the leaf node
     telemetry = TelemetryCollector(

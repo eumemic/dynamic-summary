@@ -4,6 +4,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -35,6 +36,9 @@ class TreeNodeColumnsMixin:
     # Embedding vector (stored as packed float32 bytes for efficiency)
     # 1536 dimensions * 4 bytes = 6144 bytes for text-embedding-3-small
     embedding: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+
+    # Cost in USD for creating this node (embedding + summarization)
+    cost: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class PostgresTreeNode(TreeNodeColumnsMixin, Base):

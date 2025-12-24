@@ -176,7 +176,12 @@ class TestSpanCorruption:
         )
         mock_client.chat.completions.create = AsyncMock(
             return_value=Mock(
-                choices=[Mock(message=Mock(content="Summary of the content"))]
+                choices=[Mock(message=Mock(content="Summary of the content"))],
+                usage=Mock(
+                    prompt_tokens=100,
+                    completion_tokens=10,
+                    prompt_tokens_details=Mock(cached_tokens=0),
+                ),
             )
         )
 

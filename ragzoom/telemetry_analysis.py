@@ -22,6 +22,11 @@ import numpy as np
 from typing_extensions import TypedDict
 
 from ragzoom.config import get_embedding_cost, get_llm_costs
+from ragzoom.cost import (
+    calculate_completion_cost,
+    calculate_embedding_cost,
+    calculate_prompt_cost_with_cache,
+)
 from ragzoom.telemetry_query import QueryPhaseMetrics
 from ragzoom.telemetry_types import (
     BatchEfficiencyDict,
@@ -632,26 +637,6 @@ def compute_latency_metrics(nodes: list[NodeTelemetryDict]) -> LatencyMetrics:
     )
 
 
-def _calculate_prompt_cost_with_cache(
-    prompt_tokens: int, cached_tokens: int, price_per_1k: float, cache_discount: float
-) -> float:
-    """Calculate prompt cost applying cache discount.
-
-    Args:
-        prompt_tokens: Total prompt tokens
-        cached_tokens: Number of cached prompt tokens
-        price_per_1k: Price per 1000 tokens
-        cache_discount: Discount percentage (0.9 = 90% discount)
-
-    Returns:
-        Total cost in USD
-    """
-    uncached_tokens = prompt_tokens - cached_tokens
-    return (uncached_tokens / 1000) * price_per_1k + (
-        cached_tokens / 1000
-    ) * price_per_1k * (1 - cache_discount)
-
-
 def compute_cost_metrics(
     nodes: list[NodeTelemetryDict], models: dict[str, str], source_document_tokens: int
 ) -> CostMetrics:
@@ -718,21 +703,21 @@ def compute_cost_metrics(
         total_completion_tokens += node_completion_tokens
 
         # Calculate per-node cost in USD with cache discount
-        embedding_cost = (node_embedding_tokens / 1000) * pricing[
-            "embedding_cost_per_1k"
-        ]
+        embedding_cost = calculate_embedding_cost(
+            node_embedding_tokens, pricing["embedding_cost_per_1k"]
+        )
 
         # Apply cache discount: cached tokens cost less
-        prompt_cost = _calculate_prompt_cost_with_cache(
+        prompt_cost = calculate_prompt_cost_with_cache(
             node_prompt_tokens,
             node_cached_tokens,
             pricing["summary_input_cost_per_1k"],
             cache_discount,
         )
 
-        completion_cost = (node_completion_tokens / 1000) * pricing[
-            "summary_output_cost_per_1k"
-        ]
+        completion_cost = calculate_completion_cost(
+            node_completion_tokens, pricing["summary_output_cost_per_1k"]
+        )
         node_cost = embedding_cost + prompt_cost + completion_cost
         node_costs.append(node_cost)
 
@@ -741,19 +726,21 @@ def compute_cost_metrics(
     )
 
     # Calculate total costs with cache discount
-    embedding_cost = (total_embedding_tokens / 1000) * pricing["embedding_cost_per_1k"]
+    embedding_cost = calculate_embedding_cost(
+        total_embedding_tokens, pricing["embedding_cost_per_1k"]
+    )
 
     # Apply cache discount to total prompt costs
-    prompt_cost = _calculate_prompt_cost_with_cache(
+    prompt_cost = calculate_prompt_cost_with_cache(
         total_prompt_tokens,
         total_cached_tokens,
         pricing["summary_input_cost_per_1k"],
         cache_discount,
     )
 
-    completion_cost = (total_completion_tokens / 1000) * pricing[
-        "summary_output_cost_per_1k"
-    ]
+    completion_cost = calculate_completion_cost(
+        total_completion_tokens, pricing["summary_output_cost_per_1k"]
+    )
     total_cost = embedding_cost + prompt_cost + completion_cost
 
     num_nodes = len(nodes)
