@@ -1761,6 +1761,10 @@ class IndexingEngine:
         if span_start <= 0:
             return PrecedingContextResult(tiling_ids=[], nodes={}, tiling_tokens=0)
 
+        # Skip retrieval entirely if token_cap is 0
+        if config.token_cap == 0:
+            return PrecedingContextResult(tiling_ids=[], nodes={}, tiling_tokens=0)
+
         # Always use standard retrieval path
         retriever = self._create_retriever(document_id)
         if retriever is None:
