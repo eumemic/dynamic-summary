@@ -37,15 +37,14 @@ class DummyEngine:
 
 
 def test_hash_document_lock_ranges() -> None:
-    key1, key2 = _hash_document_lock("example-document")
-    assert -(2**63) <= key1 < 2**63
-    assert -(2**63) <= key2 < 2**63
+    lock_key = _hash_document_lock("example-document")
+    assert -(2**63) <= lock_key < 2**63
 
 
 def test_advisory_lock_acquires_and_releases() -> None:
     calls: list[tuple[str, dict[str, object] | None]] = []
     engine = DummyEngine(calls)
-    lock = _AdvisoryLock(cast(Engine, engine), 1, 2)
+    lock = _AdvisoryLock(cast(Engine, engine), 12345)
 
     with lock:
         calls.append(("inside", None))
@@ -59,7 +58,7 @@ def test_advisory_lock_acquires_and_releases() -> None:
 def test_advisory_lock_unlocks_on_exception() -> None:
     calls: list[tuple[str, dict[str, object] | None]] = []
     engine = DummyEngine(calls)
-    lock = _AdvisoryLock(cast(Engine, engine), 3, 4)
+    lock = _AdvisoryLock(cast(Engine, engine), 67890)
 
     with pytest.raises(RuntimeError, match="boom"):
         with lock:
