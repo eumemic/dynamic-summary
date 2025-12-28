@@ -382,14 +382,27 @@ def storage_backend() -> Generator[_StorageBackendProtocol, None, None]:
     """
 
     db_url = os.getenv("RAGZOOM_DATABASE_URL", "sqlite:///:memory:")
+    storage_backend_type = os.getenv("RAGZOOM_BACKEND", "sqlite")
     vector_backend = os.getenv("RAGZOOM_VECTOR_BACKEND", "python")
     vector_dir = os.getenv("RAGZOOM_VECTOR_PERSIST_DIR")
 
-    backend = SQLiteStorageBackend(
-        db_url,
-        vector_backend=vector_backend,
-        vector_persist_dir=vector_dir,
-    )
+    backend: _StorageBackendProtocol
+    if storage_backend_type == "postgres" or db_url.startswith("postgresql"):
+        from ragzoom.backends.postgres_backend import PostgresStorageBackend
+        from ragzoom.config import OperationalConfig
+
+        config = OperationalConfig(
+            openai_api_key=SecretStr("test-key"),
+            database_url=db_url,
+            vector_backend=vector_backend,
+        )
+        backend = PostgresStorageBackend(config)
+    else:
+        backend = SQLiteStorageBackend(
+            db_url,
+            vector_backend=vector_backend,
+            vector_persist_dir=vector_dir,
+        )
     try:
         yield backend
     finally:

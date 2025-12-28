@@ -45,17 +45,16 @@ class _NoOpLock(AbstractContextManager[None]):
 class _AdvisoryLock(AbstractContextManager[None]):
     """PostgreSQL advisory lock scoped to a document."""
 
-    def __init__(self, engine: Engine, key1: int, key2: int) -> None:
+    def __init__(self, engine: Engine, lock_key: int) -> None:
         self._engine = engine
-        self._key1 = key1
-        self._key2 = key2
+        self._lock_key = lock_key
         self._conn: Connection | None = None
 
     def __enter__(self) -> None:  # noqa: D401 - trivial
         self._conn = self._engine.connect()
         self._conn.execute(
-            text("SELECT pg_advisory_lock(:k1, :k2)"),
-            {"k1": self._key1, "k2": self._key2},
+            text("SELECT pg_advisory_lock(:key)"),
+            {"key": self._lock_key},
         )
         return None
 
@@ -68,8 +67,8 @@ class _AdvisoryLock(AbstractContextManager[None]):
         try:
             if self._conn is not None:
                 self._conn.execute(
-                    text("SELECT pg_advisory_unlock(:k1, :k2)"),
-                    {"k1": self._key1, "k2": self._key2},
+                    text("SELECT pg_advisory_unlock(:key)"),
+                    {"key": self._lock_key},
                 )
         finally:
             if self._conn is not None:
@@ -77,17 +76,14 @@ class _AdvisoryLock(AbstractContextManager[None]):
                 self._conn = None
 
 
-def _hash_document_lock(document_id: str) -> tuple[int, int]:
+def _hash_document_lock(document_id: str) -> int:
+    """Hash document ID to a 64-bit signed integer for pg_advisory_lock."""
     digest = hashlib.sha256(document_id.encode("utf-8")).digest()
-    key1 = int.from_bytes(digest[:8], "big", signed=False)
-    key2 = int.from_bytes(digest[8:16], "big", signed=False)
-
-    def _to_signed(value: int) -> int:
-        if value >= 2**63:
-            return value - 2**64
-        return value
-
-    return _to_signed(key1), _to_signed(key2)
+    key = int.from_bytes(digest[:8], "big", signed=False)
+    # Convert to signed 64-bit integer
+    if key >= 2**63:
+        key = key - 2**64
+    return key
 
 
 class PostgresStorageBackend(StorageBackend):
@@ -121,8 +117,8 @@ class PostgresStorageBackend(StorageBackend):
     def lock_document(self, document_id: str | None) -> AbstractContextManager[None]:
         if not document_id:
             return _NoOpLock()
-        key1, key2 = _hash_document_lock(document_id)
-        return _AdvisoryLock(self.db_manager.engine, key1, key2)
+        lock_key = _hash_document_lock(document_id)
+        return _AdvisoryLock(self.db_manager.engine, lock_key)
 
     # Multi-document API
     # jscpd:ignore-start - delegation mirrors repository API for compatibility
