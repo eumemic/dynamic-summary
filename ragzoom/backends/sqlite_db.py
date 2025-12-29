@@ -38,6 +38,7 @@ class SQLiteTreeNode(TreeNodeColumnsMixin, SqliteBase):
     __tablename__ = "tree_nodes"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(String, nullable=True)
     parent_id: Mapped[str | None] = mapped_column(String, nullable=True)
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[dt.datetime] = mapped_column(
@@ -67,6 +68,7 @@ class SqliteDocument(SqliteBase):
     __tablename__ = "documents"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(String, nullable=True)
     file_path: Mapped[str | None] = mapped_column(String, nullable=True)
     indexed_at: Mapped[dt.datetime] = mapped_column(
         DateTime, default=dt.datetime.utcnow
@@ -156,6 +158,31 @@ class SqliteDatabaseManager:
                 # Add cost column for issue #310
                 try:
                     conn.exec_driver_sql("ALTER TABLE tree_nodes ADD COLUMN cost REAL")
+                except Exception:
+                    pass
+                # Add user_id columns for multi-tenancy
+                try:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE tree_nodes ADD COLUMN user_id TEXT"
+                    )
+                except Exception:
+                    pass
+                try:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE documents ADD COLUMN user_id TEXT"
+                    )
+                except Exception:
+                    pass
+                try:
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS idx_tree_nodes_user_id ON tree_nodes (user_id)"
+                    )
+                except Exception:
+                    pass
+                try:
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents (user_id)"
+                    )
                 except Exception:
                     pass
         except Exception:
