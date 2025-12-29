@@ -875,7 +875,7 @@ async def serve(state: ServerState, *, host: str, port: int) -> None:
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session, sessionmaker
 
-    from ragzoom.server.session_servicer import SessionIngestionServicer
+    from memory_service.grpc_servicer import SessionIngestionServicer
     from ragzoom.wrapper import RagZoom
 
     server = cast(GrpcServerProto, grpc.aio.server())

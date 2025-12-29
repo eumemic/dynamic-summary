@@ -2,7 +2,7 @@
   "mcpServers": {
     "ragzoom-memory": {
       "command": "python",
-      "args": ["-m", "ragzoom.claude_memory.mcp_server"],
+      "args": ["-m", "memory_service.ingestion.claude.mcp_server"],
       "env": {
         "RAGZOOM_SERVER_ADDRESS": "switchyard.proxy.rlwy.net:19731"
       }

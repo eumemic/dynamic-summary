@@ -68,6 +68,21 @@ class WorkerServiceStub:
         self, request: GetDocumentRequest, timeout: float | None = ...
     ) -> GetDocumentResponse: ...
 
+class SessionIngestionServiceStub:
+    def __init__(self, channel: Channel) -> None: ...
+    def GetSessionCursor(
+        self,
+        request: GetSessionCursorRequest,
+        timeout: float | None = ...,
+        metadata: list[tuple[str, str]] | None = ...,
+    ) -> GetSessionCursorResponse: ...
+    def IngestSession(
+        self,
+        request: IngestSessionRequest,
+        timeout: float | None = ...,
+        metadata: list[tuple[str, str]] | None = ...,
+    ) -> IngestSessionResponse: ...
+
 class IndexerServiceServicer:
     def IndexDocument(
         self, request: IndexDocumentRequest, context: ServicerContext
