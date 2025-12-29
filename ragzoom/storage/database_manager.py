@@ -366,6 +366,29 @@ class DatabaseManager:
                     )
                 )
 
+                # Create session_raw_data table for Claude Code memory sync
+                conn.execute(
+                    text(
+                        """
+                    CREATE TABLE IF NOT EXISTS session_raw_data (
+                        id SERIAL PRIMARY KEY,
+                        user_id VARCHAR(255) NOT NULL,
+                        session_id VARCHAR(255) NOT NULL,
+                        jsonl_content BYTEA NOT NULL
+                    );
+                """
+                    )
+                )
+
+                conn.execute(
+                    text(
+                        """
+                    CREATE UNIQUE INDEX IF NOT EXISTS ix_session_raw_data_user_session
+                    ON session_raw_data (user_id, session_id);
+                """
+                    )
+                )
+
                 logger.debug("Database migrations completed")
         except Exception as e:
             # Migration failures are not critical - the column might already exist

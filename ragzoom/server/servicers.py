@@ -872,10 +872,42 @@ async def shutdown_gracefully(server: GrpcServerProto) -> None:
 
 
 async def serve(state: ServerState, *, host: str, port: int) -> None:
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session, sessionmaker
+
+    from ragzoom.server.session_servicer import SessionIngestionServicer
+    from ragzoom.wrapper import RagZoom
+
     server = cast(GrpcServerProto, grpc.aio.server())
     pb2_grpc.add_IndexerServiceServicer_to_server(IndexerServicer(state), server)
     pb2_grpc.add_RetrievalServiceServicer_to_server(RetrievalServicer(state), server)
     pb2_grpc.add_WorkerServiceServicer_to_server(WorkerServicer(state), server)
+
+    # Add session ingestion service for Claude Code memory sync
+    database_url = state.operational_config.database_url
+    if database_url:
+        # Ensure psycopg3-compatible URL
+        if database_url.startswith("postgresql://"):
+            database_url = database_url.replace(
+                "postgresql://", "postgresql+psycopg://", 1
+            )
+        engine = create_engine(database_url, pool_pre_ping=True)
+        db_session_factory: sessionmaker[Session] = sessionmaker(bind=engine)
+
+        def get_db_session() -> Session:
+            return db_session_factory()
+
+        def get_ragzoom_client(user_id: str) -> RagZoom:
+            # For now, all users share the same runtime (no per-user isolation)
+            # Document IDs should include user_id prefix for isolation
+            return RagZoom(runtime=state.index_runtime)
+
+        session_servicer = SessionIngestionServicer(
+            get_db_session=get_db_session,
+            get_ragzoom_client=get_ragzoom_client,
+        )
+        pb2_grpc.add_SessionIngestionServiceServicer_to_server(session_servicer, server)
+        logger.info("Session ingestion service enabled")
 
     listen_addr = f"{host}:{port}"
     server.add_insecure_port(listen_addr)

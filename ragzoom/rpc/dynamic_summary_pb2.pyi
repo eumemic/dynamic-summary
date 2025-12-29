@@ -408,3 +408,35 @@ class ExportTelemetryResponse:
         telemetry_json: str = ...,
         error: str = ...,
     ) -> None: ...
+
+# Session ingestion messages
+class GetSessionCursorRequest:
+    session_id: str
+
+    def __init__(self, *, session_id: str) -> None: ...
+
+class GetSessionCursorResponse:
+    byte_offset: int
+
+    def __init__(self, *, byte_offset: int = ...) -> None: ...
+
+class IngestSessionRequest:
+    session_id: str
+    jsonl_delta: bytes
+
+    def __init__(self, *, session_id: str, jsonl_delta: bytes = ...) -> None: ...
+
+class IngestSessionResponse:
+    new_byte_offset: int
+    messages_processed: int
+    truncated: bool
+    truncate_span: int
+
+    def __init__(
+        self,
+        *,
+        new_byte_offset: int = ...,
+        messages_processed: int = ...,
+        truncated: bool = ...,
+        truncate_span: int = ...,
+    ) -> None: ...

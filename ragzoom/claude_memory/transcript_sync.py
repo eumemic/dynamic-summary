@@ -970,6 +970,7 @@ class SyncResult:
     truncate_span: int | None
     appended_uuids: list[str]
     new_span_end: int
+    truncate_byte_offset: int | None = None  # For server-side storage truncation
 
 
 def execute_sync(
@@ -1144,4 +1145,316 @@ def execute_sync(
         truncate_span=truncate_span,
         appended_uuids=appended_uuids,
         new_span_end=new_span_end,
+    )
+
+
+def _iter_jsonl_from_bytes(
+    content: bytes, start_offset: int = 0
+) -> Iterator[tuple[dict[str, object], int]]:
+    """Iterate over JSONL records from bytes.
+
+    Args:
+        content: JSONL content as bytes.
+        start_offset: Byte offset to start reading from.
+
+    Yields:
+        Tuples of (record, end_offset) where end_offset is the byte position
+        after the newline following this record.
+    """
+    pos = start_offset
+    while pos < len(content):
+        # Find next newline
+        newline_pos = content.find(b"\n", pos)
+        if newline_pos == -1:
+            # Last line without newline
+            line = content[pos:]
+            end_pos = len(content)
+        else:
+            line = content[pos:newline_pos]
+            end_pos = newline_pos + 1
+
+        line_str = line.decode("utf-8").strip()
+        if line_str:
+            yield json.loads(line_str), end_pos
+
+        pos = end_pos
+
+
+def _iter_jsonl_reversed_from_bytes(content: bytes) -> Iterator[dict[str, object]]:
+    """Iterate over JSONL records from bytes in reverse order.
+
+    Args:
+        content: JSONL content as bytes.
+
+    Yields:
+        Parsed JSON objects, from last record to first.
+    """
+    if not content:
+        return
+
+    # Split into lines and yield in reverse
+    lines = content.split(b"\n")
+    for line in reversed(lines):
+        line_str = line.decode("utf-8").strip()
+        if line_str:
+            yield json.loads(line_str)
+
+
+def _get_current_head_from_bytes(content: bytes) -> str | None:
+    """Get the UUID of the most recent non-compaction message from bytes."""
+    for record in _iter_jsonl_reversed_from_bytes(content):
+        if record.get("isCompactSummary"):
+            continue
+        uuid = record.get("uuid")
+        if isinstance(uuid, str):
+            return uuid
+    return None
+
+
+def _build_parent_map_from_bytes(content: bytes) -> dict[str, str | None]:
+    """Build a uuid -> parentUuid map from bytes content."""
+    parent_map: dict[str, str | None] = {}
+    records: list[tuple[str, str | None, bool]] = []
+
+    for record, _ in _iter_jsonl_from_bytes(content):
+        uuid = record.get("uuid")
+        if isinstance(uuid, str):
+            parent_uuid = record.get("parentUuid")
+            if parent_uuid is not None and not isinstance(parent_uuid, str):
+                continue
+            is_compact = bool(record.get("isCompactSummary"))
+            records.append((uuid, parent_uuid, is_compact))
+
+    # Same bridging logic as build_parent_map
+    last_regular_uuid: str | None = None
+
+    for i, (uuid, parent_uuid, is_compact) in enumerate(records):
+        if parent_uuid is None and not is_compact:
+            is_followed_by_compact = False
+            for j in range(i + 1, len(records)):
+                _, _, next_is_compact = records[j]
+                if next_is_compact:
+                    is_followed_by_compact = True
+                    break
+                break
+
+            if is_followed_by_compact and last_regular_uuid is not None:
+                parent_map[uuid] = last_regular_uuid
+            else:
+                parent_map[uuid] = None
+        else:
+            parent_map[uuid] = parent_uuid
+
+        if not is_compact:
+            last_regular_uuid = uuid
+
+    return parent_map
+
+
+def _build_records_map_from_bytes(
+    content: bytes, uuids: set[str]
+) -> dict[str, dict[str, object]]:
+    """Build a map of uuid -> record for the given UUIDs from bytes."""
+    records_map: dict[str, dict[str, object]] = {}
+    for record, _ in _iter_jsonl_from_bytes(content):
+        uuid = record.get("uuid")
+        if isinstance(uuid, str) and uuid in uuids:
+            if not record.get("isCompactSummary"):
+                records_map[uuid] = record
+    return records_map
+
+
+@dataclass
+class BytesSyncState:
+    """Server-side sync state for a session."""
+
+    append_log: list[AppendEntry] = field(default_factory=list)
+
+    def last_entry(self) -> AppendEntry | None:
+        return self.append_log[-1] if self.append_log else None
+
+
+def execute_sync_from_bytes(
+    session_id: str,
+    jsonl_content: bytes,
+    previous_byte_offset: int,
+    client: object,
+) -> SyncResult:
+    """Execute sync from in-memory JSONL bytes (for server-side processing).
+
+    This version is used when the server stores the JSONL and processes it
+    directly, rather than reading from a file path.
+
+    Args:
+        session_id: The session ID (used as document_id)
+        jsonl_content: Full JSONL content as bytes
+        previous_byte_offset: Byte offset where previous sync ended
+        client: RagZoom client with append() and truncate() methods
+
+    Returns:
+        SyncResult describing what was done
+    """
+    document_id = session_id
+
+    # Get current head from full content
+    current_head = _get_current_head_from_bytes(jsonl_content)
+    if current_head is None:
+        return SyncResult(
+            document_id=document_id,
+            truncated=False,
+            truncate_span=None,
+            appended_uuids=[],
+            new_span_end=0,
+        )
+
+    # Build parent map from full content
+    parent_map = _build_parent_map_from_bytes(jsonl_content)
+
+    # Build append log from previously synced content
+    # We need to reconstruct what was synced before
+    sync_state = BytesSyncState()
+    if previous_byte_offset > 0:
+        # Parse the previously synced portion to rebuild state
+        prev_content = jsonl_content[:previous_byte_offset]
+        prev_head = _get_current_head_from_bytes(prev_content)
+        if prev_head:
+            # We don't have the exact append log, but we can approximate
+            # by treating the previous content as one big append
+            # This is a simplification - in practice the server should
+            # store the append log alongside the JSONL
+            sync_state.append_log.append(
+                AppendEntry(last_uuid=prev_head, span_end=previous_byte_offset)
+            )
+
+    # Create an append log view for compute_sync_plan
+    class _BytesAppendLog(AppendLog):
+        def __init__(self, state: BytesSyncState) -> None:
+            super().__init__(Path("/dev/null"))
+            self._state = state
+
+        def append(self, entry: AppendEntry) -> None:
+            self._state.append_log.append(entry)
+
+        def last_entry(self) -> AppendEntry | None:
+            return self._state.last_entry()
+
+        def truncate_to(self, last_uuid: str) -> None:
+            for i, entry in enumerate(self._state.append_log):
+                if entry.last_uuid == last_uuid:
+                    self._state.append_log = self._state.append_log[: i + 1]
+                    return
+            raise ValueError(f"uuid {last_uuid!r} not found in append log")
+
+        def __iter__(self) -> Iterator[AppendEntry]:
+            return iter(self._state.append_log)
+
+    append_log = _BytesAppendLog(sync_state)
+
+    # Compute sync plan
+    plan = compute_sync_plan(current_head, append_log, parent_map)
+
+    # Nothing to do
+    if not plan.uuids_to_transcribe and plan.truncate_to_span is None:
+        last_entry = append_log.last_entry()
+        span_end = last_entry.span_end if last_entry else 0
+        return SyncResult(
+            document_id=document_id,
+            truncated=False,
+            truncate_span=None,
+            appended_uuids=[],
+            new_span_end=span_end,
+        )
+
+    truncated = False
+    truncate_span: int | None = None
+    truncate_byte_offset: int | None = None
+
+    # Execute truncation if needed
+    if plan.truncate_to_span is not None:
+        truncate_method = getattr(client, "truncate")
+        truncate_method(document_id, plan.truncate_to_span)
+        truncated = True
+        truncate_span = plan.truncate_to_span
+
+        # Find byte offset for the truncation point
+        if plan.truncate_to_uuid is not None:
+            for entry in sync_state.append_log:
+                if entry.last_uuid == plan.truncate_to_uuid:
+                    truncate_byte_offset = entry.span_end
+                    break
+            append_log.truncate_to(plan.truncate_to_uuid)
+        else:
+            truncate_byte_offset = 0
+            sync_state.append_log = []
+
+    # Transcribe and append
+    appended_uuids: list[str] = []
+    new_span_end = 0
+
+    if plan.uuids_to_transcribe:
+        records_by_uuid = _build_records_map_from_bytes(
+            jsonl_content, set(plan.uuids_to_transcribe)
+        )
+
+        # Segment UUIDs at turn boundaries
+        segments: list[list[str]] = []
+        current_segment: list[str] = []
+        prev_was_user = False
+
+        for uuid in plan.uuids_to_transcribe:
+            record = records_by_uuid.get(uuid)
+            if record is None:
+                continue
+
+            is_user_message = (
+                record.get("type") == "user" and "toolUseResult" not in record
+            )
+
+            if is_user_message and not prev_was_user and current_segment:
+                segments.append(current_segment)
+                current_segment = []
+
+            current_segment.append(uuid)
+            prev_was_user = is_user_message
+
+        if current_segment:
+            segments.append(current_segment)
+
+        # Transcribe and append
+        segment_texts: list[str] = []
+        segment_last_uuids: list[str] = []
+
+        for segment_uuids in segments:
+            combined_text = transcribe_uuids_from_map(segment_uuids, records_by_uuid)
+
+            if combined_text:
+                segment_texts.append(combined_text)
+                segment_appended_uuids = [
+                    u
+                    for u in segment_uuids
+                    if u in records_by_uuid
+                    and not (
+                        records_by_uuid[u].get("type") == "user"
+                        and "toolUseResult" in records_by_uuid[u]
+                    )
+                ]
+                if segment_appended_uuids:
+                    segment_last_uuids.append(segment_appended_uuids[-1])
+                    appended_uuids.extend(segment_appended_uuids)
+
+        if segment_texts:
+            batch_append_method = getattr(client, "batch_append")
+            result = batch_append_method(document_id, segment_texts)
+            new_span_end = getattr(result, "span_end", 0)
+    else:
+        last_entry = append_log.last_entry()
+        new_span_end = last_entry.span_end if last_entry else 0
+
+    return SyncResult(
+        document_id=document_id,
+        truncated=truncated,
+        truncate_span=truncate_span,
+        appended_uuids=appended_uuids,
+        new_span_end=new_span_end,
+        truncate_byte_offset=truncate_byte_offset,
     )

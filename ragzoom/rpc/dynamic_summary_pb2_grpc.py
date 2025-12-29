@@ -648,4 +648,130 @@ class WorkerService(object):
         )
 
 
+class SessionIngestionServiceStub(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.GetSessionCursor = channel.unary_unary(
+            "/ragzoom.rpc.SessionIngestionService/GetSessionCursor",
+            request_serializer=dynamic__summary__pb2.GetSessionCursorRequest.SerializeToString,
+            response_deserializer=dynamic__summary__pb2.GetSessionCursorResponse.FromString,
+            _registered_method=True,
+        )
+        self.IngestSession = channel.unary_unary(
+            "/ragzoom.rpc.SessionIngestionService/IngestSession",
+            request_serializer=dynamic__summary__pb2.IngestSessionRequest.SerializeToString,
+            response_deserializer=dynamic__summary__pb2.IngestSessionResponse.FromString,
+            _registered_method=True,
+        )
+
+
+class SessionIngestionServiceServicer(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def GetSessionCursor(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+    def IngestSession(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+
+def add_SessionIngestionServiceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+        "GetSessionCursor": grpc.unary_unary_rpc_method_handler(
+            servicer.GetSessionCursor,
+            request_deserializer=dynamic__summary__pb2.GetSessionCursorRequest.FromString,
+            response_serializer=dynamic__summary__pb2.GetSessionCursorResponse.SerializeToString,
+        ),
+        "IngestSession": grpc.unary_unary_rpc_method_handler(
+            servicer.IngestSession,
+            request_deserializer=dynamic__summary__pb2.IngestSessionRequest.FromString,
+            response_serializer=dynamic__summary__pb2.IngestSessionResponse.SerializeToString,
+        ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+        "ragzoom.rpc.SessionIngestionService", rpc_method_handlers
+    )
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_registered_method_handlers(
+        "ragzoom.rpc.SessionIngestionService", rpc_method_handlers
+    )
+
+
+# This class is part of an EXPERIMENTAL API.
+class SessionIngestionService(object):
+    """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def GetSessionCursor(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/ragzoom.rpc.SessionIngestionService/GetSessionCursor",
+            dynamic__summary__pb2.GetSessionCursorRequest.SerializeToString,
+            dynamic__summary__pb2.GetSessionCursorResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def IngestSession(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/ragzoom.rpc.SessionIngestionService/IngestSession",
+            dynamic__summary__pb2.IngestSessionRequest.SerializeToString,
+            dynamic__summary__pb2.IngestSessionResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+
 # jscpd:ignore-end

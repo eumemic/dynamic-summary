@@ -14,8 +14,12 @@ from .dynamic_summary_pb2 import (
     ExecuteQueryResponse,
     GetDocumentRequest,
     GetDocumentResponse,
+    GetSessionCursorRequest,
+    GetSessionCursorResponse,
     IndexDocumentRequest,
     IndexDocumentResponse,
+    IngestSessionRequest,
+    IngestSessionResponse,
     RetrieveRequest,
     RetrieveResponse,
     RunWorkersRequest,
@@ -93,8 +97,19 @@ class WorkerServiceServicer:
         self, request: GetDocumentRequest, context: ServicerContext
     ) -> Awaitable[GetDocumentResponse]: ...
 
+class SessionIngestionServiceServicer:
+    def GetSessionCursor(
+        self, request: GetSessionCursorRequest, context: ServicerContext
+    ) -> Awaitable[GetSessionCursorResponse]: ...
+    def IngestSession(
+        self, request: IngestSessionRequest, context: ServicerContext
+    ) -> Awaitable[IngestSessionResponse]: ...
+
 add_IndexerServiceServicer_to_server: Callable[[IndexerServiceServicer, Server], None]
 add_RetrievalServiceServicer_to_server: Callable[
     [RetrievalServiceServicer, Server], None
 ]
 add_WorkerServiceServicer_to_server: Callable[[WorkerServiceServicer, Server], None]
+add_SessionIngestionServiceServicer_to_server: Callable[
+    [SessionIngestionServiceServicer, Server], None
+]
