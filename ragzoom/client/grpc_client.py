@@ -185,11 +185,20 @@ class GrpcRagzoomClient:
         *,
         timeout: float | None = None,
         stream_timeout: float | None = DEFAULT_GRPC_STREAM_TIMEOUT,
+        secure: bool | None = None,
     ) -> None:
         self._address = address
         self._timeout = DEFAULT_GRPC_TIMEOUT if timeout is None else timeout
         self._stream_timeout = stream_timeout
-        self._channel = grpc.insecure_channel(address)
+
+        # Auto-detect TLS: use secure channel for port 443 or explicit secure=True
+        if secure is None:
+            secure = address.endswith(":443")
+
+        if secure:
+            self._channel = grpc.secure_channel(address, grpc.ssl_channel_credentials())
+        else:
+            self._channel = grpc.insecure_channel(address)
         self._indexer: pb2_grpc.IndexerServiceStub = pb2_grpc.IndexerServiceStub(
             self._channel
         )
