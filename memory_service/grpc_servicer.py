@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -107,6 +108,7 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
             execute_sync_from_bytes,
         )
 
+        t0 = time.perf_counter()
         user_id, session_id = await _validate_request(request, context)
 
         delta = request.jsonl_delta
@@ -115,17 +117,27 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                 grpc.StatusCode.INVALID_ARGUMENT, "jsonl_delta is required"
             )
 
+        logger.info(
+            "[TIMING] IngestSession start: session=%s delta_bytes=%d",
+            session_id[:8],
+            len(delta),
+        )
+
         lock_id = _session_lock_id(user_id, session_id)
         db_session = self._get_db_session()
 
         # Phase 1: Under lock - read existing content and append delta
+        t1 = time.perf_counter()
         try:
             db_session.execute(
                 text("SELECT pg_advisory_lock(:lock_id)"), {"lock_id": lock_id}
             )
+            t_lock = time.perf_counter()
 
             storage = SessionStorage(db_session, user_id)
             existing_content = storage.get_content(session_id)
+            t_read = time.perf_counter()
+
             full_content = existing_content + delta
             previous_byte_offset = len(existing_content)
 
@@ -133,6 +145,17 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
             # This updates the cursor so subsequent syncs don't re-send this delta
             new_offset = storage.append_content(session_id, delta)
             db_session.commit()
+            t_commit = time.perf_counter()
+
+            logger.info(
+                "[TIMING] Phase1 complete: lock=%.3fs read=%.3fs commit=%.3fs "
+                "total=%.3fs existing_bytes=%d",
+                t_lock - t1,
+                t_read - t_lock,
+                t_commit - t_read,
+                t_commit - t1,
+                len(existing_content),
+            )
 
         finally:
             # Release lock before the slow embedding phase
@@ -145,6 +168,7 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
             db_session.close()
 
         # Phase 2: Without lock - run embedding/indexing (slow)
+        t2 = time.perf_counter()
         ragzoom_client = self._get_ragzoom_client(user_id)
         try:
             result = await asyncio.to_thread(
@@ -153,6 +177,13 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                 jsonl_content=full_content,
                 previous_byte_offset=previous_byte_offset,
                 client=ragzoom_client,
+            )
+            t3 = time.perf_counter()
+            logger.info(
+                "[TIMING] Phase2 complete: execute_sync=%.3fs appended=%d truncated=%s",
+                t3 - t2,
+                len(result.appended_uuids),
+                result.truncated,
             )
 
             # Handle truncation if detected (requires re-acquiring lock)
@@ -176,6 +207,12 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                         pass
                     db_session.close()
 
+            t_end = time.perf_counter()
+            logger.info(
+                "[TIMING] IngestSession complete: total=%.3fs session=%s",
+                t_end - t0,
+                session_id[:8],
+            )
             return pb2.IngestSessionResponse(
                 new_byte_offset=new_offset,
                 messages_processed=len(result.appended_uuids),
