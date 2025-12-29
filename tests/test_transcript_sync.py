@@ -7,21 +7,19 @@ from pathlib import Path
 
 import pytest
 
-from ragzoom.claude_memory.transcript_sync import (
+from memory_service.ingestion.claude.transcript_sync import (
     AppendEntry,
     AppendLog,
+    build_parent_map,
+    find_common_ancestor,
 )
 
 
-class TestStreamingParentMap:
-    """Tests for streaming parent map building."""
+class TestBuildParentMap:
+    """Tests for building uuid -> parentUuid map from transcript."""
 
     def test_builds_map_from_linear_transcript(self, tmp_path: Path) -> None:
         """Should map each uuid to its parent."""
-        from ragzoom.claude_memory.transcript_sync import (
-            stream_find_common_ancestor_and_records,
-        )
-
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text(
             "\n".join(
@@ -34,18 +32,16 @@ class TestStreamingParentMap:
             + "\n"
         )
 
-        result = stream_find_common_ancestor_and_records(jsonl, "msg3", None)
+        parent_map = build_parent_map(jsonl)
 
-        assert result.parent_of["msg1"] is None
-        assert result.parent_of["msg2"] == "msg1"
-        assert result.parent_of["msg3"] == "msg2"
+        assert parent_map == {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+        }
 
     def test_builds_map_from_branched_transcript(self, tmp_path: Path) -> None:
         """Should include all branches in the map."""
-        from ragzoom.claude_memory.transcript_sync import (
-            stream_find_common_ancestor_and_records,
-        )
-
         # msg1 -> msg2 -> msg3 -> msg4
         #              \-> msg3' -> msg4'
         jsonl = tmp_path / "transcript.jsonl"
@@ -64,31 +60,24 @@ class TestStreamingParentMap:
             + "\n"
         )
 
-        result = stream_find_common_ancestor_and_records(jsonl, "msg4-alt", None)
+        parent_map = build_parent_map(jsonl)
 
-        assert result.parent_of["msg3-alt"] == "msg2"
-        assert result.parent_of["msg4-alt"] == "msg3-alt"
+        assert parent_map["msg3"] == "msg2"
+        assert parent_map["msg3-alt"] == "msg2"
+        assert parent_map["msg4"] == "msg3"
+        assert parent_map["msg4-alt"] == "msg3-alt"
 
     def test_handles_empty_file(self, tmp_path: Path) -> None:
         """Should return empty map for empty file."""
-        from ragzoom.claude_memory.transcript_sync import (
-            stream_find_common_ancestor_and_records,
-        )
-
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text("")
 
-        # With empty file, there's no valid head to pass
-        # This is a degenerate case - in practice we'd check for empty first
-        result = stream_find_common_ancestor_and_records(jsonl, "nonexistent", None)
-        assert result.parent_of == {}
+        parent_map = build_parent_map(jsonl)
+
+        assert parent_map == {}
 
     def test_skips_records_without_uuid(self, tmp_path: Path) -> None:
         """Should skip non-message records."""
-        from ragzoom.claude_memory.transcript_sync import (
-            stream_find_common_ancestor_and_records,
-        )
-
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text(
             "\n".join(
@@ -101,90 +90,118 @@ class TestStreamingParentMap:
             + "\n"
         )
 
-        result = stream_find_common_ancestor_and_records(jsonl, "msg2", None)
+        parent_map = build_parent_map(jsonl)
 
-        assert result.parent_of["msg1"] is None
-        assert result.parent_of["msg2"] == "msg1"
+        assert parent_map == {"msg1": None, "msg2": "msg1"}
 
 
-class TestStreamingCommonAncestor:
-    """Tests for finding common ancestor via streaming."""
+class TestFindCommonAncestor:
+    """Tests for finding common ancestor of two uuids."""
 
-    def test_x_is_ancestor_of_y(self, tmp_path: Path) -> None:
-        """When X is on Y's branch, common ancestor is found."""
-        from ragzoom.claude_memory.transcript_sync import (
-            stream_find_common_ancestor_and_records,
-        )
-
+    def test_x_is_ancestor_of_y(self) -> None:
+        """When X is on Y's branch, common ancestor is X."""
         # msg1 -> msg2 -> msg3 -> msg4
-        jsonl = tmp_path / "transcript.jsonl"
-        jsonl.write_text(
-            "\n".join(
-                [
-                    json.dumps({"uuid": "msg1", "parentUuid": None}),
-                    json.dumps({"uuid": "msg2", "parentUuid": "msg1"}),
-                    json.dumps({"uuid": "msg3", "parentUuid": "msg2"}),
-                    json.dumps({"uuid": "msg4", "parentUuid": "msg3"}),
-                ]
-            )
-            + "\n"
-        )
+        # X = msg2, Y = msg4
+        parent_map = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+            "msg4": "msg3",
+        }
 
-        result = stream_find_common_ancestor_and_records(jsonl, "msg4", "msg2")
+        ancestor = find_common_ancestor("msg2", "msg4", parent_map)
 
-        assert result.common_ancestor == "msg2"
+        assert ancestor == "msg2"
 
-    def test_finds_branch_point(self, tmp_path: Path) -> None:
+    def test_y_is_ancestor_of_x(self) -> None:
+        """When Y is on X's branch (unusual), common ancestor is Y."""
+        parent_map = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+            "msg4": "msg3",
+        }
+
+        ancestor = find_common_ancestor("msg4", "msg2", parent_map)
+
+        assert ancestor == "msg2"
+
+    def test_x_equals_y(self) -> None:
+        """When X and Y are the same, common ancestor is X."""
+        parent_map = {"msg1": None, "msg2": "msg1"}
+
+        ancestor = find_common_ancestor("msg2", "msg2", parent_map)
+
+        assert ancestor == "msg2"
+
+    def test_finds_branch_point(self) -> None:
         """Should find where branches diverged."""
-        from ragzoom.claude_memory.transcript_sync import (
-            stream_find_common_ancestor_and_records,
-        )
+        # msg1 -> msg2 -> msg3 -> msg4 (X = msg4)
+        #              \-> msg3' -> msg4' (Y = msg4')
+        parent_map = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+            "msg4": "msg3",
+            "msg3-alt": "msg2",
+            "msg4-alt": "msg3-alt",
+        }
 
-        # msg1 -> msg2 -> msg3 -> msg4 (current)
-        #              \-> msg3' -> msg4' (last_indexed)
-        jsonl = tmp_path / "transcript.jsonl"
-        jsonl.write_text(
-            "\n".join(
-                [
-                    json.dumps({"uuid": "msg1", "parentUuid": None}),
-                    json.dumps({"uuid": "msg2", "parentUuid": "msg1"}),
-                    json.dumps({"uuid": "msg3", "parentUuid": "msg2"}),
-                    json.dumps({"uuid": "msg4", "parentUuid": "msg3"}),
-                    json.dumps({"uuid": "msg3-alt", "parentUuid": "msg2"}),
-                    json.dumps({"uuid": "msg4-alt", "parentUuid": "msg3-alt"}),
-                ]
-            )
-            + "\n"
-        )
+        ancestor = find_common_ancestor("msg4", "msg4-alt", parent_map)
 
-        result = stream_find_common_ancestor_and_records(jsonl, "msg4", "msg4-alt")
+        assert ancestor == "msg2"
 
-        assert result.common_ancestor == "msg2"
+    def test_finds_root_as_common_ancestor(self) -> None:
+        """When branches diverge at root, common ancestor is root."""
+        # msg1 -> msg2 (X = msg2)
+        #     \-> msg2' (Y = msg2')
+        parent_map = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg2-alt": "msg1",
+        }
 
-    def test_disjoint_branches_returns_none(self, tmp_path: Path) -> None:
-        """When branches have no common ancestor, returns None."""
-        from ragzoom.claude_memory.transcript_sync import (
-            stream_find_common_ancestor_and_records,
-        )
+        ancestor = find_common_ancestor("msg2", "msg2-alt", parent_map)
 
-        # msg1 -> msg2 (current)
-        # alt1 -> alt2 (last_indexed)
-        jsonl = tmp_path / "transcript.jsonl"
-        jsonl.write_text(
-            "\n".join(
-                [
-                    json.dumps({"uuid": "msg1", "parentUuid": None}),
-                    json.dumps({"uuid": "msg2", "parentUuid": "msg1"}),
-                    json.dumps({"uuid": "alt1", "parentUuid": None}),
-                    json.dumps({"uuid": "alt2", "parentUuid": "alt1"}),
-                ]
-            )
-            + "\n"
-        )
+        assert ancestor == "msg1"
 
-        result = stream_find_common_ancestor_and_records(jsonl, "msg2", "alt2")
+    def test_deep_branch_point(self) -> None:
+        """Should handle deeply nested branch points."""
+        # Long chain with branch near the end
+        parent_map: dict[str, str | None] = {"msg1": None}
+        for i in range(2, 101):
+            parent_map[f"msg{i}"] = f"msg{i-1}"
+        # Branch at msg98
+        parent_map["msg99-alt"] = "msg98"
+        parent_map["msg100-alt"] = "msg99-alt"
 
-        assert result.common_ancestor is None
+        ancestor = find_common_ancestor("msg100", "msg100-alt", parent_map)
+
+        assert ancestor == "msg98"
+
+    def test_disjoint_branches_returns_none(self) -> None:
+        """Should return None when branches have no common ancestor."""
+        # Two completely separate conversation trees
+        # Tree 1: msg1 -> msg2 -> msg3
+        # Tree 2: alt1 -> alt2 (started after reverting to before msg1)
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+            "alt1": None,
+            "alt2": "alt1",
+        }
+
+        ancestor = find_common_ancestor("msg3", "alt2", parent_map)
+
+        assert ancestor is None
+
+    def test_raises_on_unknown_uuid(self) -> None:
+        """Should raise if uuid not in parent map."""
+        parent_map: dict[str, str | None] = {"msg1": None, "msg2": "msg1"}
+
+        with pytest.raises(KeyError):
+            find_common_ancestor("unknown", "msg2", parent_map)
 
 
 class TestAppendEntry:
@@ -285,13 +302,101 @@ class TestAppendLog:
         assert entries[0].last_uuid == "msg1"
         assert entries[1].last_uuid == "msg2"
 
+    def test_find_valid_prefix(self, tmp_path: Path) -> None:
+        """Should find last entry that's an ancestor of target."""
+        log_path = tmp_path / "append.log"
+        log = AppendLog(log_path)
+
+        log.append(AppendEntry("msg1", 100))
+        log.append(AppendEntry("msg2", 200))
+        log.append(AppendEntry("msg3", 300))
+        log.append(AppendEntry("msg4", 400))
+
+        # msg1 -> msg2 -> msg3 -> msg4 (indexed)
+        #              \-> msg3' -> msg4' (current branch)
+        parent_map = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+            "msg4": "msg3",
+            "msg3-alt": "msg2",
+            "msg4-alt": "msg3-alt",
+        }
+
+        # Common ancestor of msg4 and msg4-alt is msg2
+        valid_entry = log.find_valid_prefix("msg4-alt", parent_map)
+
+        assert valid_entry is not None
+        assert valid_entry.last_uuid == "msg2"
+        assert valid_entry.span_end == 200
+
+    def test_find_valid_prefix_no_revert(self, tmp_path: Path) -> None:
+        """When no revert, should return last entry."""
+        log_path = tmp_path / "append.log"
+        log = AppendLog(log_path)
+
+        log.append(AppendEntry("msg1", 100))
+        log.append(AppendEntry("msg2", 200))
+
+        # Linear chain, msg3 continues from msg2
+        parent_map = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+        }
+
+        valid_entry = log.find_valid_prefix("msg3", parent_map)
+
+        assert valid_entry is not None
+        assert valid_entry.last_uuid == "msg2"
+
+    def test_find_valid_prefix_empty_log(self, tmp_path: Path) -> None:
+        """Empty log returns None, signaling 'transcribe from root to head'."""
+        log_path = tmp_path / "append.log"
+        log = AppendLog(log_path)
+
+        # Transcript exists with messages, but we haven't indexed anything
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+        }
+
+        # None means: no valid prefix, caller should transcribe ancestor chain
+        # from root (msg1) to current head (msg3)
+        assert log.find_valid_prefix("msg3", parent_map) is None
+
+    def test_find_valid_prefix_disjoint_branches(self, tmp_path: Path) -> None:
+        """Disjoint branches return None, signaling 'transcribe from root'."""
+        log_path = tmp_path / "append.log"
+        log = AppendLog(log_path)
+
+        # We indexed msg1 -> msg2 -> msg3
+        log.append(AppendEntry("msg1", 100))
+        log.append(AppendEntry("msg2", 200))
+        log.append(AppendEntry("msg3", 300))
+
+        # User reverted to before msg1 and started completely fresh
+        # alt1 -> alt2 (no shared ancestry with msg1-3)
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+            "alt1": None,
+            "alt2": "alt1",
+        }
+
+        # None means: no valid prefix, caller should transcribe ancestor chain
+        # from root (alt1) to current head (alt2), and truncate entire document
+        assert log.find_valid_prefix("alt2", parent_map) is None
+
 
 class TestGetAncestorChain:
     """Tests for getting ordered ancestor chain between two nodes."""
 
     def test_gets_chain_exclusive_of_ancestor(self) -> None:
         """Should return chain from ancestor to target, exclusive of ancestor."""
-        from ragzoom.claude_memory.transcript_sync import get_ancestor_chain
+        from memory_service.ingestion.claude.transcript_sync import get_ancestor_chain
 
         # msg1 -> msg2 -> msg3 -> msg4
         parent_map: dict[str, str | None] = {
@@ -308,7 +413,7 @@ class TestGetAncestorChain:
 
     def test_gets_chain_to_root(self) -> None:
         """When ancestor is None, returns full chain from root."""
-        from ragzoom.claude_memory.transcript_sync import get_ancestor_chain
+        from memory_service.ingestion.claude.transcript_sync import get_ancestor_chain
 
         parent_map: dict[str, str | None] = {
             "msg1": None,
@@ -322,7 +427,7 @@ class TestGetAncestorChain:
 
     def test_immediate_child(self) -> None:
         """Chain from parent to child is just the child."""
-        from ragzoom.claude_memory.transcript_sync import get_ancestor_chain
+        from memory_service.ingestion.claude.transcript_sync import get_ancestor_chain
 
         parent_map: dict[str, str | None] = {
             "msg1": None,
@@ -335,7 +440,7 @@ class TestGetAncestorChain:
 
     def test_same_node_returns_empty(self) -> None:
         """When target equals ancestor, returns empty list."""
-        from ragzoom.claude_memory.transcript_sync import get_ancestor_chain
+        from memory_service.ingestion.claude.transcript_sync import get_ancestor_chain
 
         parent_map: dict[str, str | None] = {"msg1": None, "msg2": "msg1"}
 
@@ -345,7 +450,7 @@ class TestGetAncestorChain:
 
     def test_raises_if_ancestor_not_in_chain(self) -> None:
         """Should raise if claimed ancestor isn't actually an ancestor."""
-        from ragzoom.claude_memory.transcript_sync import get_ancestor_chain
+        from memory_service.ingestion.claude.transcript_sync import get_ancestor_chain
 
         parent_map: dict[str, str | None] = {
             "msg1": None,
@@ -362,32 +467,26 @@ class TestComputeSyncPlan:
 
     def test_no_op_when_already_synced(self, tmp_path: Path) -> None:
         """When transcript head matches last indexed, nothing to do."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             AppendLog,
-            compute_sync_plan_streaming,
-        )
-
-        transcript_path = tmp_path / "transcript.jsonl"
-        transcript_path.write_text(
-            "\n".join(
-                [
-                    json.dumps({"uuid": "msg1", "parentUuid": None}),
-                    json.dumps({"uuid": "msg2", "parentUuid": "msg1"}),
-                    json.dumps({"uuid": "msg3", "parentUuid": "msg2"}),
-                ]
-            )
-            + "\n"
+            compute_sync_plan,
         )
 
         log_path = tmp_path / "append.log"
         log = AppendLog(log_path)
         log.append(AppendEntry("msg3", 300))
 
-        plan = compute_sync_plan_streaming(
-            transcript_path=transcript_path,
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+        }
+
+        plan = compute_sync_plan(
             current_head="msg3",
             append_log=log,
+            parent_map=parent_map,
         )
 
         assert plan.uuids_to_transcribe == []
@@ -395,33 +494,27 @@ class TestComputeSyncPlan:
 
     def test_append_new_messages(self, tmp_path: Path) -> None:
         """When new messages added, transcribe them."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             AppendLog,
-            compute_sync_plan_streaming,
-        )
-
-        transcript_path = tmp_path / "transcript.jsonl"
-        transcript_path.write_text(
-            "\n".join(
-                [
-                    json.dumps({"uuid": "msg1", "parentUuid": None}),
-                    json.dumps({"uuid": "msg2", "parentUuid": "msg1"}),
-                    json.dumps({"uuid": "msg3", "parentUuid": "msg2"}),
-                    json.dumps({"uuid": "msg4", "parentUuid": "msg3"}),
-                ]
-            )
-            + "\n"
+            compute_sync_plan,
         )
 
         log_path = tmp_path / "append.log"
         log = AppendLog(log_path)
         log.append(AppendEntry("msg2", 200))
 
-        plan = compute_sync_plan_streaming(
-            transcript_path=transcript_path,
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+            "msg4": "msg3",
+        }
+
+        plan = compute_sync_plan(
             current_head="msg4",
             append_log=log,
+            parent_map=parent_map,
         )
 
         assert plan.uuids_to_transcribe == ["msg3", "msg4"]
@@ -429,27 +522,10 @@ class TestComputeSyncPlan:
 
     def test_revert_and_new_branch(self, tmp_path: Path) -> None:
         """When user reverted and continued, truncate and re-transcribe."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             AppendLog,
-            compute_sync_plan_streaming,
-        )
-
-        # msg1 -> msg2 -> msg3 -> msg4 (indexed)
-        #              \-> msg3' -> msg4' (current)
-        transcript_path = tmp_path / "transcript.jsonl"
-        transcript_path.write_text(
-            "\n".join(
-                [
-                    json.dumps({"uuid": "msg1", "parentUuid": None}),
-                    json.dumps({"uuid": "msg2", "parentUuid": "msg1"}),
-                    json.dumps({"uuid": "msg3", "parentUuid": "msg2"}),
-                    json.dumps({"uuid": "msg4", "parentUuid": "msg3"}),
-                    json.dumps({"uuid": "msg3-alt", "parentUuid": "msg2"}),
-                    json.dumps({"uuid": "msg4-alt", "parentUuid": "msg3-alt"}),
-                ]
-            )
-            + "\n"
+            compute_sync_plan,
         )
 
         log_path = tmp_path / "append.log"
@@ -459,10 +535,21 @@ class TestComputeSyncPlan:
         log.append(AppendEntry("msg3", 300))
         log.append(AppendEntry("msg4", 400))
 
-        plan = compute_sync_plan_streaming(
-            transcript_path=transcript_path,
+        # msg1 -> msg2 -> msg3 -> msg4 (indexed)
+        #              \-> msg3' -> msg4' (current)
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+            "msg4": "msg3",
+            "msg3-alt": "msg2",
+            "msg4-alt": "msg3-alt",
+        }
+
+        plan = compute_sync_plan(
             current_head="msg4-alt",
             append_log=log,
+            parent_map=parent_map,
         )
 
         # Should truncate to msg2's span_end and transcribe the new branch
@@ -472,30 +559,24 @@ class TestComputeSyncPlan:
 
     def test_empty_log_transcribes_full_chain(self, tmp_path: Path) -> None:
         """When append log is empty, transcribe from root."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendLog,
-            compute_sync_plan_streaming,
-        )
-
-        transcript_path = tmp_path / "transcript.jsonl"
-        transcript_path.write_text(
-            "\n".join(
-                [
-                    json.dumps({"uuid": "msg1", "parentUuid": None}),
-                    json.dumps({"uuid": "msg2", "parentUuid": "msg1"}),
-                    json.dumps({"uuid": "msg3", "parentUuid": "msg2"}),
-                ]
-            )
-            + "\n"
+            compute_sync_plan,
         )
 
         log_path = tmp_path / "append.log"
         log = AppendLog(log_path)
 
-        plan = compute_sync_plan_streaming(
-            transcript_path=transcript_path,
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+        }
+
+        plan = compute_sync_plan(
             current_head="msg3",
             append_log=log,
+            parent_map=parent_map,
         )
 
         assert plan.uuids_to_transcribe == ["msg1", "msg2", "msg3"]
@@ -503,25 +584,10 @@ class TestComputeSyncPlan:
 
     def test_disjoint_branches_truncates_all(self, tmp_path: Path) -> None:
         """When branches are disjoint, truncate everything and start fresh."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             AppendLog,
-            compute_sync_plan_streaming,
-        )
-
-        # Indexed: msg1 -> msg2
-        # Current: alt1 -> alt2 (completely separate)
-        transcript_path = tmp_path / "transcript.jsonl"
-        transcript_path.write_text(
-            "\n".join(
-                [
-                    json.dumps({"uuid": "msg1", "parentUuid": None}),
-                    json.dumps({"uuid": "msg2", "parentUuid": "msg1"}),
-                    json.dumps({"uuid": "alt1", "parentUuid": None}),
-                    json.dumps({"uuid": "alt2", "parentUuid": "alt1"}),
-                ]
-            )
-            + "\n"
+            compute_sync_plan,
         )
 
         log_path = tmp_path / "append.log"
@@ -529,10 +595,18 @@ class TestComputeSyncPlan:
         log.append(AppendEntry("msg1", 100))
         log.append(AppendEntry("msg2", 200))
 
-        plan = compute_sync_plan_streaming(
-            transcript_path=transcript_path,
+        # Completely separate conversation tree
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "alt1": None,
+            "alt2": "alt1",
+        }
+
+        plan = compute_sync_plan(
             current_head="alt2",
             append_log=log,
+            parent_map=parent_map,
         )
 
         # Should truncate from span 0 (delete everything) and transcribe new chain
@@ -546,7 +620,7 @@ class TestSessionState:
 
     def test_save_and_load(self, tmp_path: Path) -> None:
         """Should persist and restore state."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             SessionState,
             SessionStateHeader,
@@ -572,14 +646,14 @@ class TestSessionState:
 
     def test_load_nonexistent_returns_none(self, tmp_path: Path) -> None:
         """Should return None for missing file."""
-        from ragzoom.claude_memory.transcript_sync import SessionState
+        from memory_service.ingestion.claude.transcript_sync import SessionState
 
         state = SessionState.load(tmp_path / "missing.jsonl")
         assert state is None
 
     def test_append_log_view(self, tmp_path: Path) -> None:
         """append_log() should return working AppendLog."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             SessionState,
             SessionStateHeader,
@@ -602,7 +676,7 @@ class TestSessionState:
 
     def test_append_log_truncate(self, tmp_path: Path) -> None:
         """append_log().truncate_to() should modify state entries."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             SessionState,
             SessionStateHeader,
@@ -629,7 +703,7 @@ class TestGetCurrentHead:
 
     def test_gets_last_uuid(self, tmp_path: Path) -> None:
         """Should return the last UUID in the transcript."""
-        from ragzoom.claude_memory.transcript_sync import get_current_head
+        from memory_service.ingestion.claude.transcript_sync import get_current_head
 
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text(
@@ -650,7 +724,7 @@ class TestGetCurrentHead:
 
     def test_empty_transcript_returns_none(self, tmp_path: Path) -> None:
         """Should return None for empty transcript."""
-        from ragzoom.claude_memory.transcript_sync import get_current_head
+        from memory_service.ingestion.claude.transcript_sync import get_current_head
 
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text("")
@@ -660,7 +734,7 @@ class TestGetCurrentHead:
 
     def test_skips_records_without_uuid(self, tmp_path: Path) -> None:
         """Should skip non-message records."""
-        from ragzoom.claude_memory.transcript_sync import get_current_head
+        from memory_service.ingestion.claude.transcript_sync import get_current_head
 
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text(
@@ -680,90 +754,120 @@ class TestGetCurrentHead:
 class TestTranscribeUuids:
     """Tests for transcribing specific UUIDs."""
 
-    def test_transcribes_user_message(self) -> None:
+    def test_transcribes_user_message(self, tmp_path: Path) -> None:
         """Should transcribe user messages."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids_from_map
+        from memory_service.ingestion.claude.transcript_sync import transcribe_uuids
 
-        records: dict[str, dict[str, object]] = {
-            "msg1": {
-                "uuid": "msg1",
-                "type": "user",
-                "message": {"content": "Hello world"},
-            }
-        }
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text(
+            json.dumps(
+                {
+                    "uuid": "msg1",
+                    "type": "user",
+                    "message": {"content": "Hello world"},
+                }
+            )
+            + "\n"
+        )
 
-        text = transcribe_uuids_from_map(["msg1"], records)
+        text = transcribe_uuids(jsonl, ["msg1"])
         assert text == "[USER]\nHello world"
 
-    def test_transcribes_assistant_message(self) -> None:
+    def test_transcribes_assistant_message(self, tmp_path: Path) -> None:
         """Should transcribe assistant messages with tool count."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids_from_map
+        from memory_service.ingestion.claude.transcript_sync import transcribe_uuids
 
-        records: dict[str, dict[str, object]] = {
-            "msg1": {
-                "uuid": "msg1",
-                "type": "assistant",
-                "message": {
-                    "content": [
-                        {"type": "text", "text": "Here's my response"},
-                        {"type": "tool_use", "name": "read"},
-                        {"type": "tool_use", "name": "write"},
-                    ]
-                },
-            }
-        }
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text(
+            json.dumps(
+                {
+                    "uuid": "msg1",
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "text", "text": "Here's my response"},
+                            {"type": "tool_use", "name": "read"},
+                            {"type": "tool_use", "name": "write"},
+                        ]
+                    },
+                }
+            )
+            + "\n"
+        )
 
-        text = transcribe_uuids_from_map(["msg1"], records)
+        text = transcribe_uuids(jsonl, ["msg1"])
         assert "[ASSISTANT]\nHere's my response" in text
         assert "[Used 2 tools: read, write]" in text
 
-    def test_transcribes_multiple_in_order(self) -> None:
+    def test_transcribes_multiple_in_order(self, tmp_path: Path) -> None:
         """Should transcribe multiple UUIDs in specified order."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids_from_map
+        from memory_service.ingestion.claude.transcript_sync import transcribe_uuids
 
-        records: dict[str, dict[str, object]] = {
-            "msg1": {
-                "uuid": "msg1",
-                "type": "user",
-                "message": {"content": "First"},
-            },
-            "msg2": {
-                "uuid": "msg2",
-                "type": "assistant",
-                "message": {"content": [{"type": "text", "text": "Second"}]},
-            },
-            "msg3": {
-                "uuid": "msg3",
-                "type": "user",
-                "message": {"content": "Third"},
-            },
-        }
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "uuid": "msg1",
+                            "type": "user",
+                            "message": {"content": "First"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "uuid": "msg2",
+                            "type": "assistant",
+                            "message": {
+                                "content": [{"type": "text", "text": "Second"}]
+                            },
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "uuid": "msg3",
+                            "type": "user",
+                            "message": {"content": "Third"},
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
 
-        text = transcribe_uuids_from_map(["msg1", "msg3"], records)
+        text = transcribe_uuids(jsonl, ["msg1", "msg3"])
         assert "[USER]\nFirst" in text
         assert "[USER]\nThird" in text
         assert "Second" not in text
         # Verify order
         assert text.index("First") < text.index("Third")
 
-    def test_empty_uuids_returns_empty(self) -> None:
+    def test_empty_uuids_returns_empty(self, tmp_path: Path) -> None:
         """Should return empty string for empty UUID list."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids_from_map
+        from memory_service.ingestion.claude.transcript_sync import transcribe_uuids
 
-        records: dict[str, dict[str, object]] = {
-            "msg1": {"uuid": "msg1", "type": "user", "message": {"content": "Hello"}}
-        }
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text(
+            json.dumps(
+                {"uuid": "msg1", "type": "user", "message": {"content": "Hello"}}
+            )
+            + "\n"
+        )
 
-        text = transcribe_uuids_from_map([], records)
+        text = transcribe_uuids(jsonl, [])
         assert text == ""
 
-    def test_skips_missing_uuids(self) -> None:
-        """Should skip UUIDs not found in records."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids_from_map
+    def test_skips_missing_uuids(self, tmp_path: Path) -> None:
+        """Should skip UUIDs not found in transcript."""
+        from memory_service.ingestion.claude.transcript_sync import transcribe_uuids
 
-        records: dict[str, dict[str, object]] = {
-            "msg1": {"uuid": "msg1", "type": "user", "message": {"content": "Hello"}}
-        }
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text(
+            json.dumps(
+                {"uuid": "msg1", "type": "user", "message": {"content": "Hello"}}
+            )
+            + "\n"
+        )
 
-        text = transcribe_uuids_from_map(["msg1", "missing", "also-missing"], records)
+        text = transcribe_uuids(jsonl, ["msg1", "missing", "also-missing"])
         assert text == "[USER]\nHello"

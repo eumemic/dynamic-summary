@@ -10,7 +10,7 @@ import grpc
 
 from ragzoom.rpc import dynamic_summary_pb2 as pb2
 from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
-from ragzoom.server.session_storage import SessionStorage
+from memory_service.storage import SessionStorage
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as DbSession
@@ -84,7 +84,7 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
         context: pb2_grpc.ServicerContext,
     ) -> pb2.IngestSessionResponse:
         """Ingest JSONL delta for a session."""
-        from ragzoom.claude_memory.transcript_sync import execute_sync_from_bytes
+        from memory_service.ingestion.claude.transcript_sync import execute_sync_from_bytes
 
         user_id, session_id = await _validate_request(request, context)
 

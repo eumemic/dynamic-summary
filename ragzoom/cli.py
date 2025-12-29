@@ -2176,7 +2176,10 @@ def sync_claude_code_transcript(
     Example:
       ragzoom sync-claude-code-transcript ~/.claude/projects/.../session.jsonl
     """
-    from ragzoom.claude_memory.transcript_sync import execute_sync, get_state_path
+    from memory_service.ingestion.claude.transcript_sync import (
+        execute_sync,
+        get_state_path,
+    )
     from ragzoom.wrapper import RagZoom
 
     # State file uses same naming convention but with .jsonl extension
@@ -2212,7 +2215,7 @@ def set_session_pid_cmd(session_id: str, pid: int) -> None:
     Example:
       ragzoom set-session-pid e0d9b972-3bad-472f-a570-a4e02d0a1ff4 12345
     """
-    from ragzoom.claude_memory.transcript_sync import set_session_pid
+    from memory_service.ingestion.claude.transcript_sync import set_session_pid
 
     try:
         set_session_pid(session_id, pid)

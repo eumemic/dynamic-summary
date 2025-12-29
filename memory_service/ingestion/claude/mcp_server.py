@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel
 
-from ragzoom.claude_memory.jsonl_reader import iter_jsonl_reversed
-from ragzoom.claude_memory.transcript_sync import SessionState, _get_state_dir
+from memory_service.ingestion.claude.jsonl_reader import iter_jsonl_reversed
+from memory_service.ingestion.claude.transcript_sync import SessionState, _get_state_dir
 from ragzoom.client.grpc_client import GrpcRagzoomClient
+
+logger = logging.getLogger(__name__)
 
 
 class RememberNode(BaseModel):  # type: ignore[explicit-any]
@@ -75,6 +78,62 @@ def _get_transcript_path(document_id: str) -> Path:
         if transcript_path.exists():
             return transcript_path
     raise ValueError(f"Transcript not found for document {document_id}")
+
+
+def _get_user_id() -> str:
+    """Get user identifier for multi-tenant isolation.
+
+    Currently uses machine username. In production, this would be
+    replaced with proper authentication (e.g., API key, OAuth token).
+    """
+    return os.environ.get("RAGZOOM_USER_ID", os.getenv("USER", "anonymous"))
+
+
+def _sync_session_to_server(session_id: str, transcript_path: Path) -> None:
+    """Sync transcript to server, sending only the delta since last sync.
+
+    Args:
+        session_id: The session/document ID
+        transcript_path: Path to the local JSONL transcript file
+    """
+    server_address = os.environ.get("RAGZOOM_SERVER_ADDRESS", "localhost:50051")
+    user_id = _get_user_id()
+
+    with GrpcRagzoomClient(server_address) as client:
+        # Get current cursor from server
+        cursor = client.get_session_cursor(session_id=session_id, user_id=user_id)
+        byte_offset = cursor.byte_offset
+
+        # Read transcript from cursor position
+        file_size = transcript_path.stat().st_size
+        if byte_offset >= file_size:
+            logger.debug(
+                "Session %s already synced (offset=%d)", session_id, byte_offset
+            )
+            return
+
+        with open(transcript_path, "rb") as f:
+            f.seek(byte_offset)
+            delta = f.read()
+
+        if not delta:
+            logger.debug("No new content to sync for session %s", session_id)
+            return
+
+        # Send delta to server
+        result = client.ingest_session(
+            session_id=session_id,
+            user_id=user_id,
+            jsonl_delta=delta,
+        )
+
+        logger.info(
+            "Synced session %s: %d messages, new_offset=%d, truncated=%s",
+            session_id,
+            result.messages_processed,
+            result.new_byte_offset,
+            result.truncated,
+        )
 
 
 def _get_compaction_span_end(state: SessionState) -> int | None:
@@ -192,6 +251,10 @@ def remember(
       already height=0 (verbatim) since they haven't been summarized yet.
     """
     doc_id, state = _get_session_id()
+
+    # Sync transcript to server before querying
+    transcript_path = _get_transcript_path(doc_id)
+    _sync_session_to_server(doc_id, transcript_path)
 
     # Compute compaction boundary on-demand if span_end not specified
     if span_end is None:
