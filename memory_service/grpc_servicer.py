@@ -99,9 +99,9 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
     ) -> pb2.IngestSessionResponse:
         """Ingest JSONL delta for a session.
 
-        Uses advisory lock to ensure mutual exclusion for concurrent syncs
-        on the same session. Runs sync logic in thread pool to avoid blocking
-        the event loop.
+        Uses advisory lock only for the critical section (cursor read/write),
+        then releases it before the long-running embedding process. This allows
+        subsequent syncs to proceed while embeddings run in the background.
         """
         from memory_service.ingestion.claude.transcript_sync import (
             execute_sync_from_bytes,
@@ -117,41 +117,64 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
 
         lock_id = _session_lock_id(user_id, session_id)
         db_session = self._get_db_session()
+
+        # Phase 1: Under lock - read existing content and append delta
         try:
-            # Acquire advisory lock for this session (blocks until available)
             db_session.execute(
                 text("SELECT pg_advisory_lock(:lock_id)"), {"lock_id": lock_id}
             )
 
             storage = SessionStorage(db_session, user_id)
-
-            # Get existing content + append delta
             existing_content = storage.get_content(session_id)
             full_content = existing_content + delta
+            previous_byte_offset = len(existing_content)
 
-            # Get RagZoom client for this user
-            ragzoom_client = self._get_ragzoom_client(user_id)
+            # Append content immediately (before processing)
+            # This updates the cursor so subsequent syncs don't re-send this delta
+            new_offset = storage.append_content(session_id, delta)
+            db_session.commit()
 
-            # Run sync logic in thread pool (sync RagZoom can't run in async context)
+        finally:
+            # Release lock before the slow embedding phase
+            try:
+                db_session.execute(
+                    text("SELECT pg_advisory_unlock(:lock_id)"), {"lock_id": lock_id}
+                )
+            except Exception:
+                pass
+            db_session.close()
+
+        # Phase 2: Without lock - run embedding/indexing (slow)
+        ragzoom_client = self._get_ragzoom_client(user_id)
+        try:
             result = await asyncio.to_thread(
                 execute_sync_from_bytes,
                 session_id=session_id,
                 jsonl_content=full_content,
-                previous_byte_offset=len(existing_content),
+                previous_byte_offset=previous_byte_offset,
                 client=ragzoom_client,
             )
 
-            # Update stored content based on result
+            # Handle truncation if detected (requires re-acquiring lock)
             if result.truncated and result.truncate_byte_offset is not None:
-                # Revert detected - truncate stored content
-                storage.truncate_content(session_id, result.truncate_byte_offset)
-                # Re-append the delta (which includes new content after revert point)
-                new_offset = storage.append_content(session_id, delta)
-            else:
-                # Normal append
-                new_offset = storage.append_content(session_id, delta)
-
-            db_session.commit()
+                db_session = self._get_db_session()
+                try:
+                    db_session.execute(
+                        text("SELECT pg_advisory_lock(:lock_id)"), {"lock_id": lock_id}
+                    )
+                    storage = SessionStorage(db_session, user_id)
+                    storage.truncate_content(session_id, result.truncate_byte_offset)
+                    new_offset = storage.append_content(session_id, delta)
+                    db_session.commit()
+                finally:
+                    try:
+                        db_session.execute(
+                            text("SELECT pg_advisory_unlock(:lock_id)"),
+                            {"lock_id": lock_id},
+                        )
+                    except Exception:
+                        pass
+                    db_session.close()
 
             return pb2.IngestSessionResponse(
                 new_byte_offset=new_offset,
@@ -160,18 +183,8 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                 truncate_span=result.truncate_span or 0,
             )
         except Exception as e:
-            db_session.rollback()
             logger.exception("Error ingesting session %s", session_id)
             await context.abort(grpc.StatusCode.INTERNAL, f"Ingestion failed: {e}")
-        finally:
-            # Release advisory lock (also released automatically on session close)
-            try:
-                db_session.execute(
-                    text("SELECT pg_advisory_unlock(:lock_id)"), {"lock_id": lock_id}
-                )
-            except Exception:
-                pass  # Lock released on session close anyway
-            db_session.close()
 
 
 def _get_user_id_from_context(context: pb2_grpc.ServicerContext) -> str | None:
