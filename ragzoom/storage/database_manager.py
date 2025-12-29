@@ -389,6 +389,32 @@ class DatabaseManager:
                     )
                 )
 
+                # Create session_sync_state table (lightweight cursor-only storage)
+                # This replaces session_raw_data for memory-efficient delta syncing
+                conn.execute(
+                    text(
+                        """
+                    CREATE TABLE IF NOT EXISTS session_sync_state (
+                        id SERIAL PRIMARY KEY,
+                        user_id VARCHAR(255) NOT NULL,
+                        session_id VARCHAR(255) NOT NULL,
+                        byte_offset BIGINT NOT NULL DEFAULT 0,
+                        last_uuid VARCHAR(255),
+                        span_end INTEGER NOT NULL DEFAULT 0
+                    );
+                """
+                    )
+                )
+
+                conn.execute(
+                    text(
+                        """
+                    CREATE UNIQUE INDEX IF NOT EXISTS ix_session_sync_state_user_session
+                    ON session_sync_state (user_id, session_id);
+                """
+                    )
+                )
+
                 logger.debug("Database migrations completed")
         except Exception as e:
             # Migration failures are not critical - the column might already exist

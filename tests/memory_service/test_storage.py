@@ -32,125 +32,154 @@ class TestSessionStorage:
 
         cursor = storage.get_cursor("session1")
 
-        assert cursor == SessionCursor(byte_offset=0)
+        assert cursor == SessionCursor(byte_offset=0, last_uuid=None, span_end=0)
 
-    def test_get_cursor_returns_content_length(self, db_session: Session) -> None:
-        """Should return byte_offset equal to stored content length."""
+    def test_get_cursor_returns_stored_state(self, db_session: Session) -> None:
+        """Should return the stored cursor state."""
         storage = SessionStorage(db_session, user_id="user1")
-        content = b'{"uuid": "msg1"}\n{"uuid": "msg2"}\n'
-        storage.append_content("session1", content)
+        storage.update_cursor(
+            session_id="session1",
+            byte_offset=1234,
+            last_uuid="uuid-abc",
+            span_end=5678,
+        )
         db_session.commit()
 
         cursor = storage.get_cursor("session1")
 
-        assert cursor == SessionCursor(byte_offset=len(content))
+        assert cursor == SessionCursor(
+            byte_offset=1234, last_uuid="uuid-abc", span_end=5678
+        )
 
-    def test_get_content_returns_empty_for_new_session(
-        self, db_session: Session
-    ) -> None:
-        """Should return empty bytes for non-existent session."""
+    def test_update_cursor_creates_new_session(self, db_session: Session) -> None:
+        """Should create a new session record on first update."""
         storage = SessionStorage(db_session, user_id="user1")
 
-        content = storage.get_content("session1")
+        storage.update_cursor(
+            session_id="session1",
+            byte_offset=100,
+            last_uuid="uuid-1",
+            span_end=200,
+        )
+        db_session.commit()
 
-        assert content == b""
+        cursor = storage.get_cursor("session1")
+        assert cursor.byte_offset == 100
+        assert cursor.last_uuid == "uuid-1"
+        assert cursor.span_end == 200
 
-    def test_get_content_returns_stored_content(self, db_session: Session) -> None:
-        """Should return the full stored JSONL content."""
+    def test_update_cursor_updates_existing(self, db_session: Session) -> None:
+        """Should update existing cursor state."""
         storage = SessionStorage(db_session, user_id="user1")
-        expected = b'{"uuid": "msg1"}\n{"uuid": "msg2"}\n'
-        storage.append_content("session1", expected)
+        storage.update_cursor(
+            session_id="session1",
+            byte_offset=100,
+            last_uuid="uuid-1",
+            span_end=200,
+        )
         db_session.commit()
 
-        content = storage.get_content("session1")
+        storage.update_cursor(
+            session_id="session1",
+            byte_offset=500,
+            last_uuid="uuid-5",
+            span_end=1000,
+        )
+        db_session.commit()
 
-        assert content == expected
+        cursor = storage.get_cursor("session1")
+        assert cursor.byte_offset == 500
+        assert cursor.last_uuid == "uuid-5"
+        assert cursor.span_end == 1000
 
-    def test_append_content_creates_new_session(self, db_session: Session) -> None:
-        """Should create a new session record on first append."""
+    def test_reset_cursor_deletes_state(self, db_session: Session) -> None:
+        """Should delete the cursor state, returning to initial state."""
         storage = SessionStorage(db_session, user_id="user1")
-        content = b'{"uuid": "msg1"}\n'
-
-        new_offset = storage.append_content("session1", content)
+        storage.update_cursor(
+            session_id="session1",
+            byte_offset=100,
+            last_uuid="uuid-1",
+            span_end=200,
+        )
         db_session.commit()
 
-        assert new_offset == len(content)
-        assert storage.get_content("session1") == content
-
-    def test_append_content_appends_to_existing(self, db_session: Session) -> None:
-        """Should append to existing content."""
-        storage = SessionStorage(db_session, user_id="user1")
-        first = b'{"uuid": "msg1"}\n'
-        second = b'{"uuid": "msg2"}\n'
-        storage.append_content("session1", first)
+        storage.reset_cursor("session1")
         db_session.commit()
 
-        new_offset = storage.append_content("session1", second)
-        db_session.commit()
+        cursor = storage.get_cursor("session1")
+        assert cursor == SessionCursor(byte_offset=0, last_uuid=None, span_end=0)
 
-        assert new_offset == len(first) + len(second)
-        assert storage.get_content("session1") == first + second
-
-    def test_truncate_content_removes_after_offset(self, db_session: Session) -> None:
-        """Should truncate content at the given byte offset."""
-        storage = SessionStorage(db_session, user_id="user1")
-        first = b'{"uuid": "msg1"}\n'
-        second = b'{"uuid": "msg2"}\n'
-        storage.append_content("session1", first + second)
-        db_session.commit()
-
-        storage.truncate_content("session1", len(first))
-        db_session.commit()
-
-        assert storage.get_content("session1") == first
-        assert storage.get_cursor("session1") == SessionCursor(byte_offset=len(first))
-
-    def test_truncate_content_noop_if_offset_beyond_content(
-        self, db_session: Session
-    ) -> None:
-        """Should do nothing if offset is beyond content length."""
-        storage = SessionStorage(db_session, user_id="user1")
-        content = b'{"uuid": "msg1"}\n'
-        storage.append_content("session1", content)
-        db_session.commit()
-
-        storage.truncate_content("session1", len(content) + 100)
-        db_session.commit()
-
-        assert storage.get_content("session1") == content
-
-    def test_truncate_content_noop_if_session_missing(
-        self, db_session: Session
-    ) -> None:
+    def test_reset_cursor_noop_if_session_missing(self, db_session: Session) -> None:
         """Should do nothing if session doesn't exist."""
         storage = SessionStorage(db_session, user_id="user1")
 
         # Should not raise
-        storage.truncate_content("nonexistent", 0)
+        storage.reset_cursor("nonexistent")
 
     def test_user_isolation(self, db_session: Session) -> None:
         """Different users should have isolated sessions."""
         storage1 = SessionStorage(db_session, user_id="user1")
         storage2 = SessionStorage(db_session, user_id="user2")
-        content1 = b'{"user": "1"}\n'
-        content2 = b'{"user": "2"}\n'
 
-        storage1.append_content("session1", content1)
-        storage2.append_content("session1", content2)
+        storage1.update_cursor(
+            session_id="session1",
+            byte_offset=100,
+            last_uuid="uuid-user1",
+            span_end=200,
+        )
+        storage2.update_cursor(
+            session_id="session1",
+            byte_offset=300,
+            last_uuid="uuid-user2",
+            span_end=400,
+        )
         db_session.commit()
 
-        assert storage1.get_content("session1") == content1
-        assert storage2.get_content("session1") == content2
+        cursor1 = storage1.get_cursor("session1")
+        cursor2 = storage2.get_cursor("session1")
+
+        assert cursor1.byte_offset == 100
+        assert cursor1.last_uuid == "uuid-user1"
+        assert cursor2.byte_offset == 300
+        assert cursor2.last_uuid == "uuid-user2"
 
     def test_session_isolation(self, db_session: Session) -> None:
         """Different sessions for the same user should be isolated."""
         storage = SessionStorage(db_session, user_id="user1")
-        content_a = b'{"session": "a"}\n'
-        content_b = b'{"session": "b"}\n'
 
-        storage.append_content("session_a", content_a)
-        storage.append_content("session_b", content_b)
+        storage.update_cursor(
+            session_id="session_a",
+            byte_offset=100,
+            last_uuid="uuid-a",
+            span_end=200,
+        )
+        storage.update_cursor(
+            session_id="session_b",
+            byte_offset=300,
+            last_uuid="uuid-b",
+            span_end=400,
+        )
         db_session.commit()
 
-        assert storage.get_content("session_a") == content_a
-        assert storage.get_content("session_b") == content_b
+        cursor_a = storage.get_cursor("session_a")
+        cursor_b = storage.get_cursor("session_b")
+
+        assert cursor_a.byte_offset == 100
+        assert cursor_a.last_uuid == "uuid-a"
+        assert cursor_b.byte_offset == 300
+        assert cursor_b.last_uuid == "uuid-b"
+
+    def test_update_cursor_handles_none_last_uuid(self, db_session: Session) -> None:
+        """Should handle None as last_uuid (initial state)."""
+        storage = SessionStorage(db_session, user_id="user1")
+
+        storage.update_cursor(
+            session_id="session1",
+            byte_offset=0,
+            last_uuid=None,
+            span_end=0,
+        )
+        db_session.commit()
+
+        cursor = storage.get_cursor("session1")
+        assert cursor.last_uuid is None
