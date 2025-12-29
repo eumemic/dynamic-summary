@@ -878,7 +878,17 @@ async def serve(state: ServerState, *, host: str, port: int) -> None:
     from memory_service.grpc_servicer import SessionIngestionServicer
     from ragzoom.wrapper import RagZoom
 
-    server = cast(GrpcServerProto, grpc.aio.server())
+    # 100MB max message size for large transcript uploads
+    max_message_size = 100 * 1024 * 1024
+    server = cast(
+        GrpcServerProto,
+        grpc.aio.server(
+            options=[
+                ("grpc.max_receive_message_length", max_message_size),
+                ("grpc.max_send_message_length", max_message_size),
+            ]
+        ),
+    )
     pb2_grpc.add_IndexerServiceServicer_to_server(IndexerServicer(state), server)
     pb2_grpc.add_RetrievalServiceServicer_to_server(RetrievalServicer(state), server)
     pb2_grpc.add_WorkerServiceServicer_to_server(WorkerServicer(state), server)
