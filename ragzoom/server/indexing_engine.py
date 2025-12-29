@@ -274,6 +274,8 @@ class DocumentContext:
     failed_job_ids: set[IndexingJob] | None = None
     # Expected total jobs for progress tracking (set at append time)
     expected_total_jobs: int = 0
+    # Leaf count when document last went idle (baseline for incremental progress)
+    leaves_at_last_idle: int = 0
 
     def mark_failed(self, job: IndexingJob) -> None:
         """Mark a job as permanently failed."""
@@ -364,25 +366,30 @@ class IndexingEngine:
             document_id: Document to index
             telemetry_collector: Optional legacy collector for timing/metrics
         """
-        # Count leaves to calculate expected total work
+        # Count leaves to calculate expected work
         store = self._store.for_document(document_id)
         leaf_count = sum(1 for n in store.nodes.get_all() if n.height == 0)
-        expected_total = _expected_total_from_leaf_count(leaf_count)
 
         async with self._lock:
             # Create or update document context
             if document_id not in self._document_contexts:
+                # First trigger: all leaves are new work
                 self._document_contexts[document_id] = DocumentContext(
                     telemetry_collector=telemetry_collector,
-                    expected_total_jobs=expected_total,
+                    expected_total_jobs=_expected_total_from_leaf_count(leaf_count),
                 )
             else:
                 ctx = self._document_contexts[document_id]
                 if telemetry_collector is not None and not ctx.run_queue:
                     ctx.telemetry_collector = telemetry_collector
                 ctx.cancelled = False
-                ctx.completed_jobs = 0
-                ctx.expected_total_jobs = expected_total
+                # Calculate incremental expected jobs since last idle
+                total_expected = _expected_total_from_leaf_count(leaf_count)
+                baseline_expected = _expected_total_from_leaf_count(
+                    ctx.leaves_at_last_idle
+                )
+                ctx.expected_total_jobs = total_expected - baseline_expected
+                # Don't reset completed_jobs - they accumulate until idle
 
             self._active_documents.add(document_id)
             self._idle_event.clear()
@@ -569,6 +576,16 @@ class IndexingEngine:
 
                     self._active_documents.discard(document_id)
                     self._notify_state_change()
+
+                    # Reset progress counters for next work cycle
+                    ctx = self._document_contexts.get(document_id)
+                    if ctx is not None:
+                        store = self._store.for_document(document_id)
+                        ctx.leaves_at_last_idle = sum(
+                            1 for n in store.nodes.get_all() if n.height == 0
+                        )
+                        ctx.completed_jobs = 0
+                        ctx.expected_total_jobs = 0
 
                     # Fire callback outside lock - document is truly idle
                     if self._on_document_idle is not None:
