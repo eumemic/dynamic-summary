@@ -6,6 +6,7 @@ backend implementation and not exported.
 """
 
 import logging
+import os
 
 from ragzoom.config import OperationalConfig
 from ragzoom.contracts.storage_backend import StorageBackend
@@ -34,8 +35,6 @@ def create_store(
         if url.startswith("sqlite:") and ":memory:" not in url:
             # naive parse: sqlite:////abs or sqlite:///rel
             path_part = url.split("sqlite:///")[-1]
-            import os
-
             db_dir = os.path.dirname(path_part)
             vec_dir = os.path.join(db_dir, DEFAULT_VECTOR_DIR_NAME)
 
