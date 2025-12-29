@@ -269,6 +269,70 @@ class DatabaseManager:
                     )
                 )
 
+                # Add user_id columns for multi-tenancy
+                conn.execute(
+                    text(
+                        """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'tree_nodes'
+                            AND column_name = 'user_id'
+                        ) THEN
+                            ALTER TABLE tree_nodes
+                            ADD COLUMN user_id VARCHAR;
+                        END IF;
+                    END $$;
+                """
+                    )
+                )
+
+                conn.execute(
+                    text(
+                        """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'documents'
+                            AND column_name = 'user_id'
+                        ) THEN
+                            ALTER TABLE documents
+                            ADD COLUMN user_id VARCHAR;
+                        END IF;
+                    END $$;
+                """
+                    )
+                )
+
+                conn.execute(
+                    text(
+                        """
+                    CREATE INDEX IF NOT EXISTS idx_tree_nodes_user_id
+                    ON tree_nodes (user_id);
+                """
+                    )
+                )
+
+                conn.execute(
+                    text(
+                        """
+                    CREATE INDEX IF NOT EXISTS idx_documents_user_id
+                    ON documents (user_id);
+                """
+                    )
+                )
+
+                conn.execute(
+                    text(
+                        """
+                    CREATE INDEX IF NOT EXISTS idx_tree_nodes_user_document
+                    ON tree_nodes (user_id, document_id);
+                """
+                    )
+                )
+
                 logger.debug("Database migrations completed")
         except Exception as e:
             # Migration failures are not critical - the column might already exist

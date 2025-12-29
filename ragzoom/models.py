@@ -47,6 +47,9 @@ class PostgresTreeNode(TreeNodeColumnsMixin, Base):
     __tablename__ = "tree_nodes"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(
+        String, nullable=True, index=True
+    )  # Owner of this node (denormalized from document for query efficiency)
     parent_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("tree_nodes.id"), nullable=True
     )
@@ -85,6 +88,8 @@ class PostgresTreeNode(TreeNodeColumnsMixin, Base):
             "height",
             "level_index",
         ),
+        # Composite index for multi-tenant queries (user + document)
+        Index("idx_tree_nodes_user_document", "user_id", "document_id"),
     )
 
     def is_leaf(self) -> bool:
@@ -108,6 +113,9 @@ class Document(Base):
     __tablename__ = "documents"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(
+        String, nullable=True, index=True
+    )  # Owner of this document (None for legacy/local usage)
     file_path: Mapped[str | None] = mapped_column(
         String, nullable=True, unique=True
     )  # Path to the source file
