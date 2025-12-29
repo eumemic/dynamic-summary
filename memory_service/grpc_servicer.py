@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import grpc
+from sqlalchemy import text
 
+from memory_service.storage import SessionStorage
 from ragzoom.rpc import dynamic_summary_pb2 as pb2
 from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
-from memory_service.storage import SessionStorage
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as DbSession
@@ -18,6 +21,17 @@ if TYPE_CHECKING:
     from ragzoom.wrapper import RagZoom
 
 logger = logging.getLogger(__name__)
+
+
+def _session_lock_id(user_id: str, session_id: str) -> int:
+    """Generate a stable lock ID for a user/session pair.
+
+    Uses hash to convert string IDs to a 32-bit integer for pg_advisory_lock.
+    """
+    key = f"{user_id}:{session_id}"
+    # Use first 8 hex chars (32 bits) of MD5 hash
+    hash_hex = hashlib.md5(key.encode(), usedforsecurity=False).hexdigest()[:8]
+    return int(hash_hex, 16)
 
 
 async def _validate_request(
@@ -83,8 +97,15 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
         request: pb2.IngestSessionRequest,
         context: pb2_grpc.ServicerContext,
     ) -> pb2.IngestSessionResponse:
-        """Ingest JSONL delta for a session."""
-        from memory_service.ingestion.claude.transcript_sync import execute_sync_from_bytes
+        """Ingest JSONL delta for a session.
+
+        Uses advisory lock to ensure mutual exclusion for concurrent syncs
+        on the same session. Runs sync logic in thread pool to avoid blocking
+        the event loop.
+        """
+        from memory_service.ingestion.claude.transcript_sync import (
+            execute_sync_from_bytes,
+        )
 
         user_id, session_id = await _validate_request(request, context)
 
@@ -94,8 +115,14 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                 grpc.StatusCode.INVALID_ARGUMENT, "jsonl_delta is required"
             )
 
+        lock_id = _session_lock_id(user_id, session_id)
         db_session = self._get_db_session()
         try:
+            # Acquire advisory lock for this session (blocks until available)
+            db_session.execute(
+                text("SELECT pg_advisory_lock(:lock_id)"), {"lock_id": lock_id}
+            )
+
             storage = SessionStorage(db_session, user_id)
 
             # Get existing content + append delta
@@ -105,8 +132,9 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
             # Get RagZoom client for this user
             ragzoom_client = self._get_ragzoom_client(user_id)
 
-            # Process the full JSONL content using sync logic
-            result = execute_sync_from_bytes(
+            # Run sync logic in thread pool (sync RagZoom can't run in async context)
+            result = await asyncio.to_thread(
+                execute_sync_from_bytes,
                 session_id=session_id,
                 jsonl_content=full_content,
                 previous_byte_offset=len(existing_content),
@@ -136,6 +164,13 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
             logger.exception("Error ingesting session %s", session_id)
             await context.abort(grpc.StatusCode.INTERNAL, f"Ingestion failed: {e}")
         finally:
+            # Release advisory lock (also released automatically on session close)
+            try:
+                db_session.execute(
+                    text("SELECT pg_advisory_unlock(:lock_id)"), {"lock_id": lock_id}
+                )
+            except Exception:
+                pass  # Lock released on session close anyway
             db_session.close()
 
 
