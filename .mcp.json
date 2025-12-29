@@ -4,7 +4,7 @@
       "command": "python",
       "args": ["-m", "ragzoom.claude_memory.mcp_server"],
       "env": {
-        "RAGZOOM_SERVER_ADDRESS": "dynamic-summary-dynamic-summary-pr-330.up.railway.app:443"
+        "RAGZOOM_SERVER_ADDRESS": "switchyard.proxy.rlwy.net:19731"
       }
     }
   }
