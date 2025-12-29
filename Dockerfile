@@ -1,10 +1,11 @@
 # Build stage for the RagZoom gRPC server
 FROM python:3.11-slim AS base
 
-# Install system dependencies
+# Install system dependencies (including libpq for psycopg)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set workdir and copy only dependency manifests first (speed up build caching)
@@ -24,12 +25,12 @@ RUN pip install protobuf
 # Copy the rest of the repository
 COPY . .
 
-# Install project (and chroma extras for default vector backend) in editable mode
-RUN pip install -e '.[chroma]'
+# Install project with postgres support
+RUN pip install -e '.[chroma]' && pip install 'psycopg[binary]'
 
-# Default environment vars
-ENV RAGZOOM_DATABASE_URL=sqlite:////data/sqlite.db \
-    PYTHONUNBUFFERED=1
+# Default environment vars (Railway will override DATABASE_URL)
+ENV PYTHONUNBUFFERED=1 \
+    RAGZOOM_BACKEND=postgres
 
 # Create data dir (will be mounted as volume at runtime)
 RUN mkdir -p /data
