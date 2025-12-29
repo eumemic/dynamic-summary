@@ -113,6 +113,15 @@ def build_state(options: ServerOptions) -> ServerState:
     query_cfg = QueryConfig()
     operational_cfg = OperationalConfig()
 
+    # Allow env var override for max_parallelism
+    max_parallelism = options.max_parallelism
+    if max_parallelism is None:
+        import os
+
+        env_parallelism = os.environ.get("RAGZOOM_MAX_PARALLELISM")
+        if env_parallelism is not None:
+            max_parallelism = int(env_parallelism)
+
     return ServerState.create(
         index_config=index_cfg,
         query_config=query_cfg,
@@ -121,7 +130,7 @@ def build_state(options: ServerOptions) -> ServerState:
         telemetry_dir=(
             Path(options.telemetry_dir) if options.telemetry_dir is not None else None
         ),
-        max_parallelism=options.max_parallelism,
+        max_parallelism=max_parallelism,
     )
 
 
