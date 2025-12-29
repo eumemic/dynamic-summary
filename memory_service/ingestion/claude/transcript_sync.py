@@ -1235,10 +1235,22 @@ def execute_sync_from_bytes(
     Returns:
         SyncResult describing what was done
     """
+    import logging
+    import time
+
+    logger = logging.getLogger(__name__)
+    t0 = time.perf_counter()
     document_id = session_id
+
+    logger.info(
+        "[TIMING] execute_sync_from_bytes start: content_bytes=%d prev_offset=%d",
+        len(jsonl_content),
+        previous_byte_offset,
+    )
 
     # Get current head from full content
     current_head = _get_current_head_from_bytes(jsonl_content)
+    t_head = time.perf_counter()
     if current_head is None:
         return SyncResult(
             document_id=document_id,
@@ -1250,6 +1262,7 @@ def execute_sync_from_bytes(
 
     # Build parent map from full content
     parent_map = _build_parent_map_from_bytes(jsonl_content)
+    t_parent_map = time.perf_counter()
 
     # Build append log from previously synced content
     # We need to reconstruct what was synced before
@@ -1293,6 +1306,16 @@ def execute_sync_from_bytes(
 
     # Compute sync plan
     plan = compute_sync_plan(current_head, append_log, parent_map)
+    t_plan = time.perf_counter()
+
+    logger.info(
+        "[TIMING] parse phase: head=%.3fs parent_map=%.3fs plan=%.3fs "
+        "uuids_to_transcribe=%d",
+        t_head - t0,
+        t_parent_map - t_head,
+        t_plan - t_parent_map,
+        len(plan.uuids_to_transcribe),
+    )
 
     # Nothing to do
     if not plan.uuids_to_transcribe and plan.truncate_to_span is None:
@@ -1336,6 +1359,7 @@ def execute_sync_from_bytes(
         records_by_uuid = _build_records_map_from_bytes(
             jsonl_content, set(plan.uuids_to_transcribe)
         )
+        t_records = time.perf_counter()
 
         # Segment UUIDs at turn boundaries
         segments: list[list[str]] = []
@@ -1383,13 +1407,35 @@ def execute_sync_from_bytes(
                     segment_last_uuids.append(segment_appended_uuids[-1])
                     appended_uuids.extend(segment_appended_uuids)
 
+        t_transcribe = time.perf_counter()
+        logger.info(
+            "[TIMING] transcribe phase: records_map=%.3fs transcribe=%.3fs "
+            "segments=%d",
+            t_records - t_plan,
+            t_transcribe - t_records,
+            len(segment_texts),
+        )
+
         if segment_texts:
             batch_append_method = getattr(client, "batch_append")
             result = batch_append_method(document_id, segment_texts)
             new_span_end = getattr(result, "span_end", 0)
+            t_append = time.perf_counter()
+            logger.info(
+                "[TIMING] batch_append complete: %.3fs segments=%d",
+                t_append - t_transcribe,
+                len(segment_texts),
+            )
     else:
         last_entry = append_log.last_entry()
         new_span_end = last_entry.span_end if last_entry else 0
+
+    t_end = time.perf_counter()
+    logger.info(
+        "[TIMING] execute_sync_from_bytes complete: total=%.3fs appended=%d",
+        t_end - t0,
+        len(appended_uuids),
+    )
 
     return SyncResult(
         document_id=document_id,
