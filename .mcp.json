@@ -2,7 +2,10 @@
   "mcpServers": {
     "ragzoom-memory": {
       "command": "python",
-      "args": ["-m", "ragzoom.claude_memory.mcp_server"]
+      "args": ["-m", "ragzoom.claude_memory.mcp_server"],
+      "env": {
+        "RAGZOOM_SERVER_ADDRESS": "dynamic-summary-dynamic-summary-pr-330.up.railway.app:443"
+      }
     }
   }
 }
