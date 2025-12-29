@@ -100,11 +100,12 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
     ) -> pb2.IngestSessionResponse:
         """Ingest JSONL delta for a session.
 
-        Memory-efficient: processes ONLY the delta bytes, never loads full history.
-        Uses advisory lock for cursor read/update, releases before embedding.
+        Uses advisory lock only for the critical section (cursor read/write),
+        then releases it before the long-running embedding process. This allows
+        subsequent syncs to proceed while embeddings run in the background.
         """
         from memory_service.ingestion.claude.transcript_sync import (
-            execute_delta_sync,
+            execute_sync_from_bytes,
         )
 
         t0 = time.perf_counter()
@@ -125,7 +126,7 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
         lock_id = _session_lock_id(user_id, session_id)
         db_session = self._get_db_session()
 
-        # Phase 1: Under lock - read cursor only (NOT full content)
+        # Phase 1: Under lock - read existing content and append delta
         t1 = time.perf_counter()
         try:
             db_session.execute(
@@ -134,16 +135,26 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
             t_lock = time.perf_counter()
 
             storage = SessionStorage(db_session, user_id)
-            cursor = storage.get_cursor(session_id)
+            existing_content = storage.get_content(session_id)
             t_read = time.perf_counter()
 
+            full_content = existing_content + delta
+            previous_byte_offset = len(existing_content)
+
+            # Append content immediately (before processing)
+            # This updates the cursor so subsequent syncs don't re-send this delta
+            new_offset = storage.append_content(session_id, delta)
+            db_session.commit()
+            t_commit = time.perf_counter()
+
             logger.info(
-                "[TIMING] Phase1 complete: lock=%.3fs read=%.3fs "
-                "cursor_offset=%d last_uuid=%s",
+                "[TIMING] Phase1 complete: lock=%.3fs read=%.3fs commit=%.3fs "
+                "total=%.3fs existing_bytes=%d",
                 t_lock - t1,
                 t_read - t_lock,
-                cursor.byte_offset,
-                cursor.last_uuid[:8] if cursor.last_uuid else None,
+                t_commit - t_read,
+                t_commit - t1,
+                len(existing_content),
             )
 
         finally:
@@ -156,57 +167,45 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                 pass
             db_session.close()
 
-        # Phase 2: Without lock - process ONLY the delta (memory-efficient)
+        # Phase 2: Without lock - run embedding/indexing (slow)
         t2 = time.perf_counter()
         ragzoom_client = self._get_ragzoom_client(user_id)
         try:
             result = await asyncio.to_thread(
-                execute_delta_sync,
+                execute_sync_from_bytes,
                 session_id=session_id,
-                delta=delta,
-                cursor=cursor,
+                jsonl_content=full_content,
+                previous_byte_offset=previous_byte_offset,
                 client=ragzoom_client,
             )
             t3 = time.perf_counter()
             logger.info(
-                "[TIMING] Phase2 complete: execute_delta_sync=%.3fs "
-                "appended=%d truncated=%s",
+                "[TIMING] Phase2 complete: execute_sync=%.3fs appended=%d truncated=%s",
                 t3 - t2,
                 len(result.appended_uuids),
                 result.truncated,
             )
 
-            # Phase 3: Update cursor under lock
-            new_offset = cursor.byte_offset + len(delta)
-            db_session = self._get_db_session()
-            try:
-                db_session.execute(
-                    text("SELECT pg_advisory_lock(:lock_id)"), {"lock_id": lock_id}
-                )
-                storage = SessionStorage(db_session, user_id)
-
-                if result.truncated:
-                    # Revert detected - reset cursor to force full re-sync
-                    storage.reset_cursor(session_id)
-                    new_offset = 0
-                else:
-                    # Normal append - update cursor with new state
-                    storage.update_cursor(
-                        session_id=session_id,
-                        byte_offset=new_offset,
-                        last_uuid=result.new_last_uuid,
-                        span_end=result.new_span_end,
-                    )
-                db_session.commit()
-            finally:
+            # Handle truncation if detected (requires re-acquiring lock)
+            if result.truncated and result.truncate_byte_offset is not None:
+                db_session = self._get_db_session()
                 try:
                     db_session.execute(
-                        text("SELECT pg_advisory_unlock(:lock_id)"),
-                        {"lock_id": lock_id},
+                        text("SELECT pg_advisory_lock(:lock_id)"), {"lock_id": lock_id}
                     )
-                except Exception:
-                    pass
-                db_session.close()
+                    storage = SessionStorage(db_session, user_id)
+                    storage.truncate_content(session_id, result.truncate_byte_offset)
+                    new_offset = storage.append_content(session_id, delta)
+                    db_session.commit()
+                finally:
+                    try:
+                        db_session.execute(
+                            text("SELECT pg_advisory_unlock(:lock_id)"),
+                            {"lock_id": lock_id},
+                        )
+                    except Exception:
+                        pass
+                    db_session.close()
 
             t_end = time.perf_counter()
             logger.info(
