@@ -32,6 +32,7 @@ Channel = object
 Server = object
 
 class ServicerContext(Protocol):
+    def invocation_metadata(self) -> list[tuple[str, str]] | None: ...
     async def abort(self, code: object, details: str) -> NoReturn: ...
 
 class IndexerServiceStub:

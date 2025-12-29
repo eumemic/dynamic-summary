@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, NoReturn, Protocol
+from typing import TYPE_CHECKING
 
 import grpc
 
@@ -20,17 +20,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ServicerContextProto(Protocol):
-    """Protocol for gRPC servicer context."""
-
-    def invocation_metadata(self) -> list[tuple[str, str]] | None: ...
-
-    async def abort(self, code: object, details: str) -> NoReturn: ...
-
-
 async def _validate_request(
-    request: object,
-    context: ServicerContextProto,
+    request: pb2.GetSessionCursorRequest | pb2.IngestSessionRequest,
+    context: pb2_grpc.ServicerContext,
 ) -> tuple[str, str]:
     """Validate request and extract user_id and session_id.
 
@@ -41,14 +33,14 @@ async def _validate_request(
     if not user_id:
         await context.abort(grpc.StatusCode.UNAUTHENTICATED, "Missing user_id")
 
-    session_id = getattr(request, "session_id", "")
+    session_id = request.session_id
     if not session_id:
         await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "session_id is required")
 
     return user_id, session_id
 
 
-class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):  # type: ignore[misc,name-defined]
+class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
     """Servicer for Claude Code session ingestion.
 
     Handles:
@@ -72,9 +64,9 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):  # typ
 
     async def GetSessionCursor(  # noqa: N802
         self,
-        request: object,
-        context: ServicerContextProto,
-    ) -> object:
+        request: pb2.GetSessionCursorRequest,
+        context: pb2_grpc.ServicerContext,
+    ) -> pb2.GetSessionCursorResponse:
         """Get the current byte offset for a session."""
         user_id, session_id = await _validate_request(request, context)
 
@@ -88,15 +80,15 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):  # typ
 
     async def IngestSession(  # noqa: N802
         self,
-        request: object,
-        context: ServicerContextProto,
-    ) -> object:
+        request: pb2.IngestSessionRequest,
+        context: pb2_grpc.ServicerContext,
+    ) -> pb2.IngestSessionResponse:
         """Ingest JSONL delta for a session."""
         from ragzoom.claude_memory.transcript_sync import execute_sync_from_bytes
 
         user_id, session_id = await _validate_request(request, context)
 
-        delta = getattr(request, "jsonl_delta", b"")
+        delta = request.jsonl_delta
         if not delta:
             await context.abort(
                 grpc.StatusCode.INVALID_ARGUMENT, "jsonl_delta is required"
@@ -147,7 +139,7 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):  # typ
             db_session.close()
 
 
-def _get_user_id_from_context(context: ServicerContextProto) -> str | None:
+def _get_user_id_from_context(context: pb2_grpc.ServicerContext) -> str | None:
     """Extract user_id from gRPC context metadata."""
     metadata = context.invocation_metadata()
     if metadata is None:
@@ -155,6 +147,6 @@ def _get_user_id_from_context(context: ServicerContextProto) -> str | None:
 
     for key, value in metadata:
         if key == "user_id":
-            return value
+            return str(value)
 
     return None
