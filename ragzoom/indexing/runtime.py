@@ -454,6 +454,9 @@ class DocumentIndexSession:
         Returns:
             IndexingResult with combined stats for all appended units
         """
+        import time
+
+        t0 = time.perf_counter()
         store = self._runtime._store
         telemetry_manager = self._runtime._telemetry_manager
         lock_cm = self._lock_document(store)
@@ -465,6 +468,7 @@ class DocumentIndexSession:
 
         try:
             with lock_cm:
+                t_lock = time.perf_counter()
                 doc_record = store.get_document_by_id(self._document_id)
                 embedding_model = (
                     getattr(doc_record, "embedding_model", None)
@@ -492,6 +496,7 @@ class DocumentIndexSession:
 
                 document_store = store.for_document(self._document_id)
                 previous_leaf_count = document_store.nodes.leaf_count()
+                t_setup = time.perf_counter()
 
                 if collect_telemetry and telemetry_manager is not None:
                     existing_tokens = sum(
@@ -519,6 +524,13 @@ class DocumentIndexSession:
                     reporter=run_context.telemetry_collector if run_context else None,
                     run_context=run_context,
                     telemetry_manager=telemetry_manager,
+                )
+                t_append = time.perf_counter()
+                logger.info(
+                    "[TIMING] batch_append_text: lock=%.3fs setup=%.3fs append=%.3fs",
+                    t_lock - t0,
+                    t_setup - t_lock,
+                    t_append - t_setup,
                 )
 
                 if (
@@ -570,9 +582,19 @@ class DocumentIndexSession:
                 )
 
             # Trigger indexing work - engine discovers leaves and sibling pairs
+            t_before_trigger = time.perf_counter()
             await self._runtime._indexing_engine.trigger_work(self._document_id)
+            t_after_trigger = time.perf_counter()
 
             await self._runtime._emit_status(self._document_id)
+            t_end = time.perf_counter()
+            logger.info(
+                "[TIMING] batch_append_text: trigger_work=%.3fs emit_status=%.3fs "
+                "total=%.3fs",
+                t_after_trigger - t_before_trigger,
+                t_end - t_after_trigger,
+                t_end - t0,
+            )
             assert result is not None
             return result
         except Exception as exc:
