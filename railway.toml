@@ -3,7 +3,7 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-healthcheckPath = "/"
-healthcheckTimeout = 300
+# No HTTP healthcheck - gRPC server doesn't serve HTTP
+# Railway will use process-level health monitoring instead
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
