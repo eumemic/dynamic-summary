@@ -333,6 +333,39 @@ class DatabaseManager:
                     )
                 )
 
+                # Create users table if it doesn't exist
+                conn.execute(
+                    text(
+                        """
+                    CREATE TABLE IF NOT EXISTS users (
+                        id VARCHAR PRIMARY KEY,
+                        github_id VARCHAR UNIQUE,
+                        email VARCHAR,
+                        api_key VARCHAR NOT NULL UNIQUE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """
+                    )
+                )
+
+                conn.execute(
+                    text(
+                        """
+                    CREATE INDEX IF NOT EXISTS idx_users_api_key
+                    ON users (api_key);
+                """
+                    )
+                )
+
+                conn.execute(
+                    text(
+                        """
+                    CREATE INDEX IF NOT EXISTS idx_users_github_id
+                    ON users (github_id);
+                """
+                    )
+                )
+
                 logger.debug("Database migrations completed")
         except Exception as e:
             # Migration failures are not critical - the column might already exist
