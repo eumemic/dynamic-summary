@@ -10,7 +10,7 @@ Components:
 - mcp_server: MCP 'remember' tool for querying historical context
 """
 
-from ragzoom.claude_memory.transcript_sync import (
+from memory_service.ingestion.claude.transcript_sync import (
     AppendEntry,
     AppendLog,
     SessionState,

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ragzoom.claude_memory.transcript_sync import (
+from memory_service.ingestion.claude.transcript_sync import (
     AppendEntry,
     AppendLog,
     build_parent_map,
@@ -396,7 +396,7 @@ class TestGetAncestorChain:
 
     def test_gets_chain_exclusive_of_ancestor(self) -> None:
         """Should return chain from ancestor to target, exclusive of ancestor."""
-        from ragzoom.claude_memory.transcript_sync import get_ancestor_chain
+        from memory_service.ingestion.claude.transcript_sync import get_ancestor_chain
 
         # msg1 -> msg2 -> msg3 -> msg4
         parent_map: dict[str, str | None] = {
@@ -413,7 +413,7 @@ class TestGetAncestorChain:
 
     def test_gets_chain_to_root(self) -> None:
         """When ancestor is None, returns full chain from root."""
-        from ragzoom.claude_memory.transcript_sync import get_ancestor_chain
+        from memory_service.ingestion.claude.transcript_sync import get_ancestor_chain
 
         parent_map: dict[str, str | None] = {
             "msg1": None,
@@ -427,7 +427,7 @@ class TestGetAncestorChain:
 
     def test_immediate_child(self) -> None:
         """Chain from parent to child is just the child."""
-        from ragzoom.claude_memory.transcript_sync import get_ancestor_chain
+        from memory_service.ingestion.claude.transcript_sync import get_ancestor_chain
 
         parent_map: dict[str, str | None] = {
             "msg1": None,
@@ -440,7 +440,7 @@ class TestGetAncestorChain:
 
     def test_same_node_returns_empty(self) -> None:
         """When target equals ancestor, returns empty list."""
-        from ragzoom.claude_memory.transcript_sync import get_ancestor_chain
+        from memory_service.ingestion.claude.transcript_sync import get_ancestor_chain
 
         parent_map: dict[str, str | None] = {"msg1": None, "msg2": "msg1"}
 
@@ -450,7 +450,7 @@ class TestGetAncestorChain:
 
     def test_raises_if_ancestor_not_in_chain(self) -> None:
         """Should raise if claimed ancestor isn't actually an ancestor."""
-        from ragzoom.claude_memory.transcript_sync import get_ancestor_chain
+        from memory_service.ingestion.claude.transcript_sync import get_ancestor_chain
 
         parent_map: dict[str, str | None] = {
             "msg1": None,
@@ -467,7 +467,7 @@ class TestComputeSyncPlan:
 
     def test_no_op_when_already_synced(self, tmp_path: Path) -> None:
         """When transcript head matches last indexed, nothing to do."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             AppendLog,
             compute_sync_plan,
@@ -494,7 +494,7 @@ class TestComputeSyncPlan:
 
     def test_append_new_messages(self, tmp_path: Path) -> None:
         """When new messages added, transcribe them."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             AppendLog,
             compute_sync_plan,
@@ -522,7 +522,7 @@ class TestComputeSyncPlan:
 
     def test_revert_and_new_branch(self, tmp_path: Path) -> None:
         """When user reverted and continued, truncate and re-transcribe."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             AppendLog,
             compute_sync_plan,
@@ -559,7 +559,10 @@ class TestComputeSyncPlan:
 
     def test_empty_log_transcribes_full_chain(self, tmp_path: Path) -> None:
         """When append log is empty, transcribe from root."""
-        from ragzoom.claude_memory.transcript_sync import AppendLog, compute_sync_plan
+        from memory_service.ingestion.claude.transcript_sync import (
+            AppendLog,
+            compute_sync_plan,
+        )
 
         log_path = tmp_path / "append.log"
         log = AppendLog(log_path)
@@ -581,7 +584,7 @@ class TestComputeSyncPlan:
 
     def test_disjoint_branches_truncates_all(self, tmp_path: Path) -> None:
         """When branches are disjoint, truncate everything and start fresh."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             AppendLog,
             compute_sync_plan,
@@ -617,7 +620,7 @@ class TestSessionState:
 
     def test_save_and_load(self, tmp_path: Path) -> None:
         """Should persist and restore state."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             SessionState,
             SessionStateHeader,
@@ -643,14 +646,14 @@ class TestSessionState:
 
     def test_load_nonexistent_returns_none(self, tmp_path: Path) -> None:
         """Should return None for missing file."""
-        from ragzoom.claude_memory.transcript_sync import SessionState
+        from memory_service.ingestion.claude.transcript_sync import SessionState
 
         state = SessionState.load(tmp_path / "missing.jsonl")
         assert state is None
 
     def test_append_log_view(self, tmp_path: Path) -> None:
         """append_log() should return working AppendLog."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             SessionState,
             SessionStateHeader,
@@ -673,7 +676,7 @@ class TestSessionState:
 
     def test_append_log_truncate(self, tmp_path: Path) -> None:
         """append_log().truncate_to() should modify state entries."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             SessionState,
             SessionStateHeader,
@@ -700,7 +703,7 @@ class TestGetCurrentHead:
 
     def test_gets_last_uuid(self, tmp_path: Path) -> None:
         """Should return the last UUID in the transcript."""
-        from ragzoom.claude_memory.transcript_sync import get_current_head
+        from memory_service.ingestion.claude.transcript_sync import get_current_head
 
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text(
@@ -721,7 +724,7 @@ class TestGetCurrentHead:
 
     def test_empty_transcript_returns_none(self, tmp_path: Path) -> None:
         """Should return None for empty transcript."""
-        from ragzoom.claude_memory.transcript_sync import get_current_head
+        from memory_service.ingestion.claude.transcript_sync import get_current_head
 
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text("")
@@ -731,7 +734,7 @@ class TestGetCurrentHead:
 
     def test_skips_records_without_uuid(self, tmp_path: Path) -> None:
         """Should skip non-message records."""
-        from ragzoom.claude_memory.transcript_sync import get_current_head
+        from memory_service.ingestion.claude.transcript_sync import get_current_head
 
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text(
@@ -753,7 +756,7 @@ class TestTranscribeUuids:
 
     def test_transcribes_user_message(self, tmp_path: Path) -> None:
         """Should transcribe user messages."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids
+        from memory_service.ingestion.claude.transcript_sync import transcribe_uuids
 
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text(
@@ -772,7 +775,7 @@ class TestTranscribeUuids:
 
     def test_transcribes_assistant_message(self, tmp_path: Path) -> None:
         """Should transcribe assistant messages with tool count."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids
+        from memory_service.ingestion.claude.transcript_sync import transcribe_uuids
 
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text(
@@ -798,7 +801,7 @@ class TestTranscribeUuids:
 
     def test_transcribes_multiple_in_order(self, tmp_path: Path) -> None:
         """Should transcribe multiple UUIDs in specified order."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids
+        from memory_service.ingestion.claude.transcript_sync import transcribe_uuids
 
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text(
@@ -841,7 +844,7 @@ class TestTranscribeUuids:
 
     def test_empty_uuids_returns_empty(self, tmp_path: Path) -> None:
         """Should return empty string for empty UUID list."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids
+        from memory_service.ingestion.claude.transcript_sync import transcribe_uuids
 
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text(
@@ -856,7 +859,7 @@ class TestTranscribeUuids:
 
     def test_skips_missing_uuids(self, tmp_path: Path) -> None:
         """Should skip UUIDs not found in transcript."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids
+        from memory_service.ingestion.claude.transcript_sync import transcribe_uuids
 
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text(

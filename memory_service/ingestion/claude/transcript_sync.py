@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ragzoom.claude_memory.jsonl_reader import iter_jsonl, iter_jsonl_reversed
+from memory_service.ingestion.claude.jsonl_reader import iter_jsonl, iter_jsonl_reversed
 
 # Patterns for cleaning user text (system noise from Claude Code)
 _CAVEAT_PATTERN = re.compile(
