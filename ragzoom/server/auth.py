@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
-import grpc
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -25,6 +24,20 @@ logger = logging.getLogger(__name__)
 API_KEY_HEADER = "x-api-key"
 
 
+class ServicerContextProto(Protocol):
+    """Protocol for gRPC servicer context to avoid import issues."""
+
+    def invocation_metadata(self) -> list[tuple[str, str | bytes]]: ...
+
+
+# Status codes matching grpc.StatusCode
+class StatusCode:
+    """gRPC status codes for authentication errors."""
+
+    UNAUTHENTICATED = 16
+    PERMISSION_DENIED = 7
+
+
 @dataclass
 class AuthContext:
     """Authentication context extracted from request."""
@@ -36,15 +49,13 @@ class AuthContext:
 class AuthError(Exception):
     """Authentication error."""
 
-    def __init__(
-        self, message: str, code: grpc.StatusCode = grpc.StatusCode.UNAUTHENTICATED
-    ):
+    def __init__(self, message: str, code: int = StatusCode.UNAUTHENTICATED):
         self.message = message
         self.code = code
         super().__init__(message)
 
 
-def extract_api_key(context: grpc.ServicerContext) -> str | None:
+def extract_api_key(context: ServicerContextProto) -> str | None:
     """Extract API key from gRPC request metadata.
 
     Args:
@@ -88,7 +99,7 @@ def validate_api_key(
 
 
 def require_auth(
-    context: grpc.ServicerContext,
+    context: ServicerContextProto,
     session_factory: sessionmaker[Session],
     *,
     allow_anonymous: bool = False,
