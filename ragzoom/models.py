@@ -1,5 +1,6 @@
 """SQLAlchemy models for RagZoom (storage only; no embeddings)."""
 
+import secrets
 from datetime import datetime
 
 from sqlalchemy import (
@@ -13,6 +14,11 @@ from sqlalchemy import (
     Text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+def generate_api_key() -> str:
+    """Generate a secure API key with 'rz_' prefix."""
+    return f"rz_{secrets.token_urlsafe(32)}"
 
 
 class Base(DeclarativeBase):
@@ -122,3 +128,21 @@ class Document(Base):
     indexed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     embedding_model: Mapped[str] = mapped_column(String, nullable=False)
     summary_model: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class User(Base):
+    """Database model for authenticated users."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    github_id: Mapped[str | None] = mapped_column(
+        String, nullable=True, unique=True, index=True
+    )  # GitHub user ID for OAuth
+    email: Mapped[str | None] = mapped_column(
+        String, nullable=True, index=True
+    )  # Email address
+    api_key: Mapped[str] = mapped_column(
+        String, nullable=False, unique=True, index=True, default=generate_api_key
+    )  # API key for authentication
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

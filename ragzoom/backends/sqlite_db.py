@@ -185,6 +185,31 @@ class SqliteDatabaseManager:
                     )
                 except Exception:
                     pass
+                # Create users table for auth
+                try:
+                    conn.exec_driver_sql(
+                        """CREATE TABLE IF NOT EXISTS users (
+                            id TEXT PRIMARY KEY,
+                            github_id TEXT UNIQUE,
+                            email TEXT,
+                            api_key TEXT NOT NULL UNIQUE,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )"""
+                    )
+                except Exception:
+                    pass
+                try:
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS idx_users_api_key ON users (api_key)"
+                    )
+                except Exception:
+                    pass
+                try:
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS idx_users_github_id ON users (github_id)"
+                    )
+                except Exception:
+                    pass
         except Exception:
             # Columns already dropped or table newly created; ignore
             pass
