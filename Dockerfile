@@ -35,7 +35,8 @@ ENV PYTHONUNBUFFERED=1 \
 # Create data dir (will be mounted as volume at runtime)
 RUN mkdir -p /data
 
-# Expose gRPC port via environment to compose
+# Expose gRPC port (Railway overrides via PORT env var)
 EXPOSE 50051
 
-CMD ["python", "-m", "ragzoom.cli", "server", "start", "--host", "0.0.0.0", "--port", "50051", "--collect-telemetry"]
+# Use shell form to expand PORT env var (Railway sets this dynamically)
+CMD python -m ragzoom.cli server start --host 0.0.0.0 --port ${PORT:-50051} --collect-telemetry
