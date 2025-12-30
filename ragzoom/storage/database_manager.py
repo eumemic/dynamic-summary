@@ -408,6 +408,17 @@ class DatabaseManager:
                     )
                 )
 
+                # Add original_file_offset column to track actual file position
+                # (different from stored content length due to tool result stripping)
+                conn.execute(
+                    text(
+                        """
+                    ALTER TABLE session_raw_data
+                    ADD COLUMN IF NOT EXISTS original_file_offset BIGINT NOT NULL DEFAULT 0;
+                """
+                    )
+                )
+
                 logger.debug("Database migrations completed")
         except Exception as e:
             # Migration failures are not critical - the column might already exist

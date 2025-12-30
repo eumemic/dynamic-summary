@@ -100,6 +100,13 @@ class SessionRawData(Base):
     last_synced_uuid: Mapped[str | None] = mapped_column(String(255), nullable=True)
     span_end: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # Original file offset tracking (different from stored content length due to stripping)
+    # This tracks the position in the original unstripped file that corresponds to
+    # the end of stored content. Used by clients to know where to seek in the file.
+    original_file_offset: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
+
     __table_args__ = (
         Index("ix_session_raw_data_user_session", "user_id", "session_id", unique=True),
     )
@@ -109,7 +116,7 @@ class SessionRawData(Base):
 class SessionCursor:
     """Cursor position and sync state for a session."""
 
-    byte_offset: int
+    byte_offset: int  # Original file position (for client seeking)
     last_synced_uuid: str | None = None
     span_end: int = 0
 
@@ -124,12 +131,15 @@ class SessionStorage:
     def get_cursor(self, session_id: str) -> SessionCursor:
         """Get the current cursor and sync state for a session.
 
-        Memory-efficient: uses LENGTH() to get byte offset without loading content.
+        Memory-efficient: doesn't load content, just reads metadata.
         Returns byte_offset=0 if session doesn't exist yet.
+
+        Note: byte_offset is the original file position, not the stored content
+        length. This is because tool results are stripped before storage, so the
+        stored content is shorter than the original file.
         """
-        # Use LENGTH() to get byte offset without loading content into memory
         stmt = select(
-            func.length(SessionRawData.jsonl_content),
+            SessionRawData.original_file_offset,
             SessionRawData.last_synced_uuid,
             SessionRawData.span_end,
         ).where(
@@ -141,9 +151,9 @@ class SessionStorage:
         if result is None:
             return SessionCursor(byte_offset=0)
 
-        content_length, last_uuid, span_end = result
+        file_offset, last_uuid, span_end = result
         return SessionCursor(
-            byte_offset=content_length or 0,
+            byte_offset=file_offset or 0,
             last_synced_uuid=last_uuid,
             span_end=span_end or 0,
         )
@@ -165,10 +175,11 @@ class SessionStorage:
 
         The delta is stripped of tool result content before storage to reduce
         disk usage by ~80%. Creates the session if it doesn't exist.
-        Returns the new byte offset (total length after append).
+        Returns the new original file offset (for client seeking).
         """
         # Strip tool result content before storing
         stripped_delta = strip_tool_results(delta)
+        original_delta_size = len(delta)
 
         stmt = select(SessionRawData).where(
             SessionRawData.user_id == self._user_id,
@@ -182,22 +193,28 @@ class SessionStorage:
                 user_id=self._user_id,
                 session_id=session_id,
                 jsonl_content=stripped_delta,
+                original_file_offset=original_delta_size,
             )
             self._db.add(row)
             self._db.flush()
-            return len(stripped_delta)
+            return original_delta_size
 
         # Append to existing
         new_content = row.jsonl_content + stripped_delta
         row.jsonl_content = new_content
+        row.original_file_offset = row.original_file_offset + original_delta_size
         self._db.flush()
-        return len(new_content)
+        return row.original_file_offset
 
     def truncate_content(self, session_id: str, byte_offset: int) -> None:
         """Truncate session content to the given byte offset.
 
         Used when handling reverts in the transcript.
-        Also resets sync state since we need to re-sync.
+        Resets sync state and original_file_offset since we need to re-sync.
+
+        Note: byte_offset here refers to stored content position, not original
+        file position. After truncation, original_file_offset is set to 0 to
+        force a full re-sync from the client.
         """
         stmt = select(SessionRawData).where(
             SessionRawData.user_id == self._user_id,
@@ -209,6 +226,7 @@ class SessionStorage:
             row.jsonl_content = row.jsonl_content[:byte_offset]
             row.last_synced_uuid = None
             row.span_end = 0
+            row.original_file_offset = 0  # Force full re-sync from client
             self._db.flush()
 
     def update_sync_state(
