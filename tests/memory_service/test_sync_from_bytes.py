@@ -1,4 +1,4 @@
-"""Tests for execute_sync_from_bytes server-side sync logic."""
+"""Tests for server-side sync logic (bytes-based)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,8 @@ from memory_service.ingestion.claude.transcript_sync import (
     _build_records_map_from_bytes,
     _get_current_head_from_bytes,
     _iter_jsonl_from_bytes,
-    execute_sync_from_bytes,
+    execute_streaming_resync,
+    stream_find_common_ancestor_from_bytes,
 )
 
 
@@ -150,16 +151,83 @@ class MockBatchAppendResult:
     span_end: int
 
 
-class TestExecuteSyncFromBytes:
-    """Tests for execute_sync_from_bytes."""
+class TestStreamFindCommonAncestorFromBytes:
+    """Tests for stream_find_common_ancestor_from_bytes."""
+
+    def test_finds_ancestor_linear_chain(self) -> None:
+        """Should find common ancestor in a linear chain."""
+        content = _make_jsonl(
+            {"uuid": "msg1", "parentUuid": None},
+            {"uuid": "msg2", "parentUuid": "msg1"},
+            {"uuid": "msg3", "parentUuid": "msg2"},
+        )
+
+        result = stream_find_common_ancestor_from_bytes(
+            jsonl_content=content,
+            current_head="msg3",
+            last_indexed="msg2",
+        )
+
+        assert result.common_ancestor == "msg2"
+        # Only msg3 is cached - streaming stops early once common ancestor is found
+        assert "msg3" in result.records_cache
+
+    def test_finds_ancestor_with_branch(self) -> None:
+        """Should find common ancestor when there's a branch."""
+        content = _make_jsonl(
+            {"uuid": "msg1", "parentUuid": None},
+            {"uuid": "msg2", "parentUuid": "msg1"},
+            {"uuid": "msg3", "parentUuid": "msg2"},  # Original branch
+            {"uuid": "msg3-alt", "parentUuid": "msg2"},  # New branch (revert)
+        )
+
+        result = stream_find_common_ancestor_from_bytes(
+            jsonl_content=content,
+            current_head="msg3-alt",
+            last_indexed="msg3",
+        )
+
+        # Common ancestor should be msg2 (parent of both branches)
+        assert result.common_ancestor == "msg2"
+
+    def test_disjoint_branches_returns_none(self) -> None:
+        """Should return None for disjoint branches."""
+        content = _make_jsonl(
+            {"uuid": "msg1", "parentUuid": None},
+            {"uuid": "msg2", "parentUuid": "msg1"},
+        )
+
+        result = stream_find_common_ancestor_from_bytes(
+            jsonl_content=content,
+            current_head="msg2",
+            last_indexed="nonexistent",
+        )
+
+        assert result.common_ancestor is None
+
+    def test_empty_content(self) -> None:
+        """Should handle empty content."""
+        result = stream_find_common_ancestor_from_bytes(
+            jsonl_content=b"",
+            current_head="msg1",
+            last_indexed=None,
+        )
+
+        assert result.common_ancestor is None
+        assert result.records_cache == {}
+
+
+class TestExecuteStreamingResync:
+    """Tests for execute_streaming_resync."""
 
     def test_empty_content_returns_empty_result(self) -> None:
         client = MockRagZoomClient()
 
-        result = execute_sync_from_bytes(
+        result = execute_streaming_resync(
             session_id="session1",
             jsonl_content=b"",
-            previous_byte_offset=0,
+            last_synced_uuid=None,
+            span_end=0,
             client=client,
         )
 
@@ -168,7 +236,8 @@ class TestExecuteSyncFromBytes:
         assert result.truncated is False
         assert client.appended == []
 
-    def test_syncs_new_messages(self) -> None:
+    def test_syncs_new_messages_from_scratch(self) -> None:
+        """First sync (last_synced_uuid=None) should sync all messages."""
         content = _make_jsonl(
             {
                 "uuid": "msg1",
@@ -180,66 +249,26 @@ class TestExecuteSyncFromBytes:
                 "uuid": "msg2",
                 "parentUuid": "msg1",
                 "type": "assistant",
-                "message": {"content": "Hi there"},
+                "message": {"content": [{"type": "text", "text": "Hi there"}]},
             },
         )
         client = MockRagZoomClient()
 
-        result = execute_sync_from_bytes(
+        result = execute_streaming_resync(
             session_id="session1",
             jsonl_content=content,
-            previous_byte_offset=0,
+            last_synced_uuid=None,
+            span_end=0,
             client=client,
         )
 
         assert result.document_id == "session1"
         assert len(result.appended_uuids) > 0
-        assert result.truncated is False
         assert len(client.appended) > 0
 
-    def test_incremental_sync_only_new_messages(self) -> None:
-        """When previous_byte_offset > 0, should only sync new messages."""
-        first_msg = _make_jsonl(
-            {
-                "uuid": "msg1",
-                "parentUuid": None,
-                "type": "user",
-                "message": {"content": "Hello"},
-            },
-        )
-        full_content = first_msg + _make_jsonl(
-            {
-                "uuid": "msg2",
-                "parentUuid": "msg1",
-                "type": "assistant",
-                "message": {"content": "Hi"},
-            },
-        )
-        client = MockRagZoomClient()
-
-        # Simulate first sync already done
-        execute_sync_from_bytes(
-            session_id="session1",
-            jsonl_content=first_msg,
-            previous_byte_offset=0,
-            client=client,
-        )
-        first_append_count = len(client.appended)
-
-        # Now sync with new content
-        result = execute_sync_from_bytes(
-            session_id="session1",
-            jsonl_content=full_content,
-            previous_byte_offset=len(first_msg),
-            client=client,
-        )
-
-        # Should have appended more content
-        assert len(client.appended) > first_append_count
-        assert "msg2" in result.appended_uuids
-
-    def test_nothing_to_sync_when_already_current(self) -> None:
-        """When already synced to current head, should do nothing."""
+    def test_resync_after_revert_truncates_and_reindexes(self) -> None:
+        """After a revert, should truncate and re-index from common ancestor."""
+        # Content with a branch: msg1 -> msg2 -> msg3, then revert to msg2 -> msg3-alt
         content = _make_jsonl(
             {
                 "uuid": "msg1",
@@ -247,26 +276,32 @@ class TestExecuteSyncFromBytes:
                 "type": "user",
                 "message": {"content": "Hello"},
             },
+            {
+                "uuid": "msg2",
+                "parentUuid": "msg1",
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Hi"}]},
+            },
+            {
+                "uuid": "msg3-alt",
+                "parentUuid": "msg2",
+                "type": "user",
+                "message": {"content": "New branch"},
+            },
         )
         client = MockRagZoomClient()
 
-        # First sync
-        execute_sync_from_bytes(
+        # Simulate we had synced msg3 (which is now gone), current head is msg3-alt
+        result = execute_streaming_resync(
             session_id="session1",
             jsonl_content=content,
-            previous_byte_offset=0,
-            client=client,
-        )
-        first_append_count = len(client.appended)
-
-        # Second sync with same content and offset at end
-        result = execute_sync_from_bytes(
-            session_id="session1",
-            jsonl_content=content,
-            previous_byte_offset=len(content),
+            last_synced_uuid="msg3",  # This was the old head (now reverted)
+            span_end=100,
             client=client,
         )
 
-        # Should not have appended anything new
-        assert len(client.appended) == first_append_count
-        assert result.appended_uuids == []
+        # Should have truncated (because msg3 is not an ancestor of msg3-alt)
+        assert result.truncated is True
+        assert result.truncate_span == 0  # Full re-index
+        # Should have re-indexed content
+        assert len(client.appended) > 0

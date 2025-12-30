@@ -2,14 +2,174 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Generator
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from memory_service.storage import SessionCursor, SessionStorage
+from memory_service.storage import SessionCursor, SessionStorage, strip_tool_results
 from ragzoom.models import Base
+
+
+class TestStripToolResults:
+    """Tests for the strip_tool_results function."""
+
+    def test_empty_input(self) -> None:
+        """Should return empty bytes for empty input."""
+        assert strip_tool_results(b"") == b""
+
+    def test_preserves_regular_user_messages(self) -> None:
+        """Should preserve user messages without toolUseResult."""
+        record = {
+            "uuid": "msg1",
+            "parentUuid": "msg0",
+            "type": "user",
+            "message": {"content": "hello"},
+        }
+        input_bytes = json.dumps(record).encode()
+
+        result = strip_tool_results(input_bytes)
+
+        assert result == input_bytes
+
+    def test_preserves_assistant_messages(self) -> None:
+        """Should preserve assistant messages completely."""
+        record = {
+            "uuid": "msg1",
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "response"}]},
+        }
+        input_bytes = json.dumps(record).encode()
+
+        result = strip_tool_results(input_bytes)
+
+        assert result == input_bytes
+
+    def test_strips_tool_result_content(self) -> None:
+        """Should strip toolUseResult content to just essential fields."""
+        record = {
+            "uuid": "msg2",
+            "parentUuid": "msg1",
+            "type": "user",
+            "toolUseResult": "Here is 10MB of file content...",
+            "message": {"content": "full tool output..."},
+        }
+        input_bytes = json.dumps(record).encode()
+
+        result = strip_tool_results(input_bytes)
+        parsed = json.loads(result)
+
+        assert parsed["uuid"] == "msg2"
+        assert parsed["parentUuid"] == "msg1"
+        assert parsed["type"] == "user"
+        assert parsed["toolUseResult"] == "[stripped]"
+        assert "message" not in parsed
+
+    def test_preserves_uuid_parent_uuid_type(self) -> None:
+        """Should always preserve uuid, parentUuid, and type."""
+        record = {
+            "uuid": "tool-result-1",
+            "parentUuid": "assistant-1",
+            "type": "user",
+            "toolUseResult": "huge output",
+        }
+        input_bytes = json.dumps(record).encode()
+
+        result = strip_tool_results(input_bytes)
+        parsed = json.loads(result)
+
+        assert parsed["uuid"] == "tool-result-1"
+        assert parsed["parentUuid"] == "assistant-1"
+        assert parsed["type"] == "user"
+
+    def test_preserves_is_compact_summary_field(self) -> None:
+        """Should preserve isCompactSummary for compaction bridging."""
+        record = {
+            "uuid": "msg1",
+            "type": "user",
+            "toolUseResult": "output",
+            "isCompactSummary": True,
+        }
+        input_bytes = json.dumps(record).encode()
+
+        result = strip_tool_results(input_bytes)
+        parsed = json.loads(result)
+
+        assert parsed["isCompactSummary"] is True
+
+    def test_handles_multiple_records(self) -> None:
+        """Should handle multiple JSONL records correctly."""
+        records = [
+            {"uuid": "msg1", "type": "user", "message": {"content": "hello"}},
+            {
+                "uuid": "msg2",
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "hi"}]},
+            },
+            {
+                "uuid": "msg3",
+                "parentUuid": "msg2",
+                "type": "user",
+                "toolUseResult": "big output",
+            },
+            {"uuid": "msg4", "type": "user", "message": {"content": "thanks"}},
+        ]
+        input_bytes = b"\n".join(json.dumps(r).encode() for r in records)
+
+        result = strip_tool_results(input_bytes)
+        lines = result.split(b"\n")
+
+        assert len(lines) == 4
+        # First two should be unchanged
+        assert json.loads(lines[0]) == records[0]
+        assert json.loads(lines[1]) == records[1]
+        # Third should be stripped
+        parsed_tool = json.loads(lines[2])
+        assert parsed_tool["toolUseResult"] == "[stripped]"
+        # Fourth should be unchanged
+        assert json.loads(lines[3]) == records[3]
+
+    def test_handles_empty_lines(self) -> None:
+        """Should preserve empty lines in JSONL."""
+        input_bytes = (
+            b'{"uuid": "msg1", "type": "user"}\n\n{"uuid": "msg2", "type": "user"}'
+        )
+
+        result = strip_tool_results(input_bytes)
+
+        lines = result.split(b"\n")
+        assert len(lines) == 3
+        assert lines[1] == b""
+
+    def test_handles_malformed_json(self) -> None:
+        """Should preserve malformed lines as-is."""
+        input_bytes = b'{"uuid": "msg1"}\nnot valid json\n{"uuid": "msg2"}'
+
+        result = strip_tool_results(input_bytes)
+
+        lines = result.split(b"\n")
+        assert lines[1] == b"not valid json"
+
+    def test_reduces_size_significantly(self) -> None:
+        """Should significantly reduce size for tool result records."""
+        # Simulate a large tool result (like file content)
+        large_output = "x" * 100000  # 100KB of output
+        record = {
+            "uuid": "msg1",
+            "parentUuid": "msg0",
+            "type": "user",
+            "toolUseResult": large_output,
+            "message": {"content": [{"type": "tool_result", "content": large_output}]},
+        }
+        input_bytes = json.dumps(record).encode()
+
+        result = strip_tool_results(input_bytes)
+
+        # Should be dramatically smaller
+        assert len(result) < 200  # Just the essential fields
+        assert len(input_bytes) > 200000  # Original was huge
 
 
 @pytest.fixture

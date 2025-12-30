@@ -8,7 +8,11 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from memory_service.ingestion.claude.jsonl_reader import iter_jsonl, iter_jsonl_reversed
+from memory_service.ingestion.claude.jsonl_reader import (
+    iter_jsonl,
+    iter_jsonl_bytes_reversed,
+    iter_jsonl_reversed,
+)
 
 # Patterns for cleaning user text (system noise from Claude Code)
 _CAVEAT_PATTERN = re.compile(
@@ -386,6 +390,102 @@ def stream_find_common_ancestor_and_records(
         if intersection:
             # Return any element from intersection - they're all valid common ancestors
             # In the simple case (linear chain), there's only one
+            common = next(iter(intersection))
+            return StreamingAncestorResult(
+                common_ancestor=common,
+                parent_of=parent_of,
+                records_cache=records_cache,
+            )
+
+    # No intersection = disjoint branches
+    return StreamingAncestorResult(
+        common_ancestor=None,
+        parent_of=parent_of,
+        records_cache=records_cache,
+    )
+
+
+def stream_find_common_ancestor_from_bytes(
+    jsonl_content: bytes,
+    current_head: str,
+    last_indexed: str | None,
+) -> StreamingAncestorResult:
+    """Stream backwards through bytes to find common ancestor.
+
+    This is the bytes-based equivalent of stream_find_common_ancestor_and_records
+    for use with content stored in the database rather than files.
+
+    Complexity: O(distance from end to common ancestor) instead of O(full content).
+
+    Args:
+        jsonl_content: JSONL content as bytes (newline-delimited JSON records)
+        current_head: UUID of the current transcript head
+        last_indexed: UUID of the last indexed message, or None if empty
+
+    Returns:
+        StreamingAncestorResult with common ancestor, partial parent map, and records
+    """
+    reachable_from_current: set[str] = {current_head}
+    reachable_from_last: set[str] = {last_indexed} if last_indexed else set()
+    parent_of: dict[str, str | None] = {}
+    records_cache: dict[str, dict[str, object]] = {}
+
+    # Compaction bridging state
+    saw_compaction = False
+    pending_bridge: str | None = None
+
+    for record in iter_jsonl_bytes_reversed(jsonl_content):
+        uuid = record.get("uuid")
+        if not isinstance(uuid, str):
+            continue
+
+        parent = record.get("parentUuid")
+        if parent is not None and not isinstance(parent, str):
+            parent = None
+        is_compact = bool(record.get("isCompactSummary"))
+
+        records_cache[uuid] = record
+
+        # Handle compaction summaries
+        if is_compact:
+            saw_compaction = True
+            parent_of[uuid] = parent
+            if uuid in reachable_from_current and parent:
+                reachable_from_current.add(parent)
+            if uuid in reachable_from_last and parent:
+                reachable_from_last.add(parent)
+            continue
+
+        # Handle messages with parentUuid=None
+        if parent is None:
+            if saw_compaction:
+                pending_bridge = uuid
+                saw_compaction = False
+            parent_of[uuid] = None
+
+        # Apply bridge
+        if pending_bridge is not None and pending_bridge != uuid:
+            parent_of[pending_bridge] = uuid
+            if pending_bridge in reachable_from_current:
+                reachable_from_current.add(uuid)
+            if pending_bridge in reachable_from_last:
+                reachable_from_last.add(uuid)
+            pending_bridge = None
+
+        # Set parent for non-null parent messages
+        if parent is not None:
+            parent_of[uuid] = parent
+
+        # Extend reachable sets
+        actual_parent = parent_of.get(uuid)
+        if uuid in reachable_from_current and actual_parent:
+            reachable_from_current.add(actual_parent)
+        if uuid in reachable_from_last and actual_parent:
+            reachable_from_last.add(actual_parent)
+
+        # Check for intersection (common ancestor)
+        intersection = reachable_from_current & reachable_from_last
+        if intersection:
             common = next(iter(intersection))
             return StreamingAncestorResult(
                 common_ancestor=common,
@@ -1389,33 +1489,187 @@ def execute_delta_sync(
     )
 
 
-def execute_sync_from_bytes(
+def execute_streaming_resync(
     session_id: str,
     jsonl_content: bytes,
-    previous_byte_offset: int,
+    last_synced_uuid: str | None,
+    span_end: int,
     client: object,
 ) -> SyncResult:
-    """Execute sync from in-memory JSONL bytes (for server-side processing).
+    """Execute re-sync using streaming approach after revert detection.
 
-    DEPRECATED: This O(n) implementation loads full content into memory.
-    Use streaming sync instead (to be implemented).
+    Uses stream_find_common_ancestor_from_bytes to find the branch point
+    in O(distance) time instead of O(n), then transcribes only the new
+    messages from the common ancestor to current head.
 
     Args:
         session_id: The session ID (used as document_id)
         jsonl_content: Full JSONL content as bytes
-        previous_byte_offset: Byte offset where previous sync ended
-        client: RagZoom client with append() and truncate() methods
+        last_synced_uuid: UUID of the last synced message (before revert)
+        span_end: Document span position of last sync
+        client: RagZoom client with truncate() and batch_append() methods
 
     Returns:
-        SyncResult describing what was done
-
-    Raises:
-        NotImplementedError: This function is deprecated pending streaming rewrite.
+        SyncResult describing what was done (truncation and new appends)
     """
-    # Avoid unused parameter warnings
-    _ = (session_id, jsonl_content, previous_byte_offset, client)
-    raise NotImplementedError(
-        "execute_sync_from_bytes is deprecated. "
-        "The O(n) full-content-load approach must be replaced with streaming sync. "
-        "See plan: /Users/tom/.claude/plans/ancient-booping-moon.md"
+    import logging
+    import time
+
+    logger = logging.getLogger(__name__)
+    t0 = time.perf_counter()
+    document_id = session_id
+
+    logger.info(
+        "[TIMING] execute_streaming_resync start: content_bytes=%d last_synced=%s",
+        len(jsonl_content),
+        last_synced_uuid[:8] if last_synced_uuid else None,
+    )
+
+    # Get current head from content
+    current_head = _get_current_head_from_bytes(jsonl_content)
+    if current_head is None:
+        # Empty content
+        return SyncResult(
+            document_id=document_id,
+            truncated=False,
+            truncate_span=None,
+            appended_uuids=[],
+            new_span_end=0,
+        )
+
+    t_head = time.perf_counter()
+
+    # Use streaming to find common ancestor
+    result = stream_find_common_ancestor_from_bytes(
+        jsonl_content, current_head, last_synced_uuid
+    )
+    t_ancestor = time.perf_counter()
+
+    logger.info(
+        "[TIMING] streaming ancestor search: head=%.3fs ancestor=%.3fs "
+        "common_ancestor=%s records_cached=%d",
+        t_head - t0,
+        t_ancestor - t_head,
+        result.common_ancestor[:8] if result.common_ancestor else None,
+        len(result.records_cache),
+    )
+
+    # Get chain from common ancestor to current head
+    uuids_to_transcribe = get_ancestor_chain(
+        current_head, result.common_ancestor, result.parent_of
+    )
+    t_chain = time.perf_counter()
+
+    # If there's a common ancestor that's not the last synced uuid,
+    # we need to truncate back to that point
+    truncated = False
+    truncate_span: int | None = None
+
+    if (
+        result.common_ancestor is not None
+        and result.common_ancestor != last_synced_uuid
+    ):
+        # Need to truncate - find span position for common ancestor
+        # For now, we truncate to 0 and re-index from there
+        # A more sophisticated approach would track span per uuid
+        truncate_method = getattr(client, "truncate")
+        truncate_method(document_id, 0)
+        truncated = True
+        truncate_span = 0
+
+        # Need to transcribe from beginning since we truncated to 0
+        uuids_to_transcribe = get_ancestor_chain(current_head, None, result.parent_of)
+    elif result.common_ancestor is None and last_synced_uuid is not None:
+        # Disjoint branches - full re-index
+        truncate_method = getattr(client, "truncate")
+        truncate_method(document_id, 0)
+        truncated = True
+        truncate_span = 0
+
+        # Build full chain from root
+        uuids_to_transcribe = get_ancestor_chain(current_head, None, result.parent_of)
+
+    # Transcribe and append
+    appended_uuids: list[str] = []
+    new_span_end = span_end if not truncated else 0
+
+    if uuids_to_transcribe:
+        # Segment UUIDs at turn boundaries (same logic as execute_delta_sync)
+        segments: list[list[str]] = []
+        current_segment: list[str] = []
+        prev_was_user = False
+
+        for uuid in uuids_to_transcribe:
+            record = result.records_cache.get(uuid)
+            if record is None:
+                continue
+
+            is_user_message = (
+                record.get("type") == "user" and "toolUseResult" not in record
+            )
+
+            if is_user_message and not prev_was_user and current_segment:
+                segments.append(current_segment)
+                current_segment = []
+
+            current_segment.append(uuid)
+            prev_was_user = is_user_message
+
+        if current_segment:
+            segments.append(current_segment)
+
+        # Transcribe and collect
+        segment_texts: list[str] = []
+
+        for segment_uuids in segments:
+            combined_text = transcribe_uuids_from_map(
+                segment_uuids, result.records_cache
+            )
+
+            if combined_text:
+                segment_texts.append(combined_text)
+                segment_appended_uuids = [
+                    u
+                    for u in segment_uuids
+                    if u in result.records_cache
+                    and not (
+                        result.records_cache[u].get("type") == "user"
+                        and "toolUseResult" in result.records_cache[u]
+                    )
+                ]
+                appended_uuids.extend(segment_appended_uuids)
+
+        t_transcribe = time.perf_counter()
+        logger.info(
+            "[TIMING] transcribe phase: chain=%.3fs transcribe=%.3fs segments=%d",
+            t_chain - t_ancestor,
+            t_transcribe - t_chain,
+            len(segment_texts),
+        )
+
+        if segment_texts:
+            batch_append_method = getattr(client, "batch_append")
+            append_result = batch_append_method(document_id, segment_texts)
+            new_span_end = getattr(append_result, "span_end", 0)
+            t_append = time.perf_counter()
+            logger.info(
+                "[TIMING] batch_append complete: %.3fs segments=%d",
+                t_append - t_transcribe,
+                len(segment_texts),
+            )
+
+    t_end = time.perf_counter()
+    logger.info(
+        "[TIMING] execute_streaming_resync complete: total=%.3fs appended=%d truncated=%s",
+        t_end - t0,
+        len(appended_uuids),
+        truncated,
+    )
+
+    return SyncResult(
+        document_id=document_id,
+        truncated=truncated,
+        truncate_span=truncate_span,
+        appended_uuids=appended_uuids,
+        new_span_end=new_span_end,
     )
