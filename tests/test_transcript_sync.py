@@ -894,10 +894,10 @@ class TestExecuteDeltaSync:
 
         class MockClient:
             def __init__(self) -> None:
-                self.appended: list[str] = []
+                self.appended: list[list[str]] = []
 
-            def append(self, document_id: str, text: str) -> MockResult:
-                self.appended.append(text)
+            def batch_append(self, document_id: str, texts: list[str]) -> MockResult:
+                self.appended.append(texts)
                 return MockResult(span_end=100)
 
         delta = b'{"uuid": "msg1", "parentUuid": null, "type": "user", "message": {"content": "Hello"}}\n'
@@ -928,7 +928,7 @@ class TestExecuteDeltaSync:
             span_end: int = 100
 
         class MockClient:
-            def append(self, document_id: str, text: str) -> object:
+            def batch_append(self, document_id: str, texts: list[str]) -> object:
                 raise AssertionError("Should not be called on revert")
 
         # Delta's first message has parentUuid=msg1, but we synced to msg2
@@ -965,10 +965,10 @@ class TestExecuteDeltaSync:
 
         class MockClient:
             def __init__(self) -> None:
-                self.appended: list[str] = []
+                self.appended: list[list[str]] = []
 
-            def append(self, document_id: str, text: str) -> MockResult:
-                self.appended.append(text)
+            def batch_append(self, document_id: str, texts: list[str]) -> MockResult:
+                self.appended.append(texts)
                 return MockResult(span_end=200)
 
         # Delta continues from msg2 (the last synced)
@@ -1000,7 +1000,7 @@ class TestExecuteDeltaSync:
             span_end: int = 100
 
         class MockClient:
-            def append(self, document_id: str, text: str) -> object:
+            def batch_append(self, document_id: str, texts: list[str]) -> object:
                 raise AssertionError("Should not be called on empty delta")
 
         cursor = MockCursor()
