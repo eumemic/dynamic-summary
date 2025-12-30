@@ -520,7 +520,14 @@ class IndexingEngine:
         self._dirty_documents.add(document_id)
 
         # Start scheduler if not already running
-        if self._scheduler_task is None or self._scheduler_task.done():
+        task_none = self._scheduler_task is None
+        task_done = self._scheduler_task.done() if self._scheduler_task else True
+        if task_none or task_done:
+            logger.warning(
+                "SCHED: starting scheduler task_none=%s task_done=%s",
+                task_none,
+                task_done,
+            )
             self._scheduler_task = asyncio.create_task(self._run_scheduler())
 
     async def _run_scheduler(self) -> None:
@@ -531,11 +538,16 @@ class IndexingEngine:
         """
         # Yield to let more job completions accumulate their scheduling requests
         await asyncio.sleep(0)
+        logger.warning(
+            "SCHED: scheduler loop starting dirty=%d", len(self._dirty_documents)
+        )
 
         while self._dirty_documents:
             # Pop one document at a time (set iteration isn't safe during modification)
             document_id = self._dirty_documents.pop()
+            logger.warning("SCHED: processing doc=%s", document_id[:8])
             await self._find_and_start_jobs(document_id)
+        logger.warning("SCHED: scheduler loop done")
 
     async def _find_and_start_jobs(self, document_id: str) -> None:
         """Find and start eligible jobs up to max parallelism.
@@ -571,6 +583,11 @@ class IndexingEngine:
             # Find multiple jobs at once outside lock (does I/O)
             jobs = self._find_next_n_jobs(
                 document_id, current_active, ctx, available_slots
+            )
+            logger.warning(
+                "SCHED: _find_next_n_jobs returned %d jobs (slots=%d)",
+                len(jobs),
+                available_slots,
             )
 
             finalize_runs = False
