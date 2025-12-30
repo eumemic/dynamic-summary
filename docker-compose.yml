@@ -1,4 +1,20 @@
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      - POSTGRES_USER=ragzoom
+      - POSTGRES_PASSWORD=ragzoom
+      - POSTGRES_DB=ragzoom
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ragzoom"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   grpc:
     build:
       context: .
@@ -100,3 +116,6 @@ services:
           path: ./ui/inspector/tsconfig.node.json
         - action: rebuild
           path: ./ui/inspector/Dockerfile
+
+volumes:
+  postgres_data:
