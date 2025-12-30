@@ -194,9 +194,10 @@ class TestSessionStorage:
 
         assert cursor == SessionCursor(byte_offset=0)
 
-    def test_get_cursor_returns_content_length(self, db_session: Session) -> None:
-        """Should return byte_offset equal to stored content length."""
+    def test_get_cursor_returns_original_file_offset(self, db_session: Session) -> None:
+        """Should return byte_offset equal to original file offset."""
         storage = SessionStorage(db_session, user_id="user1")
+        # Content without tool results - original_file_offset equals content length
         content = b'{"uuid": "msg1"}\n{"uuid": "msg2"}\n'
         storage.append_content("session1", content)
         db_session.commit()
@@ -263,7 +264,8 @@ class TestSessionStorage:
         db_session.commit()
 
         assert storage.get_content("session1") == first
-        assert storage.get_cursor("session1") == SessionCursor(byte_offset=len(first))
+        # Truncation resets original_file_offset to 0 to force full re-sync
+        assert storage.get_cursor("session1") == SessionCursor(byte_offset=0)
 
     def test_truncate_content_noop_if_offset_beyond_content(
         self, db_session: Session
@@ -355,6 +357,39 @@ class TestSessionStorage:
         db_session.commit()
 
         cursor = storage.get_cursor("session1")
-        assert cursor.byte_offset == 17
+        # Truncation resets original_file_offset to 0 to force full re-sync
+        assert cursor.byte_offset == 0
         assert cursor.last_synced_uuid is None
         assert cursor.span_end == 0
+
+    def test_cursor_tracks_original_file_offset_with_stripping(
+        self, db_session: Session
+    ) -> None:
+        """Cursor byte_offset should track original delta size, not stripped content."""
+        storage = SessionStorage(db_session, user_id="user1")
+
+        # Create content with a large tool result that will be stripped
+        large_output = "x" * 10000
+        record_with_tool = {
+            "uuid": "msg1",
+            "parentUuid": "msg0",
+            "type": "user",
+            "toolUseResult": large_output,
+            "message": {"content": large_output},
+        }
+        original_content = json.dumps(record_with_tool).encode() + b"\n"
+        original_size = len(original_content)
+
+        # Append the content
+        new_offset = storage.append_content("session1", original_content)
+        db_session.commit()
+
+        # byte_offset should be the original size, not the stripped size
+        assert new_offset == original_size
+
+        cursor = storage.get_cursor("session1")
+        assert cursor.byte_offset == original_size
+
+        # But stored content should be much smaller
+        stored = storage.get_content("session1")
+        assert len(stored) < original_size  # Should be stripped
