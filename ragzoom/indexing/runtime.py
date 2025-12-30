@@ -341,10 +341,7 @@ class DocumentIndexSession:
                 previous_leaf_count = document_store.nodes.leaf_count()
 
                 if collect_telemetry and telemetry_manager is not None:
-                    existing_tokens = sum(
-                        int(getattr(node, "token_count", 0))
-                        for node in document_store.nodes.get_leaves()
-                    )
+                    existing_tokens = document_store.nodes.sum_leaf_tokens()
                     new_tokens = tokenizer.count_tokens(text)
                     source_tokens = existing_tokens + new_tokens
                     run_context = await telemetry_manager.start_run(
@@ -494,10 +491,7 @@ class DocumentIndexSession:
                 previous_leaf_count = document_store.nodes.leaf_count()
 
                 if collect_telemetry and telemetry_manager is not None:
-                    existing_tokens = sum(
-                        int(getattr(node, "token_count", 0))
-                        for node in document_store.nodes.get_leaves()
-                    )
+                    existing_tokens = document_store.nodes.sum_leaf_tokens()
                     new_tokens = sum(tokenizer.count_tokens(u) for u in units if u)
                     source_tokens = existing_tokens + new_tokens
                     run_context = await telemetry_manager.start_run(

@@ -557,6 +557,21 @@ class PostgresNodeRepository(BaseRepository):
                 self._force_load_and_detach(session, node)
                 yield node
 
+    def iter_all_for_document(self, document_id: str | None) -> Iterator[TreeNode]:
+        """Iterate over all nodes ordered by span_start.
+
+        Uses yield_per to stream results without loading all into memory.
+        """
+        with self.SessionLocal() as session:
+            query = session.query(PostgresTreeNode).order_by(
+                PostgresTreeNode.span_start
+            )
+            if document_id is not None:
+                query = query.filter(PostgresTreeNode.document_id == document_id)
+            for node in query.yield_per(100):
+                self._force_load_and_detach(session, node)
+                yield node
+
     def get_nodes_overlapping_span(
         self,
         document_id: str | None,
@@ -884,6 +899,24 @@ class PostgresNodeRepository(BaseRepository):
         """Return maximum node height for a document (fast MAX(height))"""
         with self.SessionLocal() as session:
             q = session.query(func.max(PostgresTreeNode.height))
+            if document_id:
+                q = q.filter(PostgresTreeNode.document_id == document_id)
+            return int(q.scalar() or 0)
+
+    def sum_leaf_tokens_for_document(self, document_id: str | None) -> int:
+        """Return sum of token_count for all leaves in document."""
+        with self.SessionLocal() as session:
+            q = session.query(func.coalesce(func.sum(PostgresTreeNode.token_count), 0))
+            q = q.filter(PostgresTreeNode.height == 0)
+            if document_id:
+                q = q.filter(PostgresTreeNode.document_id == document_id)
+            return int(q.scalar() or 0)
+
+    def sum_root_tokens_for_document(self, document_id: str | None) -> int:
+        """Return sum of token_count for all root nodes in document."""
+        with self.SessionLocal() as session:
+            q = session.query(func.coalesce(func.sum(PostgresTreeNode.token_count), 0))
+            q = q.filter(PostgresTreeNode.parent_id.is_(None))
             if document_id:
                 q = q.filter(PostgresTreeNode.document_id == document_id)
             return int(q.scalar() or 0)

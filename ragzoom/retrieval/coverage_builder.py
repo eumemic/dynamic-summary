@@ -275,9 +275,9 @@ class CoverageBuilder:
         # Add roots - document may be a forest, so we need all roots even if
         # some trees have no seeds. Roots are fetched (not computed) because
         # different trees in the forest may have different heights.
+        # Use streaming iterator to avoid loading all roots into memory at once.
         try:
-            root_nodes = self.store.nodes.get_root_nodes()
-            for root in root_nodes:
+            for root in self.store.nodes.iter_root_nodes():
                 root_coord = TreeCoordinate(
                     document_id=getattr(root, "document_id", None),
                     height=getattr(root, "height", 0),
