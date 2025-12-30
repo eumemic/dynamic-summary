@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from memory_service.ingestion.claude.transcript_sync import (
+from ragzoom.claude_memory.transcript_sync import (
     AppendEntry,
     SessionState,
     SessionStateHeader,
@@ -374,9 +374,11 @@ class TestCompactionSegmentBridging:
     bridge these segments by treating compaction as a virtual parent edge.
     """
 
-    def test_parent_map_bridges_compaction_boundary(self, tmp_path: Path) -> None:
-        """Parent map should connect post-compaction messages to pre-compaction chain."""
-        from memory_service.ingestion.claude.transcript_sync import build_parent_map
+    def test_streaming_bridges_compaction_boundary(self, tmp_path: Path) -> None:
+        """Streaming should connect post-compaction messages to pre-compaction chain."""
+        from ragzoom.claude_memory.transcript_sync import (
+            stream_find_common_ancestor_and_records,
+        )
 
         transcript_path = tmp_path / "transcript.jsonl"
         transcript_path.write_text(
@@ -411,15 +413,17 @@ class TestCompactionSegmentBridging:
             + "\n"
         )
 
-        parent_map = build_parent_map(transcript_path)
+        result = stream_find_common_ancestor_and_records(
+            transcript_path, current_head="msg5", last_indexed=None
+        )
 
         # The system message (which has parentUuid=None) should be bridged
         # to msg3 (the last message before the system/compaction pair)
-        assert parent_map["system1"] == "msg3"
+        assert result.parent_of["system1"] == "msg3"
 
         # Regular parent relationships should still work
-        assert parent_map["msg2"] == "msg1"
-        assert parent_map["msg4"] == "compact1"
+        assert result.parent_of["msg2"] == "msg1"
+        assert result.parent_of["msg4"] == "compact1"
 
     def test_sync_indexes_content_across_compaction(self, tmp_path: Path) -> None:
         """Sync should index ALL messages, including those before compaction."""
@@ -490,9 +494,9 @@ class TestCompactionSegmentBridging:
 
     def test_ancestor_chain_spans_multiple_compactions(self, tmp_path: Path) -> None:
         """With multiple compactions, ancestor chain should span all of them."""
-        from memory_service.ingestion.claude.transcript_sync import (
-            build_parent_map,
+        from ragzoom.claude_memory.transcript_sync import (
             get_ancestor_chain,
+            stream_find_common_ancestor_and_records,
         )
 
         transcript_path = tmp_path / "transcript.jsonl"
@@ -530,10 +534,13 @@ class TestCompactionSegmentBridging:
             + "\n"
         )
 
-        parent_map = build_parent_map(transcript_path)
+        # Use streaming to build parent map
+        result = stream_find_common_ancestor_and_records(
+            transcript_path, current_head="d1", last_indexed=None
+        )
 
         # Get full ancestor chain from d1 back to root
-        chain = get_ancestor_chain("d1", None, parent_map)
+        chain = get_ancestor_chain("d1", None, result.parent_of)
 
         # Should include messages from all three segments
         assert "a1" in chain
