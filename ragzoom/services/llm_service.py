@@ -142,7 +142,8 @@ class LLMService:
         if os.environ.get("PYTEST_CURRENT_TEST"):
             self.client = _build_test_openai_client(self.config.embedding_model)
         else:
-            self.client = AsyncOpenAI(api_key=actual_key)
+            # Set a 120-second timeout to prevent indefinite hanging on API calls
+            self.client = AsyncOpenAI(api_key=actual_key, timeout=120.0)
 
         # Lazy-init summarizer; track client/config to detect when tests replace them
         self._cached_summarizer: Summarizer | None = None

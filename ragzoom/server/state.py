@@ -85,7 +85,8 @@ class ServerState:
             model,
         )
         openai_client = OpenAI(
-            api_key=operational_cfg.openai_api_key.get_secret_value()
+            api_key=operational_cfg.openai_api_key.get_secret_value(),
+            timeout=120.0,
         )
 
         indexing_engine = IndexingEngine(
