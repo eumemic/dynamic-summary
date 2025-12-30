@@ -43,16 +43,12 @@ class AppendOutcome:
     new_leaf_ids: list[str]
     deleted_node_ids: list[str]
     total_leaves: int
-    # Data for async embedding (leaves no longer embedded during append)
-    leaf_texts: list[str]
-    leaf_metadata: list[dict[str, object]]
 
 
 class AppendExecutor:
     """Create new leaves for appended content.
 
     Embedding is handled asynchronously via WorkerCoordinator after append completes.
-    The AppendOutcome includes leaf_texts and leaf_metadata for queuing embedding work.
     """
 
     def __init__(
@@ -250,21 +246,6 @@ class AppendExecutor:
             appended_span_end,
         )
 
-        # Build metadata for async embedding
-        leaf_metadata: list[dict[str, object]] = []
-        for leaf in leaf_specs:
-            leaf_metadata.append(
-                {
-                    "document_id": document_id,
-                    "span_start": leaf.span_start,
-                    "span_end": leaf.span_end,
-                    "is_leaf": 1,
-                    "height": 0,
-                    "level_index": leaf.level_index,
-                    "coord_version": 1,
-                }
-            )
-
         return AppendOutcome(
             document_id=document_id,
             appended_span_start=leaf_specs[0].span_start,
@@ -272,8 +253,6 @@ class AppendExecutor:
             new_leaf_ids=[leaf.node_id for leaf in leaf_specs],
             deleted_node_ids=[],
             total_leaves=total_leaves,
-            leaf_texts=[leaf.text for leaf in leaf_specs],
-            leaf_metadata=leaf_metadata,
         )
 
     # jscpd:ignore-start - Parallel structure to append() intentional (batch vs single)
@@ -320,8 +299,6 @@ class AppendExecutor:
                 new_leaf_ids=[],
                 deleted_node_ids=[],
                 total_leaves=total_leaves,
-                leaf_texts=[],
-                leaf_metadata=[],
             )
 
         right_leaf = store.nodes.get_rightmost_leaf_for_document(document_id)
@@ -397,8 +374,6 @@ class AppendExecutor:
                 new_leaf_ids=[],
                 deleted_node_ids=[],
                 total_leaves=total_leaves,
-                leaf_texts=[],
-                leaf_metadata=[],
             )
 
         # Fix following_neighbor_id links across unit boundaries
@@ -536,21 +511,6 @@ class AppendExecutor:
             total_leaves,
         )
 
-        # Build metadata for async embedding
-        leaf_metadata: list[dict[str, object]] = []
-        for leaf in all_leaf_specs:
-            leaf_metadata.append(
-                {
-                    "document_id": document_id,
-                    "span_start": leaf.span_start,
-                    "span_end": leaf.span_end,
-                    "is_leaf": 1,
-                    "height": 0,
-                    "level_index": leaf.level_index,
-                    "coord_version": 1,
-                }
-            )
-
         return AppendOutcome(
             document_id=document_id,
             appended_span_start=initial_span_start,
@@ -558,8 +518,6 @@ class AppendExecutor:
             new_leaf_ids=[leaf.node_id for leaf in all_leaf_specs],
             deleted_node_ids=[],
             total_leaves=total_leaves,
-            leaf_texts=[leaf.text for leaf in all_leaf_specs],
-            leaf_metadata=leaf_metadata,
         )
 
     # jscpd:ignore-end
