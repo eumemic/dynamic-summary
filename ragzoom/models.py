@@ -74,8 +74,14 @@ class PostgresTreeNode(TreeNodeColumnsMixin, Base):
         Index("idx_tree_nodes_document_id", "document_id"),
         # Index on parent_id for tree navigation queries
         Index("idx_tree_nodes_parent_id", "parent_id"),
-        # Composite index for root node queries (document + no parent)
-        Index("idx_tree_nodes_document_root", "document_id", "parent_id"),
+        # Composite index for root node queries with span ordering
+        # Covers: WHERE document_id = X AND parent_id IS NULL ORDER BY span_start
+        Index(
+            "idx_tree_nodes_document_root_span",
+            "document_id",
+            "parent_id",
+            "span_start",
+        ),
         # Index on following_neighbor_id for dataflow navigation
         Index("idx_tree_nodes_following_neighbor_id", "following_neighbor_id"),
         # Index for quickly scanning siblings by height and level_index
@@ -84,6 +90,14 @@ class PostgresTreeNode(TreeNodeColumnsMixin, Base):
             "document_id",
             "height",
             "level_index",
+        ),
+        # Index for leaf queries with span ordering (height=0 queries)
+        # Covers: WHERE document_id = X AND height = 0 ORDER BY span_start
+        Index(
+            "idx_tree_nodes_document_height_span",
+            "document_id",
+            "height",
+            "span_start",
         ),
     )
 
