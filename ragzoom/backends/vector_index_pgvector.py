@@ -193,10 +193,17 @@ class PgVectorIndexAdapter(VectorIndex):
     def _ensure_schema(self) -> None:
         # Create vector extension and table for node vectors
         with self._engine.begin() as conn:
-            try:
-                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            except Exception as e:  # pragma: no cover - environment-specific
-                logger.debug(f"pgvector extension note: {e}")
+            # Check if pgvector extension is available
+            result = conn.execute(
+                text("SELECT name FROM pg_available_extensions WHERE name = 'vector'")
+            )
+            if not result.fetchone():
+                raise RuntimeError(
+                    "pgvector extension is not available in this PostgreSQL installation. "
+                    "Either use a PostgreSQL image with pgvector (e.g., pgvector/pgvector:pg17) "
+                    "or set RAGZOOM_VECTOR_BACKEND=chroma to use in-memory vectors."
+                )
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             conn.execute(
                 text(
                     """
