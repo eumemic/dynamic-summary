@@ -394,7 +394,12 @@ class IndexingEngine:
             self._active_documents.add(document_id)
             self._idle_event.clear()
 
-        await self._find_and_start_jobs(document_id)
+        # Fire-and-forget: don't block append on job discovery
+        # Jobs will be discovered and started in background
+        asyncio.create_task(
+            self._safe_find_and_start_jobs(document_id),
+            name=f"trigger_work:{document_id[:8]}",
+        )
 
     async def register_run(
         self,
@@ -497,6 +502,13 @@ class IndexingEngine:
     # -----------------------------------------------------------------------
     # Job discovery and scheduling
     # -----------------------------------------------------------------------
+
+    async def _safe_find_and_start_jobs(self, document_id: str) -> None:
+        """Wrapper around _find_and_start_jobs that logs errors."""
+        try:
+            await self._find_and_start_jobs(document_id)
+        except Exception:
+            logger.exception("Error in background job discovery for %s", document_id)
 
     def _request_scheduling(self, document_id: str) -> None:
         """Request scheduling for a document, coalescing multiple requests.
