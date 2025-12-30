@@ -681,7 +681,7 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
             )
 
         document_store = self._state.store.for_document(request.document_id)
-        leaves = document_store.nodes.get_leaves()
+        leaf_count = document_store.nodes.leaf_count()
         root = document_store.tree.get_root()
         tree_depth = int(getattr(root, "height", 0) or 0) if root else 0
 
@@ -691,7 +691,7 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
 
         doc_status = pb2.DocumentStatus(
             document_id=request.document_id,
-            leaf_count=len(leaves),
+            leaf_count=leaf_count,
             has_pending_work=has_pending_work,
             tree_depth=tree_depth,
         )
@@ -772,7 +772,7 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
 
         doc_store = self._state.store.for_document(request.document_id)
         active_nodes: dict[str, dict[str, object]] = {}
-        for node in doc_store.nodes.get_all():
+        for node in doc_store.nodes.iter_all():
             active_nodes[node.id] = {
                 "height": int(getattr(node, "height", 0)),
                 "span": (

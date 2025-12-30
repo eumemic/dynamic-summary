@@ -8,7 +8,7 @@ for tests and development.
 from __future__ import annotations
 
 import struct
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import cast
 
 import numpy as np
@@ -399,6 +399,55 @@ class SqliteNodeRepository:
             rows = session.execute(stmt).scalars().all()
             return _detach_rows(session, rows)
 
+    def iter_root_nodes_for_document(
+        self, document_id: str | None
+    ) -> Iterator[TreeNode]:
+        """Iterate over root nodes ordered by span_start.
+
+        Uses yield_per to stream results without loading all into memory.
+        """
+        with self.SessionLocal() as session:
+            query = (
+                session.query(SQLiteTreeNode)
+                .filter(SQLiteTreeNode.parent_id.is_(None))
+                .order_by(SQLiteTreeNode.span_start)
+            )
+            if document_id is not None:
+                query = query.filter(SQLiteTreeNode.document_id == document_id)
+            for node in query.yield_per(100):
+                session.expunge(node)
+                yield cast(TreeNode, node)
+
+    def iter_leaves_for_document(self, document_id: str | None) -> Iterator[TreeNode]:
+        """Iterate over leaf nodes ordered by span_start.
+
+        Uses yield_per to stream results without loading all into memory.
+        """
+        with self.SessionLocal() as session:
+            query = (
+                session.query(SQLiteTreeNode)
+                .filter(SQLiteTreeNode.height == 0)
+                .order_by(SQLiteTreeNode.span_start)
+            )
+            if document_id is not None:
+                query = query.filter(SQLiteTreeNode.document_id == document_id)
+            for node in query.yield_per(100):
+                session.expunge(node)
+                yield cast(TreeNode, node)
+
+    def iter_all_for_document(self, document_id: str | None) -> Iterator[TreeNode]:
+        """Iterate over all nodes ordered by span_start.
+
+        Uses yield_per to stream results without loading all into memory.
+        """
+        with self.SessionLocal() as session:
+            query = session.query(SQLiteTreeNode).order_by(SQLiteTreeNode.span_start)
+            if document_id is not None:
+                query = query.filter(SQLiteTreeNode.document_id == document_id)
+            for node in query.yield_per(100):
+                session.expunge(node)
+                yield cast(TreeNode, node)
+
     # jscpd:ignore-start - span query mirrors Postgres implementation for parity
     def get_nodes_overlapping_span(
         self,
@@ -736,6 +785,26 @@ class SqliteNodeRepository:
         """Return maximum node height for a document."""
         with self.SessionLocal() as session:
             stmt = select(func.max(SQLiteTreeNode.height))
+            if document_id:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+            result = session.execute(stmt).scalar_one()
+            return int(result or 0)
+
+    def sum_leaf_tokens_for_document(self, document_id: str | None) -> int:
+        """Return sum of token_count for all leaves in document."""
+        with self.SessionLocal() as session:
+            stmt = select(func.coalesce(func.sum(SQLiteTreeNode.token_count), 0))
+            stmt = stmt.where(SQLiteTreeNode.height == 0)
+            if document_id:
+                stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
+            result = session.execute(stmt).scalar_one()
+            return int(result or 0)
+
+    def sum_root_tokens_for_document(self, document_id: str | None) -> int:
+        """Return sum of token_count for all root nodes in document."""
+        with self.SessionLocal() as session:
+            stmt = select(func.coalesce(func.sum(SQLiteTreeNode.token_count), 0))
+            stmt = stmt.where(SQLiteTreeNode.parent_id.is_(None))
             if document_id:
                 stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
             result = session.execute(stmt).scalar_one()

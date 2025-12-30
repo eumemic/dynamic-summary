@@ -1,7 +1,7 @@
 """Document-scoped store that prevents cross-document contamination."""
 
 import logging
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from typing import TYPE_CHECKING, cast
 
@@ -188,6 +188,29 @@ class DocumentNodeRepository:
             return nodes
         return [node for node in nodes if node.document_id == target_doc]
 
+    def iter_root_nodes(self) -> Iterator[TreeNode]:
+        """Iterate over root nodes ordered by span_start.
+
+        Uses streaming to avoid loading all nodes into memory.
+        Falls back to get_root_nodes() if iterator not available.
+        """
+        yield from self._repo.iter_root_nodes_for_document(self.document_id)
+
+    def iter_leaves(self) -> Iterator[TreeNode]:
+        """Iterate over leaf nodes ordered by span_start.
+
+        Uses streaming to avoid loading all nodes into memory.
+        Falls back to get_leaves() if iterator not available.
+        """
+        yield from self._repo.iter_leaves_for_document(self.document_id)
+
+    def iter_all(self) -> Iterator[TreeNode]:
+        """Iterate over all nodes ordered by span_start.
+
+        Uses streaming to avoid loading all nodes into memory.
+        """
+        yield from self._repo.iter_all_for_document(self.document_id)
+
     def get_parentless_nodes(self) -> list[TreeNode]:
         """Return nodes without parents for this document."""
 
@@ -286,6 +309,20 @@ class DocumentNodeRepository:
             return int(getter(self.document_id))
         nodes = self.get_all()
         return max((n.height for n in nodes), default=0)
+
+    def sum_leaf_tokens(self) -> int:
+        """Get sum of token_count for all leaves in this document efficiently."""
+        summer = getattr(self._repo, "sum_leaf_tokens_for_document", None)
+        if callable(summer):
+            return int(summer(self.document_id))
+        return sum(int(n.token_count) for n in self.get_leaves())
+
+    def sum_root_tokens(self) -> int:
+        """Get sum of token_count for all root nodes in this document efficiently."""
+        summer = getattr(self._repo, "sum_root_tokens_for_document", None)
+        if callable(summer):
+            return int(summer(self.document_id))
+        return sum(int(n.token_count) for n in self.get_root_nodes())
 
     def pinned_count(self) -> int:
         """Get count of pinned nodes for this document efficiently."""
@@ -760,17 +797,14 @@ class DocumentStore:
             logger.debug("No document_id provided for token statistics")
             return None
 
-        leaves = self.nodes.get_leaves()
-        if not leaves:
+        count = self.nodes.leaf_count()
+        if count == 0:
             logger.debug(
                 f"No leaf nodes found for document {self.document_id} when calculating average tokens"
             )
             return None
 
-        total_tokens = sum(int(n.token_count) for n in leaves)
-        count = len(leaves)
-        if count == 0:
-            return None
+        total_tokens = self.nodes.sum_leaf_tokens()
         avg_tokens: int = total_tokens // count
         logger.debug(
             f"Calculated average leaf tokens: {avg_tokens} from {count} leaves for document {self.document_id}"
@@ -787,16 +821,17 @@ class DocumentStore:
             logger.debug("No document_id provided for root statistics")
             return None
 
-        roots = self.nodes.get_root_nodes()
-        if not roots:
+        # Check if any roots exist without loading all
+        first_root = next(self.nodes.iter_root_nodes(), None)
+        if first_root is None:
             logger.debug(f"No root nodes found for document {self.document_id}")
             return None
 
-        total_tokens = sum(int(n.token_count) for n in roots)
-        max_height = max(int(n.height) for n in roots)
+        total_tokens = self.nodes.sum_root_tokens()
+        max_height = self.nodes.max_height()
         logger.debug(
             f"Root statistics for {self.document_id}: "
-            f"total_tokens={total_tokens}, max_height={max_height}, roots={len(roots)}"
+            f"total_tokens={total_tokens}, max_height={max_height}"
         )
         return total_tokens, max_height
 
