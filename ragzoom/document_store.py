@@ -1,7 +1,7 @@
 """Document-scoped store that prevents cross-document contamination."""
 
 import logging
-from collections.abc import Generator, Sequence
+from collections.abc import Generator, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from typing import TYPE_CHECKING, cast
 
@@ -187,6 +187,22 @@ class DocumentNodeRepository:
         if target_doc is None:
             return nodes
         return [node for node in nodes if node.document_id == target_doc]
+
+    def iter_root_nodes(self) -> Iterator[TreeNode]:
+        """Iterate over root nodes ordered by span_start.
+
+        Uses streaming to avoid loading all nodes into memory.
+        Falls back to get_root_nodes() if iterator not available.
+        """
+        yield from self._repo.iter_root_nodes_for_document(self.document_id)
+
+    def iter_leaves(self) -> Iterator[TreeNode]:
+        """Iterate over leaf nodes ordered by span_start.
+
+        Uses streaming to avoid loading all nodes into memory.
+        Falls back to get_leaves() if iterator not available.
+        """
+        yield from self._repo.iter_leaves_for_document(self.document_id)
 
     def get_parentless_nodes(self) -> list[TreeNode]:
         """Return nodes without parents for this document."""

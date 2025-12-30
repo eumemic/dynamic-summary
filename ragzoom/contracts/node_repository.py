@@ -6,7 +6,7 @@ Implementations include Postgres and SQLite repositories.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import Protocol, TypedDict, runtime_checkable
 
 import numpy as np
@@ -103,6 +103,23 @@ class NodeRepository(Protocol):
         self, document_id: str | None, *, page_size: int = 1000
     ) -> list[list[TreeNode]]: ...
     def get_root_nodes(self, document_id: str | None = None) -> list[TreeNode]: ...
+
+    # Iterators for streaming access (avoid loading all nodes into memory)
+    def iter_root_nodes_for_document(
+        self, document_id: str | None
+    ) -> Iterator[TreeNode]:
+        """Iterate over root nodes ordered by span_start.
+
+        Uses server-side cursor to avoid loading all nodes into memory.
+        """
+        ...
+
+    def iter_leaves_for_document(self, document_id: str | None) -> Iterator[TreeNode]:
+        """Iterate over leaf nodes ordered by span_start.
+
+        Uses server-side cursor to avoid loading all nodes into memory.
+        """
+        ...
 
     # Aggregations
     def count_nodes_for_document(self, document_id: str | None) -> int: ...

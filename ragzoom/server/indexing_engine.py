@@ -879,12 +879,13 @@ class IndexingEngine:
         Returns list of (span_start, job) tuples for merging with summary jobs.
         Scans all leaves (not just roots) because leaves may have been
         summarized before their embedding job started.
+
+        Uses iter_leaves() for memory-efficient streaming - leaves are yielded
+        ordered by span_start, allowing early exit without loading all leaves.
         """
         results: list[tuple[int, EmbeddingJob]] = []
-        leaves = store.nodes.get_leaves()
-        leaves.sort(key=lambda n: int(getattr(n, "span_start", 0)))
 
-        for leaf in leaves:
+        for leaf in store.nodes.iter_leaves():
             if len(results) >= max_jobs:
                 break
 

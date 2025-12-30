@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import struct
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -520,6 +520,42 @@ class PostgresNodeRepository(BaseRepository):
                 extracted.append(node)
 
             return extracted
+
+    def iter_root_nodes_for_document(
+        self, document_id: str | None
+    ) -> Iterator[TreeNode]:
+        """Iterate over root nodes ordered by span_start.
+
+        Uses yield_per to stream results without loading all into memory.
+        """
+        with self.SessionLocal() as session:
+            query = (
+                session.query(PostgresTreeNode)
+                .filter(PostgresTreeNode.parent_id.is_(None))
+                .order_by(PostgresTreeNode.span_start)
+            )
+            if document_id is not None:
+                query = query.filter(PostgresTreeNode.document_id == document_id)
+            for node in query.yield_per(100):
+                self._force_load_and_detach(session, node)
+                yield node
+
+    def iter_leaves_for_document(self, document_id: str | None) -> Iterator[TreeNode]:
+        """Iterate over leaf nodes ordered by span_start.
+
+        Uses yield_per to stream results without loading all into memory.
+        """
+        with self.SessionLocal() as session:
+            query = (
+                session.query(PostgresTreeNode)
+                .filter(PostgresTreeNode.height == 0)
+                .order_by(PostgresTreeNode.span_start)
+            )
+            if document_id is not None:
+                query = query.filter(PostgresTreeNode.document_id == document_id)
+            for node in query.yield_per(100):
+                self._force_load_and_detach(session, node)
+                yield node
 
     def get_nodes_overlapping_span(
         self,
