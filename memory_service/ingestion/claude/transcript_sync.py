@@ -1215,6 +1215,180 @@ class BytesSyncState:
         return self.append_log[-1] if self.append_log else None
 
 
+def execute_delta_sync(
+    session_id: str,
+    delta: bytes,
+    cursor: object,
+    client: object,
+) -> SyncResult:
+    """Execute sync using only delta bytes (memory efficient).
+
+    This function processes only the new delta bytes without loading the full
+    session content. It detects reverts by checking if the first message's
+    parentUuid matches the cursor's last_synced_uuid.
+
+    Args:
+        session_id: The session ID (used as document_id)
+        delta: New JSONL bytes to process (delta only, not full content)
+        cursor: SessionCursor with last_synced_uuid and span_end
+        client: RagZoom client with batch_append() method
+
+    Returns:
+        SyncResult. If truncated=True, caller must load full content and re-sync.
+    """
+    import logging
+    import time
+
+    logger = logging.getLogger(__name__)
+    t0 = time.perf_counter()
+    document_id = session_id
+
+    # Extract cursor fields
+    last_synced_uuid: str | None = getattr(cursor, "last_synced_uuid", None)
+    span_end: int = getattr(cursor, "span_end", 0)
+
+    logger.info(
+        "[TIMING] execute_delta_sync start: delta_bytes=%d last_synced_uuid=%s",
+        len(delta),
+        last_synced_uuid[:8] if last_synced_uuid else None,
+    )
+
+    # Parse delta to get records
+    delta_records: list[dict[str, object]] = []
+    for record, _ in _iter_jsonl_from_bytes(delta):
+        if not record.get("isCompactSummary"):
+            delta_records.append(record)
+
+    if not delta_records:
+        # Empty delta
+        return SyncResult(
+            document_id=document_id,
+            truncated=False,
+            truncate_span=None,
+            appended_uuids=[],
+            new_span_end=span_end,
+        )
+
+    # Check for revert: first message's parentUuid should match last_synced_uuid
+    first_record = delta_records[0]
+    first_parent = first_record.get("parentUuid")
+
+    # Handle revert detection
+    if last_synced_uuid is not None:
+        # We have a previous sync point - check if delta continues from it
+        if first_parent != last_synced_uuid:
+            # Revert detected: the new messages don't continue from where we left off
+            logger.info(
+                "[TIMING] execute_delta_sync: revert detected, "
+                "first_parent=%s != last_synced=%s",
+                first_parent[:8] if isinstance(first_parent, str) else first_parent,
+                last_synced_uuid[:8],
+            )
+            return SyncResult(
+                document_id=document_id,
+                truncated=True,
+                truncate_span=span_end,
+                appended_uuids=[],
+                new_span_end=span_end,
+            )
+    else:
+        # First sync ever - any message is valid
+        pass
+
+    t_parse = time.perf_counter()
+
+    # Build records map from delta
+    records_by_uuid: dict[str, dict[str, object]] = {}
+    uuids_in_order: list[str] = []
+    for record in delta_records:
+        uuid = record.get("uuid")
+        if isinstance(uuid, str):
+            records_by_uuid[uuid] = record
+            uuids_in_order.append(uuid)
+
+    if not uuids_in_order:
+        return SyncResult(
+            document_id=document_id,
+            truncated=False,
+            truncate_span=None,
+            appended_uuids=[],
+            new_span_end=span_end,
+        )
+
+    # Segment UUIDs at turn boundaries (same logic as execute_sync_from_bytes)
+    segments: list[list[str]] = []
+    current_segment: list[str] = []
+    prev_was_user = False
+
+    for uuid in uuids_in_order:
+        if uuid not in records_by_uuid:
+            continue
+        record = records_by_uuid[uuid]
+
+        is_user_message = record.get("type") == "user" and "toolUseResult" not in record
+
+        if is_user_message and not prev_was_user and current_segment:
+            segments.append(current_segment)
+            current_segment = []
+
+        current_segment.append(uuid)
+        prev_was_user = is_user_message
+
+    if current_segment:
+        segments.append(current_segment)
+
+    # Transcribe and collect texts
+    segment_texts: list[str] = []
+    segment_last_uuids: list[str] = []
+    appended_uuids: list[str] = []
+
+    for segment_uuids in segments:
+        combined_text = transcribe_uuids_from_map(segment_uuids, records_by_uuid)
+
+        if combined_text:
+            segment_texts.append(combined_text)
+            segment_appended_uuids = [
+                u
+                for u in segment_uuids
+                if u in records_by_uuid
+                and not (
+                    records_by_uuid[u].get("type") == "user"
+                    and "toolUseResult" in records_by_uuid[u]
+                )
+            ]
+            if segment_appended_uuids:
+                segment_last_uuids.append(segment_appended_uuids[-1])
+                appended_uuids.extend(segment_appended_uuids)
+
+    t_transcribe = time.perf_counter()
+
+    # Append to document
+    new_span_end = span_end
+    if segment_texts:
+        batch_append_method = getattr(client, "batch_append")
+        result = batch_append_method(document_id, segment_texts)
+        new_span_end = getattr(result, "span_end", 0)
+
+    t_append = time.perf_counter()
+    logger.info(
+        "[TIMING] execute_delta_sync complete: parse=%.3fs transcribe=%.3fs "
+        "append=%.3fs total=%.3fs appended=%d",
+        t_parse - t0,
+        t_transcribe - t_parse,
+        t_append - t_transcribe,
+        t_append - t0,
+        len(appended_uuids),
+    )
+
+    return SyncResult(
+        document_id=document_id,
+        truncated=False,
+        truncate_span=None,
+        appended_uuids=appended_uuids,
+        new_span_end=new_span_end,
+    )
+
+
 def execute_sync_from_bytes(
     session_id: str,
     jsonl_content: bytes,

@@ -389,6 +389,25 @@ class DatabaseManager:
                     )
                 )
 
+                # Add sync state columns to session_raw_data for memory-efficient syncing
+                conn.execute(
+                    text(
+                        """
+                    ALTER TABLE session_raw_data
+                    ADD COLUMN IF NOT EXISTS last_synced_uuid VARCHAR(255);
+                """
+                    )
+                )
+
+                conn.execute(
+                    text(
+                        """
+                    ALTER TABLE session_raw_data
+                    ADD COLUMN IF NOT EXISTS span_end INTEGER NOT NULL DEFAULT 0;
+                """
+                    )
+                )
+
                 logger.debug("Database migrations completed")
         except Exception as e:
             # Migration failures are not critical - the column might already exist
