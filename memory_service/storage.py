@@ -1,9 +1,13 @@
 """Storage for raw Claude Code session JSONL files.
 
-Stores complete JSONL content in the database, enabling:
+Stores stripped JSONL content in the database, enabling:
 - Cursor calculation (byte offset = length of stored content)
 - Reindexing from raw data
 - Debugging by inspecting original transcripts
+
+The stored JSONL has tool_result content stripped to reduce storage:
+- Records with type="user" and toolUseResult are stripped to essential fields
+- This removes ~80% of raw JSONL size (tool outputs we don't transcribe)
 
 Also tracks sync state (last_synced_uuid, span_end) for memory-efficient
 incremental syncing without loading full content.
@@ -11,6 +15,7 @@ incremental syncing without loading full content.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 
@@ -20,6 +25,65 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 from ragzoom.models import Base
 
 logger = logging.getLogger(__name__)
+
+
+def strip_tool_results(jsonl_bytes: bytes) -> bytes:
+    """Strip tool result content from JSONL bytes to reduce storage.
+
+    Tool results (type="user" with toolUseResult field) contain the full output
+    of tool executions, which can be megabytes of file contents, command output,
+    etc. We don't need this content for transcription - we only need the record
+    structure for sync/branch detection.
+
+    For tool result records, we keep only:
+    - uuid, parentUuid, type (required for sync algorithm)
+    - isCompactSummary (if present, for compaction bridging)
+
+    All other records are preserved unchanged.
+
+    Args:
+        jsonl_bytes: Raw JSONL bytes (newline-delimited JSON records)
+
+    Returns:
+        Stripped JSONL bytes with tool result content removed
+    """
+    if not jsonl_bytes:
+        return jsonl_bytes
+
+    lines = jsonl_bytes.split(b"\n")
+    stripped_lines: list[bytes] = []
+
+    for line in lines:
+        if not line.strip():
+            stripped_lines.append(line)
+            continue
+
+        try:
+            record = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # Keep malformed lines as-is (shouldn't happen, but be safe)
+            stripped_lines.append(line)
+            continue
+
+        # Only strip tool result records
+        if record.get("type") == "user" and "toolUseResult" in record:
+            # Keep only essential fields for sync
+            stripped_record: dict[str, object] = {
+                "uuid": record.get("uuid"),
+                "type": "user",
+                "toolUseResult": "[stripped]",  # Marker so we know this was a tool result
+            }
+            if "parentUuid" in record:
+                stripped_record["parentUuid"] = record["parentUuid"]
+            if "isCompactSummary" in record:
+                stripped_record["isCompactSummary"] = record["isCompactSummary"]
+
+            stripped_lines.append(json.dumps(stripped_record).encode())
+        else:
+            # Preserve other records unchanged
+            stripped_lines.append(line)
+
+    return b"\n".join(stripped_lines)
 
 
 class SessionRawData(Base):
@@ -99,9 +163,13 @@ class SessionStorage:
     def append_content(self, session_id: str, delta: bytes) -> int:
         """Append JSONL bytes to a session.
 
-        Creates the session if it doesn't exist.
+        The delta is stripped of tool result content before storage to reduce
+        disk usage by ~80%. Creates the session if it doesn't exist.
         Returns the new byte offset (total length after append).
         """
+        # Strip tool result content before storing
+        stripped_delta = strip_tool_results(delta)
+
         stmt = select(SessionRawData).where(
             SessionRawData.user_id == self._user_id,
             SessionRawData.session_id == session_id,
@@ -113,14 +181,14 @@ class SessionStorage:
             row = SessionRawData(
                 user_id=self._user_id,
                 session_id=session_id,
-                jsonl_content=delta,
+                jsonl_content=stripped_delta,
             )
             self._db.add(row)
             self._db.flush()
-            return len(delta)
+            return len(stripped_delta)
 
         # Append to existing
-        new_content = row.jsonl_content + delta
+        new_content = row.jsonl_content + stripped_delta
         row.jsonl_content = new_content
         self._db.flush()
         return len(new_content)

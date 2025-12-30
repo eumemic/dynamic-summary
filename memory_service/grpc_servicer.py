@@ -105,7 +105,7 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
         """
         from memory_service.ingestion.claude.transcript_sync import (
             execute_delta_sync,
-            execute_sync_from_bytes,
+            execute_streaming_resync,
         )
 
         t0 = time.perf_counter()
@@ -199,12 +199,13 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                         pass
                     db_session.close()
 
-                # Re-sync with full content
+                # Re-sync with streaming approach
                 result = await asyncio.to_thread(
-                    execute_sync_from_bytes,
+                    execute_streaming_resync,
                     session_id=session_id,
                     jsonl_content=full_content,
-                    previous_byte_offset=0,  # Start fresh after revert
+                    last_synced_uuid=cursor.last_synced_uuid,
+                    span_end=cursor.span_end,
                     client=ragzoom_client,
                 )
                 t3 = time.perf_counter()
