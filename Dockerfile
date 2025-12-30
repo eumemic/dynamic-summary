@@ -40,3 +40,4 @@ EXPOSE 50051
 
 # Use shell form to expand PORT env var (Railway sets this dynamically)
 CMD python -m ragzoom.cli server start --host 0.0.0.0 --port ${PORT:-50051} --collect-telemetry
+
