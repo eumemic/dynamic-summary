@@ -169,43 +169,6 @@ class AppendLog:
             for entry in entries[: found_idx + 1]:
                 f.write(json.dumps(entry.to_json()) + "\n")
 
-    def find_valid_prefix(
-        self, current_head: str, parent_map: dict[str, str | None]
-    ) -> AppendEntry | None:
-        """Find the last entry whose uuid is an ancestor of current_head.
-
-        Walks backwards through the append log, checking each entry's last_uuid
-        against the ancestor chain of current_head.
-
-        Returns None if the log is empty, signaling the caller should transcribe
-        the entire ancestor chain from root to current_head.
-        """
-        entries = list(self)
-        if not entries:
-            return None
-
-        # Get the last indexed uuid
-        last_indexed = entries[-1].last_uuid
-
-        # Find common ancestor between last_indexed and current_head
-        common = find_common_ancestor(last_indexed, current_head, parent_map)
-
-        # No common ancestor means completely disjoint branches - user reverted
-        # to before anything we indexed, so start fresh
-        if common is None:
-            return None
-
-        # Walk backwards through entries to find the one containing the common ancestor
-        # An entry is valid if its last_uuid is the common ancestor or an ancestor of it
-        common_ancestors = _get_ancestors(common, parent_map)
-        common_ancestors.add(common)
-
-        for entry in reversed(entries):
-            if entry.last_uuid in common_ancestors:
-                return entry
-
-        return None
-
     def __iter__(self) -> Iterator[AppendEntry]:
         """Iterate over all entries."""
         if not self._path.exists():
@@ -309,93 +272,6 @@ class _SessionAppendLog(AppendLog):
         return iter(self._state.entries)
 
 
-def build_parent_map(transcript_path: Path) -> dict[str, str | None]:
-    """Build a uuid -> parentUuid map from a transcript file.
-
-    Handles compaction boundaries by bridging "segments". When a message has
-    parentUuid=None but is immediately followed by a compaction summary, this
-    indicates a session resume. We bridge the gap by setting that message's
-    parent to the last message before the system/compaction pair.
-
-    This allows ancestor chain traversal to span multiple compaction events.
-    """
-    parent_map: dict[str, str | None] = {}
-
-    # First pass: collect all records with their order and identify compaction points
-    records: list[tuple[str, str | None, bool]] = []  # (uuid, parentUuid, is_compact)
-    for record, _ in iter_jsonl(transcript_path):
-        uuid = record.get("uuid")
-        if isinstance(uuid, str):
-            parent_uuid = record.get("parentUuid")
-            if parent_uuid is not None and not isinstance(parent_uuid, str):
-                continue
-            is_compact = bool(record.get("isCompactSummary"))
-            records.append((uuid, parent_uuid, is_compact))
-
-    # Second pass: build parent map with compaction bridging
-    # Track the last "regular" uuid before each compaction boundary
-    last_regular_uuid: str | None = None
-
-    for i, (uuid, parent_uuid, is_compact) in enumerate(records):
-        if parent_uuid is None and not is_compact:
-            # This message has no parent. Check if it's followed by a compaction.
-            # If so, bridge it to the last regular message before this point.
-            is_followed_by_compact = False
-            for j in range(i + 1, len(records)):
-                _, _, next_is_compact = records[j]
-                if next_is_compact:
-                    is_followed_by_compact = True
-                    break
-                # Stop looking if we hit another regular message
-                _, next_parent, _ = records[j]
-                if next_parent != uuid:
-                    break
-
-            if is_followed_by_compact and last_regular_uuid is not None:
-                # Bridge to the last regular message before this segment
-                parent_map[uuid] = last_regular_uuid
-            else:
-                parent_map[uuid] = None
-        else:
-            parent_map[uuid] = parent_uuid
-
-        # Update last_regular_uuid (messages that aren't part of compaction)
-        if not is_compact:
-            last_regular_uuid = uuid
-
-    return parent_map
-
-
-def find_common_ancestor(
-    x: str, y: str, parent_map: dict[str, str | None]
-) -> str | None:
-    """Find the most recent common ancestor of x and y.
-
-    Traces both ancestor chains until they intersect.
-    Returns None if x and y have no common ancestor (completely disjoint branches).
-    Raises KeyError if either x or y is not in the parent map.
-    """
-    if x not in parent_map:
-        raise KeyError(x)
-    if y not in parent_map:
-        raise KeyError(y)
-
-    # Get all ancestors of x (including x itself)
-    x_ancestors = _get_ancestors(x, parent_map)
-    x_ancestors.add(x)
-
-    # Walk up y's chain until we find a common ancestor
-    current: str | None = y
-    while current is not None:
-        if current in x_ancestors:
-            return current
-        current = parent_map.get(current)
-
-    # No intersection - completely disjoint branches (e.g., user reverted to
-    # before the first message and started a new conversation)
-    return None
-
-
 def _get_ancestors(uuid: str, parent_map: dict[str, str | None]) -> set[str]:
     """Get all ancestors of a uuid (not including the uuid itself)."""
     ancestors: set[str] = set()
@@ -404,6 +280,125 @@ def _get_ancestors(uuid: str, parent_map: dict[str, str | None]) -> set[str]:
         ancestors.add(current)
         current = parent_map.get(current)
     return ancestors
+
+
+@dataclass
+class StreamingAncestorResult:
+    """Result from streaming common ancestor search."""
+
+    common_ancestor: str | None
+    """The common ancestor UUID, or None if branches are disjoint."""
+
+    parent_of: dict[str, str | None]
+    """Partial parent map containing all ancestors of both heads."""
+
+    records_cache: dict[str, dict[str, object]]
+    """Cached records for transcription."""
+
+
+def stream_find_common_ancestor_and_records(
+    transcript_path: Path,
+    current_head: str,
+    last_indexed: str | None,
+) -> StreamingAncestorResult:
+    """Stream backwards to find common ancestor, building parent_of and records cache.
+
+    This is O(distance from end to common ancestor) instead of O(full transcript).
+    Handles compaction bridging inline.
+
+    Args:
+        transcript_path: Path to the JSONL transcript
+        current_head: UUID of the current transcript head
+        last_indexed: UUID of the last indexed message, or None if empty
+
+    Returns:
+        StreamingAncestorResult with common ancestor, partial parent map, and records
+    """
+    reachable_from_current: set[str] = {current_head}
+    reachable_from_last: set[str] = {last_indexed} if last_indexed else set()
+    parent_of: dict[str, str | None] = {}
+    records_cache: dict[str, dict[str, object]] = {}
+
+    # Compaction bridging state
+    # In reverse order: we see msg3 -> compact1 -> system1 -> msg2
+    # system1 (parentUuid=None, seen after compaction) needs to be bridged to msg2
+    saw_compaction = False
+    pending_bridge: str | None = (
+        None  # UUID that needs bridging to next regular message
+    )
+
+    for record in iter_jsonl_reversed(transcript_path):
+        uuid = record.get("uuid")
+        if not isinstance(uuid, str):
+            continue
+
+        parent = record.get("parentUuid")
+        if parent is not None and not isinstance(parent, str):
+            parent = None
+        is_compact = bool(record.get("isCompactSummary"))
+
+        records_cache[uuid] = record
+
+        # Handle compaction summaries
+        if is_compact:
+            saw_compaction = True
+            parent_of[uuid] = parent
+            # Extend reachable sets through compaction
+            if uuid in reachable_from_current and parent:
+                reachable_from_current.add(parent)
+            if uuid in reachable_from_last and parent:
+                reachable_from_last.add(parent)
+            continue
+
+        # Handle messages with parentUuid=None
+        if parent is None:
+            if saw_compaction:
+                # This message is followed by compaction (in forward order)
+                # Bridge it to the next regular message we see
+                pending_bridge = uuid
+                saw_compaction = False
+            parent_of[uuid] = None  # Tentative, may be updated below
+
+        # Apply bridge: this non-compaction message is the target for pending bridge
+        # We bridge to ANY non-compaction message (even with parentUuid=None)
+        if pending_bridge is not None and pending_bridge != uuid:
+            parent_of[pending_bridge] = uuid
+            if pending_bridge in reachable_from_current:
+                reachable_from_current.add(uuid)
+            if pending_bridge in reachable_from_last:
+                reachable_from_last.add(uuid)
+            pending_bridge = None
+
+        # Set parent for non-null parent messages
+        if parent is not None:
+            parent_of[uuid] = parent
+
+        # Extend reachable sets
+        actual_parent = parent_of.get(uuid)
+        if uuid in reachable_from_current and actual_parent:
+            reachable_from_current.add(actual_parent)
+        if uuid in reachable_from_last and actual_parent:
+            reachable_from_last.add(actual_parent)
+
+        # Check for intersection (common ancestor)
+        # The intersection contains the actual common ancestor UUID(s)
+        intersection = reachable_from_current & reachable_from_last
+        if intersection:
+            # Return any element from intersection - they're all valid common ancestors
+            # In the simple case (linear chain), there's only one
+            common = next(iter(intersection))
+            return StreamingAncestorResult(
+                common_ancestor=common,
+                parent_of=parent_of,
+                records_cache=records_cache,
+            )
+
+    # No intersection = disjoint branches
+    return StreamingAncestorResult(
+        common_ancestor=None,
+        parent_of=parent_of,
+        records_cache=records_cache,
+    )
 
 
 def get_ancestor_chain(
@@ -456,55 +451,84 @@ class SyncPlan:
     truncate_to_uuid: str | None
     """UUID of the valid prefix entry (for truncating append log)."""
 
+    records_cache: dict[str, dict[str, object]] = field(default_factory=dict)
+    """Cached records for transcription (from streaming, avoids second scan)."""
 
-def compute_sync_plan(
+
+def compute_sync_plan_streaming(
+    transcript_path: Path,
     current_head: str,
     append_log: AppendLog,
-    parent_map: dict[str, str | None],
 ) -> SyncPlan:
-    """Compute what operations are needed to sync transcript to document.
+    """Compute sync plan using streaming approach (O(distance) instead of O(n)).
 
     Args:
+        transcript_path: Path to the JSONL transcript
         current_head: UUID of the current transcript head
         append_log: The append log tracking what we've indexed
-        parent_map: uuid -> parentUuid mapping from transcript
 
     Returns:
-        SyncPlan describing truncation and transcription needed
+        SyncPlan with records_cache populated for transcription
     """
     last_entry = append_log.last_entry()
-
-    # Empty append log: transcribe entire ancestor chain from root
-    if last_entry is None:
-        chain = get_ancestor_chain(current_head, None, parent_map)
-        return SyncPlan(
-            uuids_to_transcribe=chain,
-            truncate_to_span=None,
-            truncate_to_uuid=None,
-        )
+    last_indexed = last_entry.last_uuid if last_entry else None
 
     # Already synced: nothing to do
-    if last_entry.last_uuid == current_head:
+    if last_indexed == current_head:
         return SyncPlan(
             uuids_to_transcribe=[],
             truncate_to_span=None,
             truncate_to_uuid=None,
         )
 
-    # Find valid prefix (handles revert detection)
-    valid_prefix = append_log.find_valid_prefix(current_head, parent_map)
+    # Stream backwards to find common ancestor and cache records
+    result = stream_find_common_ancestor_and_records(
+        transcript_path, current_head, last_indexed
+    )
 
-    if valid_prefix is None:
-        # Disjoint branches: truncate everything and start fresh
-        chain = get_ancestor_chain(current_head, None, parent_map)
+    # Empty append log: transcribe entire ancestor chain from root
+    if last_entry is None:
+        chain = get_ancestor_chain(current_head, None, result.parent_of)
+        return SyncPlan(
+            uuids_to_transcribe=chain,
+            truncate_to_span=None,
+            truncate_to_uuid=None,
+            records_cache=result.records_cache,
+        )
+
+    # Disjoint branches: truncate everything and start fresh
+    if result.common_ancestor is None:
+        chain = get_ancestor_chain(current_head, None, result.parent_of)
         return SyncPlan(
             uuids_to_transcribe=chain,
             truncate_to_span=0,
             truncate_to_uuid=None,
+            records_cache=result.records_cache,
+        )
+
+    # Find valid prefix entry (which entry contains the common ancestor)
+    common_ancestors = _get_ancestors(result.common_ancestor, result.parent_of)
+    common_ancestors.add(result.common_ancestor)
+
+    valid_prefix: AppendEntry | None = None
+    entries = list(append_log)
+    for entry in reversed(entries):
+        if entry.last_uuid in common_ancestors:
+            valid_prefix = entry
+            break
+
+    if valid_prefix is None:
+        # Shouldn't happen if common_ancestor was found, but handle gracefully
+        chain = get_ancestor_chain(current_head, None, result.parent_of)
+        return SyncPlan(
+            uuids_to_transcribe=chain,
+            truncate_to_span=0,
+            truncate_to_uuid=None,
+            records_cache=result.records_cache,
         )
 
     # Get chain from valid prefix to current head
-    chain = get_ancestor_chain(current_head, valid_prefix.last_uuid, parent_map)
+    chain = get_ancestor_chain(current_head, valid_prefix.last_uuid, result.parent_of)
 
     # Determine if truncation is needed
     if valid_prefix.last_uuid == last_entry.last_uuid:
@@ -513,6 +537,7 @@ def compute_sync_plan(
             uuids_to_transcribe=chain,
             truncate_to_span=None,
             truncate_to_uuid=None,
+            records_cache=result.records_cache,
         )
     else:
         # Revert happened: truncate to valid prefix
@@ -520,6 +545,7 @@ def compute_sync_plan(
             uuids_to_transcribe=chain,
             truncate_to_span=valid_prefix.span_end,
             truncate_to_uuid=valid_prefix.last_uuid,
+            records_cache=result.records_cache,
         )
 
 
@@ -559,32 +585,6 @@ def get_current_head(transcript_path: Path) -> str | None:
         if isinstance(uuid, str):
             return uuid
     return None
-
-
-def build_records_map(
-    transcript_path: Path,
-    uuids: set[str],
-) -> dict[str, dict[str, object]]:
-    """Build a UUID -> record lookup for the specified UUIDs.
-
-    Args:
-        transcript_path: Path to the JSONL transcript
-        uuids: Set of UUIDs to extract
-
-    Returns:
-        UUID -> record mapping
-    """
-    records_by_uuid: dict[str, dict[str, object]] = {}
-
-    for record, _ in iter_jsonl(transcript_path):
-        if record.get("isCompactSummary"):
-            continue
-
-        uuid = record.get("uuid")
-        if isinstance(uuid, str) and uuid in uuids:
-            records_by_uuid[uuid] = record
-
-    return records_by_uuid
 
 
 def transcribe_uuid_from_map(
@@ -729,62 +729,6 @@ def transcribe_uuids_from_map(
             if chunk:
                 chunks.append(chunk)
 
-    if pending_tools:
-        chunks.append(_format_tool_batch(pending_tools))
-
-    return "\n\n".join(chunks)
-
-
-def transcribe_uuids(
-    transcript_path: Path,
-    uuids: list[str],
-) -> str:
-    """Transcribe specific messages by UUID into readable text.
-
-    Consecutive tool-only assistant messages are batched into a single
-    "[Used N tools: ...]" line.
-
-    Args:
-        transcript_path: Path to the JSONL transcript
-        uuids: UUIDs to transcribe, in order
-
-    Returns:
-        Concatenated transcript text for the specified messages
-    """
-    if not uuids:
-        return ""
-
-    records_by_uuid = build_records_map(transcript_path, set(uuids))
-
-    # Transcribe with tool batching
-    chunks: list[str] = []
-    pending_tools: list[str] = []  # Accumulate consecutive tool-only messages
-
-    for uuid in uuids:
-        record = records_by_uuid.get(uuid)
-        if record is None:
-            continue
-
-        # Skip tool results
-        if record.get("type") == "user" and "toolUseResult" in record:
-            continue
-
-        if _is_tool_only_assistant(record):
-            # Accumulate tools from tool-only messages
-            _, tools = _extract_assistant_content(record)
-            pending_tools.extend(tools)
-        else:
-            # Flush any pending tools before this message
-            if pending_tools:
-                chunks.append(_format_tool_batch(pending_tools))
-                pending_tools = []
-
-            # Transcribe this record
-            chunk = _transcribe_record(record)
-            if chunk:
-                chunks.append(chunk)
-
-    # Flush remaining pending tools
     if pending_tools:
         chunks.append(_format_tool_batch(pending_tools))
 
@@ -1008,10 +952,9 @@ def execute_sync(
             new_span_end=0,
         )
 
-    # Build parent map and compute sync plan
-    parent_map = build_parent_map(transcript_path)
+    # Compute sync plan using streaming (O(distance) instead of O(n))
     append_log = state.append_log()
-    plan = compute_sync_plan(current_head, append_log, parent_map)
+    plan = compute_sync_plan_streaming(transcript_path, current_head, append_log)
 
     # Nothing to do
     if not plan.uuids_to_transcribe and plan.truncate_to_span is None:
@@ -1047,10 +990,8 @@ def execute_sync(
     appended_uuids: list[str] = []
     new_span_end = 0
     if plan.uuids_to_transcribe:
-        # Build records map once for all UUIDs
-        records_by_uuid = build_records_map(
-            transcript_path, set(plan.uuids_to_transcribe)
-        )
+        # Use records cached during streaming (avoids second O(n) scan)
+        records_by_uuid = plan.records_cache
 
         # Split UUIDs into segments at turn boundaries
         # A turn = user messages + subsequent assistant/tool messages
