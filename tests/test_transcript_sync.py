@@ -871,3 +871,148 @@ class TestTranscribeUuids:
 
         text = transcribe_uuids(jsonl, ["msg1", "missing", "also-missing"])
         assert text == "[USER]\nHello"
+
+
+class TestExecuteDeltaSync:
+    """Tests for memory-efficient delta sync."""
+
+    def test_delta_sync_appends_new_messages(self) -> None:
+        """Should process delta without loading full content."""
+        from dataclasses import dataclass
+
+        from memory_service.ingestion.claude.transcript_sync import execute_delta_sync
+
+        @dataclass
+        class MockCursor:
+            last_synced_uuid: str | None = None
+            span_end: int = 0
+
+        @dataclass
+        class MockResult:
+            span_end: int = 0
+            span_start: int = 0
+
+        class MockClient:
+            def __init__(self) -> None:
+                self.appended: list[list[str]] = []
+
+            def batch_append(self, document_id: str, texts: list[str]) -> MockResult:
+                self.appended.append(texts)
+                return MockResult(span_end=100)
+
+        delta = b'{"uuid": "msg1", "parentUuid": null, "type": "user", "message": {"content": "Hello"}}\n'
+        cursor = MockCursor()
+        client = MockClient()
+
+        result = execute_delta_sync(
+            session_id="test-session",
+            delta=delta,
+            cursor=cursor,
+            client=client,
+        )
+
+        assert not result.truncated
+        assert len(result.appended_uuids) == 1
+        assert result.appended_uuids[0] == "msg1"
+        assert len(client.appended) == 1
+
+    def test_delta_sync_detects_revert(self) -> None:
+        """Should detect revert when delta doesn't continue from last synced."""
+        from dataclasses import dataclass
+
+        from memory_service.ingestion.claude.transcript_sync import execute_delta_sync
+
+        @dataclass
+        class MockCursor:
+            last_synced_uuid: str | None = "msg2"
+            span_end: int = 100
+
+        class MockClient:
+            def batch_append(self, document_id: str, texts: list[str]) -> object:
+                raise AssertionError("Should not be called on revert")
+
+        # Delta's first message has parentUuid=msg1, but we synced to msg2
+        # This is a revert scenario
+        delta = b'{"uuid": "msg3-alt", "parentUuid": "msg1", "type": "user", "message": {"content": "Reverted"}}\n'
+        cursor = MockCursor()
+        client = MockClient()
+
+        result = execute_delta_sync(
+            session_id="test-session",
+            delta=delta,
+            cursor=cursor,
+            client=client,
+        )
+
+        assert result.truncated
+        assert result.appended_uuids == []
+
+    def test_delta_sync_continues_from_last_synced(self) -> None:
+        """Should process delta that continues from last synced UUID."""
+        from dataclasses import dataclass
+
+        from memory_service.ingestion.claude.transcript_sync import execute_delta_sync
+
+        @dataclass
+        class MockCursor:
+            last_synced_uuid: str | None = "msg2"
+            span_end: int = 100
+
+        @dataclass
+        class MockResult:
+            span_end: int = 0
+            span_start: int = 0
+
+        class MockClient:
+            def __init__(self) -> None:
+                self.appended: list[list[str]] = []
+
+            def batch_append(self, document_id: str, texts: list[str]) -> MockResult:
+                self.appended.append(texts)
+                return MockResult(span_end=200)
+
+        # Delta continues from msg2 (the last synced)
+        delta = b'{"uuid": "msg3", "parentUuid": "msg2", "type": "user", "message": {"content": "Next message"}}\n'
+        cursor = MockCursor()
+        client = MockClient()
+
+        result = execute_delta_sync(
+            session_id="test-session",
+            delta=delta,
+            cursor=cursor,
+            client=client,
+        )
+
+        assert not result.truncated
+        assert len(result.appended_uuids) == 1
+        assert result.appended_uuids[0] == "msg3"
+        assert len(client.appended) == 1
+
+    def test_delta_sync_empty_delta(self) -> None:
+        """Should handle empty delta gracefully."""
+        from dataclasses import dataclass
+
+        from memory_service.ingestion.claude.transcript_sync import execute_delta_sync
+
+        @dataclass
+        class MockCursor:
+            last_synced_uuid: str | None = "msg2"
+            span_end: int = 100
+
+        class MockClient:
+            def batch_append(self, document_id: str, texts: list[str]) -> object:
+                raise AssertionError("Should not be called on empty delta")
+
+        cursor = MockCursor()
+        client = MockClient()
+
+        result = execute_delta_sync(
+            session_id="test-session",
+            delta=b"",
+            cursor=cursor,
+            client=client,
+        )
+
+        assert not result.truncated
+        assert result.appended_uuids == []
+        assert result.new_span_end == 100  # Unchanged

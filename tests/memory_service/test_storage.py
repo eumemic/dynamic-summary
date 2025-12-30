@@ -154,3 +154,47 @@ class TestSessionStorage:
 
         assert storage.get_content("session_a") == content_a
         assert storage.get_content("session_b") == content_b
+
+    def test_update_sync_state(self, db_session: Session) -> None:
+        """Should update sync state after successful processing."""
+        storage = SessionStorage(db_session, user_id="user1")
+        storage.append_content("session1", b'{"uuid": "msg1"}\n')
+        db_session.commit()
+
+        storage.update_sync_state("session1", last_synced_uuid="msg1", span_end=100)
+        db_session.commit()
+
+        cursor = storage.get_cursor("session1")
+        assert cursor.last_synced_uuid == "msg1"
+        assert cursor.span_end == 100
+
+    def test_get_cursor_returns_sync_state(self, db_session: Session) -> None:
+        """Should return sync state alongside byte offset."""
+        storage = SessionStorage(db_session, user_id="user1")
+        content = b'{"uuid": "msg1"}\n{"uuid": "msg2"}\n'
+        storage.append_content("session1", content)
+        storage.update_sync_state("session1", last_synced_uuid="msg2", span_end=200)
+        db_session.commit()
+
+        cursor = storage.get_cursor("session1")
+
+        assert cursor.byte_offset == len(content)
+        assert cursor.last_synced_uuid == "msg2"
+        assert cursor.span_end == 200
+
+    def test_truncate_content_resets_sync_state(self, db_session: Session) -> None:
+        """Truncation should reset sync state for re-sync."""
+        storage = SessionStorage(db_session, user_id="user1")
+        content = b'{"uuid": "msg1"}\n{"uuid": "msg2"}\n'
+        storage.append_content("session1", content)
+        storage.update_sync_state("session1", last_synced_uuid="msg2", span_end=200)
+        db_session.commit()
+
+        # Truncate to just the first message
+        storage.truncate_content("session1", 17)  # len('{"uuid": "msg1"}\n')
+        db_session.commit()
+
+        cursor = storage.get_cursor("session1")
+        assert cursor.byte_offset == 17
+        assert cursor.last_synced_uuid is None
+        assert cursor.span_end == 0
