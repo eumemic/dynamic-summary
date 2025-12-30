@@ -220,8 +220,7 @@ class TreeNavigator:
         Returns:
             Root TreeNode if found, None otherwise
         """
-        roots = self.node_repo.get_root_nodes()
-        return roots[0] if roots else None
+        return next(self.node_repo.iter_root_nodes_for_document(None), None)
 
     def get_root_node_for_document(self, document_id: str | None) -> TreeNode | None:
         """Get the root node for a specific document.
@@ -232,8 +231,7 @@ class TreeNavigator:
         Returns:
             Root TreeNode for document if found, None otherwise
         """
-        roots = self.node_repo.get_root_nodes(document_id)
-        return roots[0] if roots else None
+        return next(self.node_repo.iter_root_nodes_for_document(document_id), None)
 
     def get_node_depth(self, node_id: str) -> int:
         """Calculate depth of a node (distance from root).
