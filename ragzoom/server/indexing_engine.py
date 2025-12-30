@@ -368,7 +368,7 @@ class IndexingEngine:
         """
         # Count leaves to calculate expected work
         store = self._store.for_document(document_id)
-        leaf_count = sum(1 for n in store.nodes.get_all() if n.height == 0)
+        leaf_count = store.nodes.leaf_count()
 
         async with self._lock:
             # Create or update document context
@@ -581,9 +581,7 @@ class IndexingEngine:
                     ctx = self._document_contexts.get(document_id)
                     if ctx is not None:
                         store = self._store.for_document(document_id)
-                        ctx.leaves_at_last_idle = sum(
-                            1 for n in store.nodes.get_all() if n.height == 0
-                        )
+                        ctx.leaves_at_last_idle = store.nodes.leaf_count()
                         ctx.completed_jobs = 0
                         ctx.expected_total_jobs = 0
 

@@ -15,7 +15,7 @@ from tests.conftest import IndexerRuntimeHarness
 def _count_leaves(storage: StorageBackend, document_id: str) -> int:
     """Count leaf nodes in a document."""
     store = storage.for_document(document_id)
-    return sum(1 for n in store.nodes.get_all() if n.height == 0)
+    return store.nodes.leaf_count()
 
 
 class TestIncrementalProgress:
