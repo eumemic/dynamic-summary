@@ -43,16 +43,12 @@ class AppendOutcome:
     new_leaf_ids: list[str]
     deleted_node_ids: list[str]
     total_leaves: int
-    # Data for async embedding (leaves no longer embedded during append)
-    leaf_texts: list[str]
-    leaf_metadata: list[dict[str, object]]
 
 
 class AppendExecutor:
     """Create new leaves for appended content.
 
     Embedding is handled asynchronously via WorkerCoordinator after append completes.
-    The AppendOutcome includes leaf_texts and leaf_metadata for queuing embedding work.
     """
 
     def __init__(
@@ -250,21 +246,6 @@ class AppendExecutor:
             appended_span_end,
         )
 
-        # Build metadata for async embedding
-        leaf_metadata: list[dict[str, object]] = []
-        for leaf in leaf_specs:
-            leaf_metadata.append(
-                {
-                    "document_id": document_id,
-                    "span_start": leaf.span_start,
-                    "span_end": leaf.span_end,
-                    "is_leaf": 1,
-                    "height": 0,
-                    "level_index": leaf.level_index,
-                    "coord_version": 1,
-                }
-            )
-
         return AppendOutcome(
             document_id=document_id,
             appended_span_start=leaf_specs[0].span_start,
@@ -272,8 +253,6 @@ class AppendExecutor:
             new_leaf_ids=[leaf.node_id for leaf in leaf_specs],
             deleted_node_ids=[],
             total_leaves=total_leaves,
-            leaf_texts=[leaf.text for leaf in leaf_specs],
-            leaf_metadata=leaf_metadata,
         )
 
     # jscpd:ignore-start - Parallel structure to append() intentional (batch vs single)
@@ -320,8 +299,6 @@ class AppendExecutor:
                 new_leaf_ids=[],
                 deleted_node_ids=[],
                 total_leaves=total_leaves,
-                leaf_texts=[],
-                leaf_metadata=[],
             )
 
         right_leaf = store.nodes.get_rightmost_leaf_for_document(document_id)
@@ -364,8 +341,14 @@ class AppendExecutor:
                 combined_chars=total_new_chars,
             )
 
-        # Process each unit independently - this creates forced boundaries
-        all_leaf_specs: list[LeafSpec] = []
+        # Process each unit independently, writing to DB incrementally
+        # This avoids accumulating O(total chunks) LeafSpec objects in memory
+        all_new_ids: list[str] = []
+        total_leaf_tokens = 0
+        appended_span_end = initial_span_start
+        prev_unit_last_id: str | None = None  # Last node ID from previous unit
+        prev_unit_last_preceding_id: str | None = None  # Its preceding neighbor
+
         for unit_text in non_empty_units:
             # Split this unit (may produce 1+ chunks)
             chunks = self._splitter.split_text(unit_text)
@@ -380,14 +363,107 @@ class AppendExecutor:
                 start_level_index=level_index,
             )
 
-            if unit_specs:
-                all_leaf_specs.extend(unit_specs)
-                last_spec = unit_specs[-1]
-                span_start = last_spec.span_end
-                preceding_id = last_spec.node_id
-                level_index = last_spec.level_index + 1
+            if not unit_specs:
+                continue
 
-        if not all_leaf_specs:
+            # Build payload for this unit
+            payload: list[NodeDataDict] = []
+            for leaf in unit_specs:
+                payload.append(
+                    {
+                        "node_id": leaf.node_id,
+                        "text": leaf.text,
+                        "span_start": leaf.span_start,
+                        "span_end": leaf.span_end,
+                        "parent_id": None,
+                        "left_child_id": None,
+                        "right_child_id": None,
+                        "document_id": document_id,
+                        "token_count": leaf.token_count,
+                        "height": 0,
+                        "preceding_neighbor_id": leaf.preceding_neighbor_id,
+                        "following_neighbor_id": leaf.following_neighbor_id,
+                        "level_index": leaf.level_index,
+                    }
+                )
+
+            # Build neighbor updates for this unit
+            neighbor_updates: list[tuple[str, str | None, str | None]] = []
+
+            # Link existing rightmost leaf to first new leaf (only for first unit)
+            if right_leaf is not None and not all_new_ids:
+                neighbor_updates.append(
+                    (
+                        right_leaf.id,
+                        getattr(right_leaf, "preceding_neighbor_id", None),
+                        unit_specs[0].node_id,
+                    )
+                )
+
+            # Link previous unit's last node to this unit's first node
+            if prev_unit_last_id is not None:
+                neighbor_updates.append(
+                    (
+                        prev_unit_last_id,
+                        prev_unit_last_preceding_id,
+                        unit_specs[0].node_id,
+                    )
+                )
+
+            # Add neighbor updates for all nodes in this unit
+            for leaf in unit_specs:
+                neighbor_updates.append(
+                    (
+                        leaf.node_id,
+                        leaf.preceding_neighbor_id,
+                        leaf.following_neighbor_id,
+                    )
+                )
+
+            # Write this unit to DB
+            with store.transaction() as session:
+                store.nodes.add_batch(payload, session=session)
+                if neighbor_updates:
+                    store.nodes.update_neighbors_batch(
+                        neighbor_updates, session=session
+                    )
+
+            # Track telemetry for this unit
+            if reporter is not None:
+                for leaf in unit_specs:
+                    reporter.track_node_created(
+                        node_id=leaf.node_id,
+                        height=0,
+                        span=(leaf.span_start, leaf.span_end),
+                    )
+
+            if (
+                telemetry_manager is not None
+                and run_context is not None
+                and run_context.collect_telemetry
+            ):
+                for leaf in unit_specs:
+                    await telemetry_manager.record_node_committed(
+                        run_context,
+                        node_id=leaf.node_id,
+                        height=0,
+                        span_start=leaf.span_start,
+                        span_end=leaf.span_end,
+                    )
+
+            # Update tracking for next iteration
+            all_new_ids.extend(leaf.node_id for leaf in unit_specs)
+            total_leaf_tokens += sum(leaf.token_count for leaf in unit_specs)
+            last_spec = unit_specs[-1]
+            appended_span_end = last_spec.span_end
+            span_start = last_spec.span_end
+            preceding_id = last_spec.node_id
+            prev_unit_last_id = last_spec.node_id
+            prev_unit_last_preceding_id = last_spec.preceding_neighbor_id
+            level_index = last_spec.level_index + 1
+            # unit_specs goes out of scope here, memory freed
+
+        if not all_new_ids:
             # Splitter returned no chunks for any unit
             total_leaves = store.nodes.leaf_count()
             return AppendOutcome(
@@ -397,41 +473,21 @@ class AppendExecutor:
                 new_leaf_ids=[],
                 deleted_node_ids=[],
                 total_leaves=total_leaves,
-                leaf_texts=[],
-                leaf_metadata=[],
             )
 
-        # Fix following_neighbor_id links across unit boundaries
-        # _build_leaf_specs sets following_neighbor_id within each unit's specs,
-        # but the last spec of each unit has following_neighbor_id=None.
-        # We need to link them to the next spec.
-        for idx in range(len(all_leaf_specs) - 1):
-            if all_leaf_specs[idx].following_neighbor_id is None:
-                all_leaf_specs[idx] = LeafSpec(
-                    node_id=all_leaf_specs[idx].node_id,
-                    text=all_leaf_specs[idx].text,
-                    span_start=all_leaf_specs[idx].span_start,
-                    span_end=all_leaf_specs[idx].span_end,
-                    token_count=all_leaf_specs[idx].token_count,
-                    preceding_neighbor_id=all_leaf_specs[idx].preceding_neighbor_id,
-                    following_neighbor_id=all_leaf_specs[idx + 1].node_id,
-                    level_index=all_leaf_specs[idx].level_index,
-                )
-
         logger.debug(
-            "append_batch[%s]: prepared %d leaf specs from %d units",
+            "append_batch[%s]: wrote %d leaves from %d units",
             document_id,
-            len(all_leaf_specs),
+            len(all_new_ids),
             len(non_empty_units),
         )
 
         split_end_time = time.time()
-        total_leaf_tokens = sum(leaf.token_count for leaf in all_leaf_specs)
 
         if reporter is not None:
             reporter.record_chunk_split_end(
                 end_time=split_end_time,
-                chunk_count=len(all_leaf_specs),
+                chunk_count=len(all_new_ids),
                 total_tokens=total_leaf_tokens,
             )
 
@@ -443,92 +499,14 @@ class AppendExecutor:
             await telemetry_manager.log_chunk_event(
                 run_context,
                 event="chunk_split_completed",
-                chunk_count=len(all_leaf_specs),
+                chunk_count=len(all_new_ids),
                 duration=split_end_time - split_start_time,
                 total_tokens=total_leaf_tokens,
             )
 
-        if reporter is not None:
-            for leaf in all_leaf_specs:
-                reporter.track_node_created(
-                    node_id=leaf.node_id,
-                    height=0,
-                    span=(leaf.span_start, leaf.span_end),
-                )
-
-        # Build payload for batch insert
-        payload: list[NodeDataDict] = []
-        for leaf in all_leaf_specs:
-            payload.append(
-                {
-                    "node_id": leaf.node_id,
-                    "text": leaf.text,
-                    "span_start": leaf.span_start,
-                    "span_end": leaf.span_end,
-                    "parent_id": None,
-                    "left_child_id": None,
-                    "right_child_id": None,
-                    "document_id": document_id,
-                    "token_count": leaf.token_count,
-                    "height": 0,
-                    "preceding_neighbor_id": leaf.preceding_neighbor_id,
-                    "following_neighbor_id": leaf.following_neighbor_id,
-                    "level_index": leaf.level_index,
-                }
-            )
-
-        # Update neighbor links: existing rightmost leaf -> first new leaf
-        neighbor_updates: list[tuple[str, str | None, str | None]] = []
-        if right_leaf is not None:
-            neighbor_updates.append(
-                (
-                    right_leaf.id,
-                    getattr(right_leaf, "preceding_neighbor_id", None),
-                    all_leaf_specs[0].node_id,
-                )
-            )
-        for leaf in all_leaf_specs:
-            neighbor_updates.append(
-                (
-                    leaf.node_id,
-                    leaf.preceding_neighbor_id,
-                    leaf.following_neighbor_id,
-                )
-            )
-
-        # Store all leaves in a single transaction
-        with store.transaction() as session:
-            store.nodes.add_batch(payload, session=session)
-            if neighbor_updates:
-                store.nodes.update_neighbors_batch(neighbor_updates, session=session)
-
-        logger.debug(
-            "append_batch[%s]: wrote %d leaves span=(%d,%d)",
-            document_id,
-            len(all_leaf_specs),
-            all_leaf_specs[0].span_start,
-            all_leaf_specs[-1].span_end,
-        )
-
-        affected_nodes = {leaf.node_id for leaf in all_leaf_specs}
-        store.tree.clear_depth_cache(list(affected_nodes))
+        store.tree.clear_depth_cache(all_new_ids)
 
         total_leaves = store.nodes.leaf_count()
-        appended_span_end = all_leaf_specs[-1].span_end
-
-        if (
-            telemetry_manager is not None
-            and run_context is not None
-            and run_context.collect_telemetry
-        ):
-            for leaf in all_leaf_specs:
-                await telemetry_manager.record_node_committed(
-                    run_context,
-                    node_id=leaf.node_id,
-                    height=0,
-                    span_start=leaf.span_start,
-                    span_end=leaf.span_end,
-                )
 
         logger.debug(
             "append_batch[%s]: completed batch append (new_total_leaves=%d)",
@@ -536,30 +514,13 @@ class AppendExecutor:
             total_leaves,
         )
 
-        # Build metadata for async embedding
-        leaf_metadata: list[dict[str, object]] = []
-        for leaf in all_leaf_specs:
-            leaf_metadata.append(
-                {
-                    "document_id": document_id,
-                    "span_start": leaf.span_start,
-                    "span_end": leaf.span_end,
-                    "is_leaf": 1,
-                    "height": 0,
-                    "level_index": leaf.level_index,
-                    "coord_version": 1,
-                }
-            )
-
         return AppendOutcome(
             document_id=document_id,
             appended_span_start=initial_span_start,
             appended_span_end=appended_span_end,
-            new_leaf_ids=[leaf.node_id for leaf in all_leaf_specs],
+            new_leaf_ids=all_new_ids,
             deleted_node_ids=[],
             total_leaves=total_leaves,
-            leaf_texts=[leaf.text for leaf in all_leaf_specs],
-            leaf_metadata=leaf_metadata,
         )
 
     # jscpd:ignore-end

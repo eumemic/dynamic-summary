@@ -6,7 +6,7 @@ Implementations include Postgres and SQLite repositories.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import Protocol, TypedDict, runtime_checkable
 
 import numpy as np
@@ -104,6 +104,30 @@ class NodeRepository(Protocol):
     ) -> list[list[TreeNode]]: ...
     def get_root_nodes(self, document_id: str | None = None) -> list[TreeNode]: ...
 
+    # Iterators for streaming access (avoid loading all nodes into memory)
+    def iter_root_nodes_for_document(
+        self, document_id: str | None
+    ) -> Iterator[TreeNode]:
+        """Iterate over root nodes ordered by span_start.
+
+        Uses server-side cursor to avoid loading all nodes into memory.
+        """
+        ...
+
+    def iter_leaves_for_document(self, document_id: str | None) -> Iterator[TreeNode]:
+        """Iterate over leaf nodes ordered by span_start.
+
+        Uses server-side cursor to avoid loading all nodes into memory.
+        """
+        ...
+
+    def iter_all_for_document(self, document_id: str | None) -> Iterator[TreeNode]:
+        """Iterate over all nodes ordered by span_start.
+
+        Uses server-side cursor to avoid loading all nodes into memory.
+        """
+        ...
+
     # Aggregations
     def count_nodes_for_document(self, document_id: str | None) -> int: ...
     def get_leaf_nodes(self) -> list[TreeNode]: ...
@@ -115,6 +139,14 @@ class NodeRepository(Protocol):
         self, document_id: str, token_budget: int, before_span_end: int
     ) -> list[TreeNode]: ...
     def max_height_for_document(self, document_id: str | None) -> int: ...
+    def sum_leaf_tokens_for_document(self, document_id: str | None) -> int:
+        """Return sum of token_count for all leaves in document."""
+        ...
+
+    def sum_root_tokens_for_document(self, document_id: str | None) -> int:
+        """Return sum of token_count for all root nodes in document."""
+        ...
+
     def get_pinned_nodes(self, depth_max: int | None = None) -> list[TreeNode]: ...
     def get_pinned_nodes_for_document(
         self, document_id: str, depth_max: int | None = None
