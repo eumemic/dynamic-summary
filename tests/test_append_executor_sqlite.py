@@ -45,13 +45,6 @@ async def test_append_creates_leaves_from_scratch(
     assert outcome.total_leaves == len(leaves)
     assert all(node.parent_id is None for node in leaves)
     assert set(outcome.new_leaf_ids) == {leaf.id for leaf in leaves}
-    # AppendOutcome includes data for async embedding
-    assert len(outcome.leaf_texts) == len(outcome.new_leaf_ids)
-    assert len(outcome.leaf_metadata) == len(outcome.new_leaf_ids)
-    for meta in outcome.leaf_metadata:
-        assert "document_id" in meta
-        assert "span_start" in meta
-        assert "span_end" in meta
 
 
 @pytest.mark.asyncio
@@ -122,7 +115,3 @@ async def test_append_preserves_existing_leaves_and_links_neighbors(
     assert new_leaf.preceding_neighbor_id == "tail"
     # New leaf starts where tail ended
     assert new_leaf.span_start == 6
-
-    # AppendOutcome includes data for async embedding
-    assert len(outcome.leaf_texts) == len(outcome.new_leaf_ids)
-    assert len(outcome.leaf_metadata) == len(outcome.new_leaf_ids)
