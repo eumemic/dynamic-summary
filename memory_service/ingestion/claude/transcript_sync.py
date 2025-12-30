@@ -1337,16 +1337,18 @@ def execute_delta_sync(
     if current_segment:
         segments.append(current_segment)
 
-    # Transcribe and collect texts
-    segment_texts: list[str] = []
-    segment_last_uuids: list[str] = []
+    # Stream append each segment to avoid memory buildup
     appended_uuids: list[str] = []
+    new_span_end = span_end
+    append_method = getattr(client, "append")
 
     for segment_uuids in segments:
         combined_text = transcribe_uuids_from_map(segment_uuids, records_by_uuid)
 
         if combined_text:
-            segment_texts.append(combined_text)
+            result = append_method(document_id, combined_text)
+            new_span_end = getattr(result, "span_end", 0)
+
             segment_appended_uuids = [
                 u
                 for u in segment_uuids
@@ -1357,27 +1359,17 @@ def execute_delta_sync(
                 )
             ]
             if segment_appended_uuids:
-                segment_last_uuids.append(segment_appended_uuids[-1])
                 appended_uuids.extend(segment_appended_uuids)
-
-    t_transcribe = time.perf_counter()
-
-    # Append to document
-    new_span_end = span_end
-    if segment_texts:
-        batch_append_method = getattr(client, "batch_append")
-        result = batch_append_method(document_id, segment_texts)
-        new_span_end = getattr(result, "span_end", 0)
 
     t_append = time.perf_counter()
     logger.info(
-        "[TIMING] execute_delta_sync complete: parse=%.3fs transcribe=%.3fs "
-        "append=%.3fs total=%.3fs appended=%d",
+        "[TIMING] execute_delta_sync complete: parse=%.3fs append=%.3fs "
+        "total=%.3fs appended=%d segments=%d",
         t_parse - t0,
-        t_transcribe - t_parse,
-        t_append - t_transcribe,
+        t_append - t_parse,
         t_append - t0,
         len(appended_uuids),
+        len(segments),
     )
 
     return SyncResult(
@@ -1559,46 +1551,48 @@ def execute_sync_from_bytes(
         if current_segment:
             segments.append(current_segment)
 
-        # Transcribe and append
-        segment_texts: list[str] = []
-        segment_last_uuids: list[str] = []
-
-        for segment_uuids in segments:
-            combined_text = transcribe_uuids_from_map(segment_uuids, records_by_uuid)
-
-            if combined_text:
-                segment_texts.append(combined_text)
-                segment_appended_uuids = [
-                    u
-                    for u in segment_uuids
-                    if u in records_by_uuid
-                    and not (
-                        records_by_uuid[u].get("type") == "user"
-                        and "toolUseResult" in records_by_uuid[u]
-                    )
-                ]
-                if segment_appended_uuids:
-                    segment_last_uuids.append(segment_appended_uuids[-1])
-                    appended_uuids.extend(segment_appended_uuids)
-
-        t_transcribe = time.perf_counter()
         logger.info(
-            "[TIMING] transcribe phase: records_map=%.3fs transcribe=%.3fs "
-            "segments=%d",
+            "[TIMING] transcribe phase: records_map=%.3fs segments=%d",
             t_records - t_plan,
-            t_transcribe - t_records,
-            len(segment_texts),
+            len(segments),
         )
 
-        if segment_texts:
-            batch_append_method = getattr(client, "batch_append")
-            result = batch_append_method(document_id, segment_texts)
-            new_span_end = getattr(result, "span_end", 0)
-            t_append = time.perf_counter()
+        # Stream segments in small batches to avoid OOM
+        batch_size = 20
+        append_method = getattr(client, "append")
+        total_batches = (len(segments) + batch_size - 1) // batch_size
+
+        for batch_idx in range(0, len(segments), batch_size):
+            batch_segments = segments[batch_idx : batch_idx + batch_size]
+            batch_num = batch_idx // batch_size + 1
+
+            for segment_uuids in batch_segments:
+                combined_text = transcribe_uuids_from_map(
+                    segment_uuids, records_by_uuid
+                )
+
+                if combined_text:
+                    # Append one segment at a time
+                    result = append_method(document_id, combined_text)
+                    new_span_end = getattr(result, "span_end", 0)
+
+                    segment_appended_uuids = [
+                        u
+                        for u in segment_uuids
+                        if u in records_by_uuid
+                        and not (
+                            records_by_uuid[u].get("type") == "user"
+                            and "toolUseResult" in records_by_uuid[u]
+                        )
+                    ]
+                    if segment_appended_uuids:
+                        appended_uuids.extend(segment_appended_uuids)
+
             logger.info(
-                "[TIMING] batch_append complete: %.3fs segments=%d",
-                t_append - t_transcribe,
-                len(segment_texts),
+                "[TIMING] append batch %d/%d complete: segments=%d",
+                batch_num,
+                total_batches,
+                len(batch_segments),
             )
     else:
         last_entry = append_log.last_entry()
