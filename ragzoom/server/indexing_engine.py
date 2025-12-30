@@ -725,20 +725,17 @@ class IndexingEngine:
         active_jobs: set[IndexingJob],
     ) -> bool:
         store = self._store.for_document(document_id)
-        roots = store.nodes.get_root_nodes(document_id)
 
         leaf_config = self._index_config.preceding_context.leaf
         inner_config = self._index_config.preceding_context.inner
 
         embedding_frontier = self._calculate_eligibility_frontier(
-            roots,
             store,
             document_id,
             leaf_config.min_forest_completeness,
             leaf_config.verbatim_tokens,
         )
         summary_frontier = self._calculate_eligibility_frontier(
-            roots,
             store,
             document_id,
             inner_config.min_forest_completeness,
@@ -751,8 +748,6 @@ class IndexingEngine:
             active_jobs,
             ctx,
             embedding_frontier,
-            roots,
-            leaf_config.max_forest_height_differential,
             max_jobs=1,
             run_id=run_id,
         )
@@ -760,7 +755,7 @@ class IndexingEngine:
             return True
 
         summary_jobs = self._find_next_n_summary_jobs(
-            roots,
+            store,
             document_id,
             active_jobs,
             ctx,
@@ -810,23 +805,22 @@ class IndexingEngine:
         Each job type uses its own forest completeness gating:
         - Embedding jobs use leaf.min_forest_completeness (typically 1.0)
         - Summary jobs use inner.min_forest_completeness (typically 0.0 = no gating)
+
+        Uses streaming iterators to avoid loading all nodes into memory.
         """
         store = self._store.for_document(document_id)
-        roots = store.nodes.get_root_nodes(document_id)
 
         # Calculate separate frontiers for each job type
         leaf_config = self._index_config.preceding_context.leaf
         inner_config = self._index_config.preceding_context.inner
 
         embedding_frontier = self._calculate_eligibility_frontier(
-            roots,
             store,
             document_id,
             leaf_config.min_forest_completeness,
             leaf_config.verbatim_tokens,
         )
         summary_frontier = self._calculate_eligibility_frontier(
-            roots,
             store,
             document_id,
             inner_config.min_forest_completeness,
@@ -840,12 +834,10 @@ class IndexingEngine:
             active_jobs,
             ctx,
             embedding_frontier,
-            roots,
-            leaf_config.max_forest_height_differential,
             max_jobs,
         )
         summary_jobs = self._find_next_n_summary_jobs(
-            roots,
+            store,
             document_id,
             active_jobs,
             ctx,
@@ -869,8 +861,6 @@ class IndexingEngine:
         active_jobs: set[IndexingJob],
         ctx: DocumentContext | None,
         frontier: int | None,
-        roots: list[TreeNode],
-        max_height_diff: int | None,
         max_jobs: int,
         run_id: str | None = None,
     ) -> list[tuple[int, EmbeddingJob]]:
@@ -882,6 +872,10 @@ class IndexingEngine:
 
         Uses iter_leaves() for memory-efficient streaming - leaves are yielded
         ordered by span_start, allowing early exit without loading all leaves.
+
+        Note: max_forest_height_differential is not supported for embedding jobs
+        in this streaming implementation. The default config has it set to null
+        for leaf nodes anyway.
         """
         results: list[tuple[int, EmbeddingJob]] = []
 
@@ -894,14 +888,6 @@ class IndexingEngine:
             # Check frontier
             if frontier is not None and leaf_span_start > frontier:
                 break
-
-            # Check height differential constraint
-            if max_height_diff is not None:
-                min_preceding = self._get_min_preceding_height(roots, leaf_span_start)
-                if min_preceding is not None:
-                    leaf_height = int(getattr(leaf, "height", 0))
-                    if leaf_height - min_preceding > max_height_diff:
-                        break
 
             # Check if needs embedding
             if not self._has_embedding(leaf, document_id):
@@ -919,7 +905,7 @@ class IndexingEngine:
 
     def _find_next_n_summary_jobs(
         self,
-        roots: list[TreeNode],
+        store: DocumentStore,
         document_id: str,
         active_jobs: set[IndexingJob],
         ctx: DocumentContext | None,
@@ -931,62 +917,83 @@ class IndexingEngine:
         """Scan roots for up to max_jobs eligible sibling pairs to summarize.
 
         Returns list of (span_start, job) tuples for merging with embedding jobs.
+
+        Uses iter_root_nodes() for memory-efficient streaming with a sliding window
+        pattern - tracks previous root and min_preceding_height incrementally.
         """
         results: list[tuple[int, SummaryJob]] = []
         # Track which roots are already used in a job (can't use same root twice)
         used_roots: set[str] = set()
 
-        for i, root in enumerate(roots):
+        # Sliding window state for iterator-based approach
+        prev_root: TreeNode | None = None
+        min_preceding_height: int | None = None
+
+        for root in store.nodes.iter_root_nodes():
             if len(results) >= max_jobs:
                 break
 
             root_span_start = int(getattr(root, "span_start", 0))
+            root_height = int(getattr(root, "height", 0))
 
             # Check frontier
             if frontier is not None and root_span_start > frontier:
                 break
 
-            # Skip if this root is already used in a pending job
-            if root.id in used_roots:
-                continue
-
-            # Check for eligible sibling pair
-            if i + 1 < len(roots):
-                right = roots[i + 1]
-                # Skip if right sibling already used
-                if right.id in used_roots:
-                    continue
-
-                if self._is_eligible_pair(root, right, document_id):
-                    # Check height differential constraint
-                    if max_height_diff is not None:
-                        min_preceding = self._get_min_preceding_height(
-                            roots, root_span_start
-                        )
-                        if min_preceding is not None:
-                            left_height = int(getattr(root, "height", 0))
+            # Try to form pair with previous root (if prev_root exists and eligible)
+            if prev_root is not None and prev_root.id not in used_roots:
+                if root.id not in used_roots:
+                    if self._is_eligible_pair(prev_root, root, document_id):
+                        # Check height differential constraint
+                        if (
+                            max_height_diff is not None
+                            and min_preceding_height is not None
+                        ):
+                            left_height = int(getattr(prev_root, "height", 0))
                             parent_height = left_height + 1
-                            if parent_height - min_preceding > max_height_diff:
+                            if parent_height - min_preceding_height > max_height_diff:
                                 break
 
-                    if run_id is not None:
-                        assigned_run = ctx.run_assignments.get(root.id) if ctx else None
-                        if assigned_run != run_id:
-                            continue
+                        if run_id is not None:
+                            assigned_run = (
+                                ctx.run_assignments.get(prev_root.id) if ctx else None
+                            )
+                            if assigned_run != run_id:
+                                # Skip this pair but continue scanning
+                                prev_root = root
+                                if (
+                                    min_preceding_height is None
+                                    or root_height < min_preceding_height
+                                ):
+                                    min_preceding_height = root_height
+                                continue
 
-                    summary_job = SummaryJob(document_id, root.id, right.id)
-                    if summary_job not in active_jobs:
-                        if ctx is not None and ctx.is_failed(summary_job):
-                            continue
-                        results.append((root_span_start, summary_job))
-                        used_roots.add(root.id)
-                        used_roots.add(right.id)
+                        prev_span_start = int(getattr(prev_root, "span_start", 0))
+                        summary_job = SummaryJob(document_id, prev_root.id, root.id)
+                        if summary_job not in active_jobs:
+                            if ctx is not None and ctx.is_failed(summary_job):
+                                # Skip this pair but continue scanning
+                                prev_root = root
+                                if (
+                                    min_preceding_height is None
+                                    or root_height < min_preceding_height
+                                ):
+                                    min_preceding_height = root_height
+                                continue
+                            results.append((prev_span_start, summary_job))
+                            used_roots.add(prev_root.id)
+                            used_roots.add(root.id)
+
+            # Update sliding window state
+            prev_root = root
+            # Update min_preceding_height for next iteration
+            if min_preceding_height is None or root_height < min_preceding_height:
+                min_preceding_height = root_height
 
         return results
 
     def _calculate_eligibility_frontier(
         self,
-        roots: list[TreeNode],
         store: DocumentStore,
         document_id: str,
         min_forest_completeness: float,
@@ -1011,8 +1018,10 @@ class IndexingEngine:
         - 1.0 = heights match optimal forest exactly
         - 0.0 = maximum deviation from optimal
 
+        Uses iter_root_nodes() for memory-efficient streaming - exits early when
+        first ineligible root is found.
+
         Args:
-            roots: Current root nodes in document order
             store: Document store for metadata lookups
             document_id: Document being indexed
             min_forest_completeness: Minimum completeness threshold (0.0 = no gating)
@@ -1027,7 +1036,7 @@ class IndexingEngine:
         preceding_roots = 0
         preceding_max_height = 0
 
-        for root in roots:
+        for root in store.nodes.iter_root_nodes():
             root_height = int(getattr(root, "height", 0))
             leaves_in_subtree = 2**root_height
 
@@ -1071,28 +1080,6 @@ class IndexingEngine:
 
         # No ineligibility found - all jobs are eligible
         return None
-
-    def _get_min_preceding_height(
-        self, roots: list[TreeNode], span_start: int
-    ) -> int | None:
-        """Get the minimum height among roots before the given span position.
-
-        Args:
-            roots: Current root nodes in document order
-            span_start: Position to check before
-
-        Returns:
-            Minimum height of preceding roots, or None if no preceding roots
-        """
-        min_height: int | None = None
-        for root in roots:
-            root_span_start = int(getattr(root, "span_start", 0))
-            if root_span_start >= span_start:
-                break
-            root_height = int(getattr(root, "height", 0))
-            if min_height is None or root_height < min_height:
-                min_height = root_height
-        return min_height
 
     def _is_leaf(self, node: TreeNode) -> bool:
         """Check if a node is a leaf (height 0)."""
