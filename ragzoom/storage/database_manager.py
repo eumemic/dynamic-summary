@@ -2,10 +2,12 @@
 
 import logging
 import os
+import time
 
 import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
 from ragzoom.config import OperationalConfig
@@ -13,6 +15,66 @@ from ragzoom.exceptions import InvalidOperationError
 from ragzoom.models import Base
 
 logger = logging.getLogger(__name__)
+
+
+def _create_engine_with_retry(
+    database_url: str,
+    pool_size: int,
+    max_overflow: int,
+    max_retries: int = 10,
+    retry_delay: float = 3.0,
+) -> Engine:
+    """Create SQLAlchemy engine with connection retry logic.
+
+    On Railway and similar platforms, the database service may not be ready
+    when the application starts. This function retries the connection with
+    exponential backoff.
+
+    Args:
+        database_url: Database connection URL
+        pool_size: Connection pool size
+        max_overflow: Maximum overflow connections
+        max_retries: Maximum number of connection attempts
+        retry_delay: Base delay between retries (seconds)
+
+    Returns:
+        SQLAlchemy Engine with verified connection
+    """
+    engine = create_engine(
+        database_url,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_pre_ping=True,
+    )
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            # Test the connection by executing a simple query
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            logger.info("Database connection established on attempt %d", attempt)
+            return engine
+        except Exception as e:
+            if attempt == max_retries:
+                logger.error(
+                    "Failed to connect to database after %d attempts: %s",
+                    max_retries,
+                    e,
+                )
+                raise
+            delay = retry_delay * (1.5 ** (attempt - 1))  # Exponential backoff
+            logger.warning(
+                "Database connection attempt %d/%d failed: %s. Retrying in %.1fs...",
+                attempt,
+                max_retries,
+                e,
+                delay,
+            )
+            time.sleep(delay)
+
+    # Should never reach here, but satisfy type checker
+    raise RuntimeError("Unexpected exit from retry loop")
+
 
 # Embeddings are not stored in SQL; pgvector registration not required
 register_vector: object | None = None
@@ -45,11 +107,10 @@ class DatabaseManager:
             os.getenv("RAGZOOM_DB_MAX_OVERFLOW", str(self.DEFAULT_MAX_OVERFLOW))
         )
 
-        self.engine = create_engine(
+        self.engine = _create_engine_with_retry(
             database_url,
             pool_size=pool_size,
             max_overflow=max_overflow,
-            pool_pre_ping=True,  # Verify connections before using
         )
 
         # No pgvector registration or extension needed
