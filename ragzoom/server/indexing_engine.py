@@ -647,10 +647,20 @@ class IndexingEngine:
 
                     # Fire all jobs simultaneously
                     for job in new_jobs:
-                        asyncio.create_task(self._run_job(job))
+                        task = asyncio.create_task(self._run_job(job))
+                        logger.warning(
+                            "SCHED: created task for job type=%s id=%s task=%s",
+                            "embed" if isinstance(job, EmbeddingJob) else "summary",
+                            (
+                                job.leaf_id[:8]
+                                if isinstance(job, EmbeddingJob)
+                                else job.left_id[:8]
+                            ),
+                            task,
+                        )
 
-                    logger.debug(
-                        "engine: started %d jobs (active=%d)",
+                    logger.warning(
+                        "SCHED: started %d jobs (active=%d)",
                         len(new_jobs),
                         len(self._active_jobs),
                     )
