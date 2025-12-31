@@ -520,14 +520,7 @@ class IndexingEngine:
         self._dirty_documents.add(document_id)
 
         # Start scheduler if not already running
-        task_none = self._scheduler_task is None
-        task_done = self._scheduler_task.done() if self._scheduler_task else True
-        if task_none or task_done:
-            logger.warning(
-                "SCHED: starting scheduler task_none=%s task_done=%s",
-                task_none,
-                task_done,
-            )
+        if self._scheduler_task is None or self._scheduler_task.done():
             self._scheduler_task = asyncio.create_task(self._run_scheduler())
 
     async def _run_scheduler(self) -> None:
@@ -538,16 +531,11 @@ class IndexingEngine:
         """
         # Yield to let more job completions accumulate their scheduling requests
         await asyncio.sleep(0)
-        logger.warning(
-            "SCHED: scheduler loop starting dirty=%d", len(self._dirty_documents)
-        )
 
         while self._dirty_documents:
             # Pop one document at a time (set iteration isn't safe during modification)
             document_id = self._dirty_documents.pop()
-            logger.warning("SCHED: processing doc=%s", document_id[:8])
             await self._find_and_start_jobs(document_id)
-        logger.warning("SCHED: scheduler loop done")
 
     async def _find_and_start_jobs(self, document_id: str) -> None:
         """Find and start eligible jobs up to max parallelism.
@@ -581,14 +569,8 @@ class IndexingEngine:
                 current_active = set(self._active_jobs)
 
             # Find multiple jobs at once outside lock (does I/O)
-            logger.warning("SCHED: calling _find_next_n_jobs slots=%d", available_slots)
             jobs = self._find_next_n_jobs(
                 document_id, current_active, ctx, available_slots
-            )
-            logger.warning(
-                "SCHED: _find_next_n_jobs returned %d jobs (slots=%d)",
-                len(jobs),
-                available_slots,
             )
 
             finalize_runs = False
@@ -602,10 +584,6 @@ class IndexingEngine:
 
                     if has_active_jobs:
                         # Jobs still running - they'll re-trigger when done
-                        logger.warning(
-                            "SCHED: returning early, has_active=%d",
-                            len(self._active_jobs),
-                        )
                         return
 
                     self._active_documents.discard(document_id)
@@ -652,23 +630,7 @@ class IndexingEngine:
 
                     # Fire all jobs simultaneously
                     for job in new_jobs:
-                        task = asyncio.create_task(self._run_job(job))
-                        logger.warning(
-                            "SCHED: created task for job type=%s id=%s task=%s",
-                            "embed" if isinstance(job, EmbeddingJob) else "summary",
-                            (
-                                job.leaf_id[:8]
-                                if isinstance(job, EmbeddingJob)
-                                else job.left_id[:8]
-                            ),
-                            task,
-                        )
-
-                    logger.warning(
-                        "SCHED: started %d jobs (active=%d)",
-                        len(new_jobs),
-                        len(self._active_jobs),
-                    )
+                        asyncio.create_task(self._run_job(job))
 
             # Yield to event loop to let newly created tasks start running
             # This is critical because _find_next_n_jobs is synchronous and
@@ -1192,15 +1154,11 @@ class IndexingEngine:
         """Execute a job with cleanup and re-trigger."""
         document_id = job.document_id
         job_failed = False
-        job_type = "embed" if isinstance(job, EmbeddingJob) else "summary"
-        job_id = job.leaf_id if isinstance(job, EmbeddingJob) else job.left_id
-        logger.warning("JOB_START: %s %s", job_type, job_id[:8])
         try:
             if isinstance(job, EmbeddingJob):
                 await self._embed_leaf(job)
             else:
                 await self._summarize_pair(job)
-            logger.warning("JOB_END: %s %s SUCCESS", job_type, job_id[:8])
         except Exception:
             logger.exception("Job failed: %s", job)
             job_failed = True
@@ -1248,9 +1206,7 @@ class IndexingEngine:
         """
         from ragzoom.contracts.embedding_model import EmbeddingUsageInfo
 
-        logger.warning("EMBED: %s step=get_store", job.leaf_id[:8])
         store = self._store.for_document(job.document_id)
-        logger.warning("EMBED: %s step=get_leaf", job.leaf_id[:8])
         leaf = store.nodes.get(job.leaf_id)
         if leaf is None:
             logger.warning(
@@ -1293,19 +1249,15 @@ class IndexingEngine:
         needs_semantic_retrieval = span_start > 0 and (leaf_config.num_seeds or 0) != 0
         if needs_semantic_retrieval:
             # Get retrieval embedding with usage info
-            logger.warning("EMBED: %s step=create_retriever", job.leaf_id[:8])
             retriever = self._create_retriever(job.document_id)
             if retriever is not None:
-                logger.warning("EMBED: %s step=query_embedding_START", job.leaf_id[:8])
                 query_embedding, retrieval_embedding_usage = (
                     await retriever.embedding_service.get_query_embedding_async_with_usage(
                         leaf_text, job.document_id
                     )
                 )
-                logger.warning("EMBED: %s step=query_embedding_DONE", job.leaf_id[:8])
 
         # Retrieve preceding context (pass pre-computed embedding to skip API call)
-        logger.warning("EMBED: %s step=get_context_START", job.leaf_id[:8])
         context_result = await self._get_preceding_context(
             store=store,
             document_id=job.document_id,
@@ -1314,7 +1266,6 @@ class IndexingEngine:
             query_text=leaf_text,
             query_embedding=query_embedding,
         )
-        logger.warning("EMBED: %s step=get_context_DONE", job.leaf_id[:8])
         tiling_ids = context_result.tiling_ids
         context_nodes = context_result.nodes
         tiling_tokens = context_result.tiling_tokens
@@ -1350,7 +1301,6 @@ class IndexingEngine:
         if context_prefix:
             # Generate a contextualizing summary of preceding context
             # (extracts only information relevant to understanding the leaf)
-            logger.warning("EMBED: %s step=contextualize_START", job.leaf_id[:8])
             contextualization_result = await self._llm_service._contextualize_text(
                 preceding_context=context_prefix,
                 target_text=leaf_text,
@@ -1358,7 +1308,6 @@ class IndexingEngine:
                 parent_id=job.leaf_id,
                 reporter=telemetry,
             )
-            logger.warning("EMBED: %s step=contextualize_DONE", job.leaf_id[:8])
             context_summary = contextualization_result.summary
             # Store the summary in the database
             store.nodes._repo.update_preceding_context_summary(
@@ -1372,10 +1321,8 @@ class IndexingEngine:
             text_to_embed = leaf_text
 
         # Record embedding start time for telemetry
-        logger.warning("EMBED: %s step=embed_START", job.leaf_id[:8])
         embed_start_time = time.time()
         embed_result = await self._llm_service.embed_texts_with_usage([text_to_embed])
-        logger.warning("EMBED: %s step=embed_DONE", job.leaf_id[:8])
         embeddings = embed_result["embeddings"]
         leaf_embedding_usage = embed_result["usage"]
         if not embeddings:
