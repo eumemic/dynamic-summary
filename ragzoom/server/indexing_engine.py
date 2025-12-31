@@ -581,6 +581,7 @@ class IndexingEngine:
                 current_active = set(self._active_jobs)
 
             # Find multiple jobs at once outside lock (does I/O)
+            logger.warning("SCHED: calling _find_next_n_jobs slots=%d", available_slots)
             jobs = self._find_next_n_jobs(
                 document_id, current_active, ctx, available_slots
             )
@@ -601,6 +602,10 @@ class IndexingEngine:
 
                     if has_active_jobs:
                         # Jobs still running - they'll re-trigger when done
+                        logger.warning(
+                            "SCHED: returning early, has_active=%d",
+                            len(self._active_jobs),
+                        )
                         return
 
                     self._active_documents.discard(document_id)
@@ -664,6 +669,11 @@ class IndexingEngine:
                         len(new_jobs),
                         len(self._active_jobs),
                     )
+
+            # Yield to event loop to let newly created tasks start running
+            # This is critical because _find_next_n_jobs is synchronous and
+            # would otherwise block the event loop indefinitely
+            await asyncio.sleep(0)
 
             if finalize_runs:
                 await self._maybe_complete_runs(document_id)
