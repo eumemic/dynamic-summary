@@ -4,7 +4,7 @@
       "command": "python",
       "args": ["-m", "memory_service.ingestion.claude.mcp_server"],
       "env": {
-        "RAGZOOM_SERVER_ADDRESS": "switchyard.proxy.rlwy.net:19731"
+        "RAGZOOM_SERVER_ADDRESS": "hopper.proxy.rlwy.net:24604"
       }
     }
   }
