@@ -1680,6 +1680,13 @@ def prepare_streaming_resync(
         truncate_span = 0
         # Build full chain from root
         uuids_to_transcribe = get_ancestor_chain(current_head, None, result.parent_of)
+    elif span_end > 0 and last_synced_uuid is None:
+        # Cursor was reset - we have indexed content but no sync point
+        # Must truncate and re-index from scratch
+        needs_truncate = True
+        truncate_span = 0
+        # Build full chain from root
+        uuids_to_transcribe = get_ancestor_chain(current_head, None, result.parent_of)
 
     # Transcribe and collect texts
     segment_texts: list[str] = []

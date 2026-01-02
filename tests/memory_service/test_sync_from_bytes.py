@@ -309,6 +309,69 @@ class TestExecuteStreamingResync:
         assert len(client.appended) > 0
 
 
+class TestPrepareStreamingResync:
+    """Tests for prepare_streaming_resync."""
+
+    def test_cursor_reset_triggers_truncate(self) -> None:
+        """When cursor is reset (last_synced_uuid=None) but span_end > 0, trigger truncate."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            prepare_streaming_resync,
+        )
+
+        content = _make_jsonl(
+            {
+                "uuid": "msg1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "Hello"},
+            },
+            {
+                "uuid": "msg2",
+                "parentUuid": "msg1",
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Hi"}]},
+            },
+        )
+
+        # Simulate cursor reset: last_synced_uuid=None but span_end > 0
+        result = prepare_streaming_resync(
+            session_id="session1",
+            jsonl_content=content,
+            last_synced_uuid=None,
+            span_end=100,  # Had indexed data, then cursor was reset
+        )
+
+        # Should detect this as cursor reset and set needs_truncate=True
+        assert result.needs_truncate is True
+        assert result.truncate_span == 0  # Truncate to beginning
+
+    def test_fresh_sync_no_truncate(self) -> None:
+        """Fresh sync (span_end=0, last_synced_uuid=None) should not truncate."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            prepare_streaming_resync,
+        )
+
+        content = _make_jsonl(
+            {
+                "uuid": "msg1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "Hello"},
+            },
+        )
+
+        # Fresh sync - no previous indexed data
+        result = prepare_streaming_resync(
+            session_id="session1",
+            jsonl_content=content,
+            last_synced_uuid=None,
+            span_end=0,
+        )
+
+        # Should NOT truncate - this is a fresh sync
+        assert result.needs_truncate is False
+
+
 class TestPrepareDeltaSync:
     """Tests for prepare_delta_sync."""
 
