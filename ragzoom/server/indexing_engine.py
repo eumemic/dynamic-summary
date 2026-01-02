@@ -1392,22 +1392,27 @@ class IndexingEngine:
 
         # Write to vector index for similarity search
         vector_index = self._get_vector_index()
-        if vector_index is not None:
-            metadata: dict[str, object] = {
-                "node_id": job.leaf_id,
-                "document_id": job.document_id,
-                "span_start": span_start,
-                "span_end": span_end,
-                "height": 0,
-                "is_leaf": 1,
-                "parent_id": getattr(leaf, "parent_id", None) or "",
-            }
-            vector_index.upsert([(job.leaf_id, embedding_array, metadata)])
-            logger.debug(
-                "embed: wrote vector doc=%s leaf=%s",
-                job.document_id,
-                job.leaf_id,
+        if vector_index is None:
+            raise RuntimeError(
+                f"Cannot persist embedding for leaf {job.leaf_id}: "
+                "no vector_index_factory configured. "
+                "Set RAGZOOM_VECTOR_BACKEND to 'pgvector', 'chroma', or 'python'."
             )
+        metadata: dict[str, object] = {
+            "node_id": job.leaf_id,
+            "document_id": job.document_id,
+            "span_start": span_start,
+            "span_end": span_end,
+            "height": 0,
+            "is_leaf": 1,
+            "parent_id": getattr(leaf, "parent_id", None) or "",
+        }
+        vector_index.upsert([(job.leaf_id, embedding_array, metadata)])
+        logger.debug(
+            "embed: wrote vector doc=%s leaf=%s",
+            job.document_id,
+            job.leaf_id,
+        )
 
     def _build_embedding_text(
         self, leaf_text: str, context_prefix: str, token_limit: int = 8000

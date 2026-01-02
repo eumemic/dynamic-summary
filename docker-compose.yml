@@ -26,6 +26,7 @@ services:
     environment:
       - RAGZOOM_DATABASE_URL=postgresql://ragzoom:ragzoom@postgres:5432/ragzoom
       - RAGZOOM_BACKEND=postgres
+      - RAGZOOM_VECTOR_BACKEND=pgvector
       - OPENAI_API_KEY=${OPENAI_API_KEY}
     volumes:
       - ./data:/data
@@ -68,6 +69,7 @@ services:
       - RAGZOOM_SERVER_ADDRESS=grpc:50051
       - RAGZOOM_DATABASE_URL=postgresql://ragzoom:ragzoom@postgres:5432/ragzoom
       - RAGZOOM_BACKEND=postgres
+      - RAGZOOM_VECTOR_BACKEND=pgvector
       - RAGZOOM_CORS_ORIGINS=http://localhost:${RAGZOOM_UI_PORT:-55300},http://127.0.0.1:${RAGZOOM_UI_PORT:-55300}
     volumes:
       - ./data:/data
