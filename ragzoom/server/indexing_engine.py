@@ -601,13 +601,6 @@ class IndexingEngine:
                 else:
                     # Filter out any jobs already added by another task
                     new_jobs = [j for j in jobs if j not in self._active_jobs]
-                    filtered_count = len(jobs) - len(new_jobs)
-                    if filtered_count > 0:
-                        logger.error(
-                            "DUPLICATE_FILTER: filtered %d jobs, remaining %d",
-                            filtered_count,
-                            len(new_jobs),
-                        )
                     if not new_jobs:
                         continue
 

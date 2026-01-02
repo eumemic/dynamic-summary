@@ -168,6 +168,7 @@ async def test_async_ragzoom_preserves_background_tasks() -> None:
     task_started = threading.Event()
     task_cancelled = False
     task_completed = False
+    background_task: asyncio.Task[None] | None = None
 
     class _TaskSpawningSession:
         """Session that spawns a background task during batch_append."""
@@ -208,7 +209,9 @@ async def test_async_ragzoom_preserves_background_tasks() -> None:
                     raise
 
             # Spawn background task (like IndexingEngine does)
-            asyncio.create_task(background_work())
+            # Store task reference so test can cancel it during cleanup
+            nonlocal background_task
+            background_task = asyncio.create_task(background_work())
 
             # Give the task a moment to start
             await asyncio.sleep(0.01)
@@ -258,3 +261,11 @@ async def test_async_ragzoom_preserves_background_tasks() -> None:
         "AsyncRagZoom should preserve background tasks on the main loop."
     )
     assert task_started.is_set(), "Background task should have started"
+
+    # Clean up: cancel the long-running background task
+    if background_task is not None and not background_task.done():
+        background_task.cancel()
+        try:
+            await background_task
+        except asyncio.CancelledError:
+            pass  # Expected
