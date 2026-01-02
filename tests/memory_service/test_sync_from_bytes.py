@@ -11,8 +11,10 @@ from memory_service.ingestion.claude.transcript_sync import (
     _get_current_head_from_bytes,
     _iter_jsonl_from_bytes,
     execute_streaming_resync,
+    prepare_delta_sync,
     stream_find_common_ancestor_from_bytes,
 )
+from memory_service.storage import SessionCursor
 
 
 def _make_jsonl(*records: dict[str, object]) -> bytes:
@@ -305,3 +307,107 @@ class TestExecuteStreamingResync:
         assert result.truncate_span == 0  # Full re-index
         # Should have re-indexed content
         assert len(client.appended) > 0
+
+
+class TestPrepareDeltaSync:
+    """Tests for prepare_delta_sync."""
+
+    def test_cursor_reset_triggers_revert(self) -> None:
+        """When cursor is reset (last_synced_uuid=None) but span_end > 0, trigger revert."""
+        delta = _make_jsonl(
+            {
+                "uuid": "msg1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "Hello"},
+            },
+            {
+                "uuid": "msg2",
+                "parentUuid": "msg1",
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Hi"}]},
+            },
+        )
+
+        # Cursor with last_synced_uuid=None but span_end > 0 (had indexed data, then reset)
+        cursor = SessionCursor(byte_offset=0, last_synced_uuid=None, span_end=100)
+
+        result = prepare_delta_sync(
+            session_id="session1",
+            delta=delta,
+            cursor=cursor,
+        )
+
+        # Should detect this as a revert/reset and set truncated=True
+        assert result.truncated is True
+        assert result.truncate_span == 100  # Truncate from the existing span_end
+
+    def test_fresh_sync_no_revert(self) -> None:
+        """Fresh sync (span_end=0, last_synced_uuid=None) should not trigger revert."""
+        delta = _make_jsonl(
+            {
+                "uuid": "msg1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "Hello"},
+            },
+        )
+
+        # Fresh cursor - no previous data
+        cursor = SessionCursor(byte_offset=0, last_synced_uuid=None, span_end=0)
+
+        result = prepare_delta_sync(
+            session_id="session1",
+            delta=delta,
+            cursor=cursor,
+        )
+
+        # Should NOT be truncated - this is a fresh sync
+        assert result.truncated is False
+
+    def test_normal_continuation_no_revert(self) -> None:
+        """Normal continuation (delta continues from last_synced_uuid) should not revert."""
+        delta = _make_jsonl(
+            {
+                "uuid": "msg3",
+                "parentUuid": "msg2",  # Continues from last_synced_uuid
+                "type": "user",
+                "message": {"content": "Continuing"},
+            },
+        )
+
+        # Cursor showing we synced up to msg2
+        cursor = SessionCursor(byte_offset=100, last_synced_uuid="msg2", span_end=50)
+
+        result = prepare_delta_sync(
+            session_id="session1",
+            delta=delta,
+            cursor=cursor,
+        )
+
+        # Should NOT be truncated - normal continuation
+        assert result.truncated is False
+
+    def test_actual_revert_triggers_truncate(self) -> None:
+        """Revert (delta doesn't continue from last_synced_uuid) should trigger truncate."""
+        delta = _make_jsonl(
+            {
+                "uuid": "msg3-alt",
+                "parentUuid": "msg1",  # Branches from msg1, not msg2
+                "type": "user",
+                "message": {"content": "Different branch"},
+            },
+        )
+
+        # Cursor showing we synced up to msg2
+        cursor = SessionCursor(byte_offset=100, last_synced_uuid="msg2", span_end=50)
+
+        result = prepare_delta_sync(
+            session_id="session1",
+            delta=delta,
+            cursor=cursor,
+        )
+
+        # Should be truncated - this is a revert
+        assert result.truncated is True
+        assert result.truncate_span == 50

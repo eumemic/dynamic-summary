@@ -1410,6 +1410,22 @@ def prepare_delta_sync(
                 appended_uuids=[],
                 span_end=span_end,
             )
+    elif span_end > 0:
+        # Cursor was reset (last_synced_uuid is None) but we have indexed data.
+        # Treat as revert to beginning - triggers full re-index through existing path.
+        logger.info(
+            "[TIMING] prepare_delta_sync: cursor reset detected, "
+            "last_synced_uuid=None but span_end=%d",
+            span_end,
+        )
+        return PreparedDeltaSync(
+            document_id=document_id,
+            truncated=True,
+            truncate_span=span_end,
+            segment_texts=[],
+            appended_uuids=[],
+            span_end=span_end,
+        )
 
     t_parse = time.perf_counter()
 
