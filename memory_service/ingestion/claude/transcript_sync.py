@@ -1315,26 +1315,43 @@ class BytesSyncState:
         return self.append_log[-1] if self.append_log else None
 
 
-def execute_delta_sync(
+@dataclass
+class PreparedDeltaSync:
+    """Result of prepare_delta_sync - ready for async batch_append.
+
+    If truncated=True, the delta detected a revert and caller must
+    load full content and re-sync. Otherwise, segment_texts contains
+    the text units ready for batch_append.
+    """
+
+    document_id: str
+    truncated: bool
+    truncate_span: int | None
+    segment_texts: list[str]
+    appended_uuids: list[str]
+    span_end: int
+
+
+def prepare_delta_sync(
     session_id: str,
     delta: bytes,
     cursor: object,
-    client: object,
-) -> SyncResult:
-    """Execute sync using only delta bytes (memory efficient).
+) -> PreparedDeltaSync:
+    """Prepare delta sync data without calling batch_append (CPU-bound only).
 
-    This function processes only the new delta bytes without loading the full
-    session content. It detects reverts by checking if the first message's
-    parentUuid matches the cursor's last_synced_uuid.
+    This function processes the delta bytes and prepares segment_texts
+    for batch_append, but does NOT call the client. This allows the
+    caller to run this in a thread, then call batch_append asynchronously
+    on the main event loop.
 
     Args:
         session_id: The session ID (used as document_id)
         delta: New JSONL bytes to process (delta only, not full content)
         cursor: SessionCursor with last_synced_uuid and span_end
-        client: RagZoom client with batch_append() method
 
     Returns:
-        SyncResult. If truncated=True, caller must load full content and re-sync.
+        PreparedDeltaSync with segment_texts ready for batch_append.
+        If truncated=True, caller must load full content and re-sync.
     """
     import logging
     import time
@@ -1348,7 +1365,7 @@ def execute_delta_sync(
     span_end: int = getattr(cursor, "span_end", 0)
 
     logger.info(
-        "[TIMING] execute_delta_sync start: delta_bytes=%d last_synced_uuid=%s",
+        "[TIMING] prepare_delta_sync start: delta_bytes=%d last_synced_uuid=%s",
         len(delta),
         last_synced_uuid[:8] if last_synced_uuid else None,
     )
@@ -1361,12 +1378,13 @@ def execute_delta_sync(
 
     if not delta_records:
         # Empty delta
-        return SyncResult(
+        return PreparedDeltaSync(
             document_id=document_id,
             truncated=False,
             truncate_span=None,
+            segment_texts=[],
             appended_uuids=[],
-            new_span_end=span_end,
+            span_end=span_end,
         )
 
     # Check for revert: first message's parentUuid should match last_synced_uuid
@@ -1379,21 +1397,19 @@ def execute_delta_sync(
         if first_parent != last_synced_uuid:
             # Revert detected: the new messages don't continue from where we left off
             logger.info(
-                "[TIMING] execute_delta_sync: revert detected, "
+                "[TIMING] prepare_delta_sync: revert detected, "
                 "first_parent=%s != last_synced=%s",
                 first_parent[:8] if isinstance(first_parent, str) else first_parent,
                 last_synced_uuid[:8],
             )
-            return SyncResult(
+            return PreparedDeltaSync(
                 document_id=document_id,
                 truncated=True,
                 truncate_span=span_end,
+                segment_texts=[],
                 appended_uuids=[],
-                new_span_end=span_end,
+                span_end=span_end,
             )
-    else:
-        # First sync ever - any message is valid
-        pass
 
     t_parse = time.perf_counter()
 
@@ -1407,12 +1423,13 @@ def execute_delta_sync(
             uuids_in_order.append(uuid)
 
     if not uuids_in_order:
-        return SyncResult(
+        return PreparedDeltaSync(
             document_id=document_id,
             truncated=False,
             truncate_span=None,
+            segment_texts=[],
             appended_uuids=[],
-            new_span_end=span_end,
+            span_end=span_end,
         )
 
     # Segment UUIDs at turn boundaries (same logic as execute_sync_from_bytes)
@@ -1439,7 +1456,6 @@ def execute_delta_sync(
 
     # Transcribe and collect texts
     segment_texts: list[str] = []
-    segment_last_uuids: list[str] = []
     appended_uuids: list[str] = []
 
     for segment_uuids in segments:
@@ -1457,60 +1473,127 @@ def execute_delta_sync(
                 )
             ]
             if segment_appended_uuids:
-                segment_last_uuids.append(segment_appended_uuids[-1])
                 appended_uuids.extend(segment_appended_uuids)
 
     t_transcribe = time.perf_counter()
+    logger.info(
+        "[TIMING] prepare_delta_sync complete: parse=%.3fs transcribe=%.3fs "
+        "total=%.3fs segments=%d",
+        t_parse - t0,
+        t_transcribe - t_parse,
+        t_transcribe - t0,
+        len(segment_texts),
+    )
+
+    return PreparedDeltaSync(
+        document_id=document_id,
+        truncated=False,
+        truncate_span=None,
+        segment_texts=segment_texts,
+        appended_uuids=appended_uuids,
+        span_end=span_end,
+    )
+
+
+def execute_delta_sync(
+    session_id: str,
+    delta: bytes,
+    cursor: object,
+    client: object,
+) -> SyncResult:
+    """Execute sync using only delta bytes (memory efficient).
+
+    NOTE: This function should only be called from a sync context without
+    an event loop. If called from asyncio.to_thread while the client uses
+    a runtime backend, background tasks may be cancelled. Use
+    prepare_delta_sync() + async batch_append instead.
+
+    Args:
+        session_id: The session ID (used as document_id)
+        delta: New JSONL bytes to process (delta only, not full content)
+        cursor: SessionCursor with last_synced_uuid and span_end
+        client: RagZoom client with batch_append() method
+
+    Returns:
+        SyncResult. If truncated=True, caller must load full content and re-sync.
+    """
+    import logging
+    import time
+
+    logger = logging.getLogger(__name__)
+    t0 = time.perf_counter()
+
+    prepared = prepare_delta_sync(session_id, delta, cursor)
+
+    if prepared.truncated:
+        return SyncResult(
+            document_id=prepared.document_id,
+            truncated=True,
+            truncate_span=prepared.truncate_span,
+            appended_uuids=[],
+            new_span_end=prepared.span_end,
+        )
 
     # Append to document
-    new_span_end = span_end
-    if segment_texts:
+    new_span_end = prepared.span_end
+    if prepared.segment_texts:
         batch_append_method = getattr(client, "batch_append")
-        result = batch_append_method(document_id, segment_texts)
+        result = batch_append_method(prepared.document_id, prepared.segment_texts)
         new_span_end = getattr(result, "span_end", 0)
 
     t_append = time.perf_counter()
     logger.info(
-        "[TIMING] execute_delta_sync complete: parse=%.3fs transcribe=%.3fs "
-        "append=%.3fs total=%.3fs appended=%d",
-        t_parse - t0,
-        t_transcribe - t_parse,
-        t_append - t_transcribe,
+        "[TIMING] execute_delta_sync append: %.3fs appended=%d",
         t_append - t0,
-        len(appended_uuids),
+        len(prepared.appended_uuids),
     )
 
     return SyncResult(
-        document_id=document_id,
+        document_id=prepared.document_id,
         truncated=False,
         truncate_span=None,
-        appended_uuids=appended_uuids,
+        appended_uuids=prepared.appended_uuids,
         new_span_end=new_span_end,
     )
 
 
-def execute_streaming_resync(
+@dataclass
+class PreparedStreamingResync:
+    """Result of prepare_streaming_resync - ready for async operations.
+
+    If needs_truncate=True, caller must truncate to truncate_span before
+    calling batch_append. segment_texts contains the text units for batch_append.
+    """
+
+    document_id: str
+    needs_truncate: bool
+    truncate_span: int | None
+    segment_texts: list[str]
+    appended_uuids: list[str]
+    span_end: int
+
+
+def prepare_streaming_resync(
     session_id: str,
     jsonl_content: bytes,
     last_synced_uuid: str | None,
     span_end: int,
-    client: object,
-) -> SyncResult:
-    """Execute re-sync using streaming approach after revert detection.
+) -> PreparedStreamingResync:
+    """Prepare streaming resync data without calling client (CPU-bound only).
 
-    Uses stream_find_common_ancestor_from_bytes to find the branch point
-    in O(distance) time instead of O(n), then transcribes only the new
-    messages from the common ancestor to current head.
+    This function processes the JSONL content and prepares operations
+    for the client, but does NOT call truncate or batch_append. This allows
+    the caller to run this in a thread, then call client methods asynchronously
+    on the main event loop.
 
     Args:
         session_id: The session ID (used as document_id)
         jsonl_content: Full JSONL content as bytes
         last_synced_uuid: UUID of the last synced message (before revert)
         span_end: Document span position of last sync
-        client: RagZoom client with truncate() and batch_append() methods
 
     Returns:
-        SyncResult describing what was done (truncation and new appends)
+        PreparedStreamingResync with operations ready to execute.
     """
     import logging
     import time
@@ -1520,7 +1603,7 @@ def execute_streaming_resync(
     document_id = session_id
 
     logger.info(
-        "[TIMING] execute_streaming_resync start: content_bytes=%d last_synced=%s",
+        "[TIMING] prepare_streaming_resync start: content_bytes=%d last_synced=%s",
         len(jsonl_content),
         last_synced_uuid[:8] if last_synced_uuid else None,
     )
@@ -1529,12 +1612,13 @@ def execute_streaming_resync(
     current_head = _get_current_head_from_bytes(jsonl_content)
     if current_head is None:
         # Empty content
-        return SyncResult(
+        return PreparedStreamingResync(
             document_id=document_id,
-            truncated=False,
+            needs_truncate=False,
             truncate_span=None,
+            segment_texts=[],
             appended_uuids=[],
-            new_span_end=0,
+            span_end=0,
         )
 
     t_head = time.perf_counter()
@@ -1560,9 +1644,8 @@ def execute_streaming_resync(
     )
     t_chain = time.perf_counter()
 
-    # If there's a common ancestor that's not the last synced uuid,
-    # we need to truncate back to that point
-    truncated = False
+    # Determine if truncation is needed
+    needs_truncate = False
     truncate_span: int | None = None
 
     if (
@@ -1571,30 +1654,23 @@ def execute_streaming_resync(
     ):
         # Need to truncate - find span position for common ancestor
         # For now, we truncate to 0 and re-index from there
-        # A more sophisticated approach would track span per uuid
-        truncate_method = getattr(client, "truncate")
-        truncate_method(document_id, 0)
-        truncated = True
+        needs_truncate = True
         truncate_span = 0
-
         # Need to transcribe from beginning since we truncated to 0
         uuids_to_transcribe = get_ancestor_chain(current_head, None, result.parent_of)
     elif result.common_ancestor is None and last_synced_uuid is not None:
         # Disjoint branches - full re-index
-        truncate_method = getattr(client, "truncate")
-        truncate_method(document_id, 0)
-        truncated = True
+        needs_truncate = True
         truncate_span = 0
-
         # Build full chain from root
         uuids_to_transcribe = get_ancestor_chain(current_head, None, result.parent_of)
 
-    # Transcribe and append
+    # Transcribe and collect texts
+    segment_texts: list[str] = []
     appended_uuids: list[str] = []
-    new_span_end = span_end if not truncated else 0
 
     if uuids_to_transcribe:
-        # Segment UUIDs at turn boundaries (same logic as execute_delta_sync)
+        # Segment UUIDs at turn boundaries
         segments: list[list[str]] = []
         current_segment: list[str] = []
         prev_was_user = False
@@ -1619,8 +1695,6 @@ def execute_streaming_resync(
             segments.append(current_segment)
 
         # Transcribe and collect
-        segment_texts: list[str] = []
-
         for segment_uuids in segments:
             combined_text = transcribe_uuids_from_map(
                 segment_uuids, result.records_cache
@@ -1639,37 +1713,88 @@ def execute_streaming_resync(
                 ]
                 appended_uuids.extend(segment_appended_uuids)
 
-        t_transcribe = time.perf_counter()
-        logger.info(
-            "[TIMING] transcribe phase: chain=%.3fs transcribe=%.3fs segments=%d",
-            t_chain - t_ancestor,
-            t_transcribe - t_chain,
-            len(segment_texts),
-        )
+    t_transcribe = time.perf_counter()
+    logger.info(
+        "[TIMING] prepare_streaming_resync complete: chain=%.3fs transcribe=%.3fs "
+        "total=%.3fs segments=%d needs_truncate=%s",
+        t_chain - t_ancestor,
+        t_transcribe - t_chain,
+        t_transcribe - t0,
+        len(segment_texts),
+        needs_truncate,
+    )
 
-        if segment_texts:
-            batch_append_method = getattr(client, "batch_append")
-            append_result = batch_append_method(document_id, segment_texts)
-            new_span_end = getattr(append_result, "span_end", 0)
-            t_append = time.perf_counter()
-            logger.info(
-                "[TIMING] batch_append complete: %.3fs segments=%d",
-                t_append - t_transcribe,
-                len(segment_texts),
-            )
+    new_span_end = span_end if not needs_truncate else 0
+    return PreparedStreamingResync(
+        document_id=document_id,
+        needs_truncate=needs_truncate,
+        truncate_span=truncate_span,
+        segment_texts=segment_texts,
+        appended_uuids=appended_uuids,
+        span_end=new_span_end,
+    )
+
+
+def execute_streaming_resync(
+    session_id: str,
+    jsonl_content: bytes,
+    last_synced_uuid: str | None,
+    span_end: int,
+    client: object,
+) -> SyncResult:
+    """Execute re-sync using streaming approach after revert detection.
+
+    NOTE: This function should only be called from a sync context without
+    an event loop. If called from asyncio.to_thread while the client uses
+    a runtime backend, background tasks may be cancelled. Use
+    prepare_streaming_resync() + async client methods instead.
+
+    Args:
+        session_id: The session ID (used as document_id)
+        jsonl_content: Full JSONL content as bytes
+        last_synced_uuid: UUID of the last synced message (before revert)
+        span_end: Document span position of last sync
+        client: RagZoom client with truncate() and batch_append() methods
+
+    Returns:
+        SyncResult describing what was done (truncation and new appends)
+    """
+    import logging
+    import time
+
+    logger = logging.getLogger(__name__)
+    t0 = time.perf_counter()
+
+    prepared = prepare_streaming_resync(
+        session_id, jsonl_content, last_synced_uuid, span_end
+    )
+
+    # Execute truncate if needed
+    if prepared.needs_truncate and prepared.truncate_span is not None:
+        truncate_method = getattr(client, "truncate")
+        truncate_method(prepared.document_id, prepared.truncate_span)
+
+    # Execute batch_append
+    new_span_end = prepared.span_end
+    if prepared.segment_texts:
+        batch_append_method = getattr(client, "batch_append")
+        append_result = batch_append_method(
+            prepared.document_id, prepared.segment_texts
+        )
+        new_span_end = getattr(append_result, "span_end", 0)
 
     t_end = time.perf_counter()
     logger.info(
-        "[TIMING] execute_streaming_resync complete: total=%.3fs appended=%d truncated=%s",
+        "[TIMING] execute_streaming_resync complete: %.3fs appended=%d truncated=%s",
         t_end - t0,
-        len(appended_uuids),
-        truncated,
+        len(prepared.appended_uuids),
+        prepared.needs_truncate,
     )
 
     return SyncResult(
-        document_id=document_id,
-        truncated=truncated,
-        truncate_span=truncate_span,
-        appended_uuids=appended_uuids,
+        document_id=prepared.document_id,
+        truncated=prepared.needs_truncate,
+        truncate_span=prepared.truncate_span,
+        appended_uuids=prepared.appended_uuids,
         new_span_end=new_span_end,
     )

@@ -19,7 +19,7 @@ from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as DbSession
 
-    from ragzoom.wrapper import RagZoom
+    from ragzoom.wrapper import AsyncRagZoom
 
 logger = logging.getLogger(__name__)
 
@@ -66,16 +66,16 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
     def __init__(
         self,
         get_db_session: Callable[[], DbSession],
-        get_ragzoom_client: Callable[[str], RagZoom],
+        get_async_ragzoom_client: Callable[[str], AsyncRagZoom],
     ) -> None:
         """Initialize the servicer.
 
         Args:
             get_db_session: Factory to get a database session
-            get_ragzoom_client: Factory to get a RagZoom client for a user
+            get_async_ragzoom_client: Factory to get an AsyncRagZoom client for a user
         """
         self._get_db_session = get_db_session
-        self._get_ragzoom_client = get_ragzoom_client
+        self._get_async_ragzoom_client = get_async_ragzoom_client
 
     async def GetSessionCursor(  # noqa: N802
         self,
@@ -104,8 +104,9 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
         Normal appends process only the delta without loading history.
         """
         from memory_service.ingestion.claude.transcript_sync import (
-            execute_delta_sync,
-            execute_streaming_resync,
+            SyncResult,
+            prepare_delta_sync,
+            prepare_streaming_resync,
         )
 
         t0 = time.perf_counter()
@@ -165,19 +166,18 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
 
         # Phase 2: Without lock - process delta or handle revert
         t2 = time.perf_counter()
-        ragzoom_client = self._get_ragzoom_client(user_id)
+        async_client = self._get_async_ragzoom_client(user_id)
         try:
-            # Try delta-only sync first (memory efficient)
-            result = await asyncio.to_thread(
-                execute_delta_sync,
+            # Prepare delta sync in thread (CPU-bound parsing)
+            prepared = await asyncio.to_thread(
+                prepare_delta_sync,
                 session_id=session_id,
                 delta=delta,
                 cursor=cursor,
-                client=ragzoom_client,
             )
             t3 = time.perf_counter()
 
-            if result.truncated:
+            if prepared.truncated:
                 # Revert detected - need to load full content and re-sync
                 logger.warning(
                     "[TIMING] Revert detected, loading full content for re-sync"
@@ -199,14 +199,55 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                         pass
                     db_session.close()
 
-                # Re-sync with streaming approach
-                result = await asyncio.to_thread(
-                    execute_streaming_resync,
+                # Prepare streaming resync in thread (CPU-bound parsing)
+                prepared_resync = await asyncio.to_thread(
+                    prepare_streaming_resync,
                     session_id=session_id,
                     jsonl_content=full_content,
                     last_synced_uuid=cursor.last_synced_uuid,
                     span_end=cursor.span_end,
-                    client=ragzoom_client,
+                )
+
+                # Execute truncate if needed (async, on main loop)
+                if (
+                    prepared_resync.needs_truncate
+                    and prepared_resync.truncate_span is not None
+                ):
+                    await async_client.truncate(
+                        prepared_resync.document_id, prepared_resync.truncate_span
+                    )
+
+                # Execute batch_append (async, on main loop - jobs run on this loop)
+                new_span_end = prepared_resync.span_end
+                if prepared_resync.segment_texts:
+                    append_result = await async_client.batch_append(
+                        prepared_resync.document_id, prepared_resync.segment_texts
+                    )
+                    new_span_end = append_result.span_end
+
+                result = SyncResult(
+                    document_id=prepared_resync.document_id,
+                    truncated=prepared_resync.needs_truncate,
+                    truncate_span=prepared_resync.truncate_span,
+                    appended_uuids=prepared_resync.appended_uuids,
+                    new_span_end=new_span_end,
+                )
+                t3 = time.perf_counter()
+            else:
+                # Normal delta sync - execute batch_append (async, on main loop)
+                new_span_end = prepared.span_end
+                if prepared.segment_texts:
+                    append_result = await async_client.batch_append(
+                        prepared.document_id, prepared.segment_texts
+                    )
+                    new_span_end = append_result.span_end
+
+                result = SyncResult(
+                    document_id=prepared.document_id,
+                    truncated=False,
+                    truncate_span=None,
+                    appended_uuids=prepared.appended_uuids,
+                    new_span_end=new_span_end,
                 )
                 t3 = time.perf_counter()
 

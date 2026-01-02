@@ -879,7 +879,7 @@ async def serve(state: ServerState, *, host: str, port: int) -> None:
     from sqlalchemy.orm import Session, sessionmaker
 
     from memory_service.grpc_servicer import SessionIngestionServicer
-    from ragzoom.wrapper import RagZoom
+    from ragzoom.wrapper import AsyncRagZoom
 
     # 100MB max message size for large transcript uploads
     max_message_size = 100 * 1024 * 1024
@@ -910,14 +910,14 @@ async def serve(state: ServerState, *, host: str, port: int) -> None:
         def get_db_session() -> Session:
             return db_session_factory()
 
-        def get_ragzoom_client(user_id: str) -> RagZoom:
+        def get_async_ragzoom_client(user_id: str) -> AsyncRagZoom:
             # For now, all users share the same runtime (no per-user isolation)
             # Document IDs should include user_id prefix for isolation
-            return RagZoom(runtime=state.index_runtime)
+            return AsyncRagZoom(runtime=state.index_runtime)
 
         session_servicer = SessionIngestionServicer(
             get_db_session=get_db_session,
-            get_ragzoom_client=get_ragzoom_client,
+            get_async_ragzoom_client=get_async_ragzoom_client,
         )
         pb2_grpc.add_SessionIngestionServiceServicer_to_server(session_servicer, server)
         logger.info("Session ingestion service enabled")
