@@ -186,6 +186,14 @@ class SessionIngestResult:
 
 
 @dataclass
+class CompactionBoundaryResult:
+    """Result from getting the compaction boundary for a session."""
+
+    has_boundary: bool
+    span_end: int
+
+
+@dataclass
 class DocumentStatusView:
     document_id: str
     leaf_count: int
@@ -663,4 +671,37 @@ class GrpcRagzoomClient:
             messages_processed=response.messages_processed,
             truncated=response.truncated,
             truncate_span=response.truncate_span,
+        )
+
+    def get_compaction_boundary(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+    ) -> CompactionBoundaryResult:
+        """Get the compaction boundary span_end for a session.
+
+        The compaction boundary is the span_end just before post-compaction content.
+        This allows queries to be limited to pre-compaction history only.
+
+        Args:
+            session_id: The session to get boundary for
+            user_id: User identifier for multi-tenant isolation
+
+        Returns:
+            CompactionBoundaryResult with has_boundary=True and span_end if
+            compaction has occurred, or has_boundary=False otherwise.
+        """
+        request = pb2.GetCompactionBoundaryRequest(session_id=session_id)
+        metadata = [("user_id", user_id)]
+        try:
+            response = self._session.GetCompactionBoundary(
+                request, timeout=self._timeout, metadata=metadata
+            )
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        return CompactionBoundaryResult(
+            has_boundary=response.has_boundary,
+            span_end=response.span_end,
         )

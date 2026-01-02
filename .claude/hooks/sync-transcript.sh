@@ -23,11 +23,6 @@ if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
         export RAGZOOM_SERVER_ADDRESS
     fi
 
-    # Use separate state directory for remote server to avoid conflicts with local sync
-    if [[ -n "${RAGZOOM_SERVER_ADDRESS:-}" && "$RAGZOOM_SERVER_ADDRESS" != "localhost"* ]]; then
-        export RAGZOOM_STATE_DIR="data/transcript-state-remote"
-    fi
-
     # Run sync synchronously so errors are visible
     python -m ragzoom.cli sync-claude-code-transcript "$TRANSCRIPT_PATH"
 fi

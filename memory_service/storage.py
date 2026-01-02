@@ -107,6 +107,10 @@ class SessionRawData(Base):
         BigInteger, nullable=False, default=0
     )
 
+    # Compaction boundary: span_end just before post-compaction content
+    # Used by MCP server to limit queries to pre-compaction history
+    compaction_span_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     __table_args__ = (
         Index("ix_session_raw_data_user_session", "user_id", "session_id", unique=True),
     )
@@ -230,12 +234,22 @@ class SessionStorage:
             self._db.flush()
 
     def update_sync_state(
-        self, session_id: str, last_synced_uuid: str, span_end: int
+        self,
+        session_id: str,
+        last_synced_uuid: str,
+        span_end: int,
+        compaction_span_end: int | None = None,
     ) -> None:
         """Update the sync state after successful processing.
 
         This is called after content is already appended and processed,
         to record what UUID we last synced and the document span position.
+
+        Args:
+            session_id: The session ID
+            last_synced_uuid: UUID of the last synced message
+            span_end: Document span position after sync
+            compaction_span_end: Optional span_end just before post-compaction content
         """
         stmt = select(SessionRawData).where(
             SessionRawData.user_id == self._user_id,
@@ -246,4 +260,18 @@ class SessionStorage:
         if row is not None:
             row.last_synced_uuid = last_synced_uuid
             row.span_end = span_end
+            if compaction_span_end is not None:
+                row.compaction_span_end = compaction_span_end
             self._db.flush()
+
+    def get_compaction_boundary(self, session_id: str) -> int | None:
+        """Get the compaction boundary span_end for a session.
+
+        Returns the span_end just before post-compaction content,
+        or None if no compaction has occurred.
+        """
+        stmt = select(SessionRawData.compaction_span_end).where(
+            SessionRawData.user_id == self._user_id,
+            SessionRawData.session_id == session_id,
+        )
+        return self._db.execute(stmt).scalar_one_or_none()

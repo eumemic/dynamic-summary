@@ -437,6 +437,100 @@ class TestPrepareStreamingResync:
         assert "Message after compaction" in full_text
         assert "Response after" in full_text
 
+    def test_compaction_boundary_computed(self) -> None:
+        """Compaction boundary is the span_end just before post-compaction content."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            prepare_streaming_resync,
+        )
+
+        content = _make_jsonl(
+            # Pre-compaction: msg1 -> msg2
+            {
+                "uuid": "msg1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "Pre-compaction user message"},
+            },
+            {
+                "uuid": "msg2",
+                "parentUuid": "msg1",
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "Pre-compaction response"}]
+                },
+            },
+            # Compaction summary (skipped but marks boundary)
+            {
+                "uuid": "compact1",
+                "parentUuid": "msg2",
+                "type": "user",
+                "isCompactSummary": True,
+                "message": {"content": "Compaction summary"},
+            },
+            # Post-compaction: msg3 -> msg4
+            {
+                "uuid": "msg3",
+                "parentUuid": "compact1",
+                "type": "user",
+                "message": {"content": "Post-compaction user message"},
+            },
+            {
+                "uuid": "msg4",
+                "parentUuid": "msg3",
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "text", "text": "Post-compaction response"}]
+                },
+            },
+        )
+
+        result = prepare_streaming_resync(
+            session_id="session1",
+            jsonl_content=content,
+            last_synced_uuid=None,
+            span_end=0,
+        )
+
+        # compaction_span_end should be the cumulative length of pre-compaction segments
+        assert result.compaction_span_end is not None
+
+        # The boundary should equal the length of pre-compaction content
+        pre_compaction_len = sum(
+            len(s) for s in result.segment_texts if "Pre-compaction" in s
+        )
+        assert result.compaction_span_end == pre_compaction_len
+
+    def test_compaction_boundary_none_without_compaction(self) -> None:
+        """Compaction boundary is None when there's no compaction summary."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            prepare_streaming_resync,
+        )
+
+        content = _make_jsonl(
+            {
+                "uuid": "msg1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "First message"},
+            },
+            {
+                "uuid": "msg2",
+                "parentUuid": "msg1",
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Response"}]},
+            },
+        )
+
+        result = prepare_streaming_resync(
+            session_id="session1",
+            jsonl_content=content,
+            last_synced_uuid=None,
+            span_end=0,
+        )
+
+        # No compaction, so boundary should be None
+        assert result.compaction_span_end is None
+
 
 class TestPrepareDeltaSync:
     """Tests for prepare_delta_sync."""

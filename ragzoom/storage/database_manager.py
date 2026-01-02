@@ -480,6 +480,17 @@ class DatabaseManager:
                     )
                 )
 
+                # Add compaction_span_end column to track compaction boundary
+                # (span_end just before post-compaction content)
+                conn.execute(
+                    text(
+                        """
+                    ALTER TABLE session_raw_data
+                    ADD COLUMN IF NOT EXISTS compaction_span_end INTEGER;
+                """
+                    )
+                )
+
                 logger.debug("Database migrations completed")
         except Exception as e:
             # Migration failures are not critical - the column might already exist

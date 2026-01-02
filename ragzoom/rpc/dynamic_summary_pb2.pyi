@@ -440,3 +440,14 @@ class IngestSessionResponse:
         truncated: bool = ...,
         truncate_span: int = ...,
     ) -> None: ...
+
+class GetCompactionBoundaryRequest:
+    session_id: str
+
+    def __init__(self, *, session_id: str) -> None: ...
+
+class GetCompactionBoundaryResponse:
+    has_boundary: bool
+    span_end: int
+
+    def __init__(self, *, has_boundary: bool = ..., span_end: int = ...) -> None: ...

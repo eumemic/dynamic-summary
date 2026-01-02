@@ -12,6 +12,8 @@ from .dynamic_summary_pb2 import (
     BatchAppendTextResponse,
     ExecuteQueryRequest,
     ExecuteQueryResponse,
+    GetCompactionBoundaryRequest,
+    GetCompactionBoundaryResponse,
     GetDocumentRequest,
     GetDocumentResponse,
     GetSessionCursorRequest,
@@ -82,6 +84,12 @@ class SessionIngestionServiceStub:
         timeout: float | None = ...,
         metadata: list[tuple[str, str]] | None = ...,
     ) -> IngestSessionResponse: ...
+    def GetCompactionBoundary(
+        self,
+        request: GetCompactionBoundaryRequest,
+        timeout: float | None = ...,
+        metadata: list[tuple[str, str]] | None = ...,
+    ) -> GetCompactionBoundaryResponse: ...
 
 class IndexerServiceServicer:
     def IndexDocument(
@@ -120,6 +128,9 @@ class SessionIngestionServiceServicer:
     def IngestSession(
         self, request: IngestSessionRequest, context: ServicerContext
     ) -> Awaitable[IngestSessionResponse]: ...
+    def GetCompactionBoundary(
+        self, request: GetCompactionBoundaryRequest, context: ServicerContext
+    ) -> Awaitable[GetCompactionBoundaryResponse]: ...
 
 add_IndexerServiceServicer_to_server: Callable[[IndexerServiceServicer, Server], None]
 add_RetrievalServiceServicer_to_server: Callable[

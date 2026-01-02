@@ -267,7 +267,17 @@ message IngestSessionResponse {
   int32 truncate_span = 4;  // Span position truncated to (if truncated)
 }
 
+message GetCompactionBoundaryRequest {
+  string session_id = 1;
+}
+
+message GetCompactionBoundaryResponse {
+  bool has_boundary = 1;  // True if compaction has occurred
+  int32 span_end = 2;  // Span position just before post-compaction content
+}
+
 service SessionIngestionService {
   rpc GetSessionCursor(GetSessionCursorRequest) returns (GetSessionCursorResponse);
   rpc IngestSession(IngestSessionRequest) returns (IngestSessionResponse);
+  rpc GetCompactionBoundary(GetCompactionBoundaryRequest) returns (GetCompactionBoundaryResponse);
 }

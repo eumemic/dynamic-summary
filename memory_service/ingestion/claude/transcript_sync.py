@@ -81,13 +81,16 @@ def _parse_command_xml(text: str) -> str | None:
 
 
 @dataclass
-class SessionStateHeader:
-    """Header line of session state file."""
+class SessionPidMapping:
+    """Minimal local state: just PID→session mapping.
+
+    This is used by the MCP server to find its session via parent PID matching.
+    All other sync state (last_synced_uuid, span_end, compaction_span_end)
+    is stored server-side in the database.
+    """
 
     document_id: str
-
     last_pid: int | None = None
-    """PID of the Claude Code process for this session."""
 
     def to_json(self) -> dict[str, object]:
         result: dict[str, object] = {"document_id": self.document_id}
@@ -96,7 +99,7 @@ class SessionStateHeader:
         return result
 
     @classmethod
-    def from_json(cls, data: dict[str, object]) -> SessionStateHeader:
+    def from_json(cls, data: dict[str, object]) -> SessionPidMapping:
         doc_id = data.get("document_id")
         if not isinstance(doc_id, str):
             raise TypeError(f"document_id must be str, got {type(doc_id)}")
@@ -104,6 +107,30 @@ class SessionStateHeader:
         if last_pid is not None and not isinstance(last_pid, int):
             raise TypeError(f"last_pid must be int or None, got {type(last_pid)}")
         return cls(document_id=doc_id, last_pid=last_pid)
+
+    @classmethod
+    def load(cls, path: Path) -> SessionPidMapping | None:
+        """Load session PID mapping from JSON file.
+
+        Returns None if file doesn't exist.
+        """
+        if not path.exists():
+            return None
+
+        content = path.read_text().strip()
+        if not content:
+            return None
+
+        return cls.from_json(json.loads(content))
+
+    def save(self, path: Path) -> None:
+        """Save session PID mapping to JSON file."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self.to_json()) + "\n")
+
+
+# Legacy alias for backwards compatibility during migration
+SessionStateHeader = SessionPidMapping
 
 
 @dataclass
@@ -236,17 +263,14 @@ def get_state_path(document_id: str) -> Path:
 
 
 def set_session_pid(document_id: str, pid: int) -> None:
-    """Set the PID for a session, creating state file if needed.
+    """Set the PID for a session, creating mapping file if needed.
 
     Called by SessionStart hook to register the Claude Code PID before
-    any tool calls. Preserves existing state fields if the file exists.
+    any tool calls. Uses the new simplified format (JSON, not JSONL).
     """
     state_path = get_state_path(document_id)
-    state = SessionState.load(state_path)
-    if state is None:
-        state = SessionState(header=SessionStateHeader(document_id=document_id))
-    state.header.last_pid = pid
-    state.save(state_path)
+    mapping = SessionPidMapping(document_id=document_id, last_pid=pid)
+    mapping.save(state_path)
 
 
 class _SessionAppendLog(AppendLog):
@@ -1015,6 +1039,9 @@ class SyncResult:
     appended_uuids: list[str]
     new_span_end: int
     truncate_byte_offset: int | None = None  # For server-side storage truncation
+    compaction_span_end: int | None = (
+        None  # Span_end just before post-compaction content
+    )
 
 
 def execute_sync(
@@ -1587,6 +1614,8 @@ class PreparedStreamingResync:
     segment_texts: list[str]
     appended_uuids: list[str]
     span_end: int
+    compaction_span_end: int | None
+    """Span position just before post-compaction content, or None if no compaction."""
 
 
 def prepare_streaming_resync(
@@ -1635,6 +1664,7 @@ def prepare_streaming_resync(
             segment_texts=[],
             appended_uuids=[],
             span_end=0,
+            compaction_span_end=None,
         )
 
     t_head = time.perf_counter()
@@ -1691,20 +1721,33 @@ def prepare_streaming_resync(
     # Transcribe and collect texts
     segment_texts: list[str] = []
     appended_uuids: list[str] = []
+    compaction_segment_index: int | None = (
+        None  # Index of first post-compaction segment
+    )
 
     if uuids_to_transcribe:
-        # Segment UUIDs at turn boundaries
+        # Segment UUIDs at turn boundaries, tracking compaction boundary
         segments: list[list[str]] = []
         current_segment: list[str] = []
         prev_was_user = False
+        seen_compaction = False
 
         for uuid in uuids_to_transcribe:
             record = result.records_cache.get(uuid)
             if record is None:
                 continue
 
-            # Skip compaction summaries - they shouldn't be indexed
+            # Track compaction summaries - they mark the boundary
             if record.get("isCompactSummary"):
+                seen_compaction = True
+                # If we have a current segment, it's the last pre-compaction segment
+                if current_segment:
+                    segments.append(current_segment)
+                    current_segment = []
+                    prev_was_user = False
+                # Record that the NEXT segment is post-compaction
+                if compaction_segment_index is None:
+                    compaction_segment_index = len(segments)
                 continue
 
             is_user_message = (
@@ -1714,12 +1757,18 @@ def prepare_streaming_resync(
             if is_user_message and not prev_was_user and current_segment:
                 segments.append(current_segment)
                 current_segment = []
+                # If we just saw compaction, mark this as the first post-compaction segment
+                if seen_compaction and compaction_segment_index is None:
+                    compaction_segment_index = len(segments)
 
             current_segment.append(uuid)
             prev_was_user = is_user_message
 
         if current_segment:
             segments.append(current_segment)
+            # Handle case where compaction was seen but no segment break yet
+            if seen_compaction and compaction_segment_index is None:
+                compaction_segment_index = len(segments) - 1
 
         # Transcribe and collect
         for segment_uuids in segments:
@@ -1751,6 +1800,14 @@ def prepare_streaming_resync(
         needs_truncate,
     )
 
+    # Compute compaction boundary: sum of segment lengths before compaction_segment_index
+    compaction_span_end: int | None = None
+    if compaction_segment_index is not None and compaction_segment_index > 0:
+        # Boundary is the cumulative length of pre-compaction segments
+        compaction_span_end = sum(
+            len(s) for s in segment_texts[:compaction_segment_index]
+        )
+
     new_span_end = span_end if not needs_truncate else 0
     return PreparedStreamingResync(
         document_id=document_id,
@@ -1759,6 +1816,7 @@ def prepare_streaming_resync(
         segment_texts=segment_texts,
         appended_uuids=appended_uuids,
         span_end=new_span_end,
+        compaction_span_end=compaction_span_end,
     )
 
 

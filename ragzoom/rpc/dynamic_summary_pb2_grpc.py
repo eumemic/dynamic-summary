@@ -669,6 +669,12 @@ class SessionIngestionServiceStub(object):
             response_deserializer=dynamic__summary__pb2.IngestSessionResponse.FromString,
             _registered_method=True,
         )
+        self.GetCompactionBoundary = channel.unary_unary(
+            "/ragzoom.rpc.SessionIngestionService/GetCompactionBoundary",
+            request_serializer=dynamic__summary__pb2.GetCompactionBoundaryRequest.SerializeToString,
+            response_deserializer=dynamic__summary__pb2.GetCompactionBoundaryResponse.FromString,
+            _registered_method=True,
+        )
 
 
 class SessionIngestionServiceServicer(object):
@@ -686,6 +692,12 @@ class SessionIngestionServiceServicer(object):
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
 
+    def GetCompactionBoundary(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
 
 def add_SessionIngestionServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -698,6 +710,11 @@ def add_SessionIngestionServiceServicer_to_server(servicer, server):
             servicer.IngestSession,
             request_deserializer=dynamic__summary__pb2.IngestSessionRequest.FromString,
             response_serializer=dynamic__summary__pb2.IngestSessionResponse.SerializeToString,
+        ),
+        "GetCompactionBoundary": grpc.unary_unary_rpc_method_handler(
+            servicer.GetCompactionBoundary,
+            request_deserializer=dynamic__summary__pb2.GetCompactionBoundaryRequest.FromString,
+            response_serializer=dynamic__summary__pb2.GetCompactionBoundaryResponse.SerializeToString,
         ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -762,6 +779,36 @@ class SessionIngestionService(object):
             "/ragzoom.rpc.SessionIngestionService/IngestSession",
             dynamic__summary__pb2.IngestSessionRequest.SerializeToString,
             dynamic__summary__pb2.IngestSessionResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def GetCompactionBoundary(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/ragzoom.rpc.SessionIngestionService/GetCompactionBoundary",
+            dynamic__summary__pb2.GetCompactionBoundaryRequest.SerializeToString,
+            dynamic__summary__pb2.GetCompactionBoundaryResponse.FromString,
             options,
             channel_credentials,
             insecure,
