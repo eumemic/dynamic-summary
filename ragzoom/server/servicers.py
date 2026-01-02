@@ -663,6 +663,7 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
                 documents=document_progress,
             )
 
+            # Return AFTER yielding the final idle status
             if mode == _UNTIL_IDLE_WORKER_MODE and idle:
                 return
 
@@ -961,6 +962,7 @@ async def _render_indexing_progress(engine: IndexingEngine) -> None:
     try:
         while True:
             status = await engine.status()
+            # Only show documents with active inflight work
             active_doc_ids = {
                 doc_id
                 for doc_id, count in status.in_flight_by_document.items()

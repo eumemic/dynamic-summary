@@ -393,7 +393,9 @@ class IndexingEngine:
                     ctx.leaves_at_last_idle
                 )
                 ctx.expected_total_jobs = total_expected - baseline_expected
-                # Don't reset completed_jobs - they accumulate until idle
+                # Reset completed count when starting new work after idle
+                if document_id not in self._active_documents:
+                    ctx.completed_jobs = 0
 
             self._active_documents.add(document_id)
             self._idle_event.clear()
@@ -586,13 +588,13 @@ class IndexingEngine:
                     self._active_documents.discard(document_id)
                     self._notify_state_change()
 
-                    # Reset progress counters for next work cycle
+                    # Update leaves count but keep progress counters so displays
+                    # can show the final "completed=X/X inflight=0" state.
+                    # Counters reset on the next trigger_work() call.
                     ctx = self._document_contexts.get(document_id)
                     if ctx is not None:
                         store = self._store.for_document(document_id)
                         ctx.leaves_at_last_idle = store.nodes.leaf_count()
-                        ctx.completed_jobs = 0
-                        ctx.expected_total_jobs = 0
 
                     # Fire callback outside lock - document is truly idle
                     if self._on_document_idle is not None:

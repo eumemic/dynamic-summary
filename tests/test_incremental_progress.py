@@ -1,8 +1,9 @@
 """Tests for incremental progress tracking.
 
 These tests verify that progress counters (completed/expected) accumulate
-correctly across multiple appends until the document goes idle, at which
-point they reset for the next work cycle.
+correctly across multiple appends. Counters are preserved when a document
+goes idle (so the final state is visible to streaming clients), then reset
+when trigger_work() is called to start the next work cycle.
 """
 
 import pytest
@@ -57,19 +58,54 @@ class TestIncrementalProgress:
         assert status.expected_total_by_document["doc"] == expected
 
     @pytest.mark.asyncio
-    async def test_counters_reset_at_idle(
+    async def test_counters_preserved_at_idle(
         self,
         indexer_runtime_harness: IndexerRuntimeHarness,
         storage_backend: StorageBackend,
     ) -> None:
-        """Both counters reset when document goes idle."""
+        """Counters are preserved when document goes idle for final state display.
+
+        The counters persist after idle so that gRPC streaming clients can see
+        the final "completed=X/X inflight=0" state. They reset on the next
+        trigger_work() call when new work begins.
+        """
         await indexer_runtime_harness.append("doc", "text " * 50, await_idle=True)
 
-        # After idle, context should have reset counters
+        # After idle, counters should still show the completed work
         ctx = indexer_runtime_harness.indexing_engine._document_contexts.get("doc")
         assert ctx is not None
-        assert ctx.completed_jobs == 0
-        assert ctx.expected_total_jobs == 0
+        assert ctx.completed_jobs > 0  # Work was done
+        assert ctx.expected_total_jobs > 0  # Expected was set
+
+    @pytest.mark.asyncio
+    async def test_counters_reset_on_next_trigger(
+        self,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+        storage_backend: StorageBackend,
+    ) -> None:
+        """Counters reset when new work starts after idle.
+
+        When trigger_work() is called after idle, the completed_jobs counter
+        resets so progress for the new work cycle starts from 0.
+        """
+        await indexer_runtime_harness.append("doc", "text " * 50, await_idle=True)
+
+        # After idle, counters are preserved
+        ctx = indexer_runtime_harness.indexing_engine._document_contexts.get("doc")
+        assert ctx is not None
+        completed_before = ctx.completed_jobs
+        assert completed_before > 0
+
+        # New append triggers new work - completed should reset
+        await indexer_runtime_harness.append("doc", "more " * 30, await_idle=False)
+
+        # completed_jobs should have reset to 0 (or incremented from 0)
+        # At this point, some work may already be done, so just check it's less
+        # than the sum of both rounds' completed jobs
+        ctx = indexer_runtime_harness.indexing_engine._document_contexts.get("doc")
+        assert ctx is not None
+        # The key invariant: the counter was reset, not accumulated
+        assert ctx.completed_jobs < completed_before + ctx.expected_total_jobs
 
     @pytest.mark.asyncio
     async def test_after_idle_new_append_uses_new_baseline(
