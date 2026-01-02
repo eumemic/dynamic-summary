@@ -337,12 +337,19 @@ class AsyncRagZoom:
             self._address = None
         self._timeout = timeout
         # jscpd:ignore-end
-        # Keep sync wrapper for gRPC client operations
-        self._sync = RagZoom(
-            server_address=server_address,
-            timeout=timeout,
-            runtime=None,  # Don't pass runtime - we handle it directly
-        )
+        # Lazy sync wrapper - only created when needed for query()
+        self._sync: RagZoom | None = None
+        self._server_address_for_sync = server_address
+
+    def _get_sync(self) -> RagZoom:
+        """Get or create the sync wrapper for gRPC operations."""
+        if self._sync is None:
+            self._sync = RagZoom(
+                server_address=self._server_address_for_sync,
+                timeout=self._timeout,
+                runtime=None,  # Don't pass runtime - we handle it directly
+            )
+        return self._sync
 
     def _client(self) -> GrpcRagzoomClient:
         if self._address is None:
@@ -413,13 +420,17 @@ class AsyncRagZoom:
                 collect_telemetry=collect_telemetry,
             )
 
-        with self._client() as client:
-            return client.append_text(
-                document_id=document_id,
-                content=text.encode("utf-8"),
-                collect_telemetry=collect_telemetry,
-                replace_existing=replace_existing,
-            )
+        # gRPC client is sync - run in thread to avoid blocking event loop
+        def _do_append() -> IndexingResult:
+            with self._client() as client:
+                return client.append_text(
+                    document_id=document_id,
+                    content=text.encode("utf-8"),
+                    collect_telemetry=collect_telemetry,
+                    replace_existing=replace_existing,
+                )
+
+        return await asyncio.to_thread(_do_append)
 
     async def batch_append(
         self,
@@ -441,12 +452,16 @@ class AsyncRagZoom:
                 collect_telemetry=collect_telemetry,
             )
 
-        with self._client() as client:
-            return client.batch_append_text(
-                document_id=document_id,
-                units=units,
-                collect_telemetry=collect_telemetry,
-            )
+        # gRPC client is sync - run in thread to avoid blocking event loop
+        def _do_batch_append() -> IndexingResult:
+            with self._client() as client:
+                return client.batch_append_text(
+                    document_id=document_id,
+                    units=units,
+                    collect_telemetry=collect_telemetry,
+                )
+
+        return await asyncio.to_thread(_do_batch_append)
 
     async def clear(self, document_id: str) -> None:
         if not document_id:
@@ -457,8 +472,12 @@ class AsyncRagZoom:
             await session.clear()
             return
 
-        with self._client() as client:
-            client.clear_document(document_id)
+        # gRPC client is sync - run in thread to avoid blocking event loop
+        def _do_clear() -> None:
+            with self._client() as client:
+                client.clear_document(document_id)
+
+        await asyncio.to_thread(_do_clear)
 
     async def truncate(self, document_id: str, span_start: int) -> TruncateResult:
         if not document_id:
@@ -475,11 +494,15 @@ class AsyncRagZoom:
                 span_start=runtime_result.span_start,
             )
 
-        with self._client() as client:
-            return client.truncate_document(
-                document_id=document_id,
-                span_start=span_start,
-            )
+        # gRPC client is sync - run in thread to avoid blocking event loop
+        def _do_truncate() -> TruncateResult:
+            with self._client() as client:
+                return client.truncate_document(
+                    document_id=document_id,
+                    span_start=span_start,
+                )
+
+        return await asyncio.to_thread(_do_truncate)
 
     async def query(
         self,
@@ -495,7 +518,7 @@ class AsyncRagZoom:
     ) -> QueryResponse:
         # Query always goes through gRPC client (no runtime path)
         return await self._call_sync(
-            self._sync.query,
+            self._get_sync().query,
             document_id,
             query_text,
             budget_tokens=budget_tokens,
