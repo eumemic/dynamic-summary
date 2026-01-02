@@ -313,8 +313,14 @@ class PgVectorIndexAdapter(VectorIndex):
             )
 
     def _row_to_vector(self, row: Sequence[object]) -> Vector:
+        import json
+
         node_id = str(row[0])
-        emb = np.asarray(row[1], dtype=np.float32)
+        # pgvector may return embedding as string when using raw SQL with text()
+        raw_emb = row[1]
+        if isinstance(raw_emb, str):
+            raw_emb = json.loads(raw_emb)
+        emb = np.asarray(raw_emb, dtype=np.float32)
         meta: MetaDict = {
             "document_id": coerce_str(row[2]),
             "span_start": coerce_int(row[3]),
