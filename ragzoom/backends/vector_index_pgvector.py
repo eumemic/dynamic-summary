@@ -103,8 +103,8 @@ class PgVectorIndexAdapter(VectorIndex):
         )
         if where_clauses:
             sql += "WHERE " + " AND ".join(where_clauses) + " "
-        # Order by cosine distance; convert to similarity in Python
-        sql += "ORDER BY embedding <=> :q LIMIT :k"
+        # Order by cosine distance; use CAST() syntax for SQLAlchemy text() compatibility
+        sql += "ORDER BY embedding <=> CAST(:q AS vector) LIMIT :k"
 
         out: list[Vector] = []
         with self._engine.begin() as conn:
