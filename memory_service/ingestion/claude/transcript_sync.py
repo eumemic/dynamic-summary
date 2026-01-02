@@ -1703,6 +1703,10 @@ def prepare_streaming_resync(
             if record is None:
                 continue
 
+            # Skip compaction summaries - they shouldn't be indexed
+            if record.get("isCompactSummary"):
+                continue
+
             is_user_message = (
                 record.get("type") == "user" and "toolUseResult" not in record
             )

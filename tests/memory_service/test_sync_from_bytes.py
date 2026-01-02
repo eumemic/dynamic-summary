@@ -371,6 +371,72 @@ class TestPrepareStreamingResync:
         # Should NOT truncate - this is a fresh sync
         assert result.needs_truncate is False
 
+    def test_compact_summaries_excluded_from_segments(self) -> None:
+        """Compaction summaries (isCompactSummary=true) should not be indexed."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            prepare_streaming_resync,
+        )
+
+        # Simulate a conversation with a compaction summary in the middle
+        # The compact summary has parentUuid=None but bridges to earlier content
+        content = _make_jsonl(
+            # Original messages before compaction
+            {
+                "uuid": "msg1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "First message"},
+            },
+            {
+                "uuid": "msg2",
+                "parentUuid": "msg1",
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "First response"}]},
+            },
+            # Compaction summary - should NOT be indexed
+            {
+                "uuid": "compact1",
+                "parentUuid": "msg2",
+                "type": "user",
+                "isCompactSummary": True,
+                "message": {
+                    "content": "This is a compaction summary that should be skipped"
+                },
+            },
+            # Messages after compaction (child of compact summary)
+            {
+                "uuid": "msg3",
+                "parentUuid": "compact1",
+                "type": "user",
+                "message": {"content": "Message after compaction"},
+            },
+            {
+                "uuid": "msg4",
+                "parentUuid": "msg3",
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Response after"}]},
+            },
+        )
+
+        result = prepare_streaming_resync(
+            session_id="session1",
+            jsonl_content=content,
+            last_synced_uuid=None,
+            span_end=0,
+        )
+
+        # Concatenate all segment texts
+        full_text = "".join(result.segment_texts)
+
+        # The compaction summary text should NOT appear
+        assert "compaction summary that should be skipped" not in full_text
+
+        # But the real messages should appear
+        assert "First message" in full_text
+        assert "First response" in full_text
+        assert "Message after compaction" in full_text
+        assert "Response after" in full_text
+
 
 class TestPrepareDeltaSync:
     """Tests for prepare_delta_sync."""
