@@ -601,6 +601,13 @@ class IndexingEngine:
                 else:
                     # Filter out any jobs already added by another task
                     new_jobs = [j for j in jobs if j not in self._active_jobs]
+                    filtered_count = len(jobs) - len(new_jobs)
+                    if filtered_count > 0:
+                        logger.error(
+                            "DUPLICATE_FILTER: filtered %d jobs, remaining %d",
+                            filtered_count,
+                            len(new_jobs),
+                        )
                     if not new_jobs:
                         continue
 
@@ -1161,6 +1168,8 @@ class IndexingEngine:
                 await self._embed_leaf(job)
             else:
                 await self._summarize_pair(job)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.exception("Job failed: %s", job)
             job_failed = True
@@ -1208,11 +1217,8 @@ class IndexingEngine:
         """
         from ragzoom.contracts.embedding_model import EmbeddingUsageInfo
 
-        logger.info("embed_leaf: STEP 1 - start job=%s", job.leaf_id[:8])
         store = self._store.for_document(job.document_id)
-        logger.info("embed_leaf: STEP 2 - got store job=%s", job.leaf_id[:8])
         leaf = store.nodes.get(job.leaf_id)
-        logger.info("embed_leaf: STEP 3 - got leaf job=%s", job.leaf_id[:8])
         if leaf is None:
             logger.warning(
                 "embed: leaf not found doc=%s leaf=%s",
@@ -1252,32 +1258,17 @@ class IndexingEngine:
         # Only compute query embedding if span_start > 0 AND num_seeds != 0
         # (num_seeds=0 means skip semantic search, so no embedding needed)
         needs_semantic_retrieval = span_start > 0 and (leaf_config.num_seeds or 0) != 0
-        logger.info(
-            "embed_leaf: STEP 4 - needs_semantic=%s job=%s",
-            needs_semantic_retrieval,
-            job.leaf_id[:8],
-        )
         if needs_semantic_retrieval:
             # Get retrieval embedding with usage info
             retriever = self._create_retriever(job.document_id)
             if retriever is not None:
-                logger.info(
-                    "embed_leaf: STEP 5 - calling query embedding job=%s",
-                    job.leaf_id[:8],
-                )
                 query_embedding, retrieval_embedding_usage = (
                     await retriever.embedding_service.get_query_embedding_async_with_usage(
                         leaf_text, job.document_id
                     )
                 )
-                logger.info(
-                    "embed_leaf: STEP 6 - got query embedding job=%s", job.leaf_id[:8]
-                )
 
         # Retrieve preceding context (pass pre-computed embedding to skip API call)
-        logger.info(
-            "embed_leaf: STEP 7 - getting preceding context job=%s", job.leaf_id[:8]
-        )
         context_result = await self._get_preceding_context(
             store=store,
             document_id=job.document_id,
@@ -1318,26 +1309,15 @@ class IndexingEngine:
         # Contextualize preceding context if present, then build embedding text
         context_summary = ""
         contextualization_result = None
-        logger.info(
-            "embed_leaf: STEP 8 - context_prefix len=%d job=%s",
-            len(context_prefix),
-            job.leaf_id[:8],
-        )
         if context_prefix:
             # Generate a contextualizing summary of preceding context
             # (extracts only information relevant to understanding the leaf)
-            logger.info(
-                "embed_leaf: STEP 9 - calling contextualize job=%s", job.leaf_id[:8]
-            )
             contextualization_result = await self._llm_service._contextualize_text(
                 preceding_context=context_prefix,
                 target_text=leaf_text,
                 target_tokens=self._index_config.target_chunk_tokens,
                 parent_id=job.leaf_id,
                 reporter=telemetry,
-            )
-            logger.info(
-                "embed_leaf: STEP 10 - got contextualize result job=%s", job.leaf_id[:8]
             )
             context_summary = contextualization_result.summary
             # Store the summary in the database
@@ -1353,9 +1333,7 @@ class IndexingEngine:
 
         # Record embedding start time for telemetry
         embed_start_time = time.time()
-        logger.info("embed_leaf: STEP 11 - calling embed_texts job=%s", job.leaf_id[:8])
         embed_result = await self._llm_service.embed_texts_with_usage([text_to_embed])
-        logger.info("embed_leaf: STEP 12 - got embed result job=%s", job.leaf_id[:8])
         embeddings = embed_result["embeddings"]
         leaf_embedding_usage = embed_result["usage"]
         if not embeddings:
