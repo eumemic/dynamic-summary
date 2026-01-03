@@ -491,6 +491,33 @@ class DatabaseManager:
                     )
                 )
 
+                # Create session_append_entries table for per-segment tracking
+                # Used for granular revert handling (O(d) where d = distance from end)
+                conn.execute(
+                    text(
+                        """
+                    CREATE TABLE IF NOT EXISTS session_append_entries (
+                        id SERIAL PRIMARY KEY,
+                        session_raw_data_id INTEGER NOT NULL
+                            REFERENCES session_raw_data(id) ON DELETE CASCADE,
+                        entry_index INTEGER NOT NULL,
+                        last_uuid VARCHAR(255) NOT NULL,
+                        span_end INTEGER NOT NULL,
+                        UNIQUE(session_raw_data_id, entry_index)
+                    );
+                """
+                    )
+                )
+
+                conn.execute(
+                    text(
+                        """
+                    CREATE INDEX IF NOT EXISTS ix_append_entries_session_index
+                        ON session_append_entries(session_raw_data_id, entry_index);
+                """
+                    )
+                )
+
                 logger.debug("Database migrations completed")
         except Exception as e:
             # Migration failures are not critical - the column might already exist
