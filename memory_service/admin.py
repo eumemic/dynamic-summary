@@ -190,15 +190,13 @@ def _print_document_status(db: Session) -> None:
             else f"      Summaries: {summary_count:,}/{expected_summaries:,} ({summary_pct:.1f}%) ✅"
         )
 
-        # Tree structure
-        tree_status = (
-            "✅ Complete" if root_count == 1 else f"🌲 Forest ({root_count} roots)"
-        )
+        # Tree structure - forest is complete when no mergeable pairs remain
+        # (i.e., no two roots at the same height)
+        if mergeable_pairs == 0:
+            tree_status = f"✅ Complete forest ({root_count} trees)"
+        else:
+            tree_status = f"🌲 {root_count} roots, {mergeable_pairs} mergeable pairs"
         print(f"      Tree: height={max_height} | {tree_status}")
-
-        # Job queue (mergeable pairs at each height)
-        if mergeable_pairs > 0:
-            print(f"      Queue: {mergeable_pairs} mergeable pairs")
 
         # Validation
         print()

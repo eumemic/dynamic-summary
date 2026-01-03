@@ -129,7 +129,7 @@ Memory Service Status
 Key metrics explained:
 - **Embeddings**: Leaves with vector embeddings (needed for semantic search)
 - **Summaries**: Internal nodes created by merging sibling pairs
-- **Forest**: Multiple root trees that will eventually merge into one
+- **Forest**: Multiple perfect binary trees. Complete when no two roots share the same height (all mergeable pairs merged). Only becomes a single tree if leaf count is a power of 2.
 - **Queue**: Sibling pairs at same height eligible for summarization
 - **Validation**: Checks for duplicate coordinates, broken parent refs, etc.
 
