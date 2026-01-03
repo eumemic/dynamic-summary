@@ -19,7 +19,17 @@ import json
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy import BigInteger, Index, Integer, LargeBinary, String, func, select
+from sqlalchemy import (
+    BigInteger,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    delete,
+    func,
+    select,
+)
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from ragzoom.models import Base
@@ -113,6 +123,38 @@ class SessionRawData(Base):
 
     __table_args__ = (
         Index("ix_session_raw_data_user_session", "user_id", "session_id", unique=True),
+    )
+
+
+class SessionAppendEntry(Base):
+    """Per-segment append log entry for granular revert handling.
+
+    Each entry records the last_uuid and span_end for a segment that was indexed.
+    This enables O(d) revert detection where d = distance from end to divergence,
+    matching the local algorithm's behavior.
+
+    On revert, we search backwards through entries to find the valid prefix
+    (the most recent entry whose last_uuid is an ancestor of the common ancestor),
+    then truncate to that entry's span_end.
+    """
+
+    __tablename__ = "session_append_entries"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_raw_data_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("session_raw_data.id", ondelete="CASCADE"), nullable=False
+    )
+    entry_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_uuid: Mapped[str] = mapped_column(String(255), nullable=False)
+    span_end: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_append_entries_session_index",
+            "session_raw_data_id",
+            "entry_index",
+            unique=True,
+        ),
     )
 
 
@@ -292,3 +334,102 @@ class SessionStorage:
             row.last_synced_uuid = None
             row.original_file_offset = 0
             self._db.flush()
+
+    def _get_session_raw_data_id(self, session_id: str) -> int | None:
+        """Get the SessionRawData id for a session, or None if not found."""
+        stmt = select(SessionRawData.id).where(
+            SessionRawData.user_id == self._user_id,
+            SessionRawData.session_id == session_id,
+        )
+        return self._db.execute(stmt).scalar_one_or_none()
+
+    def get_append_entries(self, session_id: str) -> list[tuple[str, int]]:
+        """Get all append log entries for a session in order.
+
+        Returns a list of (last_uuid, span_end) tuples, ordered by entry_index.
+        Returns empty list if session doesn't exist or has no entries.
+        """
+        raw_data_id = self._get_session_raw_data_id(session_id)
+        if raw_data_id is None:
+            return []
+
+        stmt = (
+            select(SessionAppendEntry.last_uuid, SessionAppendEntry.span_end)
+            .where(SessionAppendEntry.session_raw_data_id == raw_data_id)
+            .order_by(SessionAppendEntry.entry_index)
+        )
+        results = self._db.execute(stmt).all()
+        return [(row[0], row[1]) for row in results]
+
+    def append_entry(self, session_id: str, last_uuid: str, span_end: int) -> None:
+        """Append a new entry to the append log for a session.
+
+        Creates the entry with the next entry_index value.
+        The session must already exist (created via append_content).
+        """
+        raw_data_id = self._get_session_raw_data_id(session_id)
+        if raw_data_id is None:
+            raise ValueError(f"Session {session_id} does not exist")
+
+        # Get next entry index
+        stmt = select(
+            func.coalesce(func.max(SessionAppendEntry.entry_index), -1)
+        ).where(SessionAppendEntry.session_raw_data_id == raw_data_id)
+        max_index: int = self._db.execute(stmt).scalar_one()
+        next_index = max_index + 1
+
+        entry = SessionAppendEntry(
+            session_raw_data_id=raw_data_id,
+            entry_index=next_index,
+            last_uuid=last_uuid,
+            span_end=span_end,
+        )
+        self._db.add(entry)
+        self._db.flush()
+
+    def truncate_entries_after(self, session_id: str, keep_last_uuid: str) -> None:
+        """Remove all entries after the one with the given last_uuid.
+
+        Used on revert to truncate the append log to the valid prefix.
+        Keeps the entry with keep_last_uuid and removes all later entries.
+        """
+        raw_data_id = self._get_session_raw_data_id(session_id)
+        if raw_data_id is None:
+            return
+
+        # Find the entry_index of the entry to keep
+        stmt = select(SessionAppendEntry.entry_index).where(
+            SessionAppendEntry.session_raw_data_id == raw_data_id,
+            SessionAppendEntry.last_uuid == keep_last_uuid,
+        )
+        keep_index = self._db.execute(stmt).scalar_one_or_none()
+
+        if keep_index is None:
+            # Entry not found - clear all entries
+            del_stmt = delete(SessionAppendEntry).where(
+                SessionAppendEntry.session_raw_data_id == raw_data_id
+            )
+            self._db.execute(del_stmt)
+        else:
+            # Delete entries with index > keep_index
+            del_stmt = delete(SessionAppendEntry).where(
+                SessionAppendEntry.session_raw_data_id == raw_data_id,
+                SessionAppendEntry.entry_index > keep_index,
+            )
+            self._db.execute(del_stmt)
+        self._db.flush()
+
+    def clear_append_entries(self, session_id: str) -> None:
+        """Clear all append entries for a session.
+
+        Used when doing a full re-index (truncate to 0).
+        """
+        raw_data_id = self._get_session_raw_data_id(session_id)
+        if raw_data_id is None:
+            return
+
+        del_stmt = delete(SessionAppendEntry).where(
+            SessionAppendEntry.session_raw_data_id == raw_data_id
+        )
+        self._db.execute(del_stmt)
+        self._db.flush()

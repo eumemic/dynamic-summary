@@ -634,3 +634,152 @@ class TestPrepareDeltaSync:
         # Should be truncated - this is a revert
         assert result.truncated is True
         assert result.truncate_span == 50
+
+
+class TestGranularRevertTruncation:
+    """Tests for granular revert truncation with append entries."""
+
+    def test_revert_truncates_to_divergence_point_not_zero(self) -> None:
+        """Revert should truncate to the span at common ancestor, not to 0.
+
+        This tests the core regression: the server was truncating to 0 on every
+        revert, but it should truncate to the span_end of the valid prefix entry
+        in the append log.
+
+        Setup:
+        - Transcript contains BOTH branches (Claude Code keeps full history):
+          msg1 -> msg2 -> msg3 (indexed branch)
+                       -> msg3_alt (new branch after revert)
+        - We indexed up to msg3 (span_end=300)
+        - User reverted to msg2 and continued with msg3_alt
+        - Common ancestor is msg2
+        - Should truncate to 200 (msg2's span_end), not 0
+        """
+        from memory_service.ingestion.claude.transcript_sync import (
+            prepare_streaming_resync,
+        )
+
+        # Transcript with BOTH branches (this is how Claude Code works -
+        # reverts don't delete old messages, they just branch off)
+        content = _make_jsonl(
+            {
+                "uuid": "msg1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "First message"},
+            },
+            {
+                "uuid": "msg2",
+                "parentUuid": "msg1",
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "First response"}]},
+            },
+            {
+                "uuid": "msg3",
+                "parentUuid": "msg2",
+                "type": "user",
+                "message": {"content": "Original third message (will be reverted)"},
+            },
+            {
+                "uuid": "msg3_alt",
+                "parentUuid": "msg2",
+                "type": "user",
+                "message": {"content": "New branch after revert"},
+            },
+        )
+
+        # Append entries representing what we indexed before the revert:
+        # msg1 at span_end=100, msg2 at span_end=200, msg3 at span_end=300
+        append_entries = [
+            ("msg1", 100),  # Segment ending at msg1 -> span_end=100
+            ("msg2", 200),  # Segment ending at msg2 -> span_end=200
+            ("msg3", 300),  # Segment ending at msg3 -> span_end=300 (now reverted)
+        ]
+
+        result = prepare_streaming_resync(
+            session_id="session1",
+            jsonl_content=content,
+            last_synced_uuid="msg3",  # We had synced up to msg3
+            span_end=300,
+            append_entries=append_entries,
+        )
+
+        # Should truncate to msg2's span_end (200), not 0
+        assert result.needs_truncate is True
+        assert result.truncate_span == 200, (
+            f"Expected truncate_span=200 (msg2's span_end), got {result.truncate_span}. "
+            "The algorithm should find msg2 as the valid prefix and truncate to its span_end."
+        )
+
+    def test_disjoint_branches_truncate_to_zero(self) -> None:
+        """Disjoint branches (no common ancestor) should truncate to 0."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            prepare_streaming_resync,
+        )
+
+        # Completely new transcript with no relation to indexed content
+        content = _make_jsonl(
+            {
+                "uuid": "new_msg1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "Completely new conversation"},
+            },
+        )
+
+        append_entries = [
+            ("old_msg1", 100),
+            ("old_msg2", 200),
+        ]
+
+        result = prepare_streaming_resync(
+            session_id="session1",
+            jsonl_content=content,
+            last_synced_uuid="old_msg2",
+            span_end=200,
+            append_entries=append_entries,
+        )
+
+        # Disjoint branches - must truncate to 0
+        assert result.needs_truncate is True
+        assert result.truncate_span == 0
+
+    def test_no_append_entries_falls_back_to_zero(self) -> None:
+        """Without append entries, revert should fall back to truncating to 0."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            prepare_streaming_resync,
+        )
+
+        content = _make_jsonl(
+            {
+                "uuid": "msg1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "Message"},
+            },
+            {
+                "uuid": "msg2",
+                "parentUuid": "msg1",
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Response"}]},
+            },
+            {
+                "uuid": "msg3_alt",
+                "parentUuid": "msg2",
+                "type": "user",
+                "message": {"content": "After revert"},
+            },
+        )
+
+        # No append entries provided (legacy/migration case)
+        result = prepare_streaming_resync(
+            session_id="session1",
+            jsonl_content=content,
+            last_synced_uuid="msg3",
+            span_end=300,
+            append_entries=None,  # No entries
+        )
+
+        # Should still work, falling back to truncate to 0
+        assert result.needs_truncate is True
+        assert result.truncate_span == 0

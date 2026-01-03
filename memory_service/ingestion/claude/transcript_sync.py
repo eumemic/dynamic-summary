@@ -315,6 +315,41 @@ def _get_ancestors(uuid: str, parent_map: dict[str, str | None]) -> set[str]:
     return ancestors
 
 
+def find_valid_prefix_from_entries(
+    common_ancestor: str,
+    parent_of: dict[str, str | None],
+    append_entries: list[tuple[str, int]],
+) -> tuple[str, int] | None:
+    """Find the valid prefix entry by searching backwards through append entries.
+
+    The valid prefix is the most recent append entry whose last_uuid is an ancestor
+    of (or equal to) the common_ancestor. This tells us where to truncate on revert.
+
+    This is the core algorithm for granular revert truncation:
+    - Search BACKWARDS through entries (most recent first)
+    - Find the first entry whose last_uuid is in the common ancestor's lineage
+    - Return that entry's (last_uuid, span_end) as the truncation point
+
+    Args:
+        common_ancestor: The common ancestor UUID between old and new branches
+        parent_of: UUID -> parent UUID mapping from the transcript
+        append_entries: List of (last_uuid, span_end) tuples in order
+
+    Returns:
+        (last_uuid, span_end) of the valid prefix, or None if not found.
+    """
+    # Get all ancestors of common_ancestor (including itself)
+    valid_uuids = _get_ancestors(common_ancestor, parent_of)
+    valid_uuids.add(common_ancestor)
+
+    # Search backwards through entries to find valid prefix
+    for last_uuid, span_end in reversed(append_entries):
+        if last_uuid in valid_uuids:
+            return (last_uuid, span_end)
+
+    return None
+
+
 @dataclass
 class StreamingAncestorResult:
     """Result from streaming common ancestor search."""
@@ -1146,6 +1181,11 @@ class SyncResult:
     appended_uuids: list[str]
     new_span_end: int
     truncate_byte_offset: int | None = None  # For server-side storage truncation
+    # Per-segment tracking for granular revert handling
+    segment_last_uuids: list[str] = field(default_factory=list)
+    """Last UUID for each segment appended (parallel to segment spans)."""
+    valid_prefix_uuid: str | None = None
+    """UUID of valid prefix entry on revert (for truncating append log)."""
     # Note: compaction_span_end was removed - it's now computed dynamically
     # by compute_compaction_boundary_from_bytes() on each GetCompactionBoundary query
 
@@ -1463,6 +1503,8 @@ class PreparedDeltaSync:
     segment_texts: list[str]
     appended_uuids: list[str]
     span_end: int
+    segment_last_uuids: list[str] = field(default_factory=list)
+    """Last UUID for each segment (parallel to segment_texts). Used for append log."""
 
 
 def prepare_delta_sync(
@@ -1605,6 +1647,7 @@ def prepare_delta_sync(
 
     # Transcribe and collect texts
     segment_texts: list[str] = []
+    segment_last_uuids: list[str] = []
     appended_uuids: list[str] = []
 
     for segment_uuids in segments:
@@ -1623,6 +1666,8 @@ def prepare_delta_sync(
             ]
             if segment_appended_uuids:
                 appended_uuids.extend(segment_appended_uuids)
+                # Track last UUID for this segment (for append log)
+                segment_last_uuids.append(segment_appended_uuids[-1])
 
     t_transcribe = time.perf_counter()
     logger.info(
@@ -1641,6 +1686,7 @@ def prepare_delta_sync(
         segment_texts=segment_texts,
         appended_uuids=appended_uuids,
         span_end=span_end,
+        segment_last_uuids=segment_last_uuids,
     )
 
 
@@ -1723,12 +1769,19 @@ class PreparedStreamingResync:
     compaction_span_end: int | None
     """Span position just before post-compaction content, or None if no compaction."""
 
+    segment_last_uuids: list[str] = field(default_factory=list)
+    """Last UUID for each segment (parallel to segment_texts). Used for append log."""
+
+    valid_prefix_uuid: str | None = None
+    """UUID of valid prefix entry on revert (for truncating append log)."""
+
 
 def prepare_streaming_resync(
     session_id: str,
     jsonl_content: bytes,
     last_synced_uuid: str | None,
     span_end: int,
+    append_entries: list[tuple[str, int]] | None = None,
 ) -> PreparedStreamingResync:
     """Prepare streaming resync data without calling client (CPU-bound only).
 
@@ -1742,6 +1795,9 @@ def prepare_streaming_resync(
         jsonl_content: Full JSONL content as bytes
         last_synced_uuid: UUID of the last synced message (before revert)
         span_end: Document span position of last sync
+        append_entries: List of (last_uuid, span_end) entries for granular revert.
+            If provided, reverts will truncate to the divergence point instead of 0.
+            If None, reverts fall back to full re-index (truncate to 0).
 
     Returns:
         PreparedStreamingResync with operations ready to execute.
@@ -1799,17 +1855,36 @@ def prepare_streaming_resync(
     # Determine if truncation is needed
     needs_truncate = False
     truncate_span: int | None = None
+    valid_prefix_uuid: str | None = None
 
     if (
         result.common_ancestor is not None
         and result.common_ancestor != last_synced_uuid
     ):
-        # Need to truncate - find span position for common ancestor
-        # For now, we truncate to 0 and re-index from there
+        # Revert detected - need to truncate to divergence point
         needs_truncate = True
-        truncate_span = 0
-        # Need to transcribe from beginning since we truncated to 0
-        uuids_to_transcribe = get_ancestor_chain(current_head, None, result.parent_of)
+
+        # Try to find granular truncation point using append entries
+        valid_prefix: tuple[str, int] | None = None
+        if append_entries:
+            valid_prefix = find_valid_prefix_from_entries(
+                result.common_ancestor, result.parent_of, append_entries
+            )
+
+        if valid_prefix:
+            # Granular truncation: truncate to valid prefix's span_end
+            valid_prefix_uuid = valid_prefix[0]
+            truncate_span = valid_prefix[1]
+            # Only transcribe from valid prefix to current head
+            uuids_to_transcribe = get_ancestor_chain(
+                current_head, valid_prefix_uuid, result.parent_of
+            )
+        else:
+            # No append entries or valid prefix not found - fall back to full re-index
+            truncate_span = 0
+            uuids_to_transcribe = get_ancestor_chain(
+                current_head, None, result.parent_of
+            )
     elif result.common_ancestor is None and last_synced_uuid is not None:
         # Disjoint branches - full re-index
         needs_truncate = True
@@ -1827,6 +1902,7 @@ def prepare_streaming_resync(
     # Transcribe and collect texts
     segment_texts: list[str] = []
     appended_uuids: list[str] = []
+    segment_last_uuids: list[str] = []
     compaction_segment_index: int | None = (
         None  # Index of first post-compaction segment
     )
@@ -1894,6 +1970,9 @@ def prepare_streaming_resync(
                     )
                 ]
                 appended_uuids.extend(segment_appended_uuids)
+                # Track last UUID for append log entry
+                if segment_appended_uuids:
+                    segment_last_uuids.append(segment_appended_uuids[-1])
 
     t_transcribe = time.perf_counter()
     logger.info(
@@ -1914,7 +1993,7 @@ def prepare_streaming_resync(
             len(s) for s in segment_texts[:compaction_segment_index]
         )
 
-    new_span_end = span_end if not needs_truncate else 0
+    new_span_end = span_end if not needs_truncate else (truncate_span or 0)
     return PreparedStreamingResync(
         document_id=document_id,
         needs_truncate=needs_truncate,
@@ -1923,6 +2002,8 @@ def prepare_streaming_resync(
         appended_uuids=appended_uuids,
         span_end=new_span_end,
         compaction_span_end=compaction_span_end,
+        segment_last_uuids=segment_last_uuids,
+        valid_prefix_uuid=valid_prefix_uuid,
     )
 
 

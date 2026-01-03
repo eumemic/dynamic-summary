@@ -194,6 +194,8 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                     )
                     storage = SessionStorage(db_session, user_id)
                     full_content = storage.get_content(session_id)
+                    # Load append entries for granular revert truncation
+                    append_entries = storage.get_append_entries(session_id)
                 finally:
                     try:
                         db_session.execute(
@@ -211,6 +213,7 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                     jsonl_content=full_content,
                     last_synced_uuid=cursor.last_synced_uuid,
                     span_end=cursor.span_end,
+                    append_entries=append_entries,
                 )
 
                 # Execute truncate if needed (async, on main loop)
@@ -236,6 +239,8 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                     truncate_span=prepared_resync.truncate_span,
                     appended_uuids=prepared_resync.appended_uuids,
                     new_span_end=new_span_end,
+                    segment_last_uuids=prepared_resync.segment_last_uuids,
+                    valid_prefix_uuid=prepared_resync.valid_prefix_uuid,
                 )
                 t3 = time.perf_counter()
             else:
@@ -253,6 +258,7 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                     truncate_span=None,
                     appended_uuids=prepared.appended_uuids,
                     new_span_end=new_span_end,
+                    segment_last_uuids=prepared.segment_last_uuids,
                 )
                 t3 = time.perf_counter()
 
@@ -263,19 +269,48 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                 result.truncated,
             )
 
-            # Phase 3: Update sync state
-            if result.appended_uuids:
+            # Phase 3: Update sync state and append log
+            if result.appended_uuids or result.truncated:
                 db_session = self._get_db_session()
                 try:
                     db_session.execute(
                         text("SELECT pg_advisory_lock(:lock_id)"), {"lock_id": lock_id}
                     )
                     storage = SessionStorage(db_session, user_id)
-                    storage.update_sync_state(
-                        session_id,
-                        last_synced_uuid=result.appended_uuids[-1],
-                        span_end=result.new_span_end,
-                    )
+
+                    # Handle append log truncation on revert
+                    if result.truncated:
+                        if result.valid_prefix_uuid is not None:
+                            # Truncate to valid prefix
+                            storage.truncate_entries_after(
+                                session_id, result.valid_prefix_uuid
+                            )
+                        else:
+                            # No valid prefix - clear all entries
+                            storage.clear_append_entries(session_id)
+
+                    # Add new append entries for each segment
+                    # Calculate cumulative span positions starting from truncate point or previous span_end
+                    if result.segment_last_uuids:
+                        span_cursor = result.truncate_span or cursor.span_end
+                        segment_texts_list = (
+                            prepared_resync.segment_texts
+                            if result.truncated
+                            else prepared.segment_texts
+                        )
+                        for segment_text, last_uuid in zip(
+                            segment_texts_list, result.segment_last_uuids
+                        ):
+                            span_cursor += len(segment_text)
+                            storage.append_entry(session_id, last_uuid, span_cursor)
+
+                    # Update sync state
+                    if result.appended_uuids:
+                        storage.update_sync_state(
+                            session_id,
+                            last_synced_uuid=result.appended_uuids[-1],
+                            span_end=result.new_span_end,
+                        )
                     db_session.commit()
                 finally:
                     try:
