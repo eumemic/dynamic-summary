@@ -87,6 +87,52 @@ python -m memory_service.admin inspect-leaves <session-id> <offset>
 
 Session IDs can be specified as prefixes for convenience.
 
+### Status Command Output
+
+The `status` command is a comprehensive dashboard showing database, sessions, indexing
+progress (embeddings AND summaries), tree structure, job queue, and validation:
+
+```
+Memory Service Status
+============================================================
+
+📊 Database: postgresql://***@nozomi.proxy.rlwy.net:30284/railway
+   ✅ Connected
+
+📋 Sessions: 2
+
+   7cdd0798-4f2...
+      user: tom
+      offset: 92,400,393 bytes      # File bytes processed
+      span_end: 1130850             # Character span indexed
+      last_synced: 442a504d         # Last processed UUID
+      stored: 46,448,304 bytes      # JSONL content stored
+
+📄 Documents: 1
+🌳 Tree nodes: 2,318
+
+────────────────────────────────────────────────────────────
+📄 Document: 7cdd0798-4f29-4ce6-bfc9-6dc3b7bb2153
+
+   📈 Indexing Progress:
+      Leaves: 1,806
+      Embeddings: 546/1,806 (30.2%) ⏳ 1,260 pending
+      Summaries: 513/1,805 (28.4%) ⏳ ~1,292 pending
+      Tree: height=8 | 🌲 Forest (1293 roots)
+      Queue: 643 mergeable pairs
+
+   🔍 Validation:
+      ✅ PASSED | Nodes: 2,319 | Leaves: 1,806
+         ℹ️  Internal roots (normal during indexing): 29
+```
+
+Key metrics explained:
+- **Embeddings**: Leaves with vector embeddings (needed for semantic search)
+- **Summaries**: Internal nodes created by merging sibling pairs
+- **Forest**: Multiple root trees that will eventually merge into one
+- **Queue**: Sibling pairs at same height eligible for summarization
+- **Validation**: Checks for duplicate coordinates, broken parent refs, etc.
+
 ## Common Operations
 
 ### Validate a Document

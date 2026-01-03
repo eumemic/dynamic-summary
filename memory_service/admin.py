@@ -38,11 +38,11 @@ def get_database_url() -> str | None:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    """Show memory service status."""
+    """Show memory service status - comprehensive dashboard."""
     db_url = get_database_url()
 
     print("Memory Service Status")
-    print("=" * 50)
+    print("=" * 60)
 
     # Database connection
     if not db_url:
@@ -99,57 +99,208 @@ def cmd_status(args: argparse.Namespace) -> int:
             node_count = db.execute(
                 text("SELECT COUNT(*) FROM tree_nodes")
             ).scalar_one()
-            print(f"\n📄 Documents: {doc_count}")
-            print(f"🌳 Tree nodes: {node_count}")
+            print(f"📄 Documents: {doc_count}")
+            print(f"🌳 Tree nodes: {node_count:,}")
 
-            # Indexing progress per document
+            # Per-document detailed status
             if doc_count > 0:
-                print("\n📊 Indexing Progress:")
-                progress_query = text(
-                    """
-                    SELECT
-                        d.id,
-                        COUNT(*) FILTER (WHERE t.height = 0) as leaf_count,
-                        COUNT(*) FILTER (WHERE t.height = 0 AND t.embedding IS NOT NULL)
-                            as embedded_count,
-                        COUNT(*) FILTER (WHERE t.height > 0) as summary_count,
-                        MAX(t.height) as max_height
-                    FROM documents d
-                    LEFT JOIN tree_nodes t ON t.document_id = d.id
-                    GROUP BY d.id
-                    ORDER BY d.id
-                    """
-                )
-                for row in db.execute(progress_query):
-                    doc_id = row.id
-                    leaf_count = row.leaf_count or 0
-                    embedded_count = row.embedded_count or 0
-                    summary_count = row.summary_count or 0
-                    max_height = row.max_height or 0
-
-                    # Calculate progress
-                    embed_pct = (
-                        (embedded_count / leaf_count * 100) if leaf_count > 0 else 0
-                    )
-                    pending_embeds = leaf_count - embedded_count
-
-                    # Display document ID (truncated for session IDs)
-                    display_id = doc_id[:40] + "..." if len(doc_id) > 40 else doc_id
-                    print(f"\n   {display_id}")
-                    print(f"      Leaves: {leaf_count:,}")
-                    print(
-                        f"      Embeddings: {embedded_count:,}/{leaf_count:,} "
-                        f"({embed_pct:.1f}%)"
-                    )
-                    if pending_embeds > 0:
-                        print(f"      ⏳ Pending embeddings: {pending_embeds:,}")
-                    print(f"      Summary nodes: {summary_count:,}")
-                    print(f"      Tree height: {max_height}")
+                _print_document_status(db)
 
         except Exception:
             print("📄 RagZoom tables: Not found or not accessible")
 
     return 0
+
+
+def _print_document_status(db: Session) -> None:
+    """Print detailed status for each document."""
+    # Get comprehensive stats per document
+    progress_query = text(
+        """
+        SELECT
+            d.id,
+            COUNT(*) FILTER (WHERE t.height = 0) as leaf_count,
+            COUNT(*) FILTER (WHERE t.height = 0 AND t.embedding IS NOT NULL)
+                as embedded_count,
+            COUNT(*) FILTER (WHERE t.height > 0) as summary_count,
+            COUNT(*) FILTER (WHERE t.parent_id IS NULL) as root_count,
+            COUNT(*) FILTER (WHERE t.parent_id IS NULL AND t.height > 0)
+                as parentless_internal,
+            MAX(t.height) as max_height,
+            COUNT(*) as total_nodes
+        FROM documents d
+        LEFT JOIN tree_nodes t ON t.document_id = d.id
+        GROUP BY d.id
+        ORDER BY d.id
+        """
+    )
+
+    for row in db.execute(progress_query):
+        doc_id = row.id
+        leaf_count = row.leaf_count or 0
+        embedded_count = row.embedded_count or 0
+        summary_count = row.summary_count or 0
+        root_count = row.root_count or 0
+        max_height = row.max_height or 0
+        total_nodes = row.total_nodes or 0
+
+        # Calculate expected summaries for a complete tree
+        # For a perfect binary tree: summaries = leaves - 1
+        # For a forest: summaries = leaves - root_count
+        expected_summaries = max(0, leaf_count - 1) if leaf_count > 0 else 0
+
+        # Calculate progress percentages
+        embed_pct = (embedded_count / leaf_count * 100) if leaf_count > 0 else 0
+        summary_pct = (
+            (summary_count / expected_summaries * 100) if expected_summaries > 0 else 0
+        )
+
+        pending_embeds = leaf_count - embedded_count
+        pending_summaries = max(0, expected_summaries - summary_count)
+
+        # Get root distribution by height for job queue analysis
+        root_heights = _get_root_height_distribution(db, doc_id)
+        mergeable_pairs = sum(count // 2 for count in root_heights.values())
+
+        # Display document ID (truncated for session IDs)
+        display_id = doc_id[:40] + "..." if len(doc_id) > 43 else doc_id
+        print(f"\n{'─' * 60}")
+        print(f"📄 Document: {display_id}")
+        print()
+
+        # Indexing Progress
+        print("   📈 Indexing Progress:")
+        print(f"      Leaves: {leaf_count:,}")
+
+        # Embeddings line
+        embed_status = "✅" if pending_embeds == 0 else "⏳"
+        print(
+            f"      Embeddings: {embedded_count:,}/{leaf_count:,} ({embed_pct:.1f}%) "
+            f"{embed_status} {pending_embeds:,} pending"
+            if pending_embeds > 0
+            else f"      Embeddings: {embedded_count:,}/{leaf_count:,} ({embed_pct:.1f}%) ✅"
+        )
+
+        # Summaries line
+        summary_status = "✅" if pending_summaries == 0 else "⏳"
+        print(
+            f"      Summaries: {summary_count:,}/{expected_summaries:,} ({summary_pct:.1f}%) "
+            f"{summary_status} ~{pending_summaries:,} pending"
+            if pending_summaries > 0
+            else f"      Summaries: {summary_count:,}/{expected_summaries:,} ({summary_pct:.1f}%) ✅"
+        )
+
+        # Tree structure
+        tree_status = (
+            "✅ Complete" if root_count == 1 else f"🌲 Forest ({root_count} roots)"
+        )
+        print(f"      Tree: height={max_height} | {tree_status}")
+
+        # Job queue (mergeable pairs at each height)
+        if mergeable_pairs > 0:
+            print(f"      Queue: {mergeable_pairs} mergeable pairs")
+
+        # Validation
+        print()
+        _print_validation_status(db, doc_id, total_nodes, leaf_count)
+
+
+def _get_root_height_distribution(db: Session, document_id: str) -> dict[int, int]:
+    """Get count of roots at each height level."""
+    result = db.execute(
+        text(
+            """
+            SELECT height, COUNT(*) as count
+            FROM tree_nodes
+            WHERE document_id = :doc_id AND parent_id IS NULL
+            GROUP BY height
+            ORDER BY height
+            """
+        ),
+        {"doc_id": document_id},
+    )
+    return {row.height: row.count for row in result}
+
+
+def _print_validation_status(
+    db: Session, document_id: str, total_nodes: int, leaf_count: int
+) -> None:
+    """Run validation and print results."""
+    # Quick validation checks via SQL (faster than full validate_document)
+    # Check for orphaned internal nodes (height > 0 but no parent and not expected root)
+    parentless_query = text(
+        """
+        SELECT COUNT(*) as count
+        FROM tree_nodes
+        WHERE document_id = :doc_id
+          AND parent_id IS NULL
+          AND height > 0
+        """
+    )
+    parentless_internal = db.execute(
+        parentless_query, {"doc_id": document_id}
+    ).scalar_one()
+
+    # Check for duplicate coordinates (same height, level_index)
+    duplicate_coords_query = text(
+        """
+        SELECT height, level_index, COUNT(*) as count
+        FROM tree_nodes
+        WHERE document_id = :doc_id
+        GROUP BY height, level_index
+        HAVING COUNT(*) > 1
+        LIMIT 5
+        """
+    )
+    duplicate_coords = list(db.execute(duplicate_coords_query, {"doc_id": document_id}))
+
+    # Check for broken parent references
+    broken_parent_query = text(
+        """
+        SELECT COUNT(*) as count
+        FROM tree_nodes t
+        WHERE t.document_id = :doc_id
+          AND t.parent_id IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM tree_nodes p
+              WHERE p.id = t.parent_id AND p.document_id = :doc_id
+          )
+        """
+    )
+    broken_parents = db.execute(
+        broken_parent_query, {"doc_id": document_id}
+    ).scalar_one()
+
+    # Determine overall status
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    # Parentless internal nodes are normal during indexing (forest roots)
+    # Only flag as info, not error
+    if parentless_internal > 0:
+        warnings.append(
+            f"Internal roots (normal during indexing): {parentless_internal}"
+        )
+
+    if duplicate_coords:
+        for row in duplicate_coords:
+            errors.append(
+                f"Duplicate coords: (h={row.height}, lvl={row.level_index}) x{row.count}"
+            )
+
+    if broken_parents > 0:
+        errors.append(f"Broken parent refs: {broken_parents}")
+
+    # Print validation result
+    print("   🔍 Validation:")
+    if not errors:
+        print(f"      ✅ PASSED | Nodes: {total_nodes:,} | Leaves: {leaf_count:,}")
+    else:
+        print(f"      ❌ FAILED | Nodes: {total_nodes:,} | Leaves: {leaf_count:,}")
+        for error in errors:
+            print(f"         • {error}")
+    for warning in warnings:
+        print(f"         ℹ️  {warning}")
 
 
 def cmd_reset(args: argparse.Namespace) -> int:
