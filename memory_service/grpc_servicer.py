@@ -230,16 +230,12 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                     )
                     new_span_end = append_result.span_end
 
-                # Compute compaction_span_end from segment lengths (span = cumulative len)
-                compaction_span_end = prepared_resync.compaction_span_end
-
                 result = SyncResult(
                     document_id=prepared_resync.document_id,
                     truncated=prepared_resync.needs_truncate,
                     truncate_span=prepared_resync.truncate_span,
                     appended_uuids=prepared_resync.appended_uuids,
                     new_span_end=new_span_end,
-                    compaction_span_end=compaction_span_end,
                 )
                 t3 = time.perf_counter()
             else:
@@ -251,14 +247,12 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                     )
                     new_span_end = append_result.span_end
 
-                # Delta sync doesn't recompute compaction boundary
                 result = SyncResult(
                     document_id=prepared.document_id,
                     truncated=False,
                     truncate_span=None,
                     appended_uuids=prepared.appended_uuids,
                     new_span_end=new_span_end,
-                    compaction_span_end=None,  # Don't update - keep existing
                 )
                 t3 = time.perf_counter()
 
@@ -281,7 +275,6 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                         session_id,
                         last_synced_uuid=result.appended_uuids[-1],
                         span_end=result.new_span_end,
-                        compaction_span_end=result.compaction_span_end,
                     )
                     db_session.commit()
                 finally:
@@ -317,17 +310,31 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
     ) -> pb2.GetCompactionBoundaryResponse:
         """Get the compaction boundary span_end for a session.
 
+        Computes the boundary DYNAMICALLY by scanning the stored transcript
+        to find the most recent compaction. This ensures the boundary is always
+        correct even after multiple compactions occur.
+
         Returns has_boundary=False if no compaction has occurred,
         otherwise returns the span_end just before post-compaction content.
         """
+        from memory_service.ingestion.claude.transcript_sync import (
+            compute_compaction_boundary_from_bytes,
+        )
+
         user_id, session_id = await _validate_request(request, context)
 
         db_session = self._get_db_session()
         try:
             storage = SessionStorage(db_session, user_id)
-            boundary = storage.get_compaction_boundary(session_id)
+            content = storage.get_content(session_id)
+
+            if not content:
+                return pb2.GetCompactionBoundaryResponse(has_boundary=False, span_end=0)
+
+            boundary = compute_compaction_boundary_from_bytes(content)
             if boundary is None:
                 return pb2.GetCompactionBoundaryResponse(has_boundary=False, span_end=0)
+
             return pb2.GetCompactionBoundaryResponse(
                 has_boundary=True, span_end=boundary
             )

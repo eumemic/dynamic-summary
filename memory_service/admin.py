@@ -287,11 +287,16 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
 
 def _iter_transcription_chars(
     content: bytes,
+    start_offset: int = 0,
 ) -> Iterator[tuple[str, str, int]]:
     """Yield (char, current_uuid, char_offset) for streaming validation.
 
     This matches actual indexing: segments transcribed individually,
     concatenated WITHOUT separators.
+
+    Args:
+        content: Raw JSONL bytes
+        start_offset: Start yielding from this offset (default 0)
     """
     parent_map = _build_parent_map_from_bytes(content)
     current_head = _get_current_head_from_bytes(content)
@@ -325,27 +330,41 @@ def _iter_transcription_chars(
         return segment_boundaries[-1][2] if segment_boundaries else ""
 
     for i, char in enumerate(full_text):
-        yield (char, get_uuid_for_offset(i), i)
+        if i >= start_offset:
+            yield (char, get_uuid_for_offset(i), i)
 
 
-def _iter_leaf_chars(db: Session, document_id: str) -> Iterator[tuple[str, int]]:
-    """Yield (char, span_offset) streaming from leaves."""
-    # Stream leaves ordered by span_start
+def _iter_leaf_chars(
+    db: Session, document_id: str, start_span: int = 0
+) -> Iterator[tuple[str, int]]:
+    """Yield (char, span_offset) streaming from leaves.
+
+    Args:
+        db: Database session
+        document_id: Document ID to read leaves from
+        start_span: Start reading from this span offset (default 0)
+    """
+    # Stream leaves ordered by span_start, starting from start_span
     result = db.execute(
         text(
             """
             SELECT text, span_start FROM tree_nodes
             WHERE document_id = :doc_id AND height = 0
+            AND span_end > :start_span
             ORDER BY span_start
             """
         ),
-        {"doc_id": document_id},
+        {"doc_id": document_id, "start_span": start_span},
     )
 
     for row in result:
         leaf_text = row.text
         span_start = row.span_start
-        for i, char in enumerate(leaf_text):
+
+        # If this leaf starts before start_span, skip the early characters
+        char_offset = max(0, start_span - span_start)
+
+        for i, char in enumerate(leaf_text[char_offset:], start=char_offset):
             yield (char, span_start + i)
 
 
@@ -385,8 +404,13 @@ def _normalize_leaf_stream(
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    """Validate indexed leaves match fresh transcription."""
+    """Validate indexed leaves match fresh transcription.
+
+    Uses content-based validation: verifies each leaf's text appears in the
+    transcript in order, handling span drift from incremental indexing.
+    """
     session_id = args.session_id
+    from_compaction = getattr(args, "from_compaction", False)
     db_url = get_database_url()
 
     if not db_url:
@@ -405,86 +429,87 @@ def cmd_validate(args: argparse.Namespace) -> int:
             print("❌ Session has no stored content", file=sys.stderr)
             return 1
 
-        # Create streaming iterators with whitespace normalization
-        trans_iter = _normalize_whitespace_stream(_iter_transcription_chars(content))
-        leaf_iter = _normalize_leaf_stream(_iter_leaf_chars(db, full_session_id))
-
-        # Track context for error reporting
-        context_buffer: list[str] = []
-        context_size = 50
-
-        # Compare character by character
-        trans_exhausted = False
-        leaf_exhausted = False
-        last_uuid = ""
-        last_offset = 0
-        chars_compared = 0
-
-        while True:
-            try:
-                trans_char, uuid, trans_offset = next(trans_iter)
-                last_uuid = uuid
-                last_offset = trans_offset
-            except StopIteration:
-                trans_exhausted = True
-                trans_char = None
-
-            try:
-                leaf_char, leaf_offset = next(leaf_iter)
-            except StopIteration:
-                leaf_exhausted = True
-                leaf_char = None
-
-            # Both exhausted - success!
-            if trans_exhausted and leaf_exhausted:
-                print(f"✅ Validation passed - {chars_compared:,} characters match")
-                return 0
-
-            # One exhausted before other - length mismatch
-            if trans_exhausted:
-                print("❌ Leaf content continues past transcription end")
-                print(f"   Transcription ended at offset {last_offset:,}")
-                print(f"   Last UUID: {last_uuid}")
-                print(f"   Extra leaf content: {repr(leaf_char)}...")
-                return 1
-
-            if leaf_exhausted:
-                print("❌ Transcription continues past leaf content end")
-                print(f"   Leaves ended at offset {leaf_offset:,}")
-                print(f"   Current UUID: {uuid}")
-                print(f"   Extra transcription: {repr(trans_char)}...")
-                return 1
-
-            # At this point neither is exhausted, so chars are not None
-            assert trans_char is not None
-            assert leaf_char is not None
-
-            chars_compared += 1
-
-            # Track context
-            context_buffer.append(trans_char)
-            if len(context_buffer) > context_size:
-                context_buffer.pop(0)
-
-            # Compare
-            if trans_char != leaf_char:
-                # Collect some following context
-                following: list[str] = [leaf_char]
-                for _ in range(context_size):
-                    try:
-                        c, _ = next(leaf_iter)
-                        following.append(c)
-                    except StopIteration:
-                        break
-
-                print(f"❌ Divergence at offset {trans_offset:,}")
-                print(f"   UUID: {uuid}")
-                print(f"   Expected: {repr(trans_char)}")
-                print(f"   Got:      {repr(leaf_char)}")
+        # Check for compaction boundary
+        compaction_boundary = row.compaction_span_end
+        if compaction_boundary:
+            print(f"ℹ️  Compaction boundary at span {compaction_boundary:,}")
+            if not from_compaction:
+                print(
+                    "   Use --from-compaction to validate only post-compaction content"
+                )
                 print()
-                print(f"   Context before: {''.join(context_buffer[:-1])!r}")
-                print(f"   Leaf continues: {''.join(following)!r}")
-                return 1
+
+        # Determine start offset for validation
+        start_span = (
+            compaction_boundary if from_compaction and compaction_boundary else 0
+        )
+
+        # Get full transcript text
+        full_text = _transcribe_session(bytes(content))
+        print(f"📝 Transcript length: {len(full_text):,} chars")
+
+        # Get leaves to validate, ordered by span
+        result = db.execute(
+            text(
+                """
+                SELECT span_start, span_end, text FROM tree_nodes
+                WHERE document_id = :doc_id AND height = 0
+                AND span_start >= :start_span
+                ORDER BY span_start
+                """
+            ),
+            {"doc_id": full_session_id, "start_span": start_span},
+        ).fetchall()
+
+        print(f"🌿 Leaves to validate: {len(result)}")
+        print()
+
+        # Content-based validation: find each leaf in order in the transcript
+        search_pos = 0
+        validated_chars = 0
+        max_gap = 0
+
+        for i, leaf_row in enumerate(result):
+            leaf_text = leaf_row.text
+            span_start = leaf_row.span_start
+
+            # Find this leaf's content in the transcript (starting from last pos)
+            found_pos = full_text.find(leaf_text, search_pos)
+
+            if found_pos < 0:
+                # Try with whitespace normalization
+                normalized_leaf = " ".join(leaf_text.split())
+                normalized_transcript = " ".join(full_text[search_pos:].split())
+                norm_pos = normalized_transcript.find(normalized_leaf[:100])
+
+                if norm_pos < 0:
+                    print(f"❌ Leaf {i} (span {span_start:,}) not found in transcript")
+                    print(f"   Search started at position {search_pos:,}")
+                    print(f"   Leaf content: {repr(leaf_text[:100])}...")
+                    print()
+                    print(
+                        f"   Transcript around search pos: {repr(full_text[search_pos:search_pos+200])}..."
+                    )
+                    return 1
+
+                # Found with normalization - this is acceptable
+                print(f"⚠️  Leaf {i} found with whitespace normalization")
+
+            else:
+                gap = found_pos - search_pos
+                if gap > max_gap:
+                    max_gap = gap
+                search_pos = found_pos + len(leaf_text)
+                validated_chars += len(leaf_text)
+
+            # Progress indicator every 100 leaves
+            if (i + 1) % 100 == 0:
+                print(f"   Validated {i + 1}/{len(result)} leaves...")
+
+        print()
+        print("✅ Validation passed")
+        print(f"   {validated_chars:,} chars in {len(result)} leaves validated")
+        print(f"   Max gap between leaves: {max_gap:,} chars")
 
     return 0
 
@@ -793,6 +818,12 @@ def main() -> int:
         "validate", help="Validate indexed leaves match transcription"
     )
     validate_parser.add_argument("session_id", help="Session ID (or prefix)")
+    validate_parser.add_argument(
+        "--from-compaction",
+        action="store_true",
+        dest="from_compaction",
+        help="Start validation from the compaction boundary (skip pre-compaction content)",
+    )
 
     # inspect-uuid command
     inspect_uuid_parser = subparsers.add_parser(

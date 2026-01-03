@@ -777,3 +777,221 @@ class TestTranscribeUuids:
 
         text = transcribe_uuids_from_map(["msg1", "missing", "also-missing"], records)
         assert text == "[USER]\nHello"
+
+
+class TestCompactionBoundary:
+    """Tests for dynamic compaction boundary detection."""
+
+    def test_no_compaction_returns_none(self) -> None:
+        """Should return None if no compaction in transcript."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            compute_compaction_boundary_from_bytes,
+        )
+
+        # Transcript without any compaction
+        content = b"\n".join(
+            [
+                json.dumps(
+                    {
+                        "uuid": "msg1",
+                        "parentUuid": None,
+                        "type": "user",
+                        "message": {"content": "Hello"},
+                    }
+                ).encode(),
+                json.dumps(
+                    {
+                        "uuid": "msg2",
+                        "parentUuid": "msg1",
+                        "type": "assistant",
+                        "message": {"content": [{"type": "text", "text": "Hi there"}]},
+                    }
+                ).encode(),
+            ]
+        )
+
+        boundary = compute_compaction_boundary_from_bytes(content)
+        assert boundary is None
+
+    def test_single_compaction_finds_boundary(self) -> None:
+        """Should return span_end just before compaction."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            compute_compaction_boundary_from_bytes,
+        )
+
+        # Pre-compaction messages
+        pre_msg1 = json.dumps(
+            {
+                "uuid": "pre1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "Before compaction"},
+            }
+        ).encode()
+        pre_msg2 = json.dumps(
+            {
+                "uuid": "pre2",
+                "parentUuid": "pre1",
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Response"}]},
+            }
+        ).encode()
+
+        # Compaction summary
+        compact = json.dumps(
+            {
+                "uuid": "compact1",
+                "parentUuid": "pre2",
+                "type": "assistant",
+                "isCompactSummary": True,
+                "message": {"content": [{"type": "text", "text": "Summary"}]},
+            }
+        ).encode()
+
+        # Post-compaction messages
+        post_msg1 = json.dumps(
+            {
+                "uuid": "post1",
+                "parentUuid": None,  # Compaction resets parent
+                "type": "user",
+                "message": {"content": "After compaction"},
+            }
+        ).encode()
+        post_msg2 = json.dumps(
+            {
+                "uuid": "post2",
+                "parentUuid": "post1",
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "New response"}]},
+            }
+        ).encode()
+
+        content = b"\n".join([pre_msg1, pre_msg2, compact, post_msg1, post_msg2])
+
+        boundary = compute_compaction_boundary_from_bytes(content)
+
+        # Boundary should be the span_end just before post-compaction content
+        # This is the cumulative length of pre-compaction transcribed segments
+        assert boundary is not None
+        assert boundary > 0  # Should have some pre-compaction content
+
+    def test_multiple_compactions_finds_most_recent(self) -> None:
+        """Should return span_end for MOST RECENT compaction, not first."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            compute_compaction_boundary_from_bytes,
+        )
+
+        # First pre-compaction messages
+        pre1_msg = json.dumps(
+            {
+                "uuid": "pre1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "Before first compaction"},
+            }
+        ).encode()
+
+        # First compaction
+        compact1 = json.dumps(
+            {
+                "uuid": "compact1",
+                "parentUuid": "pre1",
+                "type": "assistant",
+                "isCompactSummary": True,
+                "message": {"content": [{"type": "text", "text": "First summary"}]},
+            }
+        ).encode()
+
+        # Middle section (between compactions)
+        mid_msg = json.dumps(
+            {
+                "uuid": "mid1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "Between compactions"},
+            }
+        ).encode()
+
+        # Second compaction
+        compact2 = json.dumps(
+            {
+                "uuid": "compact2",
+                "parentUuid": "mid1",
+                "type": "assistant",
+                "isCompactSummary": True,
+                "message": {"content": [{"type": "text", "text": "Second summary"}]},
+            }
+        ).encode()
+
+        # Post-second-compaction messages
+        post2_msg = json.dumps(
+            {
+                "uuid": "post2",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "After second compaction"},
+            }
+        ).encode()
+
+        content = b"\n".join([pre1_msg, compact1, mid_msg, compact2, post2_msg])
+
+        # First, get boundary with just one compaction
+        single_compact_content = b"\n".join([pre1_msg, compact1, mid_msg])
+        single_boundary = compute_compaction_boundary_from_bytes(single_compact_content)
+
+        # Now get boundary with two compactions
+        boundary = compute_compaction_boundary_from_bytes(content)
+
+        # The boundary with two compactions should be LARGER than with one
+        # Because it includes the "mid" section as pre-compaction content
+        assert boundary is not None
+        assert single_boundary is not None
+        assert boundary > single_boundary, (
+            f"With multiple compactions, boundary ({boundary}) should be > "
+            f"single compaction boundary ({single_boundary})"
+        )
+
+    def test_get_post_compaction_uuids_finds_correct_uuids(self) -> None:
+        """Should collect all UUIDs after the most recent compaction."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            get_post_compaction_uuids_from_bytes,
+        )
+
+        content = b"\n".join(
+            [
+                json.dumps({"uuid": "pre1", "type": "user"}).encode(),
+                json.dumps(
+                    {"uuid": "compact1", "isCompactSummary": True, "type": "assistant"}
+                ).encode(),
+                json.dumps({"uuid": "mid1", "type": "user"}).encode(),
+                json.dumps(
+                    {"uuid": "compact2", "isCompactSummary": True, "type": "assistant"}
+                ).encode(),
+                json.dumps({"uuid": "post1", "type": "user"}).encode(),
+                json.dumps({"uuid": "post2", "type": "assistant"}).encode(),
+            ]
+        )
+
+        post_uuids = get_post_compaction_uuids_from_bytes(content)
+
+        # Should only contain UUIDs after the MOST RECENT compaction
+        assert post_uuids == {"post1", "post2"}
+        # Should NOT contain mid1 (that's pre-second-compaction)
+        assert "mid1" not in post_uuids
+        assert "pre1" not in post_uuids
+
+    def test_no_compaction_returns_empty_set(self) -> None:
+        """Should return empty set if no compaction in transcript."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            get_post_compaction_uuids_from_bytes,
+        )
+
+        content = b"\n".join(
+            [
+                json.dumps({"uuid": "msg1", "type": "user"}).encode(),
+                json.dumps({"uuid": "msg2", "type": "assistant"}).encode(),
+            ]
+        )
+
+        post_uuids = get_post_compaction_uuids_from_bytes(content)
+        assert post_uuids == set()

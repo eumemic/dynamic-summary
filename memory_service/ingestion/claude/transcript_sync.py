@@ -716,6 +716,108 @@ def get_current_head(transcript_path: Path) -> str | None:
     return None
 
 
+def get_post_compaction_uuids_from_bytes(content: bytes) -> set[str]:
+    """Get all UUIDs that appear after the most recent compaction.
+
+    Scans backwards from end until a compaction summary is found.
+    Returns empty set if no compaction occurred.
+
+    Args:
+        content: JSONL content as bytes
+
+    Returns:
+        Set of UUIDs appearing after the most recent compaction
+    """
+    post_compaction_uuids: set[str] = set()
+    found_compaction = False
+
+    for record in iter_jsonl_bytes_reversed(content):
+        if record.get("isCompactSummary"):
+            # Found compaction, stop here - we have all post-compaction UUIDs
+            found_compaction = True
+            break
+        uuid = record.get("uuid")
+        if isinstance(uuid, str):
+            post_compaction_uuids.add(uuid)
+
+    # Only return the UUIDs if we actually found a compaction
+    # If no compaction exists, there are no "post-compaction" UUIDs
+    return post_compaction_uuids if found_compaction else set()
+
+
+def compute_compaction_boundary_from_bytes(content: bytes) -> int | None:
+    """Compute compaction boundary dynamically from JSONL content.
+
+    Returns the span_end just before the first post-compaction content,
+    i.e., the boundary between pre-compaction (summarized) and post-compaction
+    (verbatim) content. This is computed by:
+
+    1. Scanning backwards to find all UUIDs after the most recent compaction
+    2. Transcribing forward, tracking cumulative span positions
+    3. Returning the span_end just before the first post-compaction UUID
+
+    This matches the behavior of the local MCP server's _get_compaction_span_end().
+
+    Args:
+        content: JSONL content as bytes
+
+    Returns:
+        span_end just before post-compaction content, or None if no compaction
+    """
+    post_compaction_uuids = get_post_compaction_uuids_from_bytes(content)
+    if not post_compaction_uuids:
+        return None  # No compaction occurred
+
+    # Parse all records and build UUID -> record map
+    records_by_uuid: dict[str, dict[str, object]] = {}
+    for line in content.split(b"\n"):
+        line_str = line.decode("utf-8").strip()
+        if not line_str:
+            continue
+        try:
+            record = json.loads(line_str)
+            uuid = record.get("uuid")
+            if isinstance(uuid, str):
+                records_by_uuid[uuid] = record
+        except json.JSONDecodeError:
+            continue
+
+    # Transcribe forward, tracking cumulative span positions
+    # Stop when we hit the first post-compaction UUID
+    prev_span_end = 0
+
+    for line in content.split(b"\n"):
+        line_str = line.decode("utf-8").strip()
+        if not line_str:
+            continue
+        try:
+            record = json.loads(line_str)
+        except json.JSONDecodeError:
+            continue
+
+        uuid = record.get("uuid")
+        if not isinstance(uuid, str):
+            continue
+
+        # Skip compaction summaries (they don't generate transcribed text)
+        if record.get("isCompactSummary"):
+            continue
+
+        # Check if this UUID is post-compaction
+        if uuid in post_compaction_uuids:
+            # Found first post-compaction content - return previous span_end
+            return prev_span_end
+
+        # Transcribe this record and update span
+        chunk = transcribe_uuid_from_map(uuid, records_by_uuid)
+        if chunk:
+            prev_span_end += len(chunk)
+
+    # Shouldn't reach here if post_compaction_uuids is non-empty,
+    # but return prev_span_end as a fallback
+    return prev_span_end
+
+
 def transcribe_uuid_from_map(
     uuid: str,
     records_by_uuid: dict[str, dict[str, object]],
@@ -1044,9 +1146,8 @@ class SyncResult:
     appended_uuids: list[str]
     new_span_end: int
     truncate_byte_offset: int | None = None  # For server-side storage truncation
-    compaction_span_end: int | None = (
-        None  # Span_end just before post-compaction content
-    )
+    # Note: compaction_span_end was removed - it's now computed dynamically
+    # by compute_compaction_boundary_from_bytes() on each GetCompactionBoundary query
 
 
 def execute_sync(
