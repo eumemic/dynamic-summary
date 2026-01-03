@@ -1017,6 +1017,14 @@ class IndexingEngine:
                             parent_height = left_height + 1
                             if parent_height - min_preceding_height > max_height_diff:
                                 pairs_height_blocked += 1
+                                logger.info(
+                                    "HEIGHT_BLOCKED: parent_h=%d min_preceding=%d "
+                                    "diff=%d max_allowed=%d",
+                                    parent_height,
+                                    min_preceding_height,
+                                    parent_height - min_preceding_height,
+                                    max_height_diff,
+                                )
                                 break
 
                         if run_id is not None:
