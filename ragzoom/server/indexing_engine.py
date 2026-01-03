@@ -1070,18 +1070,22 @@ class IndexingEngine:
 
         # Log diagnostic info if no jobs found but roots exist
         if len(results) == 0 and roots_scanned > 1:
-            # Collect root heights for diagnostics
-            root_heights: list[int] = []
-            root_levels: list[int] = []
+            # Collect root info for diagnostics (height, level, span_start)
+            root_info: list[tuple[int, int, int]] = []
             for r in store.nodes.iter_root_nodes():
-                root_heights.append(int(getattr(r, "height", 0)))
-                root_levels.append(int(getattr(r, "level_index", 0)))
-                if len(root_heights) >= 20:  # Limit to first 20
+                root_info.append(
+                    (
+                        int(getattr(r, "height", 0)),
+                        int(getattr(r, "level_index", 0)),
+                        int(getattr(r, "span_start", 0)),
+                    )
+                )
+                if len(root_info) >= 10:  # Limit to first 10
                     break
             logger.info(
-                "SUMMARY_SCAN: doc=%s roots=%d pairs_checked=%d "
-                "ineligible=%d height_blocked=%d active=%d failed=%d "
-                "heights=%s levels=%s",
+                "SUMMARY_SCAN: doc=%s roots=%d checked=%d "
+                "inelig=%d h_block=%d active=%d failed=%d "
+                "root_info(h,lvl,span)=%s",
                 document_id[:8],
                 roots_scanned,
                 pairs_checked,
@@ -1089,8 +1093,7 @@ class IndexingEngine:
                 pairs_height_blocked,
                 pairs_active,
                 pairs_failed,
-                root_heights,
-                root_levels,
+                root_info,
             )
 
         return results
