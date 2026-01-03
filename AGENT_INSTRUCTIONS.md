@@ -7,7 +7,7 @@ This file contains comprehensive instructions for any AI agent working on this r
 Note: Documentation that applies to both human developers and AI agents belongs in README.md,
 which is included below. This file (CLAUDE.md) contains only agent-specific instructions.
 
-@include README.md
+@README.md
 
 ## Agent-Specific Instructions
 
@@ -65,11 +65,11 @@ Every agent must approach code as a master craftsperson. Each line you write is 
 
 ### 5. System Architecture & Technical Documentation
 
-@include docs/architecture.md
+@docs/architecture.md
 
 ### 6. Development Practices & Testing
 
-@include docs/developer-guide.md
+@docs/developer-guide.md
 
 ### 7. Quality Checks & Testing for Agents
 
@@ -119,7 +119,7 @@ Every agent must approach code as a master craftsperson. Each line you write is 
 
 For detailed understanding of the core tiling algorithm:
 
-@include docs/deep-dives/tiling-algorithm.md
+@docs/deep-dives/tiling-algorithm.md
 
 ### 10. Custom Claude Commands
 
@@ -159,7 +159,7 @@ cd worktrees/worktree-N && claude
 
 When this agent has access to the RagZoom memory tool (`remember`), use it proactively to recall details from earlier in the conversation.
 
-@include docs/memory-usage.md
+@docs/memory-usage.md
 
 ### 14. Agent-Specific Troubleshooting
 
