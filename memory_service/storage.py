@@ -275,3 +275,20 @@ class SessionStorage:
             SessionRawData.session_id == session_id,
         )
         return self._db.execute(stmt).scalar_one_or_none()
+
+    def reset_cursor(self, session_id: str) -> None:
+        """Reset a session's cursor to force full re-sync.
+
+        Clears last_synced_uuid and sets original_file_offset to 0,
+        causing the next sync to re-process the entire transcript.
+        """
+        stmt = select(SessionRawData).where(
+            SessionRawData.user_id == self._user_id,
+            SessionRawData.session_id == session_id,
+        )
+        row = self._db.execute(stmt).scalar_one_or_none()
+
+        if row is not None:
+            row.last_synced_uuid = None
+            row.original_file_offset = 0
+            self._db.flush()

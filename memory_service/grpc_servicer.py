@@ -40,6 +40,7 @@ async def _validate_request(
         pb2.GetSessionCursorRequest
         | pb2.IngestSessionRequest
         | pb2.GetCompactionBoundaryRequest
+        | pb2.ResetSessionCursorRequest
     ),
     context: pb2_grpc.ServicerContext,
 ) -> tuple[str, str]:
@@ -329,6 +330,34 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                 return pb2.GetCompactionBoundaryResponse(has_boundary=False, span_end=0)
             return pb2.GetCompactionBoundaryResponse(
                 has_boundary=True, span_end=boundary
+            )
+        finally:
+            db_session.close()
+
+    async def ResetSessionCursor(  # noqa: N802
+        self,
+        request: pb2.ResetSessionCursorRequest,
+        context: pb2_grpc.ServicerContext,
+    ) -> pb2.ResetSessionCursorResponse:
+        """Reset a session's cursor to force full re-sync.
+
+        This clears the last_synced_uuid and byte offset, causing the next
+        sync to re-process the entire transcript.
+        """
+        user_id, session_id = await _validate_request(request, context)
+
+        db_session = self._get_db_session()
+        try:
+            storage = SessionStorage(db_session, user_id)
+            storage.reset_cursor(session_id)
+            db_session.commit()
+            return pb2.ResetSessionCursorResponse(
+                success=True, message=f"Reset cursor for session {session_id}"
+            )
+        except Exception as e:
+            logger.exception("Error resetting session cursor %s", session_id)
+            return pb2.ResetSessionCursorResponse(
+                success=False, message=f"Failed to reset cursor: {e}"
             )
         finally:
             db_session.close()

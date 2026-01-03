@@ -705,3 +705,29 @@ class GrpcRagzoomClient:
             has_boundary=response.has_boundary,
             span_end=response.span_end,
         )
+
+    def reset_session_cursor(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+    ) -> tuple[bool, str]:
+        """Reset a session's cursor to force full re-sync.
+
+        Args:
+            session_id: The session to reset
+            user_id: User identifier for multi-tenant isolation
+
+        Returns:
+            Tuple of (success, message)
+        """
+        request = pb2.ResetSessionCursorRequest(session_id=session_id)
+        metadata = [("user_id", user_id)]
+        try:
+            response = self._session.ResetSessionCursor(
+                request, timeout=self._timeout, metadata=metadata
+            )
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        return (response.success, response.message)

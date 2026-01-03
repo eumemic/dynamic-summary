@@ -276,8 +276,18 @@ message GetCompactionBoundaryResponse {
   int32 span_end = 2;  // Span position just before post-compaction content
 }
 
+message ResetSessionCursorRequest {
+  string session_id = 1;
+}
+
+message ResetSessionCursorResponse {
+  bool success = 1;
+  string message = 2;
+}
+
 service SessionIngestionService {
   rpc GetSessionCursor(GetSessionCursorRequest) returns (GetSessionCursorResponse);
   rpc IngestSession(IngestSessionRequest) returns (IngestSessionResponse);
   rpc GetCompactionBoundary(GetCompactionBoundaryRequest) returns (GetCompactionBoundaryResponse);
+  rpc ResetSessionCursor(ResetSessionCursorRequest) returns (ResetSessionCursorResponse);
 }

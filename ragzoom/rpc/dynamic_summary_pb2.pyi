@@ -451,3 +451,14 @@ class GetCompactionBoundaryResponse:
     span_end: int
 
     def __init__(self, *, has_boundary: bool = ..., span_end: int = ...) -> None: ...
+
+class ResetSessionCursorRequest:
+    session_id: str
+
+    def __init__(self, *, session_id: str) -> None: ...
+
+class ResetSessionCursorResponse:
+    success: bool
+    message: str
+
+    def __init__(self, *, success: bool = ..., message: str = ...) -> None: ...

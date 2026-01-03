@@ -2254,5 +2254,42 @@ def set_session_pid_cmd(session_id: str, pid: int) -> None:
         handle_cli_error(e, "setting session PID")
 
 
+@cli.command("reset-session")
+@click.argument("session_id")
+@click.option(
+    "--user-id",
+    envvar="RAGZOOM_USER_ID",
+    required=True,
+    help="User ID for multi-tenant isolation (or set RAGZOOM_USER_ID)",
+)
+@click.option(
+    "--server",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default="localhost:50051",
+    help="gRPC server address",
+)
+def reset_session_cmd(session_id: str, user_id: str, server: str) -> None:
+    """Reset a session's cursor to force full re-sync.
+
+    Clears the sync state on the server, causing the next sync to
+    re-process the entire transcript from scratch.
+
+    Example:
+      ragzoom reset-session 7cdd0798-4f29-4ce6-bfc9-6dc3b7bb2153
+    """
+    try:
+        with GrpcRagzoomClient(server) as client:
+            success, message = client.reset_session_cursor(
+                session_id=session_id, user_id=user_id
+            )
+            if success:
+                click.echo(f"✅ {message}")
+            else:
+                click.echo(f"❌ {message}", err=True)
+                raise SystemExit(1)
+    except Exception as e:
+        handle_cli_error(e, "resetting session")
+
+
 if __name__ == "__main__":
     cli()
