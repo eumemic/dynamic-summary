@@ -1785,13 +1785,7 @@ class IndexingEngine:
             "cost": summary_cost,
         }
 
-        # Commit to database - each operation auto-commits
-        store.nodes.add_batch([node_payload])
-        store.nodes.update_parent_references_batch(
-            [(left.id, parent_id), (right.id, parent_id)]
-        )
-
-        # Update neighbor links
+        # Prepare neighbor updates before transaction
         neighbors_update: list[tuple[str, str | None, str | None]] = [
             (parent_id, preceding_parent_id, following_parent_id)
         ]
@@ -1816,7 +1810,18 @@ class IndexingEngine:
                     )
                 )
 
-        store.nodes.update_neighbors_batch(neighbors_update)
+        # Commit all database updates atomically in a single transaction.
+        # This prevents orphaned roots: if any operation fails, all roll back.
+        # Without atomicity, a failure after add_batch but before
+        # update_parent_references_batch would leave children with parent_id=NULL
+        # while the parent exists, causing permanent stalls in the height
+        # differential check (see test_summary_job_atomicity_sqlite.py).
+        with store.transaction() as session:
+            store.nodes.add_batch([node_payload], session=session)
+            store.nodes.update_parent_references_batch(
+                [(left.id, parent_id), (right.id, parent_id)], session=session
+            )
+            store.nodes.update_neighbors_batch(neighbors_update, session=session)
 
         # Note: Inner nodes no longer store embeddings (to enable parallel
         # summarization). Embeddings only exist on leaf nodes for query-time
