@@ -99,8 +99,53 @@ def cmd_status(args: argparse.Namespace) -> int:
             node_count = db.execute(
                 text("SELECT COUNT(*) FROM tree_nodes")
             ).scalar_one()
-            print(f"📄 Documents: {doc_count}")
+            print(f"\n📄 Documents: {doc_count}")
             print(f"🌳 Tree nodes: {node_count}")
+
+            # Indexing progress per document
+            if doc_count > 0:
+                print("\n📊 Indexing Progress:")
+                progress_query = text(
+                    """
+                    SELECT
+                        d.id,
+                        COUNT(*) FILTER (WHERE t.height = 0) as leaf_count,
+                        COUNT(*) FILTER (WHERE t.height = 0 AND t.embedding IS NOT NULL)
+                            as embedded_count,
+                        COUNT(*) FILTER (WHERE t.height > 0) as summary_count,
+                        MAX(t.height) as max_height
+                    FROM documents d
+                    LEFT JOIN tree_nodes t ON t.document_id = d.id
+                    GROUP BY d.id
+                    ORDER BY d.id
+                    """
+                )
+                for row in db.execute(progress_query):
+                    doc_id = row.id
+                    leaf_count = row.leaf_count or 0
+                    embedded_count = row.embedded_count or 0
+                    summary_count = row.summary_count or 0
+                    max_height = row.max_height or 0
+
+                    # Calculate progress
+                    embed_pct = (
+                        (embedded_count / leaf_count * 100) if leaf_count > 0 else 0
+                    )
+                    pending_embeds = leaf_count - embedded_count
+
+                    # Display document ID (truncated for session IDs)
+                    display_id = doc_id[:40] + "..." if len(doc_id) > 40 else doc_id
+                    print(f"\n   {display_id}")
+                    print(f"      Leaves: {leaf_count:,}")
+                    print(
+                        f"      Embeddings: {embedded_count:,}/{leaf_count:,} "
+                        f"({embed_pct:.1f}%)"
+                    )
+                    if pending_embeds > 0:
+                        print(f"      ⏳ Pending embeddings: {pending_embeds:,}")
+                    print(f"      Summary nodes: {summary_count:,}")
+                    print(f"      Tree height: {max_height}")
+
         except Exception:
             print("📄 RagZoom tables: Not found or not accessible")
 
