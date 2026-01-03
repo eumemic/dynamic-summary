@@ -1158,14 +1158,19 @@ class IndexingEngine:
         """Execute a job with cleanup and re-trigger."""
         document_id = job.document_id
         job_failed = False
+        job_type = "embed" if isinstance(job, EmbeddingJob) else "summarize"
+        logger.info("JOB_START: %s job=%s", job_type, job)
         try:
             if isinstance(job, EmbeddingJob):
                 await self._embed_leaf(job)
             else:
                 await self._summarize_pair(job)
+            logger.info("JOB_END: %s job=%s success=True", job_type, job)
         except asyncio.CancelledError:
+            logger.info("JOB_END: %s job=%s cancelled=True", job_type, job)
             raise
         except Exception:
+            logger.info("JOB_END: %s job=%s success=False", job_type, job)
             logger.exception("Job failed: %s", job)
             job_failed = True
         finally:
@@ -1264,6 +1269,9 @@ class IndexingEngine:
                 )
 
         # Retrieve preceding context (pass pre-computed embedding to skip API call)
+        logger.info(
+            "EMBED_CONTEXT_START: leaf=%s span_start=%s", job.leaf_id, span_start
+        )
         context_result = await self._get_preceding_context(
             store=store,
             document_id=job.document_id,
@@ -1271,6 +1279,11 @@ class IndexingEngine:
             config=leaf_config,
             query_text=leaf_text,
             query_embedding=query_embedding,
+        )
+        logger.info(
+            "EMBED_CONTEXT_END: leaf=%s tiling_count=%s",
+            job.leaf_id,
+            len(context_result.tiling_ids),
         )
         tiling_ids = context_result.tiling_ids
         context_nodes = context_result.nodes
@@ -1307,6 +1320,7 @@ class IndexingEngine:
         if context_prefix:
             # Generate a contextualizing summary of preceding context
             # (extracts only information relevant to understanding the leaf)
+            logger.info("EMBED_LLM_START: leaf=%s contextualize", job.leaf_id)
             contextualization_result = await self._llm_service._contextualize_text(
                 preceding_context=context_prefix,
                 target_text=leaf_text,
@@ -1314,6 +1328,7 @@ class IndexingEngine:
                 parent_id=job.leaf_id,
                 reporter=telemetry,
             )
+            logger.info("EMBED_LLM_END: leaf=%s contextualize", job.leaf_id)
             context_summary = contextualization_result.summary
             # Store the summary in the database
             store.nodes._repo.update_preceding_context_summary(
@@ -1328,7 +1343,9 @@ class IndexingEngine:
 
         # Record embedding start time for telemetry
         embed_start_time = time.time()
+        logger.info("EMBED_API_START: leaf=%s", job.leaf_id)
         embed_result = await self._llm_service.embed_texts_with_usage([text_to_embed])
+        logger.info("EMBED_API_END: leaf=%s", job.leaf_id)
         embeddings = embed_result["embeddings"]
         leaf_embedding_usage = embed_result["usage"]
         if not embeddings:
@@ -1553,12 +1570,18 @@ class IndexingEngine:
         import json
 
         retrieval_start_time = time.time()
+        logger.info("CONTEXT_START: span_start=%s doc=%s", span_start, job.document_id)
         context_result = await self._get_preceding_context(
             store=store,
             document_id=job.document_id,
             span_start=span_start,
             config=inner_config,
             query_text=None,
+        )
+        logger.info(
+            "CONTEXT_END: span_start=%s tiling_count=%s",
+            span_start,
+            len(context_result.tiling_ids),
         )
         tiling_ids = context_result.tiling_ids
         context_nodes = context_result.nodes
@@ -1592,6 +1615,11 @@ class IndexingEngine:
             if left_tokens is not None and right_tokens is not None
             else None
         )
+        logger.info(
+            "SUMMARIZE_START: parent_id=%s combined_tokens=%s",
+            parent_id,
+            combined_tokens,
+        )
         summary_result = await self._llm_service._summarize_text(
             combined_text,
             self._index_config.target_chunk_tokens,
@@ -1600,6 +1628,7 @@ class IndexingEngine:
             prev_context=context_text,
             text_tokens=combined_tokens,
         )
+        logger.info("SUMMARIZE_END: parent_id=%s", parent_id)
         summary = summary_result.summary
         summary_tokens = summary_result.summary_tokens
 
