@@ -781,6 +781,20 @@ class SqliteNodeRepository:
                 stmt = stmt.where(SQLiteTreeNode.document_id == document_id)
             return int(session.execute(stmt).scalar_one())
 
+    def count_leaves_with_embeddings_for_document(self, document_id: str) -> int:
+        """Return count of leaf nodes that have embeddings for a document."""
+        with self.SessionLocal() as session:
+            stmt = (
+                select(func.count())
+                .select_from(SQLiteTreeNode)
+                .where(
+                    SQLiteTreeNode.height == 0,
+                    SQLiteTreeNode.embedding.isnot(None),
+                    SQLiteTreeNode.document_id == document_id,
+                )
+            )
+            return int(session.execute(stmt).scalar_one())
+
     def max_height_for_document(self, document_id: str | None) -> int:
         """Return maximum node height for a document."""
         with self.SessionLocal() as session:

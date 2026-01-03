@@ -302,6 +302,12 @@ class DocumentNodeRepository:
             return int(counter(self.document_id))
         return len(self.get_leaves())
 
+    def count_leaves_with_embeddings(self) -> int:
+        """Get count of leaf nodes that have embeddings for this document."""
+        if not self.document_id:
+            return 0
+        return self._repo.count_leaves_with_embeddings_for_document(self.document_id)
+
     def max_height(self) -> int:
         """Get maximum height for nodes in this document efficiently."""
         getter = getattr(self._repo, "max_height_for_document", None)

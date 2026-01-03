@@ -473,7 +473,12 @@ class IndexingEngine:
             await self._idle_event.wait()
 
     async def status(self) -> IndexingStatus:
-        """Get current indexing activity snapshot."""
+        """Get current indexing activity snapshot.
+
+        Progress is computed from actual database state:
+        - completed = leaves with embeddings + inner nodes (all existing inner nodes are complete)
+        - expected = 2*N - popcount(N) where N = leaf count (total nodes in a complete forest)
+        """
         async with self._lock:
             in_flight_by_doc: dict[str, int] = {}
             for job in self._active_jobs:
@@ -481,20 +486,43 @@ class IndexingEngine:
                     in_flight_by_doc.get(job.document_id, 0) + 1
                 )
 
-            completed_by_doc: dict[str, int] = {}
-            expected_total_by_doc: dict[str, int] = {}
-            for doc_id, ctx in self._document_contexts.items():
-                if ctx.completed_jobs > 0:
-                    completed_by_doc[doc_id] = ctx.completed_jobs
-                if ctx.expected_total_jobs > 0:
-                    expected_total_by_doc[doc_id] = ctx.expected_total_jobs
-
-            return IndexingStatus(
-                in_flight=len(self._active_jobs),
-                in_flight_by_document=in_flight_by_doc,
-                completed_by_document=completed_by_doc,
-                expected_total_by_document=expected_total_by_doc,
+            # Get active document IDs (either have active jobs or are being tracked)
+            active_doc_ids = set(in_flight_by_doc.keys()) | set(
+                self._document_contexts.keys()
             )
+
+        # Query actual DB state outside the lock to avoid blocking
+        completed_by_doc: dict[str, int] = {}
+        expected_total_by_doc: dict[str, int] = {}
+
+        for doc_id in active_doc_ids:
+            store = self._store.for_document(doc_id)
+
+            # Completed = leaves with embeddings + inner nodes
+            # Inner nodes are created atomically with their summary, so all existing
+            # inner nodes (height > 0) are complete
+            leaves_with_embeddings = store.nodes.count_leaves_with_embeddings()
+            total_nodes = store.nodes.count()
+            leaf_count = store.nodes.leaf_count()
+            inner_nodes = total_nodes - leaf_count
+
+            completed = leaves_with_embeddings + inner_nodes
+
+            # Expected total = 2*N - popcount(N) where N = leaf count
+            # This is the number of nodes in a complete binary forest
+            expected = _expected_total_from_leaf_count(leaf_count)
+
+            if completed > 0:
+                completed_by_doc[doc_id] = completed
+            if expected > 0:
+                expected_total_by_doc[doc_id] = expected
+
+        return IndexingStatus(
+            in_flight=len(in_flight_by_doc),
+            in_flight_by_document=in_flight_by_doc,
+            completed_by_document=completed_by_doc,
+            expected_total_by_document=expected_total_by_doc,
+        )
 
     async def shutdown(self) -> None:
         """Wait for all work to complete and clean up tasks."""

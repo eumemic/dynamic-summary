@@ -898,6 +898,16 @@ class PostgresNodeRepository(BaseRepository):
                 q = q.filter(PostgresTreeNode.document_id == document_id)
             return int(q.scalar() or 0)
 
+    def count_leaves_with_embeddings_for_document(self, document_id: str) -> int:
+        """Return count of leaf nodes that have embeddings for a document."""
+        with self.SessionLocal() as session:
+            q = session.query(func.count(PostgresTreeNode.id)).filter(
+                PostgresTreeNode.height == 0,
+                PostgresTreeNode.embedding.isnot(None),
+                PostgresTreeNode.document_id == document_id,
+            )
+            return int(q.scalar() or 0)
+
     def max_height_for_document(self, document_id: str | None) -> int:
         """Return maximum node height for a document (fast MAX(height))"""
         with self.SessionLocal() as session:
