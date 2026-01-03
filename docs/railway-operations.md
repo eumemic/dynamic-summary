@@ -58,6 +58,35 @@ ls -lt ~/.claude/projects/-Users-tom-code-dynamic-summary-worktrees-worktree-1/*
 
 The session ID is the filename (without `.jsonl` extension) of the transcript file.
 
+## Admin CLI
+
+The `memory_service.admin` module provides direct database access for admin operations:
+
+```bash
+# Set database URL first
+export RAGZOOM_DATABASE_URL="$(railway variables --kv --service pgvector-rW-f | grep DATABASE_PUBLIC_URL | cut -d= -f2-)"
+
+# Show service status and session inventory
+python -m memory_service.admin status
+
+# Reset a session for full re-index
+python -m memory_service.admin reset <session-id>
+
+# Transcribe stored JSONL to text
+python -m memory_service.admin transcribe <session-id> [-o output.txt]
+
+# Validate indexed leaves match transcription
+python -m memory_service.admin validate <session-id> [--from-compaction]
+
+# Debug commands
+python -m memory_service.admin chain <session-id>        # Show ancestor chain
+python -m memory_service.admin segments <session-id>     # Show segment boundaries
+python -m memory_service.admin inspect-uuid <session-id> <uuid>
+python -m memory_service.admin inspect-leaves <session-id> <offset>
+```
+
+Session IDs can be specified as prefixes for convenience.
+
 ## Common Operations
 
 ### Validate a Document
@@ -124,6 +153,25 @@ ragzoom validate <session-uuid>
 # - Children pointing to wrong parent
 # - Parentless count > 0
 ```
+
+To fix (reset and re-index):
+```bash
+# Reset the sync cursor - next sync will detect revert and rebuild from scratch
+export RAGZOOM_DATABASE_URL="$(railway variables --kv --service pgvector-rW-f | grep DATABASE_PUBLIC_URL | cut -d= -f2-)"
+python -m memory_service.admin reset <session-uuid>
+
+# Output:
+# Resetting session: <session-uuid>
+#    Current offset: 92,213,209
+#    Current span_end: 1130832
+#    Current last_synced: <uuid>
+#
+# ✅ Cursor reset. Next sync will trigger full re-index.
+```
+
+The reset command clears `last_synced_uuid` and `original_file_offset` while preserving
+`span_end`. The next sync detects that `span_end > 0` but there's no sync cursor,
+triggering a full revert: the index is truncated and rebuilt from the beginning.
 
 ## MCP Server Configuration
 
