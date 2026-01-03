@@ -144,10 +144,11 @@ def _print_document_status(db: Session) -> None:
         max_height = row.max_height or 0
         total_nodes = row.total_nodes or 0
 
-        # Calculate expected summaries for a complete tree
+        # Calculate expected summaries for a complete forest
         # For a perfect binary tree: summaries = leaves - 1
-        # For a forest: summaries = leaves - root_count
-        expected_summaries = max(0, leaf_count - 1) if leaf_count > 0 else 0
+        # For a forest of N trees: summaries = leaves - N
+        # During indexing, use current root_count as approximation
+        expected_summaries = max(0, leaf_count - root_count) if leaf_count > 0 else 0
 
         # Calculate progress percentages
         embed_pct = (embedded_count / leaf_count * 100) if leaf_count > 0 else 0
