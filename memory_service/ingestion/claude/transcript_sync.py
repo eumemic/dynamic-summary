@@ -112,7 +112,8 @@ class SessionPidMapping:
     def load(cls, path: Path) -> SessionPidMapping | None:
         """Load session PID mapping from JSON file.
 
-        Returns None if file doesn't exist.
+        Returns None if file doesn't exist or can't be parsed
+        (e.g., old JSONL format files).
         """
         if not path.exists():
             return None
@@ -121,7 +122,11 @@ class SessionPidMapping:
         if not content:
             return None
 
-        return cls.from_json(json.loads(content))
+        try:
+            return cls.from_json(json.loads(content))
+        except json.JSONDecodeError:
+            # Old-format JSONL files can't be parsed as single JSON
+            return None
 
     def save(self, path: Path) -> None:
         """Save session PID mapping to JSON file."""
