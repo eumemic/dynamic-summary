@@ -647,11 +647,10 @@ hotspots over the document without re-embedding anything.
 # - Claude hooks: Runs Python checks on every edit
 ```
 
+## Hosted Service (Railway)
+
+@docs/railway-operations.md
+
 ## License
 
-MIT License - see LICENSE file for details.# Query metrics baseline is now available in S3
-
-<!-- Real query metrics baseline now available -->
-
-<!-- Query baseline synced to latest folder -->
-# Test comment
+MIT License - see LICENSE file for details.
