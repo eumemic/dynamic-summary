@@ -4,12 +4,30 @@ This guide covers operational tasks for the hosted RagZoom service on Railway.
 
 ## Environment Setup
 
-The Railway CLI must be linked to the project:
+The Railway CLI must be linked to the project. Worktrees maintain their own link
+in `~/.railway/config.json` (not in the repo).
 
 ```bash
+# Check current link status
+railway status
+
+# If not linked, link interactively (requires TTY)
 cd /path/to/dynamic-summary
 railway link  # Select magnificent-harmony project
+
+# Worktrees linked to PR environments can access the same database
+# as production since they share the pgvector-rW-f service
 ```
+
+### Project Details (for non-interactive linking)
+
+- **Project ID**: `9d168ba6-ac78-4739-a53c-7ca04e211678`
+- **Project Name**: `magnificent-harmony`
+- **Production Environment ID**: `9fabe46f-fb02-49bc-afa6-0a9b0f87b51a`
+
+To link non-interactively (useful for automation), the worktree must already
+have a `.railway` entry in `~/.railway/config.json`. The Railway CLI v4.16+
+stores links per-directory in the user's home config, not in the repo.
 
 ## Key Services
 
