@@ -31,6 +31,7 @@ from ragzoom.constants import (
     DEFAULT_GRPC_ADDRESS,
     DEFAULT_GRPC_HOST,
     DEFAULT_GRPC_PORT,
+    DEFAULT_SESSION_INGEST_TIMEOUT,
 )
 from ragzoom.error_handling import handle_graceful_error
 from ragzoom.exceptions import (
@@ -2191,7 +2192,10 @@ def sync_claude_code_transcript(
     resolved_user_id = user_id or os.environ.get("USER") or "anonymous"
 
     try:
-        with GrpcRagzoomClient(server_address) as client:
+        # Use longer timeout for session ingestion (may trigger full re-index)
+        with GrpcRagzoomClient(
+            server_address, timeout=DEFAULT_SESSION_INGEST_TIMEOUT
+        ) as client:
             # Get current cursor from server
             cursor = client.get_session_cursor(
                 session_id=session_id, user_id=resolved_user_id
