@@ -280,6 +280,7 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
 
                     # Handle append log truncation on revert
                     if result.truncated:
+                        entry_count = storage.count_append_entries(session_id)
                         if result.valid_prefix_uuid is not None:
                             # Truncate to valid prefix
                             storage.truncate_entries_after(
@@ -288,6 +289,17 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                         else:
                             # No valid prefix - clear all entries
                             storage.clear_append_entries(session_id)
+                        logger.info(
+                            "[SYNC] Phase 3 truncation: session=%s valid_prefix=%s "
+                            "entry_count=%d",
+                            session_id[:8],
+                            (
+                                result.valid_prefix_uuid[:8]
+                                if result.valid_prefix_uuid
+                                else None
+                            ),
+                            entry_count,
+                        )
 
                     # Add new append entries for each segment
                     # Calculate cumulative span positions starting from truncate point or previous span_end

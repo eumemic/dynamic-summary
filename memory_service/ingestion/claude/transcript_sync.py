@@ -1552,7 +1552,40 @@ def prepare_delta_sync(
             delta_records.append(record)
 
     if not delta_records:
-        # Empty delta
+        # Empty delta (compaction-only) - but check if cursor was reset first
+        if span_end > 0 and last_synced_uuid is None:
+            # Cursor was reset but we have indexed data - need full resync
+            logger.info(
+                "[SYNC] Cursor reset with empty delta: session=%s span_end=%d - "
+                "triggering resync",
+                session_id[:8],
+                span_end,
+            )
+            return PreparedDeltaSync(
+                document_id=document_id,
+                truncated=True,
+                truncate_span=span_end,
+                segment_texts=[],
+                appended_uuids=[],
+                span_end=span_end,
+            )
+        # Known limitation: if last_synced_uuid is set but the branch changed,
+        # revert detection is bypassed. We accept this because non-compaction
+        # records would follow in subsequent deltas and trigger proper detection.
+        if last_synced_uuid is not None:
+            logger.warning(
+                "[SYNC] Compaction-only delta with active sync: session=%s "
+                "last_synced=%s span_end=%d - potential divergence undetected",
+                session_id[:8],
+                last_synced_uuid[:8],
+                span_end,
+            )
+        else:
+            logger.info(
+                "[SYNC] Empty delta (compaction-only): session=%s span_end=%d",
+                session_id[:8],
+                span_end,
+            )
         return PreparedDeltaSync(
             document_id=document_id,
             truncated=False,

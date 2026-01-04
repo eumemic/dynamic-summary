@@ -323,6 +323,7 @@ class SessionStorage:
 
         Clears last_synced_uuid and sets original_file_offset to 0,
         causing the next sync to re-process the entire transcript.
+        Also clears append entries to prevent stale entries persisting.
         """
         stmt = select(SessionRawData).where(
             SessionRawData.user_id == self._user_id,
@@ -334,6 +335,8 @@ class SessionStorage:
             row.last_synced_uuid = None
             row.original_file_offset = 0
             self._db.flush()
+            # Clear append entries to prevent stale entries persisting
+            self.clear_append_entries(session_id)
 
     def _get_session_raw_data_id(self, session_id: str) -> int | None:
         """Get the SessionRawData id for a session, or None if not found."""
@@ -360,6 +363,22 @@ class SessionStorage:
         )
         results = self._db.execute(stmt).all()
         return [(row[0], row[1]) for row in results]
+
+    def count_append_entries(self, session_id: str) -> int:
+        """Count append entries without loading them.
+
+        Efficient for logging/diagnostics without the cost of loading all entries.
+        Returns 0 if session doesn't exist or has no entries.
+        """
+        raw_data_id = self._get_session_raw_data_id(session_id)
+        if raw_data_id is None:
+            return 0
+
+        stmt = select(func.count()).where(
+            SessionAppendEntry.session_raw_data_id == raw_data_id
+        )
+        result = self._db.execute(stmt).scalar()
+        return result if result is not None else 0
 
     def append_entry(self, session_id: str, last_uuid: str, span_end: int) -> None:
         """Append a new entry to the append log for a session.

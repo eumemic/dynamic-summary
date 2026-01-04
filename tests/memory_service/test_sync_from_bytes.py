@@ -635,6 +635,93 @@ class TestPrepareDeltaSync:
         assert result.truncated is True
         assert result.truncate_span == 50
 
+    def test_compaction_only_delta_with_cursor_reset_triggers_resync(self) -> None:
+        """Compaction-only delta with cursor reset (span_end > 0, last_synced=None) triggers resync.
+
+        This was a bug: if the delta contains only isCompactSummary records (which are
+        filtered out), we returned early with truncated=False, bypassing the cursor-reset
+        check. Now we check for cursor reset before the empty-delta early return.
+        """
+        # Delta contains ONLY a compaction summary (which gets filtered out)
+        delta = _make_jsonl(
+            {
+                "uuid": "compact1",
+                "parentUuid": "msg2",
+                "type": "user",
+                "isCompactSummary": True,
+                "message": {"content": "Compaction summary"},
+            },
+        )
+
+        # Cursor was reset: last_synced_uuid=None but span_end > 0 (had indexed data)
+        cursor = SessionCursor(byte_offset=0, last_synced_uuid=None, span_end=100)
+
+        result = prepare_delta_sync(
+            session_id="session1",
+            delta=delta,
+            cursor=cursor,
+        )
+
+        # Should detect cursor reset and trigger resync
+        assert result.truncated is True
+        assert result.truncate_span == 100  # Truncate from the existing span_end
+
+    def test_compaction_only_delta_with_fresh_cursor_no_resync(self) -> None:
+        """Compaction-only delta with fresh cursor (span_end=0) should not trigger resync."""
+        # Delta contains ONLY a compaction summary
+        delta = _make_jsonl(
+            {
+                "uuid": "compact1",
+                "parentUuid": None,
+                "type": "user",
+                "isCompactSummary": True,
+                "message": {"content": "Compaction summary"},
+            },
+        )
+
+        # Fresh cursor - no indexed data yet
+        cursor = SessionCursor(byte_offset=0, last_synced_uuid=None, span_end=0)
+
+        result = prepare_delta_sync(
+            session_id="session1",
+            delta=delta,
+            cursor=cursor,
+        )
+
+        # Should NOT trigger resync - nothing to resync
+        assert result.truncated is False
+
+    def test_compaction_only_delta_with_active_sync_logs_warning(self) -> None:
+        """Compaction-only delta with active sync logs warning but doesn't resync.
+
+        This is a known limitation: if a compaction-only delta arrives while
+        last_synced_uuid is set but the branch changed, we can't detect it.
+        We accept this because non-compaction records would follow.
+        """
+        # Delta contains ONLY a compaction summary
+        delta = _make_jsonl(
+            {
+                "uuid": "compact1",
+                "parentUuid": "msg2",
+                "type": "user",
+                "isCompactSummary": True,
+                "message": {"content": "Compaction summary"},
+            },
+        )
+
+        # Active sync - last_synced_uuid is set
+        cursor = SessionCursor(byte_offset=100, last_synced_uuid="msg2", span_end=50)
+
+        result = prepare_delta_sync(
+            session_id="session1",
+            delta=delta,
+            cursor=cursor,
+        )
+
+        # Known limitation: doesn't trigger resync because we can't detect divergence
+        # The warning log is checked separately in log-based tests
+        assert result.truncated is False
+
 
 class TestGranularRevertTruncation:
     """Tests for granular revert truncation with append entries."""

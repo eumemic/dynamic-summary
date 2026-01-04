@@ -525,6 +525,67 @@ class TestAppendEntries:
         )
         assert fixed_span_cursor == 0  # Correct behavior
 
+    def test_count_append_entries_returns_count(self, db_session: Session) -> None:
+        """count_append_entries should return the count without loading entries."""
+        storage = SessionStorage(db_session, user_id="user1")
+        storage.append_content("session1", b'{"uuid": "msg1"}\n')
+        db_session.commit()
+
+        storage.append_entry("session1", "uuid1", 100)
+        storage.append_entry("session1", "uuid2", 200)
+        storage.append_entry("session1", "uuid3", 300)
+        db_session.commit()
+
+        count = storage.count_append_entries("session1")
+        assert count == 3
+
+    def test_count_append_entries_returns_zero_for_missing_session(
+        self, db_session: Session
+    ) -> None:
+        """count_append_entries should return 0 for non-existent session."""
+        storage = SessionStorage(db_session, user_id="user1")
+
+        count = storage.count_append_entries("nonexistent")
+        assert count == 0
+
+    def test_count_append_entries_returns_zero_for_empty_log(
+        self, db_session: Session
+    ) -> None:
+        """count_append_entries should return 0 for session with no entries."""
+        storage = SessionStorage(db_session, user_id="user1")
+        storage.append_content("session1", b'{"uuid": "msg1"}\n')
+        db_session.commit()
+
+        count = storage.count_append_entries("session1")
+        assert count == 0
+
+    def test_reset_cursor_clears_append_entries(self, db_session: Session) -> None:
+        """reset_cursor should clear append entries to prevent stale entries."""
+        storage = SessionStorage(db_session, user_id="user1")
+        storage.append_content("session1", b'{"uuid": "msg1"}\n')
+        storage.update_sync_state("session1", last_synced_uuid="msg1", span_end=100)
+        db_session.commit()
+
+        # Add some append entries
+        storage.append_entry("session1", "uuid1", 100)
+        storage.append_entry("session1", "uuid2", 200)
+        db_session.commit()
+        assert storage.count_append_entries("session1") == 2
+
+        # Reset cursor
+        storage.reset_cursor("session1")
+        db_session.commit()
+
+        # Verify append entries are cleared
+        assert storage.count_append_entries("session1") == 0
+        entries = storage.get_append_entries("session1")
+        assert entries == []
+
+        # Also verify cursor fields are reset
+        cursor = storage.get_cursor("session1")
+        assert cursor.byte_offset == 0
+        assert cursor.last_synced_uuid is None
+
 
 class TestTranscribeSession:
     """Tests for _transcribe_session handling of memoryview input."""

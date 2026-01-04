@@ -29,7 +29,7 @@ from memory_service.ingestion.claude.transcript_sync import (
     get_ancestor_chain,
     transcribe_uuids_from_map,
 )
-from memory_service.storage import SessionRawData
+from memory_service.storage import SessionRawData, SessionStorage
 
 
 def get_database_url() -> str | None:
@@ -418,10 +418,10 @@ def cmd_reset(args: argparse.Namespace) -> int:
         print(f"   Current span_end: {row.span_end}")
         print(f"   Current last_synced: {row.last_synced_uuid}")
 
-        # Reset cursor fields
-        row.last_synced_uuid = None
-        row.original_file_offset = 0
-        # Note: span_end stays as-is to trigger revert detection on next sync
+        # Use SessionStorage.reset_cursor() to ensure consistent behavior
+        # This clears last_synced_uuid, original_file_offset, AND append entries
+        storage = SessionStorage(db, user_id=row.user_id)
+        storage.reset_cursor(row.session_id)
         db.commit()
 
         print()
