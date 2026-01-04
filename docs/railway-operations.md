@@ -103,35 +103,36 @@ Memory Service Status
 
    7cdd0798-4f2...
       user: tom
-      offset: 92,400,393 bytes      # File bytes processed
-      span_end: 1130850             # Character span indexed
-      last_synced: 442a504d         # Last processed UUID
-      stored: 46,448,304 bytes      # JSONL content stored
+      offset: 93,090,415 bytes      # File bytes processed
+      span_end: 1148356             # Character span indexed
+      last_synced: f109d8cd         # Last processed UUID
+      stored: 46,643,997 bytes      # JSONL content stored
 
 📄 Documents: 1
-🌳 Tree nodes: 2,318
+🌳 Tree nodes: 3,669
 
 ────────────────────────────────────────────────────────────
 📄 Document: 7cdd0798-4f29-4ce6-bfc9-6dc3b7bb2153
 
    📈 Indexing Progress:
-      Leaves: 1,806
-      Embeddings: 546/1,806 (30.2%) ⏳ 1,260 pending
-      Summaries: 513/1,805 (28.4%) ⏳ ~1,292 pending
-      Tree: height=8 | 🌲 Forest (1293 roots)
-      Queue: 643 mergeable pairs
+      Leaves: 1,838
+      Embeddings: 1,838/1,838 (100.0%) ✅
+      Summaries: 1,831/1,831 (100.0%) ✅
+      Tree: height=10 | ✅ Complete forest (7 trees)
 
    🔍 Validation:
-      ✅ PASSED | Nodes: 2,319 | Leaves: 1,806
-         ℹ️  Internal roots (normal during indexing): 29
+      ✅ Tree: PASSED | Nodes: 3,669 | Leaves: 1,838
+      ✅ Transcript: 1,838 leaves verified
+         ℹ️  Internal roots (normal during indexing): 7
 ```
 
 Key metrics explained:
 - **Embeddings**: Leaves with vector embeddings (needed for semantic search)
 - **Summaries**: Internal nodes created by merging sibling pairs
 - **Forest**: Multiple perfect binary trees. Complete when no two roots share the same height (all mergeable pairs merged). Only becomes a single tree if leaf count is a power of 2.
-- **Queue**: Sibling pairs at same height eligible for summarization
-- **Validation**: Checks for duplicate coordinates, broken parent refs, etc.
+- **Validation**: Two-layer validation:
+  - **Tree**: Checks for duplicate coordinates, broken parent refs, orphaned nodes
+  - **Transcript**: Verifies each leaf's text appears in order in the JSONL transcript
 
 ## Common Operations
 

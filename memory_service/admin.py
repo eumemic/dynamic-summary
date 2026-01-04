@@ -221,6 +221,68 @@ def _get_root_height_distribution(db: Session, document_id: str) -> dict[int, in
     return {row.height: row.count for row in result}
 
 
+def _validate_transcript(
+    db: Session, document_id: str, start_span: int = 0
+) -> tuple[bool, str]:
+    """Validate indexed leaves match transcript.
+
+    Returns (passed, message) tuple.
+    """
+    # Get session data
+    session = db.execute(
+        select(SessionRawData).where(SessionRawData.session_id == document_id)
+    ).scalar_one_or_none()
+
+    if session is None:
+        return True, "No session data (standalone document)"
+
+    content = session.jsonl_content
+    if not content:
+        return True, "No stored content"
+
+    # Get full transcript
+    full_text = _transcribe_session(bytes(content))
+    if not full_text:
+        return True, "Empty transcript"
+
+    # Get leaves to validate
+    result = db.execute(
+        text(
+            """
+            SELECT span_start, text FROM tree_nodes
+            WHERE document_id = :doc_id AND height = 0
+            AND span_start >= :start_span
+            ORDER BY span_start
+            """
+        ),
+        {"doc_id": document_id, "start_span": start_span},
+    ).fetchall()
+
+    if not result:
+        return True, "No leaves to validate"
+
+    # Content-based validation: find each leaf in order
+    search_pos = 0
+    for i, leaf_row in enumerate(result):
+        leaf_text = leaf_row.text
+        found_pos = full_text.find(leaf_text, search_pos)
+
+        if found_pos < 0:
+            # Try normalized search
+            normalized_leaf = " ".join(leaf_text.split())
+            if len(normalized_leaf) > 20:
+                norm_search = " ".join(full_text[search_pos:].split())
+                if normalized_leaf[:50] not in norm_search:
+                    return (
+                        False,
+                        f"Leaf {i} (span {leaf_row.span_start:,}) not in transcript",
+                    )
+        else:
+            search_pos = found_pos + len(leaf_text)
+
+    return True, f"{len(result):,} leaves verified"
+
+
 def _print_validation_status(
     db: Session, document_id: str, total_nodes: int, leaf_count: int
 ) -> None:
@@ -270,6 +332,9 @@ def _print_validation_status(
         broken_parent_query, {"doc_id": document_id}
     ).scalar_one()
 
+    # Transcript validation
+    transcript_passed, transcript_msg = _validate_transcript(db, document_id)
+
     # Determine overall status
     errors: list[str] = []
     warnings: list[str] = []
@@ -290,10 +355,16 @@ def _print_validation_status(
     if broken_parents > 0:
         errors.append(f"Broken parent refs: {broken_parents}")
 
+    if not transcript_passed:
+        errors.append(f"Transcript: {transcript_msg}")
+
     # Print validation result
     print("   🔍 Validation:")
     if not errors:
-        print(f"      ✅ PASSED | Nodes: {total_nodes:,} | Leaves: {leaf_count:,}")
+        print(
+            f"      ✅ Tree: PASSED | Nodes: {total_nodes:,} | Leaves: {leaf_count:,}"
+        )
+        print(f"      ✅ Transcript: {transcript_msg}")
     else:
         print(f"      ❌ FAILED | Nodes: {total_nodes:,} | Leaves: {leaf_count:,}")
         for error in errors:
