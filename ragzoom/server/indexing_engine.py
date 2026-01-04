@@ -347,10 +347,6 @@ class IndexingEngine:
         self._dirty_documents: set[str] = set()
         self._scheduler_task: asyncio.Task[None] | None = None
 
-        # Store references to running job tasks to prevent garbage collection.
-        # Without this, tasks can be GC'd mid-execution, cancelling the coroutine.
-        self._job_tasks: set[asyncio.Task[None]] = set()
-
     # -----------------------------------------------------------------------
     # Public interface
     # -----------------------------------------------------------------------
@@ -400,7 +396,12 @@ class IndexingEngine:
             self._active_documents.add(document_id)
             self._idle_event.clear()
 
-        await self._find_and_start_jobs(document_id)
+        # Fire-and-forget: don't block append on job discovery
+        # Jobs will be discovered and started in background
+        asyncio.create_task(
+            self._safe_find_and_start_jobs(document_id),
+            name=f"trigger_work:{document_id[:8]}",
+        )
 
     async def register_run(
         self,
@@ -525,17 +526,19 @@ class IndexingEngine:
         )
 
     async def shutdown(self) -> None:
-        """Wait for all work to complete and clean up tasks."""
+        """Wait for all work to complete."""
         await self.wait_until_idle()
-        # Cancel any remaining job tasks to allow clean shutdown
-        for task in list(self._job_tasks):
-            if not task.done():
-                task.cancel()
-        self._job_tasks.clear()
 
     # -----------------------------------------------------------------------
     # Job discovery and scheduling
     # -----------------------------------------------------------------------
+
+    async def _safe_find_and_start_jobs(self, document_id: str) -> None:
+        """Wrapper around _find_and_start_jobs that logs errors."""
+        try:
+            await self._find_and_start_jobs(document_id)
+        except Exception:
+            logger.exception("Error in background job discovery for %s", document_id)
 
     def _request_scheduling(self, document_id: str) -> None:
         """Request scheduling for a document, coalescing multiple requests.
@@ -655,19 +658,14 @@ class IndexingEngine:
                                 )
                                 ctx.job_run_ids[job] = run_id
 
-                    # Fire all jobs simultaneously.
-                    # Store task references to prevent garbage collection - without
-                    # this, tasks can be GC'd mid-execution, cancelling coroutines.
+                    # Fire all jobs simultaneously
                     for job in new_jobs:
-                        task = asyncio.create_task(self._run_job(job))
-                        self._job_tasks.add(task)
-                        task.add_done_callback(self._job_tasks.discard)
+                        asyncio.create_task(self._run_job(job))
 
-                    logger.debug(
-                        "engine: started %d jobs (active=%d)",
-                        len(new_jobs),
-                        len(self._active_jobs),
-                    )
+                    # Yield to event loop to let newly created tasks start running
+                    # This is critical because _find_next_n_jobs is synchronous and
+                    # would otherwise block the event loop indefinitely
+                    await asyncio.sleep(0)
 
             if finalize_runs:
                 await self._maybe_complete_runs(document_id)
