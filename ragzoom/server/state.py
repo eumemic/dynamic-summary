@@ -66,6 +66,7 @@ class ServerState:
         llm_service = LLMService(
             index_cfg,
             api_key=operational_cfg.openai_api_key,
+            timeout=operational_cfg.openai_timeout,
         )
         telemetry_log = None
         if collect_telemetry:
@@ -85,7 +86,8 @@ class ServerState:
             model,
         )
         openai_client = OpenAI(
-            api_key=operational_cfg.openai_api_key.get_secret_value()
+            api_key=operational_cfg.openai_api_key.get_secret_value(),
+            timeout=operational_cfg.openai_timeout,
         )
 
         indexing_engine = IndexingEngine(
