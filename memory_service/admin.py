@@ -218,7 +218,7 @@ def _get_root_height_distribution(db: Session, document_id: str) -> dict[int, in
         ),
         {"doc_id": document_id},
     )
-    return {row.height: row.count for row in result}
+    return {int(row[0]): int(row[1]) for row in result}
 
 
 def _validate_transcript(
@@ -490,12 +490,19 @@ def _segment_uuids(
     return segments
 
 
-def _transcribe_session(content: bytes) -> str:
+def _transcribe_session(content: bytes | memoryview) -> str:
     """Transcribe stored JSONL content to readable text.
 
     This matches the actual indexing behavior: segments are transcribed
     individually and concatenated WITHOUT separators.
+
+    Args:
+        content: JSONL bytes or memoryview (SQLAlchemy returns memoryview for
+            LargeBinary columns).
     """
+    # SQLAlchemy returns memoryview for LargeBinary; convert to bytes for .find()
+    if isinstance(content, memoryview):
+        content = bytes(content)
     parent_map = _build_parent_map_from_bytes(content)
     current_head = _get_current_head_from_bytes(content)
     if current_head is None:

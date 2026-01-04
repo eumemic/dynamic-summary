@@ -393,3 +393,36 @@ class TestSessionStorage:
         # But stored content should be much smaller
         stored = storage.get_content("session1")
         assert len(stored) < original_size  # Should be stripped
+
+
+class TestTranscribeSession:
+    """Tests for _transcribe_session handling of memoryview input."""
+
+    def test_transcribe_session_handles_memoryview(self) -> None:
+        """_transcribe_session should handle memoryview input from SQLAlchemy.
+
+        SQLAlchemy returns LargeBinary columns as memoryview objects, but
+        _transcribe_session calls functions that use bytes.find() which
+        doesn't exist on memoryview.
+        """
+        from memory_service.admin import _transcribe_session
+
+        # Create minimal valid JSONL content
+        records = [
+            {"uuid": "msg1", "parentUuid": None, "type": "user", "message": "hello"},
+            {
+                "uuid": "msg2",
+                "parentUuid": "msg1",
+                "type": "assistant",
+                "message": "world",
+            },
+        ]
+        content_bytes = b"\n".join(json.dumps(r).encode() for r in records) + b"\n"
+
+        # Simulate what SQLAlchemy returns - a memoryview
+        content_memoryview = memoryview(content_bytes)
+
+        # Previously failed with AttributeError: 'memoryview' object has no attribute 'find'
+        result = _transcribe_session(content_memoryview)
+
+        assert "hello" in result or result == ""  # May be empty if no valid chain
