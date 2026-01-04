@@ -203,11 +203,13 @@ class TestOperationalConfigIntegration:
         """Test that environment variable still takes precedence."""
         with patch("ragzoom.worktree_utils.get_worktree_id", return_value="worktree-3"):
             custom_url = "postgresql://custom.server/custom_db"
+            # URL gets converted to psycopg3 dialect
+            expected_url = "postgresql+psycopg://custom.server/custom_db"
             os.environ["RAGZOOM_DATABASE_URL"] = custom_url
 
             try:
                 config = OperationalConfig()
-                assert config.database_url == custom_url
+                assert config.database_url == expected_url
             finally:
                 del os.environ["RAGZOOM_DATABASE_URL"]
 
