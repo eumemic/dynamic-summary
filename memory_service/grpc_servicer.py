@@ -292,7 +292,12 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                     # Add new append entries for each segment
                     # Calculate cumulative span positions starting from truncate point or previous span_end
                     if result.segment_last_uuids:
-                        span_cursor = result.truncate_span or cursor.span_end
+                        # Use explicit None check: truncate_span=0 is valid (full re-index)
+                        span_cursor = (
+                            result.truncate_span
+                            if result.truncate_span is not None
+                            else cursor.span_end
+                        )
                         segment_texts_list = (
                             prepared_resync.segment_texts
                             if result.truncated
