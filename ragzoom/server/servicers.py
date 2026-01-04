@@ -188,7 +188,7 @@ def _build_retriever(
     document_store = state.store.for_document(document_id)
     client = OpenAI(
         api_key=state.operational_config.openai_api_key.get_secret_value(),
-        timeout=120.0,
+        timeout=state.operational_config.openai_timeout,
     )
     embedding_service = EmbeddingService(client, document_store, resolved_embedding)
     budget_planner = BudgetPlanner(
