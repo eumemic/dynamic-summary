@@ -1,6 +1,5 @@
 """LLM service for handling OpenAI API interactions."""
 
-import asyncio
 import logging
 import os
 from collections.abc import Sequence
@@ -13,10 +12,6 @@ from ragzoom.contracts.embedding_model import EmbeddingResult, EmbeddingUsageInf
 from ragzoom.services.summary_utils import SummaryResult
 from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
-
-# Timeout for OpenAI API calls (seconds). This is a safety net in case
-# the httpx timeout doesn't trigger (e.g., due to connection pooling issues).
-OPENAI_API_TIMEOUT_SECONDS = 90
 
 logger = logging.getLogger(__name__)
 
@@ -291,33 +286,12 @@ class LLMService:
         batches = self._prepare_embedding_batches(texts)
         results: list[list[float]] = []
 
-        # jscpd:ignore-start - Timeout wrapper duplicated in embed_texts_with_usage
         try:
             for batch_idx, batch in enumerate(batches, start=1):
-                try:
-                    response = await asyncio.wait_for(
-                        self.client.embeddings.create(
-                            model=self.config.embedding_model,
-                            input=batch,
-                        ),
-                        timeout=OPENAI_API_TIMEOUT_SECONDS,
-                    )
-                except asyncio.TimeoutError:
-                    from ragzoom.exceptions import LLMError
-
-                    logger.error(
-                        "Embedding API call timed out after %ds (model=%s batch=%d)",
-                        OPENAI_API_TIMEOUT_SECONDS,
-                        self.config.embedding_model,
-                        batch_idx,
-                    )
-                    raise LLMError(
-                        operation="get_batch_embeddings",
-                        model=self.config.embedding_model,
-                        message=f"Embedding API call timed out after {OPENAI_API_TIMEOUT_SECONDS}s",
-                        batch_size=len(batch),
-                    )
-                # jscpd:ignore-end
+                response = await self.client.embeddings.create(
+                    model=self.config.embedding_model,
+                    input=batch,
+                )
                 results.extend(data.embedding for data in response.data)
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(
@@ -368,30 +342,11 @@ class LLMService:
         total_tokens = 0
 
         try:
-            for batch_idx, batch in enumerate(batches, start=1):
-                try:
-                    response = await asyncio.wait_for(
-                        self.client.embeddings.create(
-                            model=self.config.embedding_model,
-                            input=batch,
-                        ),
-                        timeout=OPENAI_API_TIMEOUT_SECONDS,
-                    )
-                except asyncio.TimeoutError:
-                    from ragzoom.exceptions import LLMError
-
-                    logger.error(
-                        "Embedding API call timed out after %ds (model=%s batch=%d)",
-                        OPENAI_API_TIMEOUT_SECONDS,
-                        self.config.embedding_model,
-                        batch_idx,
-                    )
-                    raise LLMError(
-                        operation="get_batch_embeddings_with_usage",
-                        model=self.config.embedding_model,
-                        message=f"Embedding API call timed out after {OPENAI_API_TIMEOUT_SECONDS}s",
-                        batch_size=len(batch),
-                    )
+            for batch in batches:
+                response = await self.client.embeddings.create(
+                    model=self.config.embedding_model,
+                    input=batch,
+                )
                 results.extend(data.embedding for data in response.data)
                 if response.usage:
                     total_tokens += response.usage.total_tokens

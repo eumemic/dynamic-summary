@@ -887,17 +887,6 @@ class IndexingEngine:
             max_jobs,
         )
 
-        # Log job discovery results for diagnostics
-        logger.info(
-            "JOB_DISCOVERY: doc=%s embed_jobs=%d summary_jobs=%d "
-            "embed_frontier=%s summary_frontier=%s",
-            document_id[:8],
-            len(embedding_jobs),
-            len(summary_jobs),
-            embedding_frontier,
-            summary_frontier,
-        )
-
         # Merge both lists sorted by span_start, take up to max_jobs
         all_jobs: list[tuple[int, IndexingJob]] = []
         all_jobs.extend(embedding_jobs)
@@ -981,16 +970,7 @@ class IndexingEngine:
         prev_root: TreeNode | None = None
         min_preceding_height: int | None = None
 
-        # Diagnostic counters
-        roots_scanned = 0
-        pairs_checked = 0
-        pairs_ineligible = 0
-        pairs_height_blocked = 0
-        pairs_active = 0
-        pairs_failed = 0
-
         for root in store.nodes.iter_root_nodes():
-            roots_scanned += 1
             if len(results) >= max_jobs:
                 break
 
@@ -1004,7 +984,6 @@ class IndexingEngine:
             # Try to form pair with previous root (if prev_root exists and eligible)
             if prev_root is not None and prev_root.id not in used_roots:
                 if root.id not in used_roots:
-                    pairs_checked += 1
                     if self._is_eligible_pair(prev_root, root, document_id):
                         # Check height differential constraint
                         if (
@@ -1014,15 +993,6 @@ class IndexingEngine:
                             left_height = int(getattr(prev_root, "height", 0))
                             parent_height = left_height + 1
                             if parent_height - min_preceding_height > max_height_diff:
-                                pairs_height_blocked += 1
-                                logger.info(
-                                    "HEIGHT_BLOCKED: parent_h=%d min_preceding=%d "
-                                    "diff=%d max_allowed=%d",
-                                    parent_height,
-                                    min_preceding_height,
-                                    parent_height - min_preceding_height,
-                                    max_height_diff,
-                                )
                                 break
 
                         if run_id is not None:
@@ -1043,7 +1013,6 @@ class IndexingEngine:
                         summary_job = SummaryJob(document_id, prev_root.id, root.id)
                         if summary_job not in active_jobs:
                             if ctx is not None and ctx.is_failed(summary_job):
-                                pairs_failed += 1
                                 # Skip this pair but continue scanning
                                 prev_root = root
                                 if (
@@ -1055,45 +1024,12 @@ class IndexingEngine:
                             results.append((prev_span_start, summary_job))
                             used_roots.add(prev_root.id)
                             used_roots.add(root.id)
-                        else:
-                            pairs_active += 1
-                    else:
-                        pairs_ineligible += 1
 
             # Update sliding window state
             prev_root = root
             # Update min_preceding_height for next iteration
             if min_preceding_height is None or root_height < min_preceding_height:
                 min_preceding_height = root_height
-
-        # Log diagnostic info if no jobs found but roots exist
-        if len(results) == 0 and roots_scanned > 1:
-            # Collect root info for diagnostics (height, level, span_start, id prefix)
-            root_info: list[tuple[int, int, int, str]] = []
-            for r in store.nodes.iter_root_nodes():
-                root_info.append(
-                    (
-                        int(getattr(r, "height", 0)),
-                        int(getattr(r, "level_index", 0)),
-                        int(getattr(r, "span_start", 0)),
-                        str(getattr(r, "id", ""))[:8],
-                    )
-                )
-                if len(root_info) >= 10:  # Limit to first 10
-                    break
-            logger.info(
-                "SUMMARY_SCAN: doc=%s roots=%d checked=%d "
-                "inelig=%d h_block=%d active=%d failed=%d "
-                "root_info(h,lvl,span,id)=%s",
-                document_id[:8],
-                roots_scanned,
-                pairs_checked,
-                pairs_ineligible,
-                pairs_height_blocked,
-                pairs_active,
-                pairs_failed,
-                root_info,
-            )
 
         return results
 
@@ -1248,19 +1184,14 @@ class IndexingEngine:
         """Execute a job with cleanup and re-trigger."""
         document_id = job.document_id
         job_failed = False
-        job_type = "embed" if isinstance(job, EmbeddingJob) else "summarize"
-        logger.info("JOB_START: %s job=%s", job_type, job)
         try:
             if isinstance(job, EmbeddingJob):
                 await self._embed_leaf(job)
             else:
                 await self._summarize_pair(job)
-            logger.info("JOB_END: %s job=%s success=True", job_type, job)
         except asyncio.CancelledError:
-            logger.info("JOB_END: %s job=%s cancelled=True", job_type, job)
             raise
         except Exception:
-            logger.info("JOB_END: %s job=%s success=False", job_type, job)
             logger.exception("Job failed: %s", job)
             job_failed = True
         finally:

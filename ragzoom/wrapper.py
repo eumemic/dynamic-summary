@@ -155,50 +155,26 @@ class RagZoom:
         unit boundaries. Semantically equivalent to calling append() for each unit
         sequentially, but executed in a single transaction for efficiency.
         """
-        import logging
-        import time
-
-        logger = logging.getLogger(__name__)
-
         if not document_id:
             raise ValueError("document_id is required")
         if not units:
             raise ValueError("units must be non-empty")
 
-        t0 = time.perf_counter()
-        logger.info(
-            "[TIMING] batch_append start: doc=%s units=%d",
-            document_id[:8] if len(document_id) >= 8 else document_id,
-            len(units),
-        )
-
         if self._runtime is not None:
             session = self._runtime.get_session(document_id)
-            result = self._run_runtime(
+            return self._run_runtime(
                 session.batch_append_text(
                     units,
                     collect_telemetry=collect_telemetry,
                 )
             )
-            t1 = time.perf_counter()
-            logger.info(
-                "[TIMING] batch_append complete (runtime): %.3fs",
-                t1 - t0,
-            )
-            return result
 
         with self._client() as client:
-            result = client.batch_append_text(
+            return client.batch_append_text(
                 document_id=document_id,
                 units=units,
                 collect_telemetry=collect_telemetry,
             )
-            t1 = time.perf_counter()
-            logger.info(
-                "[TIMING] batch_append complete (grpc): %.3fs",
-                t1 - t0,
-            )
-            return result
 
     def _append(
         self,

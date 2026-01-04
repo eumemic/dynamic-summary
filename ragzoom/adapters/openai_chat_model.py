@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import logging
 from typing import Literal, cast
 from typing import cast as _cast
 
@@ -16,12 +14,6 @@ from ragzoom.contracts.chat_model import ChatModel, ChatResult, Message, UsageIn
 from ragzoom.error_handling import handle_graceful_error
 from ragzoom.exceptions import LLMError
 from ragzoom.model_info import ModelInfo
-
-logger = logging.getLogger(__name__)
-
-# Timeout for OpenAI API calls (seconds). This is a safety net in case
-# the httpx timeout doesn't trigger (e.g., due to connection pooling issues).
-OPENAI_API_TIMEOUT_SECONDS = 90
 
 
 class OpenAIChatModel(ChatModel):
@@ -77,54 +69,24 @@ class OpenAIChatModel(ChatModel):
             reasoning_arg = _cast(
                 Literal["minimal", "low", "medium", "high"], reasoning_str
             )
-            try:
-                response = await asyncio.wait_for(
-                    self._client.chat.completions.create(
-                        model=self._model_id,
-                        messages=oa_messages,
-                        max_tokens=max_tokens_arg,
-                        reasoning_effort=reasoning_arg,
-                        response_format=response_format_arg,
-                    ),
-                    timeout=OPENAI_API_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                logger.error(
-                    "OpenAI API call timed out after %ds (model=%s)",
-                    OPENAI_API_TIMEOUT_SECONDS,
-                    self._model_id,
-                )
-                raise LLMError(
-                    operation="complete",
-                    model=self._model_id,
-                    message=f"OpenAI API call timed out after {OPENAI_API_TIMEOUT_SECONDS}s",
-                )
+            response = await self._client.chat.completions.create(
+                model=self._model_id,
+                messages=oa_messages,
+                max_tokens=max_tokens_arg,
+                reasoning_effort=reasoning_arg,
+                response_format=response_format_arg,
+            )
         else:
             temp_arg: float | NotGiven | None = (
                 float(temperature) if temperature is not None else NOT_GIVEN
             )
-            try:
-                response = await asyncio.wait_for(
-                    self._client.chat.completions.create(
-                        model=self._model_id,
-                        messages=oa_messages,
-                        temperature=temp_arg,
-                        max_tokens=max_tokens_arg,
-                        response_format=response_format_arg,
-                    ),
-                    timeout=OPENAI_API_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                logger.error(
-                    "OpenAI API call timed out after %ds (model=%s)",
-                    OPENAI_API_TIMEOUT_SECONDS,
-                    self._model_id,
-                )
-                raise LLMError(
-                    operation="complete",
-                    model=self._model_id,
-                    message=f"OpenAI API call timed out after {OPENAI_API_TIMEOUT_SECONDS}s",
-                )
+            response = await self._client.chat.completions.create(
+                model=self._model_id,
+                messages=oa_messages,
+                temperature=temp_arg,
+                max_tokens=max_tokens_arg,
+                response_format=response_format_arg,
+            )
 
         content = response.choices[0].message.content
         if not content:
