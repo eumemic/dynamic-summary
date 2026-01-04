@@ -103,8 +103,8 @@ class PgVectorIndexAdapter(VectorIndex):
         )
         if where_clauses:
             sql += "WHERE " + " AND ".join(where_clauses) + " "
-        # Order by cosine distance; convert to similarity in Python
-        sql += "ORDER BY embedding <=> :q LIMIT :k"
+        # Order by cosine distance; use CAST() syntax for SQLAlchemy text() compatibility
+        sql += "ORDER BY embedding <=> CAST(:q AS vector) LIMIT :k"
 
         out: list[Vector] = []
         with self._engine.begin() as conn:
@@ -193,10 +193,17 @@ class PgVectorIndexAdapter(VectorIndex):
     def _ensure_schema(self) -> None:
         # Create vector extension and table for node vectors
         with self._engine.begin() as conn:
-            try:
-                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            except Exception as e:  # pragma: no cover - environment-specific
-                logger.debug(f"pgvector extension note: {e}")
+            # Check if pgvector extension is available
+            result = conn.execute(
+                text("SELECT name FROM pg_available_extensions WHERE name = 'vector'")
+            )
+            if not result.fetchone():
+                raise RuntimeError(
+                    "pgvector extension is not available in this PostgreSQL installation. "
+                    "Either use a PostgreSQL image with pgvector (e.g., pgvector/pgvector:pg17) "
+                    "or set RAGZOOM_VECTOR_BACKEND=chroma to use in-memory vectors."
+                )
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             conn.execute(
                 text(
                     """
@@ -306,8 +313,14 @@ class PgVectorIndexAdapter(VectorIndex):
             )
 
     def _row_to_vector(self, row: Sequence[object]) -> Vector:
+        import json
+
         node_id = str(row[0])
-        emb = np.asarray(row[1], dtype=np.float32)
+        # pgvector may return embedding as string when using raw SQL with text()
+        raw_emb = row[1]
+        if isinstance(raw_emb, str):
+            raw_emb = json.loads(raw_emb)
+        emb = np.asarray(raw_emb, dtype=np.float32)
         meta: MetaDict = {
             "document_id": coerce_str(row[2]),
             "span_start": coerce_int(row[3]),

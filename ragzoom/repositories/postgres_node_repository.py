@@ -187,13 +187,16 @@ class PostgresNodeRepository(BaseRepository):
 
             # Use add_all for proper object tracking and session management
             db_session.add_all(nodes_pg)
-            if should_commit:
-                db_session.commit()
+            # Flush to persist and get generated values, but keep in session
+            db_session.flush()
 
-            # Force load and detach all nodes
+            # Force load and detach all nodes while still in session
             for node in nodes_pg:
                 db_session.refresh(node)
                 self._force_load_and_detach(db_session, node)
+
+            if should_commit:
+                db_session.commit()
 
             # Add all to cache
             for node in nodes_pg:
