@@ -386,8 +386,17 @@ def storage_backend() -> Generator[_StorageBackendProtocol, None, None]:
     vector_backend = os.getenv("RAGZOOM_VECTOR_BACKEND", "python")
     vector_dir = os.getenv("RAGZOOM_VECTOR_PERSIST_DIR")
 
+    # Determine actual backend from URL, not just env var
+    # This prevents misconfiguration where RAGZOOM_BACKEND=postgres but URL is sqlite
+    use_postgres = db_url.startswith("postgresql")
+    if storage_backend_type == "postgres" and not use_postgres:
+        raise ValueError(
+            "RAGZOOM_BACKEND=postgres but RAGZOOM_DATABASE_URL is not a PostgreSQL URL. "
+            f"Got: {db_url}"
+        )
+
     backend: _StorageBackendProtocol
-    if storage_backend_type == "postgres" or db_url.startswith("postgresql"):
+    if use_postgres:
         from ragzoom.backends.postgres_backend import PostgresStorageBackend
         from ragzoom.config import OperationalConfig
 
