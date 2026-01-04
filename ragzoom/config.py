@@ -530,6 +530,8 @@ class OperationalConfig:
     cache_size: int = 1000
     log_level: str = "INFO"
     validate_pipeline: bool = False
+    # OpenAI client timeout in seconds (default 10min is too long for interactive use)
+    openai_timeout: float = 120.0
 
     def __post_init__(self) -> None:
         """Load API key from environment if not set."""

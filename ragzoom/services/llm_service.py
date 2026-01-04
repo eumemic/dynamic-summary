@@ -122,6 +122,7 @@ class LLMService:
         config: IndexConfig,
         api_key: str | SecretStr = "",
         max_concurrent: int = 30,
+        timeout: float = 120.0,
     ):
         """Initialize LLM service.
 
@@ -129,7 +130,9 @@ class LLMService:
             config: Index configuration
             api_key: OpenAI API key as SecretStr or string (if not provided, reads from OPENAI_API_KEY env)
             max_concurrent: Maximum concurrent API requests
+            timeout: OpenAI client timeout in seconds (default 120s)
         """  # jscpd:ignore-end
+        self._timeout = timeout
         self.config = config
         self._max_parallel_api_calls = max(1, max_concurrent)
 
@@ -147,8 +150,7 @@ class LLMService:
         if os.environ.get("PYTEST_CURRENT_TEST"):
             self.client = _build_test_openai_client(self.config.embedding_model)
         else:
-            # Set a 120-second timeout to prevent indefinite hanging on API calls
-            self.client = AsyncOpenAI(api_key=actual_key, timeout=120.0)
+            self.client = AsyncOpenAI(api_key=actual_key, timeout=self._timeout)
 
         # Lazy-init summarizer; track client/config to detect when tests replace them
         self._cached_summarizer: Summarizer | None = None
