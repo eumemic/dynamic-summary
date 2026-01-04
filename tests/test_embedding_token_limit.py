@@ -192,9 +192,12 @@ async def test_indexing_engine_limits_embedding_text() -> None:
         openai_client=AsyncMock(),
     )
 
+    # Create mock vector index
+    mock_vector_index = MagicMock()
+
     # Patch _create_retriever to return our mock
     with patch.object(engine, "_create_retriever", return_value=mock_retriever):
-        with patch.object(engine, "_get_vector_index", return_value=None):
+        with patch.object(engine, "_get_vector_index", return_value=mock_vector_index):
             job = EmbeddingJob(document_id="test-doc", leaf_id="test-leaf-id")
             await engine._embed_leaf(job)
 
@@ -283,8 +286,11 @@ async def test_embed_leaf_records_telemetry() -> None:
         telemetry_collector=telemetry
     )
 
+    # Create mock vector index
+    mock_vector_index = MagicMock()
+
     # Run _embed_leaf
-    with patch.object(engine, "_get_vector_index", return_value=None):
+    with patch.object(engine, "_get_vector_index", return_value=mock_vector_index):
         job = EmbeddingJob(document_id="test-doc", leaf_id="test-leaf-id")
         await engine._embed_leaf(job)
 
