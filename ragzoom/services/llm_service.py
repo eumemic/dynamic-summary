@@ -6,7 +6,6 @@ import os
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
-import httpx
 from openai import AsyncOpenAI
 
 from ragzoom.config import IndexConfig, SecretStr
@@ -148,17 +147,8 @@ class LLMService:
         if os.environ.get("PYTEST_CURRENT_TEST"):
             self.client = _build_test_openai_client(self.config.embedding_model)
         else:
-            # Configure httpx with higher connection limits to prevent pool exhaustion
-            # when making many concurrent embedding/LLM requests.
-            # See: https://github.com/openai/openai-python/issues/1596
-            http_client = httpx.AsyncClient(
-                limits=httpx.Limits(
-                    max_connections=100,
-                    max_keepalive_connections=50,
-                ),
-                timeout=httpx.Timeout(120.0),
-            )
-            self.client = AsyncOpenAI(api_key=actual_key, http_client=http_client)
+            # Set a 120-second timeout to prevent indefinite hanging on API calls
+            self.client = AsyncOpenAI(api_key=actual_key, timeout=120.0)
 
         # Lazy-init summarizer; track client/config to detect when tests replace them
         self._cached_summarizer: Summarizer | None = None
