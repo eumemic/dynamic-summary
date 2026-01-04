@@ -186,7 +186,10 @@ def _build_retriever(
 ) -> tuple[Retriever, DocumentStore]:
     resolved_embedding = embedding_model or state.query_config.embedding_model
     document_store = state.store.for_document(document_id)
-    client = OpenAI(api_key=state.operational_config.openai_api_key.get_secret_value())
+    client = OpenAI(
+        api_key=state.operational_config.openai_api_key.get_secret_value(),
+        timeout=state.operational_config.openai_timeout,
+    )
     embedding_service = EmbeddingService(client, document_store, resolved_embedding)
     budget_planner = BudgetPlanner(
         document_store, state.index_config.target_chunk_tokens
