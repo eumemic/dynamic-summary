@@ -34,13 +34,19 @@ railway variables --kv --service pgvector-rW-f | grep DATABASE_PUBLIC_URL
 ### Run CLI Commands Against Production Database
 
 ```bash
-# Set the public database URL
-export RAGZOOM_DATABASE_URL="$(railway variables --kv --service pgvector-rW-f | grep DATABASE_PUBLIC_URL | cut -d= -f2-)"
+# Get the public database URL (copy the value after the '=')
+railway variables --kv --service pgvector-rW-f | grep DATABASE_PUBLIC_URL
+
+# Set it explicitly (avoids shell quoting issues with special chars in password)
+export RAGZOOM_DATABASE_URL="postgresql://postgres:PASSWORD@nozomi.proxy.rlwy.net:30284/railway"
 
 # Now run any ragzoom CLI command
 ragzoom validate <document-id>
 ragzoom status
 ```
+
+**Note**: Don't use `export RAGZOOM_DATABASE_URL="$(railway ...)"` - the command
+substitution can mangle special characters in the password. Copy-paste the URL directly.
 
 ## Finding Session/Document IDs
 
@@ -63,8 +69,8 @@ The session ID is the filename (without `.jsonl` extension) of the transcript fi
 The `memory_service.admin` module provides direct database access for admin operations:
 
 ```bash
-# Set database URL first
-export RAGZOOM_DATABASE_URL="$(railway variables --kv --service pgvector-rW-f | grep DATABASE_PUBLIC_URL | cut -d= -f2-)"
+# Set database URL first (see "Run CLI Commands Against Production Database" above)
+export RAGZOOM_DATABASE_URL="postgresql://postgres:PASSWORD@host:port/railway"
 
 # Show service status and session inventory
 python -m memory_service.admin status
@@ -141,7 +147,7 @@ Key metrics explained:
 Check tree invariants for corruption:
 
 ```bash
-export RAGZOOM_DATABASE_URL="$(railway variables --kv --service pgvector-rW-f | grep DATABASE_PUBLIC_URL | cut -d= -f2-)"
+# Set database URL first (see "Run CLI Commands Against Production Database" above)
 ragzoom validate <session-uuid>
 
 # Example output for corrupted document:
@@ -204,7 +210,7 @@ ragzoom validate <session-uuid>
 To fix (reset and re-index):
 ```bash
 # Reset the sync cursor - next sync will detect revert and rebuild from scratch
-export RAGZOOM_DATABASE_URL="$(railway variables --kv --service pgvector-rW-f | grep DATABASE_PUBLIC_URL | cut -d= -f2-)"
+# (Set database URL first - see "Run CLI Commands Against Production Database" above)
 python -m memory_service.admin reset <session-uuid>
 
 # Output:
