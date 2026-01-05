@@ -4,66 +4,69 @@ This guide covers operational tasks for the hosted RagZoom service on Railway.
 
 ## Environment Setup
 
-The Railway CLI must be linked to the project. Worktrees maintain their own link
-in `~/.railway/config.json` (not in the repo).
+### Non-Interactive Linking (Recommended)
 
-```bash
-# Check current link status
-railway status
-
-# If not linked, link interactively (requires TTY)
-cd /path/to/dynamic-summary
-railway link  # Select magnificent-harmony project
-
-# Worktrees linked to PR environments can access the same database
-# as production since they share the pgvector-rW-f service
-```
-
-### Project Details (for non-interactive linking)
+The Railway CLI link often gets lost. Use these project details for non-interactive linking:
 
 - **Project ID**: `9d168ba6-ac78-4739-a53c-7ca04e211678`
 - **Project Name**: `magnificent-harmony`
 - **Production Environment ID**: `9fabe46f-fb02-49bc-afa6-0a9b0f87b51a`
 
-To link non-interactively (useful for automation), the worktree must already
-have a `.railway` entry in `~/.railway/config.json`. The Railway CLI v4.16+
-stores links per-directory in the user's home config, not in the repo.
+```bash
+# Link non-interactively using project ID (works even without TTY)
+railway link -p 9d168ba6-ac78-4739-a53c-7ca04e211678 -e production
+
+# Verify link status
+railway status
+```
+
+This is the **preferred method** - it works in any directory and doesn't require
+interactive prompts.
 
 ## Key Services
 
 | Service | Purpose |
 |---------|---------|
 | `dynamic-summary` | gRPC server for memory ingestion |
-| `pgvector-rW-f` | PostgreSQL with pgvector extension |
-| `pgvector` | (Legacy, not actively used) |
+| `pgvector` | PostgreSQL with pgvector extension (the active database) |
+| `pgvector-rW-f` | Legacy/reference service (not used for data) |
+
+**Important**: The database with actual data is `pgvector`, NOT `pgvector-rW-f`.
 
 ## Database Access
 
 ### Get Database URLs
 
 ```bash
-# Internal URL (only works from within Railway network)
-railway variables --kv --service dynamic-summary | grep RAGZOOM_DATABASE_URL
+# First ensure you're linked (see above)
+railway link -p 9d168ba6-ac78-4739-a53c-7ca04e211678 -e production
 
-# Public URL (works from anywhere)
-railway variables --kv --service pgvector-rW-f | grep DATABASE_PUBLIC_URL
+# Get all database variables (use 'pgvector' service, NOT 'pgvector-rW-f')
+railway variables --service pgvector --json
+
+# Get just the public URL for external access
+railway variables --service pgvector --kv | grep DATABASE_PUBLIC_URL
 ```
 
 ### Run CLI Commands Against Production Database
 
 ```bash
-# Get the public database URL (copy the value after the '=')
-railway variables --kv --service pgvector-rW-f | grep DATABASE_PUBLIC_URL
+# Step 1: Link to project (if not already linked)
+railway link -p 9d168ba6-ac78-4739-a53c-7ca04e211678 -e production
 
-# Set it explicitly (avoids shell quoting issues with special chars in password)
-export RAGZOOM_DATABASE_URL="postgresql://postgres:PASSWORD@nozomi.proxy.rlwy.net:30284/railway"
+# Step 2: Get the public database URL
+railway variables --service pgvector --kv | grep DATABASE_PUBLIC_URL
+# Output: DATABASE_PUBLIC_URL=postgresql://postgres:PASSWORD@tramway.proxy.rlwy.net:48318/railway
 
-# Now run any ragzoom CLI command
+# Step 3: Set it explicitly (copy-paste the URL)
+export RAGZOOM_DATABASE_URL="postgresql://postgres:PASSWORD@tramway.proxy.rlwy.net:48318/railway"
+
+# Step 4: Run commands
 ragzoom validate <document-id>
-ragzoom status
+python -m memory_service.admin status
 ```
 
-**Note**: Don't use `export RAGZOOM_DATABASE_URL="$(railway ...)"` - the command
+**Note**: Don't use `export RAGZOOM_DATABASE_URL="$(railway ...)"` - command
 substitution can mangle special characters in the password. Copy-paste the URL directly.
 
 ## Finding Session/Document IDs

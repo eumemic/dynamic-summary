@@ -17,7 +17,14 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from typing import TYPE_CHECKING
+
+# Admin tools connect to explicit database URLs without worktree isolation
+os.environ.setdefault("RAGZOOM_SKIP_WORKTREE_ISOLATION", "1")
 from collections.abc import Iterator
+
+if TYPE_CHECKING:
+    from ragzoom.contracts.storage_backend import StorageBackend
 
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session
@@ -114,6 +121,19 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def _print_document_status(db: Session) -> None:
     """Print detailed status for each document."""
+    from ragzoom.config import OperationalConfig
+    from ragzoom.store import create_store
+
+    # Create store once for all validations (avoid repeated initialization)
+    db_url = get_database_url()
+    store: StorageBackend | None = None
+    if db_url:
+        try:
+            config = OperationalConfig(database_url=db_url)
+            store = create_store(config)
+        except Exception:
+            pass  # Will show validation error per-document
+
     # Get comprehensive stats per document
     progress_query = text(
         """
@@ -201,7 +221,7 @@ def _print_document_status(db: Session) -> None:
 
         # Validation
         print()
-        _print_validation_status(db, doc_id, total_nodes, leaf_count)
+        _print_validation_status(db, doc_id, total_nodes, leaf_count, store)
 
 
 def _get_root_height_distribution(db: Session, document_id: str) -> dict[int, int]:
@@ -284,76 +304,49 @@ def _validate_transcript(
 
 
 def _print_validation_status(
-    db: Session, document_id: str, total_nodes: int, leaf_count: int
+    db: Session,
+    document_id: str,
+    total_nodes: int,
+    leaf_count: int,
+    store: StorageBackend | None,
 ) -> None:
-    """Run validation and print results."""
-    # Quick validation checks via SQL (faster than full validate_document)
-    # Check for orphaned internal nodes (height > 0 but no parent and not expected root)
-    parentless_query = text(
-        """
-        SELECT COUNT(*) as count
-        FROM tree_nodes
-        WHERE document_id = :doc_id
-          AND parent_id IS NULL
-          AND height > 0
-        """
-    )
-    parentless_internal = db.execute(
-        parentless_query, {"doc_id": document_id}
-    ).scalar_one()
+    """Run validation and print results using ragzoom.validation.tree."""
+    from ragzoom.validation.tree import validate_document
 
-    # Check for duplicate coordinates (same height, level_index)
-    duplicate_coords_query = text(
-        """
-        SELECT height, level_index, COUNT(*) as count
-        FROM tree_nodes
-        WHERE document_id = :doc_id
-        GROUP BY height, level_index
-        HAVING COUNT(*) > 1
-        LIMIT 5
-        """
-    )
-    duplicate_coords = list(db.execute(duplicate_coords_query, {"doc_id": document_id}))
+    if store is None:
+        print("   🔍 Validation: ❌ No database URL configured")
+        return
 
-    # Check for broken parent references
-    broken_parent_query = text(
-        """
-        SELECT COUNT(*) as count
-        FROM tree_nodes t
-        WHERE t.document_id = :doc_id
-          AND t.parent_id IS NOT NULL
-          AND NOT EXISTS (
-              SELECT 1 FROM tree_nodes p
-              WHERE p.id = t.parent_id AND p.document_id = :doc_id
-          )
-        """
+    # Run validation (without require_complete since indexing may be in progress)
+    report = validate_document(
+        document_id=document_id,
+        store=store,
+        require_complete=False,
     )
-    broken_parents = db.execute(
-        broken_parent_query, {"doc_id": document_id}
-    ).scalar_one()
 
-    # Transcript validation
+    # Transcript validation (memory-service specific, not in ragzoom.validation)
     transcript_passed, transcript_msg = _validate_transcript(db, document_id)
 
-    # Determine overall status
+    # Collect errors and warnings
     errors: list[str] = []
     warnings: list[str] = []
 
-    # Parentless internal nodes are normal during indexing (forest roots)
-    # Only flag as info, not error
-    if parentless_internal > 0:
-        warnings.append(
-            f"Internal roots (normal during indexing): {parentless_internal}"
-        )
+    # Add tree validation errors (limit to first 5 for readability)
+    for finding in report.errors[:5]:
+        # Summarize duplicate coordinate errors
+        if finding.code == "level_neighbors.duplicate_level_index":
+            # Extract height and level_index from message
+            errors.append(finding.message[:80])
+        else:
+            errors.append(f"{finding.code}: {finding.message[:60]}")
 
-    if duplicate_coords:
-        for row in duplicate_coords:
-            errors.append(
-                f"Duplicate coords: (h={row.height}, lvl={row.level_index}) x{row.count}"
-            )
+    if len(report.errors) > 5:
+        errors.append(f"... and {len(report.errors) - 5} more errors")
 
-    if broken_parents > 0:
-        errors.append(f"Broken parent refs: {broken_parents}")
+    # Parentless internal nodes shown as info (normal during indexing)
+    parentless_count = report.metrics.get("parentless_count", 0)
+    if parentless_count > 0:
+        warnings.append(f"Internal roots (normal during indexing): {parentless_count}")
 
     if not transcript_passed:
         errors.append(f"Transcript: {transcript_msg}")

@@ -584,7 +584,15 @@ class OperationalConfig:
                 )
 
         # Apply worktree isolation when using PostgreSQL default name
-        if self.backend == "postgres":
+        # Skip if RAGZOOM_SKIP_WORKTREE_ISOLATION is set (for admin tools connecting to production)
+        skip_isolation = os.environ.get(
+            "RAGZOOM_SKIP_WORKTREE_ISOLATION", ""
+        ).lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if self.backend == "postgres" and not skip_isolation:
             from ragzoom.worktree_utils import get_worktree_database_url
 
             self.database_url = get_worktree_database_url(self.database_url)

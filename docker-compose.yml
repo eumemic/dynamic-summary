@@ -28,6 +28,8 @@ services:
       - RAGZOOM_BACKEND=postgres
       - RAGZOOM_VECTOR_BACKEND=pgvector
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # DEBUG: Set >0 to inject delay before LLM call in summarize to reproduce TOCTOU race
+      - RAGZOOM_SUMMARIZE_DELAY_MS=${RAGZOOM_SUMMARIZE_DELAY_MS:-0}
     volumes:
       - ./data:/data
     ports:

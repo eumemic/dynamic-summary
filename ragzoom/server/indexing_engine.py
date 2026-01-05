@@ -1555,6 +1555,16 @@ class IndexingEngine:
             )
             return
 
+        # DEBUG: Inject delay to reproduce TOCTOU race (set RAGZOOM_SUMMARIZE_DELAY_MS)
+        import os
+
+        delay_ms = int(os.environ.get("RAGZOOM_SUMMARIZE_DELAY_MS", "0"))
+        if delay_ms > 0:
+            logger.warning(
+                "summarize: INJECTING %dms DELAY for race reproduction", delay_ms
+            )
+            await asyncio.sleep(delay_ms / 1000.0)
+
         run_id, telemetry = await self._run_context_for_node(
             job.document_id, job.left_id
         )
