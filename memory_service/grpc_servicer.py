@@ -132,7 +132,9 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
         lock_id = _session_lock_id(user_id, session_id)
         db_session = self._get_db_session()
 
-        # Phase 1: Under lock - get cursor and append delta (NO content read)
+        # Phase 1 & 2: Under lock - get cursor, append delta, and execute batch_append
+        # IMPORTANT: The lock MUST be held through batch_append to prevent concurrent
+        # sessions from reading the same rightmost leaf and creating duplicate level_index.
         t1 = time.perf_counter()
         try:
             db_session.execute(
@@ -159,20 +161,10 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                 cursor.byte_offset,
             )
 
-        finally:
-            # Release lock before the slow embedding phase
-            try:
-                db_session.execute(
-                    text("SELECT pg_advisory_unlock(:lock_id)"), {"lock_id": lock_id}
-                )
-            except Exception:
-                pass
-            db_session.close()
+            # Phase 2: Still under lock - process delta and execute batch_append
+            t2 = time.perf_counter()
+            async_client = self._get_async_ragzoom_client(user_id)
 
-        # Phase 2: Without lock - process delta or handle revert
-        t2 = time.perf_counter()
-        async_client = self._get_async_ragzoom_client(user_id)
-        try:
             # Prepare delta sync in thread (CPU-bound parsing)
             prepared = await asyncio.to_thread(
                 prepare_delta_sync,
@@ -184,27 +176,13 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
 
             if prepared.truncated:
                 # Revert detected - need to load full content and re-sync
+                # Lock is already held, just read content
                 logger.warning(
                     "[TIMING] Revert detected, loading full content for re-sync"
                 )
-                db_session = self._get_db_session()
-                try:
-                    db_session.execute(
-                        text("SELECT pg_advisory_lock(:lock_id)"), {"lock_id": lock_id}
-                    )
-                    storage = SessionStorage(db_session, user_id)
-                    full_content = storage.get_content(session_id)
-                    # Load append entries for granular revert truncation
-                    append_entries = storage.get_append_entries(session_id)
-                finally:
-                    try:
-                        db_session.execute(
-                            text("SELECT pg_advisory_unlock(:lock_id)"),
-                            {"lock_id": lock_id},
-                        )
-                    except Exception:
-                        pass
-                    db_session.close()
+                full_content = storage.get_content(session_id)
+                # Load append entries for granular revert truncation
+                append_entries = storage.get_append_entries(session_id)
 
                 # Prepare streaming resync in thread (CPU-bound parsing)
                 prepared_resync = await asyncio.to_thread(
@@ -268,8 +246,18 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                 len(result.appended_uuids),
                 result.truncated,
             )
+        finally:
+            # Release lock after batch_append completes
+            try:
+                db_session.execute(
+                    text("SELECT pg_advisory_unlock(:lock_id)"), {"lock_id": lock_id}
+                )
+            except Exception:
+                pass
+            db_session.close()
 
-            # Phase 3: Update sync state and append log
+        # Phase 3: Update sync state and append log
+        try:
             if result.appended_uuids or result.truncated:
                 db_session = self._get_db_session()
                 try:
