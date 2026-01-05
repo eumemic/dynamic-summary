@@ -1,1 +1,1 @@
--e .[chroma]
+-e .[chroma,postgres]

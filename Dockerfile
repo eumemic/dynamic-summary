@@ -25,8 +25,8 @@ RUN pip install protobuf
 # Copy the rest of the repository
 COPY . .
 
-# Install project with postgres support
-RUN pip install -e '.[chroma]' && pip install 'psycopg[binary]'
+# Install project (postgres and chroma are already in lockfile)
+RUN pip install -e '.[chroma,postgres]'
 
 # Default environment vars (Railway will override DATABASE_URL)
 ENV PYTHONUNBUFFERED=1 \
