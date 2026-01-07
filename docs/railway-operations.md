@@ -33,6 +33,35 @@ interactive prompts.
 
 **Important**: The database with actual data is `pgvector`, NOT `pgvector-rW-f`.
 
+## gRPC Endpoint
+
+The gRPC service address is configured in `.mcp.json` under `RAGZOOM_SERVER_ADDRESS`.
+This address is used by:
+- The MCP server for Claude Code memory queries
+- The stop hook for transcript syncing
+
+**Warning**: Railway's TCP proxy address (`RAILWAY_TCP_PROXY_DOMAIN:RAILWAY_TCP_PROXY_PORT`)
+can change between deployments. The address in `.mcp.json` may not match what Railway
+shows in variables. To verify which endpoint has the data:
+
+```bash
+# Test gRPC connection and check document state
+python -c "
+import grpc
+from ragzoom.rpc import dynamic_summary_pb2 as pb2
+from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
+
+address = 'switchback.proxy.rlwy.net:11553'  # from .mcp.json
+channel = grpc.insecure_channel(address)
+stub = pb2_grpc.WorkerServiceStub(channel)
+req = pb2.GetDocumentRequest(document_id='YOUR_SESSION_ID')
+resp = stub.GetDocument(req, timeout=10, metadata=[('user_id', 'tom')])
+print(f'Leaves: {resp.status.leaf_count}, Depth: {resp.status.tree_depth}')
+"
+```
+
+The endpoint with more leaves/depth is the correct one with your data.
+
 ## Database Access
 
 ### Get Database URLs
