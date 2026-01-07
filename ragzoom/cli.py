@@ -760,10 +760,17 @@ def validate(
         heading += " (complete forest required)"
 
     click.echo(heading)
+    root_count = report.metrics.get("root_count", 0)
+    mergeable_pairs = report.metrics.get("mergeable_pairs", 0)
+    forest_status = (
+        f"Roots: {root_count} (complete)"
+        if mergeable_pairs == 0
+        else f"Roots: {root_count} ({mergeable_pairs} mergeable)"
+    )
     click.echo(
         f"   Nodes: {report.metrics.get('node_count', 0)}, "
         f"Leaves: {report.metrics.get('leaf_count', 0)}, "
-        f"Parentless: {report.metrics.get('parentless_count', 0)}"
+        f"{forest_status}"
     )
 
     if report.findings:

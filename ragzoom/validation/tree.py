@@ -133,10 +133,18 @@ def validate_document(
     if telemetry is not None:
         findings.extend(_telemetry_consistency(snapshot, telemetry))
 
+    # Calculate forest metrics
+    roots = snapshot.parentless
+    height_counts: dict[int, int] = {}
+    for root in roots:
+        height_counts[root.height] = height_counts.get(root.height, 0) + 1
+    mergeable_pairs = sum(count // 2 for count in height_counts.values())
+
     metrics = {
         "node_count": len(snapshot.nodes),
         "leaf_count": len(snapshot.leaves),
-        "parentless_count": len(snapshot.parentless),
+        "root_count": len(roots),
+        "mergeable_pairs": mergeable_pairs,
     }
 
     return ValidationReport(document_id=document_id, findings=findings, metrics=metrics)
