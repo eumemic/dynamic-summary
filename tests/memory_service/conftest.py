@@ -133,6 +133,39 @@ class MemoryServiceTestHarness:
             require_complete=require_complete,
         )
 
+    def get_internal_nodes(self, document_id: str) -> list[TreeNode]:
+        """Get internal nodes (height > 0) for a document."""
+        nodes = self.get_all_nodes(document_id)
+        return [n for n in nodes if n.height > 0]
+
+    def get_roots(self, document_id: str) -> list[TreeNode]:
+        """Get root nodes (nodes without parents in the current tree)."""
+        nodes = self.get_all_nodes(document_id)
+        node_ids = {n.id for n in nodes}
+        return [n for n in nodes if n.parent_id is None or n.parent_id not in node_ids]
+
+    def get_document_span(self, document_id: str) -> tuple[int, int] | None:
+        """Get (span_start, span_end) covering entire document.
+
+        Returns None if document has no leaves.
+        """
+        leaves = self.get_leaves(document_id)
+        if not leaves:
+            return None
+        return (leaves[0].span_start, leaves[-1].span_end)
+
+    def concatenate_leaf_text(self, document_id: str) -> str:
+        """Get concatenated text of all leaves in span order."""
+        leaves = self.get_leaves(document_id)
+        return "".join(leaf.text for leaf in leaves)
+
+    def count_nodes_by_height(self, document_id: str) -> dict[int, int]:
+        """Return count of nodes at each height level."""
+        from collections import Counter
+
+        nodes = self.get_all_nodes(document_id)
+        return dict(Counter(n.height for n in nodes))
+
 
 @pytest.fixture
 async def memory_service_harness(
