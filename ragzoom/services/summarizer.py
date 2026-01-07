@@ -43,8 +43,7 @@ class Summarizer:
                 result = await self.chat_model.complete(typed_messages, temperature=0.3)
 
             content = result.get("content", "")
-            if not content:
-                raise ValueError("Empty response from ChatModel")
+            # Empty content is handled by should_retry_summary, not raised as error
 
             usage = result.get("usage")
             if not usage:

@@ -61,12 +61,12 @@ Please try again with a different prompt
 
 This occurs when transcript content (code, error messages, or user conversations) triggers OpenAI's content filter. The content being summarized is legitimate development work but contains patterns that trip the filter.
 
-#### 2. Empty LLM Response
+#### 2. Empty LLM Response (FIXED)
 ```
 LLM error during complete with gpt-5-nano: LLM returned empty response content
 ```
 
-The model (gpt-5-nano) occasionally returns empty responses, causing the summary job to fail.
+The model (gpt-5-nano) occasionally returns empty responses. Previously this caused the summary job to fail immediately. Now empty responses trigger the existing retry mechanism - the `should_retry_summary` function already handles empty strings by returning `True` (retry warranted).
 
 ### Impact (with fix applied)
 
@@ -194,3 +194,18 @@ ctx.mark_failed(job)
 - `test_multiple_failures_eventually_succeed`: Verifies multiple failures → eventual success
 
 **File**: `ragzoom/server/indexing_engine.py`
+
+### 4. Empty LLM Response Now Triggers Retry
+
+**Problem**: Empty LLM responses raised `LLMError` immediately, causing job failure instead of retrying.
+
+**Root Cause**: Both `openai_chat_model.py` and `summarizer.py` had explicit checks that raised exceptions on empty content, bypassing the retry mechanism.
+
+**Fix**: Removed exception-raising checks, allowing empty strings to flow through to `should_retry_summary()` which already handles them correctly (returns `True` to trigger retry).
+
+**Files Changed**:
+- `ragzoom/adapters/openai_chat_model.py`: Return empty string instead of raising `LLMError`
+- `ragzoom/services/summarizer.py`: Remove `ValueError` check for empty content
+
+**Test Coverage**: `tests/test_retry_conversation_continuation.py`:
+- `test_empty_response_triggers_retry`: Verifies empty response → retry → success
