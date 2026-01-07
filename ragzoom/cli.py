@@ -773,6 +773,17 @@ def validate(
         f"{forest_status}"
     )
 
+    # Show pending work if any
+    pending_embeddings = report.metrics.get("pending_embeddings", 0)
+    pending_summaries = report.metrics.get("pending_summaries", 0)
+    if pending_embeddings > 0 or pending_summaries > 0:
+        parts = []
+        if pending_embeddings > 0:
+            parts.append(f"{pending_embeddings} embeddings")
+        if pending_summaries > 0:
+            parts.append(f"{pending_summaries} summaries")
+        click.echo(f"   Pending: {', '.join(parts)}")
+
     if report.findings:
         click.echo("\nFindings:")
         ordered = sorted(

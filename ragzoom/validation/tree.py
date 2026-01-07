@@ -140,11 +140,25 @@ def validate_document(
         height_counts[root.height] = height_counts.get(root.height, 0) + 1
     mergeable_pairs = sum(count // 2 for count in height_counts.values())
 
+    # Count pending work
+    leaf_count = len(snapshot.leaves)
+    embedded_count = sum(1 for leaf in snapshot.leaves if leaf.embedding is not None)
+    pending_embeddings = leaf_count - embedded_count
+
+    # Expected summaries = leaf_count - 1 for a complete binary tree
+    # Actual summaries = internal nodes (height > 0)
+    internal_nodes = [n for n in snapshot.nodes if n.height > 0]
+    summary_count = len(internal_nodes)
+    expected_summaries = max(0, leaf_count - 1)
+    pending_summaries = max(0, expected_summaries - summary_count)
+
     metrics = {
         "node_count": len(snapshot.nodes),
-        "leaf_count": len(snapshot.leaves),
+        "leaf_count": leaf_count,
         "root_count": len(roots),
         "mergeable_pairs": mergeable_pairs,
+        "pending_embeddings": pending_embeddings,
+        "pending_summaries": pending_summaries,
     }
 
     return ValidationReport(document_id=document_id, findings=findings, metrics=metrics)
