@@ -246,6 +246,10 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
                 len(result.appended_uuids),
                 result.truncated,
             )
+        except Exception as e:
+            logger.exception("Error in Phase 1/2 for session %s", session_id)
+            await context.abort(grpc.StatusCode.INTERNAL, f"Ingestion failed: {e}")
+            raise  # Unreachable but satisfies type checker
         finally:
             # Release lock after batch_append completes
             try:
