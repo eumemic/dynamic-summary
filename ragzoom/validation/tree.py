@@ -145,12 +145,9 @@ def validate_document(
     embedded_count = sum(1 for leaf in snapshot.leaves if leaf.embedding is not None)
     pending_embeddings = leaf_count - embedded_count
 
-    # Expected summaries = leaf_count - 1 for a complete binary tree
-    # Actual summaries = internal nodes (height > 0)
-    internal_nodes = [n for n in snapshot.nodes if n.height > 0]
-    summary_count = len(internal_nodes)
-    expected_summaries = max(0, leaf_count - 1)
-    pending_summaries = max(0, expected_summaries - summary_count)
+    # Pending summaries = mergeable pairs (each pair merges into one parent)
+    # A complete forest has no mergeable pairs (no two roots at same height)
+    pending_summaries = mergeable_pairs
 
     metrics = {
         "node_count": len(snapshot.nodes),
