@@ -268,27 +268,11 @@ class DocumentContext:
     inflight_by_run: dict[str, int] = field(default_factory=dict)
     job_run_ids: dict[IndexingJob, str] = field(default_factory=dict)
     completed_jobs: int = 0
-    failed_jobs: int = 0
     cancelled: bool = False
-    # Track permanently failed jobs to avoid infinite retry loops
-    failed_job_ids: set[IndexingJob] | None = None
     # Expected total jobs for progress tracking (set at append time)
     expected_total_jobs: int = 0
     # Leaf count when document last went idle (baseline for incremental progress)
     leaves_at_last_idle: int = 0
-
-    def mark_failed(self, job: IndexingJob) -> None:
-        """Mark a job as permanently failed."""
-        if self.failed_job_ids is None:
-            self.failed_job_ids = set()
-        self.failed_job_ids.add(job)
-        self.failed_jobs += 1
-
-    def is_failed(self, job: IndexingJob) -> bool:
-        """Check if a job has already failed."""
-        if self.failed_job_ids is None:
-            return False
-        return job in self.failed_job_ids
 
 
 # ---------------------------------------------------------------------------
@@ -938,8 +922,6 @@ class IndexingEngine:
                         continue
                 embedding_job = EmbeddingJob(document_id, leaf.id)
                 if embedding_job not in active_jobs:
-                    if ctx is not None and ctx.is_failed(embedding_job):
-                        continue
                     results.append((leaf_span_start, embedding_job))
 
         return results
@@ -1012,15 +994,6 @@ class IndexingEngine:
                         prev_span_start = int(getattr(prev_root, "span_start", 0))
                         summary_job = SummaryJob(document_id, prev_root.id, root.id)
                         if summary_job not in active_jobs:
-                            if ctx is not None and ctx.is_failed(summary_job):
-                                # Skip this pair but continue scanning
-                                prev_root = root
-                                if (
-                                    min_preceding_height is None
-                                    or root_height < min_preceding_height
-                                ):
-                                    min_preceding_height = root_height
-                                continue
                             results.append((prev_span_start, summary_job))
                             used_roots.add(prev_root.id)
                             used_roots.add(root.id)
@@ -1198,12 +1171,10 @@ class IndexingEngine:
             async with self._lock:
                 self._active_jobs.discard(job)
 
-                # Track success/failure
+                # Track success (failed jobs will be retried on next scan)
                 ctx = self._document_contexts.get(document_id)
                 if ctx is not None:
-                    if job_failed:
-                        ctx.mark_failed(job)
-                    else:
+                    if not job_failed:
                         ctx.completed_jobs += 1
                     run_id = ctx.job_run_ids.pop(job, None)
                     if run_id is not None:
