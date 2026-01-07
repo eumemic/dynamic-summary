@@ -662,3 +662,150 @@ class TestSummaryJobIntegration:
         assert getattr(right, "parent_id", "UNSET") is None
 
         await engine.shutdown()
+
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(
+        reason="BUG: No unique constraint on (document_id, height, level_index) - "
+        "multiple IndexingEngine instances can create duplicate parent nodes. "
+        "Fix: Add unique constraint and handle IntegrityError in _summarize_pair."
+    )
+    async def test_multi_instance_summarize_creates_duplicate_coordinates(
+        self,
+        sqlite_backend: SQLiteStorageBackend,
+    ) -> None:
+        """Reproduce multi-instance race: two IndexingEngines create duplicates.
+
+        This test simulates the Railway deployment scenario where old and new
+        containers briefly run simultaneously, each with their own IndexingEngine.
+        Both engines share the same database but have separate in-memory _active_jobs
+        sets, so both can discover and process the same eligible pair.
+
+        BUG REPRODUCTION: Without a unique constraint on (document_id, height,
+        level_index), both engines create parent nodes at the same coordinate.
+
+        After the fix (unique constraint + IntegrityError handling), this test
+        should be updated to verify that only ONE parent is created.
+        """
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        from ragzoom.config import IndexConfig
+        from ragzoom.server.indexing_engine import IndexingEngine, SummaryJob
+
+        doc_id = "test-doc"
+        store_for_doc = sqlite_backend.for_document(doc_id)
+
+        # Create two leaf nodes as eligible pair
+        store_for_doc.nodes.add_node(
+            node_id="left-leaf",
+            text="Left leaf content for summarization",
+            embedding=[0.1] * 8,
+            height=0,
+            level_index=0,
+            span_start=0,
+            span_end=1000,
+            parent_id=None,
+            token_count=50,
+        )
+        store_for_doc.nodes.add_node(
+            node_id="right-leaf",
+            text="Right leaf content for summarization",
+            embedding=[0.1] * 8,
+            height=0,
+            level_index=1,
+            span_start=1000,
+            span_end=2000,
+            parent_id=None,
+            token_count=50,
+        )
+
+        # Verify we have 2 roots before
+        roots_before = list(store_for_doc.nodes.iter_root_nodes())
+        assert len(roots_before) == 2
+
+        # Create mock LLM that returns valid summaries
+        def make_mock_llm() -> MagicMock:
+            mock = MagicMock()
+            mock._summarize_text = AsyncMock(
+                return_value=MagicMock(
+                    summary="Summary of left and right",
+                    summary_tokens=30,
+                    usage=MagicMock(
+                        prompt_tokens=100,
+                        cached_tokens=0,
+                        completion_tokens=30,
+                    ),
+                )
+            )
+            return mock
+
+        config = IndexConfig.load(target_chunk_tokens=50)
+
+        # Create TWO IndexingEngine instances sharing the SAME database backend
+        # This simulates two Railway containers during deployment
+        engine_1 = IndexingEngine(
+            store=sqlite_backend,
+            llm_service=make_mock_llm(),
+            index_config=config,
+            openai_client=MagicMock(),
+            vector_index_factory=lambda _: MagicMock(),
+            max_parallelism=1,
+        )
+        engine_2 = IndexingEngine(
+            store=sqlite_backend,
+            llm_service=make_mock_llm(),
+            index_config=config,
+            openai_client=MagicMock(),
+            vector_index_factory=lambda _: MagicMock(),
+            max_parallelism=1,
+        )
+
+        # Both engines create a SummaryJob for the SAME pair
+        # (each has empty _active_jobs, so both discover the pair)
+        job = SummaryJob(doc_id, "left-leaf", "right-leaf")
+
+        # Inject delay AFTER parent check to widen the race window
+        # This simulates the real scenario where LLM calls take seconds
+        import os
+
+        os.environ["RAGZOOM_SUMMARIZE_DELAY_MS"] = "100"
+
+        try:
+            # Run _summarize_pair on BOTH engines concurrently
+            # Both will pass the parent check (children have parent_id=None)
+            # Then both will wait 100ms (simulating LLM call)
+            # Both will then create a parent at (height=1, level_index=0)
+            results = await asyncio.gather(
+                engine_1._summarize_pair(job),
+                engine_2._summarize_pair(job),
+                return_exceptions=True,
+            )
+        finally:
+            os.environ.pop("RAGZOOM_SUMMARIZE_DELAY_MS", None)
+
+        # Neither should raise (no constraint violation without unique constraint)
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                # If one fails, that's actually the FIXED behavior
+                # For now, we expect both to succeed (demonstrating the bug)
+                pass
+
+        # Query for nodes at height=1 with level_index=0
+        all_nodes = list(store_for_doc.nodes.iter_all())
+        height_1_nodes = [n for n in all_nodes if getattr(n, "height", 0) == 1]
+        duplicate_coords = [
+            n for n in height_1_nodes if getattr(n, "level_index", -1) == 0
+        ]
+
+        # CORRECT BEHAVIOR: Only ONE parent should exist at (height=1, level_index=0)
+        # This test currently FAILS because the bug allows duplicates.
+        # After fix (unique constraint + IntegrityError handling), it will pass.
+        node_ids = [getattr(n, "id", "?") for n in duplicate_coords]
+        assert len(duplicate_coords) == 1, (
+            f"Expected exactly 1 parent node at (height=1, level_index=0), "
+            f"got {len(duplicate_coords)}: {node_ids}. "
+            f"BUG: Multiple IndexingEngine instances created duplicate coordinates."
+        )
+
+        await engine_1.shutdown()
+        await engine_2.shutdown()
