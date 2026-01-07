@@ -121,11 +121,6 @@ class TestTruncateDuringIndexing:
     """Tests for truncation while background indexing is in-flight."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="Bug 3: truncation creates orphaned nodes - any partial truncation "
-        "deletes parents while leaving children with dangling parent_id refs",
-        strict=True,
-    )
     async def test_truncate_during_indexing_validates_tree(
         self, memory_service_harness: MemoryServiceTestHarness
     ) -> None:
@@ -176,11 +171,6 @@ class TestMultipleTruncateAppendCycles:
     """Tests for multiple truncate/append operations."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="Bug 3: truncation creates orphaned nodes - cycles use truncation "
-        "which is broken",
-        strict=True,
-    )
     async def test_multiple_cycles_maintain_integrity(
         self, memory_service_harness: MemoryServiceTestHarness
     ) -> None:
@@ -228,24 +218,19 @@ class TestMultipleTruncateAppendCycles:
         ), f"Found orphaned nodes after cycles: {[n.id for n in orphans]}"
 
 
-class TestTruncationFKViolation:
-    """Tests for Bug 3: FK violation on partial truncation.
+class TestTruncationReferentialIntegrity:
+    """Tests for referential integrity during truncation.
 
-    Bug 3: delete_nodes_from_span() deletes parent nodes while leaving children
-    with dangling parent_id FK references. This happens when truncation deletes
-    internal nodes (summaries) that span across the truncation boundary while
-    keeping their children on the "kept" side.
+    These tests verify that truncation properly cleans up dangling references:
+    - parent_id references to deleted parent nodes
+    - following_neighbor_id references to deleted neighbor nodes
 
-    These tests are marked xfail until Bug 3 is fixed.
+    The fix (commit TBD) adds UPDATE statements before DELETE to NULL out
+    these references on kept nodes before their targets are deleted.
     """
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="Bug 3: FK violation on partial truncation - delete_nodes_from_span "
-        "deletes parents while leaving children with dangling parent_id refs",
-        strict=True,
-    )
-    async def test_partial_truncation_creates_orphaned_nodes(
+    async def test_partial_truncation_no_orphaned_nodes(
         self, memory_service_harness: MemoryServiceTestHarness
     ) -> None:
         """Partial truncation should not create orphaned nodes (Bug 3).
@@ -295,10 +280,6 @@ class TestTruncationFKViolation:
         )
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="Bug 3: FK violation on partial truncation",
-        strict=True,
-    )
     async def test_truncation_preserves_parent_child_relationships(
         self, memory_service_harness: MemoryServiceTestHarness
     ) -> None:

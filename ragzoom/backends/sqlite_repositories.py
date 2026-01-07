@@ -1062,7 +1062,7 @@ class SqliteNodeRepository:
             List of deleted node IDs (for vector index cleanup)
         """
         with self.SessionLocal() as session:
-            # Delete nodes whose span extends beyond the truncation point
+            # Step 1: Find nodes to delete (span extends beyond truncation point)
             stmt = select(SQLiteTreeNode.id).where(
                 SQLiteTreeNode.document_id == document_id,
                 SQLiteTreeNode.span_end > span_start,
@@ -1070,7 +1070,31 @@ class SqliteNodeRepository:
             node_ids = [str(row) for row in session.execute(stmt).scalars().all()]
 
             if node_ids:
-                # Delete the nodes
+                # Step 2: NULL out parent_id on kept children whose parents will be deleted.
+                # This prevents FK violations where children point to deleted parents.
+                session.execute(
+                    update(SQLiteTreeNode)
+                    .where(
+                        SQLiteTreeNode.document_id == document_id,
+                        SQLiteTreeNode.span_end <= span_start,
+                        SQLiteTreeNode.parent_id.in_(node_ids),
+                    )
+                    .values(parent_id=None)
+                )
+
+                # Step 3: NULL out following_neighbor_id on kept nodes whose neighbors
+                # will be deleted. This prevents dangling neighbor references.
+                session.execute(
+                    update(SQLiteTreeNode)
+                    .where(
+                        SQLiteTreeNode.document_id == document_id,
+                        SQLiteTreeNode.span_end <= span_start,
+                        SQLiteTreeNode.following_neighbor_id.in_(node_ids),
+                    )
+                    .values(following_neighbor_id=None)
+                )
+
+                # Step 4: Delete the nodes
                 session.execute(
                     delete(SQLiteTreeNode).where(SQLiteTreeNode.id.in_(node_ids))
                 )
