@@ -189,9 +189,31 @@ class DatabaseManager:
 
         This must be called after tables are created to handle schema updates
         for existing databases that need migration.
+
+        Uses a PostgreSQL advisory lock to prevent concurrent migration attempts
+        from multiple server instances (e.g., during Railway deployments). The
+        lock is transaction-scoped and auto-releases on commit/rollback.
         """
+        # Arbitrary unique ID for migration lock (consistent across all instances)
+        migration_lock_id = 8675309
+
         try:
             with self.engine.begin() as conn:
+                # Try to acquire transaction-level advisory lock (non-blocking)
+                # Returns false immediately if another process holds the lock
+                result = conn.execute(
+                    text("SELECT pg_try_advisory_xact_lock(:lock_id)"),
+                    {"lock_id": migration_lock_id},
+                )
+                got_lock = result.scalar()
+
+                if not got_lock:
+                    logger.debug("Another process is running migrations, skipping")
+                    return
+
+                # Set lock timeout as safety net - don't wait forever for table locks
+                conn.execute(text("SET lock_timeout = '10s'"))
+
                 # Add height column if it doesn't exist (for existing databases)
                 conn.execute(
                     text(
