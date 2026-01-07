@@ -23,6 +23,29 @@ railway status
 This is the **preferred method** - it works in any directory and doesn't require
 interactive prompts.
 
+## Deployments
+
+**CRITICAL**: Railway deploys automatically when you push to the PR branch. Do NOT use
+`railway deployment redeploy` - it just redeploys the old code.
+
+To deploy new code:
+```bash
+# Push to the PR branch - Railway auto-deploys
+git push origin worktree-1
+
+# Check deployment status
+railway deployment list --service dynamic-summary
+```
+
+The deployment workflow is:
+1. Push commits to PR branch (e.g., `worktree-1`)
+2. Railway detects the push and starts a build
+3. Build completes → new deployment goes live
+4. Old deployment is marked REMOVED
+
+**Never use** `railway deployment redeploy` or `railway deploy` - these don't pick up
+new code from git.
+
 ## Key Services
 
 | Service | Purpose |
