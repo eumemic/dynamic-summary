@@ -4,24 +4,36 @@ This guide covers operational tasks for the hosted RagZoom service on Railway.
 
 ## Environment Setup
 
-### Non-Interactive Linking (Recommended)
+### PR vs Production Environments
 
-The Railway CLI link often gets lost. Use these project details for non-interactive linking:
+**During development, we work with the PR environment, NOT production.**
+
+When you open a PR, Railway automatically creates a PR-specific environment (e.g., `pr-335`).
+This environment:
+- Auto-deploys when you push to the PR branch
+- Shares the same database as production (pgvector)
+- Has its own TCP proxy address for gRPC
+
+**Production is ignored during PR development.** Only after merging does the code go to production.
+
+### Non-Interactive Linking
+
+The Railway CLI link often gets lost. Use these project details:
 
 - **Project ID**: `9d168ba6-ac78-4739-a53c-7ca04e211678`
 - **Project Name**: `magnificent-harmony`
-- **Production Environment ID**: `9fabe46f-fb02-49bc-afa6-0a9b0f87b51a`
 
 ```bash
-# Link non-interactively using project ID (works even without TTY)
+# For PR development (preferred during active development)
+# Environment name format: dynamic-summary-pr-{PR_NUMBER}
+railway link -p 9d168ba6-ac78-4739-a53c-7ca04e211678 -e dynamic-summary-pr-335
+
+# For production (only after merge, or for prod debugging)
 railway link -p 9d168ba6-ac78-4739-a53c-7ca04e211678 -e production
 
 # Verify link status
 railway status
 ```
-
-This is the **preferred method** - it works in any directory and doesn't require
-interactive prompts.
 
 ## Deployments
 
