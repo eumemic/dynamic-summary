@@ -129,6 +129,7 @@ class TestSpanCorruption:
                 usage=Mock(
                     prompt_tokens=100,
                     completion_tokens=10,
+                    total_tokens=110,
                     prompt_tokens_details=Mock(cached_tokens=0),
                 ),
             )
@@ -215,6 +216,7 @@ class TestSpanCorruption:
                 usage=Mock(
                     prompt_tokens=100,
                     completion_tokens=10,
+                    total_tokens=110,
                     prompt_tokens_details=Mock(cached_tokens=0),
                 ),
             )

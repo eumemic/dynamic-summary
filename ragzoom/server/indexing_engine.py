@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 import uuid
 from collections import deque
@@ -1167,6 +1168,9 @@ class IndexingEngine:
         except Exception:
             logger.exception("Job failed: %s", job)
             job_failed = True
+            # In strict mode (tests), re-raise to fail fast instead of silent retry
+            if os.environ.get("RAGZOOM_STRICT_ERRORS") == "1":
+                raise
         finally:
             async with self._lock:
                 self._active_jobs.discard(job)

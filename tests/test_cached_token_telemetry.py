@@ -174,7 +174,9 @@ async def test_backward_compatibility_without_cached_tokens(
 
     response = MagicMock()
     response.choices = [MagicMock(message=MagicMock(content="Summary"))]
-    response.usage = MagicMock(prompt_tokens=1000, completion_tokens=100)
+    response.usage = MagicMock(
+        prompt_tokens=1000, completion_tokens=100, total_tokens=1100
+    )
     response.usage.prompt_tokens_details = None
 
     async def mock_create(**_kwargs: OpenAIMockParams) -> MagicMock:
