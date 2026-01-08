@@ -55,11 +55,17 @@ class TestSpanCorruption:
         mock_sync_client = MagicMock()
 
         def sync_mock_embeddings(*args: object, **kwargs: object) -> object:
+            from types import SimpleNamespace
+
             input_texts = cast(list[str] | str, kwargs.get("input", []))
             if isinstance(input_texts, str):
                 input_texts = [input_texts]
+            num_items = len(input_texts)
             return MagicMock(
-                data=[MagicMock(embedding=[0.1] * 1536) for _ in input_texts]
+                data=[MagicMock(embedding=[0.1] * 1536) for _ in input_texts],
+                usage=SimpleNamespace(
+                    prompt_tokens=num_items * 10, total_tokens=num_items * 10
+                ),
             )
 
         mock_sync_client.embeddings.create = sync_mock_embeddings
@@ -97,17 +103,34 @@ class TestSpanCorruption:
         text = " ".join(chunks)
         text = " ".join(chunks)
 
-        mock_client.embeddings.create = AsyncMock(
-            side_effect=lambda **kwargs: Mock(
-                data=[Mock(embedding=[0.1] * 1536)]
-                * len(kwargs.get("input", [kwargs.get("input")]))
+        def async_embedding_side_effect(**kwargs: object) -> Mock:
+            from types import SimpleNamespace
+
+            input_data = kwargs.get("input", [])
+            if isinstance(input_data, str):
+                input_data = [input_data]
+            input_list = cast(list[str], input_data)
+            num_items = len(input_list)
+            return Mock(
+                data=[Mock(embedding=[0.1] * 1536) for _ in input_list],
+                usage=SimpleNamespace(
+                    prompt_tokens=num_items * 10, total_tokens=num_items * 10
+                ),
             )
+
+        mock_client.embeddings.create = AsyncMock(
+            side_effect=async_embedding_side_effect
         )
         mock_client.chat.completions.create = AsyncMock(
             return_value=Mock(
                 choices=[
                     Mock(message=Mock(content="Summary of left and right content"))
-                ]
+                ],
+                usage=Mock(
+                    prompt_tokens=100,
+                    completion_tokens=10,
+                    prompt_tokens_details=Mock(cached_tokens=0),
+                ),
             )
         )
 
@@ -168,11 +191,23 @@ class TestSpanCorruption:
         chunks = [f"CHUNK_{i}_START {base_text} CHUNK_{i}_END" for i in range(5)]
         text = " ".join(chunks)
 
-        mock_client.embeddings.create = AsyncMock(
-            side_effect=lambda **kwargs: Mock(
-                data=[Mock(embedding=[0.1] * 1536)]
-                * len(kwargs.get("input", [kwargs.get("input")]))
+        def async_embedding_side_effect(**kwargs: object) -> Mock:
+            from types import SimpleNamespace
+
+            input_data = kwargs.get("input", [])
+            if isinstance(input_data, str):
+                input_data = [input_data]
+            input_list = cast(list[str], input_data)
+            num_items = len(input_list)
+            return Mock(
+                data=[Mock(embedding=[0.1] * 1536) for _ in input_list],
+                usage=SimpleNamespace(
+                    prompt_tokens=num_items * 10, total_tokens=num_items * 10
+                ),
             )
+
+        mock_client.embeddings.create = AsyncMock(
+            side_effect=async_embedding_side_effect
         )
         mock_client.chat.completions.create = AsyncMock(
             return_value=Mock(

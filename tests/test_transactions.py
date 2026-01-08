@@ -115,7 +115,7 @@ class TestTransactionContext:
                 "document_id": doc_id,
                 "token_count": 2,
                 "height": 0,
-                "level_index": 0,
+                "level_index": 1,
             },
             {
                 "node_id": "parent-1",
@@ -393,7 +393,7 @@ class TestTransactionSafety:
         # Test rollback by triggering an exception in a transaction
         with pytest.raises(ValueError, match="Simulated exception"):
             with doc_store.transaction() as session:
-                # Add a test node
+                # Add a test node (with different level_index to avoid unique constraint)
                 invalid_nodes: list[NodeDataDict] = [
                     {
                         "node_id": "test-node-exception",
@@ -403,7 +403,7 @@ class TestTransactionSafety:
                         "document_id": doc_id,
                         "token_count": 3,
                         "height": 0,
-                        "level_index": 0,
+                        "level_index": 1,
                     }
                 ]
                 doc_store.nodes.add_batch(invalid_nodes, session=session)
