@@ -64,7 +64,7 @@ class TestTreeNavigation:
                 "document_id": "doc1",
                 "token_count": 3,
                 "height": 0,
-                "level_index": 0,
+                "level_index": 1,
             },
             # Internal nodes
             {
@@ -87,7 +87,7 @@ class TestTreeNavigation:
                 "document_id": "doc1",
                 "token_count": 10,
                 "height": 1,
-                "level_index": 0,
+                "level_index": 1,
             },
             {
                 "node_id": "root",

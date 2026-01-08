@@ -1726,12 +1726,35 @@ class IndexingEngine:
         # update_parent_references_batch would leave children with parent_id=NULL
         # while the parent exists, causing permanent stalls in the height
         # differential check (see test_summary_job_atomicity_sqlite.py).
-        with store.transaction() as session:
-            store.nodes.add_batch([node_payload], session=session)
-            store.nodes.update_parent_references_batch(
-                [(left.id, parent_id), (right.id, parent_id)], session=session
+        #
+        # The unique constraint on (document_id, height, level_index) prevents
+        # duplicate nodes from concurrent indexers. If another IndexingEngine
+        # instance (e.g., during Railway rolling deployment) wins the race and
+        # creates the parent first, we get an IntegrityError. This is expected
+        # and we simply log and return - the other instance's parent is valid.
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            with store.transaction() as session:
+                store.nodes.add_batch([node_payload], session=session)
+                store.nodes.update_parent_references_batch(
+                    [(left.id, parent_id), (right.id, parent_id)], session=session
+                )
+                store.nodes.update_neighbors_batch(neighbors_update, session=session)
+        except IntegrityError as e:
+            # Another concurrent indexer won the race and created the parent first.
+            # This is expected during multi-instance scenarios (e.g., Railway
+            # rolling deployments). The winning instance's parent is valid, so we
+            # simply log and return without error.
+            logger.info(
+                "summarize: concurrent indexer won race, skipping duplicate "
+                "doc=%s height=%d level_index=%d: %s",
+                job.document_id,
+                parent_height,
+                parent_level_index,
+                e,
             )
-            store.nodes.update_neighbors_batch(neighbors_update, session=session)
+            return
 
         # Note: Inner nodes no longer store embeddings (to enable parallel
         # summarization). Embeddings only exist on leaf nodes for query-time

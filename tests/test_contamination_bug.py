@@ -80,7 +80,7 @@ class TestContaminationBug:
                 "document_id": "doc1",
                 "token_count": 25,
                 "height": 0,
-                "level_index": 0,
+                "level_index": 1,
             },
         ]
         doc1_store.nodes.add_batch(doc1_nodes)
@@ -123,7 +123,7 @@ class TestContaminationBug:
                 "document_id": "doc2",
                 "token_count": 25,
                 "height": 0,
-                "level_index": 0,
+                "level_index": 1,
             },
         ]
         doc2_store.nodes.add_batch(doc2_nodes)

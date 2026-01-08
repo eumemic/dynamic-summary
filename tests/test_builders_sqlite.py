@@ -201,7 +201,7 @@ class TestBuildersSQLite:
                 "document_id": "test-doc",
                 "token_count": 5,
                 "height": 0,
-                "level_index": 0,
+                "level_index": 1,
                 "parent_id": "node-0",
             },
         ]

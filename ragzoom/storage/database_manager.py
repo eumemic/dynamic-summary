@@ -280,6 +280,22 @@ class DatabaseManager:
                     )
                 )
 
+                # Unique constraint to prevent duplicate coordinates from concurrent
+                # indexers. This prevents the TOCTOU race where multiple
+                # IndexingEngine instances (e.g., during Railway rolling deployments)
+                # can both discover the same eligible sibling pair and create
+                # duplicate parent nodes at the same (height, level_index).
+                # NOTE: Will fail if duplicates already exist in the database.
+                # Clean up duplicates first (e.g., reset session and re-sync).
+                conn.execute(
+                    text(
+                        """
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_tree_nodes_document_height_level
+                    ON tree_nodes (document_id, height, level_index);
+                """
+                    )
+                )
+
                 # Drop legacy document metadata columns no longer used
                 conn.execute(
                     text(

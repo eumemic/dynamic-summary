@@ -664,27 +664,20 @@ class TestSummaryJobIntegration:
         await engine.shutdown()
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="BUG: No unique constraint on (document_id, height, level_index) - "
-        "multiple IndexingEngine instances can create duplicate parent nodes. "
-        "Fix: Add unique constraint and handle IntegrityError in _summarize_pair."
-    )
     async def test_multi_instance_summarize_creates_duplicate_coordinates(
         self,
         sqlite_backend: SQLiteStorageBackend,
     ) -> None:
-        """Reproduce multi-instance race: two IndexingEngines create duplicates.
+        """Verify multi-instance race is handled correctly by unique constraint.
 
         This test simulates the Railway deployment scenario where old and new
         containers briefly run simultaneously, each with their own IndexingEngine.
         Both engines share the same database but have separate in-memory _active_jobs
         sets, so both can discover and process the same eligible pair.
 
-        BUG REPRODUCTION: Without a unique constraint on (document_id, height,
-        level_index), both engines create parent nodes at the same coordinate.
-
-        After the fix (unique constraint + IntegrityError handling), this test
-        should be updated to verify that only ONE parent is created.
+        FIX VERIFICATION: With the unique constraint on (document_id, height,
+        level_index), only ONE parent is created. The second IndexingEngine hits
+        an IntegrityError and gracefully returns without creating a duplicate.
         """
         import asyncio
         from unittest.mock import AsyncMock, MagicMock

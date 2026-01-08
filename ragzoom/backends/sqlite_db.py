@@ -135,6 +135,13 @@ class SqliteDatabaseManager:
                     )
                 except Exception:
                     pass
+                # Unique constraint to prevent duplicate coordinates from concurrent indexers
+                try:
+                    conn.exec_driver_sql(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_tree_nodes_document_height_level ON tree_nodes (document_id, height, level_index)"
+                    )
+                except Exception:
+                    pass
                 # Add contextual indexing columns for issue #287
                 try:
                     conn.exec_driver_sql(
