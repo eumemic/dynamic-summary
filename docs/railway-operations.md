@@ -281,7 +281,8 @@ Symptoms:
 - Indexing stalls with jobs stuck
 - `HEIGHT_BLOCKED` in logs
 
-Root cause: Non-atomic summary job failure (fixed in commit `527c0aa`).
+Root cause: Multi-instance race during blue/green deployments. Fixed by unique constraint
+on `(document_id, height, level_index)` in commit `df1b80b6`.
 
 To diagnose:
 ```bash
