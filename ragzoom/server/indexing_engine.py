@@ -1417,6 +1417,8 @@ class IndexingEngine:
             "span_start": span_start,
             "span_end": span_end,
             "height": 0,
+            "level_index": getattr(leaf, "level_index", 0),
+            "coord_version": 1,
             "is_leaf": 1,
             "parent_id": getattr(leaf, "parent_id", None) or "",
         }
