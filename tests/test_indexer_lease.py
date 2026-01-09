@@ -213,6 +213,7 @@ class TestIndexerLease:
                 text("SELECT expires_at FROM indexer_leases WHERE id = 1")
             )
             initial_expires = result.scalar()
+        assert initial_expires is not None
 
         # Wait for heartbeat
         await asyncio.sleep(fast_config.heartbeat_interval + 0.1)
@@ -223,6 +224,7 @@ class TestIndexerLease:
                 text("SELECT expires_at FROM indexer_leases WHERE id = 1")
             )
             new_expires = result.scalar()
+        assert new_expires is not None
 
         # Parse timestamps if needed (SQLite returns strings)
         if isinstance(initial_expires, str):
