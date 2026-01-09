@@ -269,6 +269,24 @@ class DatabaseManager:
                     )
                 )
 
+                # Create indexer_leases table for single-writer coordination.
+                # Uses a singleton row pattern (id=1) with TTL-based expiration
+                # to ensure only one IndexingEngine instance can write at a time.
+                # This prevents corruption during Railway blue/green deployments.
+                conn.execute(
+                    text(
+                        """
+                    CREATE TABLE IF NOT EXISTS indexer_leases (
+                        id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                        holder_id VARCHAR(255) NOT NULL,
+                        acquired_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        last_heartbeat TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        expires_at TIMESTAMP NOT NULL
+                    );
+                """
+                    )
+                )
+
                 logger.debug("Database migrations completed")
         except Exception as e:
             # Migration failures are not critical - the column might already exist
