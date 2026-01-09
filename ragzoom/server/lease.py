@@ -241,6 +241,9 @@ class IndexerLease:
         # SQLite stores timestamps as strings, PostgreSQL as datetime
         if isinstance(current_expires, str):
             current_expires = datetime.fromisoformat(current_expires)
+        # Ensure timezone-aware comparison (stored times are UTC)
+        if current_expires.tzinfo is None:
+            current_expires = current_expires.replace(tzinfo=timezone.utc)
 
         if current_expires < now:
             # Lease expired - steal it
