@@ -79,13 +79,6 @@ class Retriever:
     # Helper methods for shared retrieval logic
     # ------------------------------------------------------------------
 
-    def _filter_stale_vectors(self, raw_candidates: list["Vector"]) -> list["Vector"]:
-        """Filter out vectors that don't exist in storage to preserve invariants."""
-        cand_ids = [v.id for v in raw_candidates]
-        existing_nodes = self.document_store.nodes.get_nodes(cand_ids)
-        existing_ids = {n.id for n in existing_nodes}
-        return [v for v in raw_candidates if v.id in existing_ids]
-
     def _build_candidates_for_scoring(
         self,
         query_embedding: list[float],
@@ -355,8 +348,9 @@ class Retriever:
                 k_candidates,
                 filters if filters else None,
             )
-            # Filter out stale vectors that don't exist in storage to preserve invariants
-            vec_candidates = self._filter_stale_vectors(raw_candidates)
+            # Stale vectors (from deleted nodes) are handled by coverage builder
+            # which checks coord_version in metadata and falls back to DB if needed
+            vec_candidates = raw_candidates
             if telemetry_collector:
                 telemetry_collector.record_metric(
                     "candidates_filtered", len(vec_candidates)
