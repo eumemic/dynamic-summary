@@ -5,8 +5,7 @@
 # Output: Silent on success
 #
 # Configuration:
-#   RAGZOOM_ENV - which environment to sync to (default: production)
-#   RAGZOOM_SERVER_ADDRESS - override address discovery (optional)
+#   data/.memory-env - contains MEMORY_ENV=<environment> (default: production)
 
 set -euo pipefail
 
@@ -21,12 +20,16 @@ if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
     GIT_ROOT="$(git rev-parse --show-toplevel)"
     cd "$GIT_ROOT"
 
-    # Discover gRPC address if not already set
-    if [[ -z "${RAGZOOM_SERVER_ADDRESS:-}" ]]; then
-        RAGZOOM_ENV="${RAGZOOM_ENV:-production}"
-        RAGZOOM_SERVER_ADDRESS=$("$GIT_ROOT/scripts/get-grpc-address" "$RAGZOOM_ENV")
-        export RAGZOOM_SERVER_ADDRESS
+    # Read config from data/.memory-env
+    if [[ -f "data/.memory-env" ]]; then
+        source "data/.memory-env"
     fi
+    MEMORY_ENV="${MEMORY_ENV:-production}"
+    MEMORY_USER_ID="${MEMORY_USER_ID:-$USER}"
+
+    # Discover gRPC address and export for CLI
+    export RAGZOOM_SERVER_ADDRESS=$("$GIT_ROOT/scripts/get-grpc-address" "$MEMORY_ENV")
+    export RAGZOOM_USER_ID="$MEMORY_USER_ID"
 
     # Run sync synchronously so errors are visible
     python -m ragzoom.cli sync-claude-code-transcript "$TRANSCRIPT_PATH"
