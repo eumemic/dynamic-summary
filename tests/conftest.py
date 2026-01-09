@@ -808,9 +808,14 @@ async def grpc_test_environment(
                 def __init__(self, embedding: list[float]) -> None:
                     self.embedding = embedding
 
+            class _Usage:
+                prompt_tokens = 0
+                total_tokens = 0
+
             class _Resp:
                 def __init__(self, items: list[_Item]) -> None:
                     self.data = items
+                    self.usage = _Usage()
 
             return _Resp([_Item(list(self._vector)) for _ in texts])
 
