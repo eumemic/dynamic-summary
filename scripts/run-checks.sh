@@ -204,6 +204,7 @@ AUTOFIXES_APPLIED=0
 # Create temporary directory for storing results
 tmpdir=$(mktemp -d)
 
+
 # Store process IDs for parallel execution
 declare -a pids=()
 ANY_PIDS=0
@@ -407,17 +408,17 @@ fi
 if ! should_skip "jscpd"; then
     # Prefer global jscpd, then local node_modules, then npx fallback
     if command -v jscpd &> /dev/null; then
-        JSCPD_BIN="$(command -v jscpd)"
+        JSCPD_CMD="$(command -v jscpd)"
     elif [ -x "$GIT_ROOT/node_modules/.bin/jscpd" ]; then
-        JSCPD_BIN="$GIT_ROOT/node_modules/.bin/jscpd"
+        JSCPD_CMD="$GIT_ROOT/node_modules/.bin/jscpd"
     elif command -v npx &> /dev/null; then
-        JSCPD_BIN="npx jscpd@latest"
+        JSCPD_CMD="npx jscpd@4.0.5"
         echo "[JSCPD] Using npx fallback (consider: npm install -g jscpd)"
     else
-        JSCPD_BIN=""
+        JSCPD_CMD=""
     fi
 
-    if [ -n "$JSCPD_BIN" ]; then
+    if [ -n "$JSCPD_CMD" ]; then
         if [ "$IMPACTED_ONLY" = true ]; then
             # Limit jscpd scan to impacted source files under ragzoom/
             impacted_src=()
@@ -432,12 +433,12 @@ if ! should_skip "jscpd"; then
             done
             if [ ${#impacted_src[@]} -gt 0 ]; then
                 jscpd_targets="${impacted_src[*]}"
-                run_check_background "JSCPD" "$JSCPD_BIN $jscpd_targets --config $GIT_ROOT/.jscpd.json"
+                run_check_background "JSCPD" "$JSCPD_CMD $jscpd_targets --config $GIT_ROOT/.jscpd.json"
             else
                 echo "[JSCPD] Skipped (no impacted source files)"
             fi
         else
-            run_check_background "JSCPD" "$JSCPD_BIN ragzoom/ --config $GIT_ROOT/.jscpd.json"
+            run_check_background "JSCPD" "$JSCPD_CMD ragzoom/ --config $GIT_ROOT/.jscpd.json"
         fi
     else
         echo "[JSCPD] Skipped (jscpd not available)"

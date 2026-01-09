@@ -17,6 +17,7 @@ The fix wraps all three in a single transaction.
 import pytest
 
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
+from ragzoom.services.summary_utils import AccumulatedUsage, SummaryResult
 
 
 class TestSummaryJobAtomicity:
@@ -582,10 +583,11 @@ class TestSummaryJobIntegration:
         # Create engine with mocked LLM
         mock_llm = MagicMock()
         mock_llm._summarize_text = AsyncMock(
-            return_value=MagicMock(
+            return_value=SummaryResult(
                 summary="Summary of left and right",
+                retry_count=0,
                 summary_tokens=30,
-                usage=MagicMock(
+                usage=AccumulatedUsage(
                     prompt_tokens=100,
                     cached_tokens=0,
                     completion_tokens=30,
@@ -721,12 +723,15 @@ class TestSummaryJobIntegration:
 
         # Create mock LLM that returns valid summaries
         def make_mock_llm() -> MagicMock:
+            from ragzoom.services.summary_utils import AccumulatedUsage, SummaryResult
+
             mock = MagicMock()
             mock._summarize_text = AsyncMock(
-                return_value=MagicMock(
+                return_value=SummaryResult(
                     summary="Summary of left and right",
                     summary_tokens=30,
-                    usage=MagicMock(
+                    retry_count=0,
+                    usage=AccumulatedUsage(
                         prompt_tokens=100,
                         cached_tokens=0,
                         completion_tokens=30,
@@ -791,12 +796,15 @@ class TestSummaryJobIntegration:
         # Without single-writer coordination, we may get duplicates.
         # The IndexerLease mechanism prevents this in production.
         # This test documents the behavior without coordination.
-        # Note: Due to SQLite's serialization, we might not always see duplicates
-        # in this test, but the race condition exists conceptually.
+        # Note: Due to SQLite's serialization and the unique constraint on
+        # (document_id, height, level_index), we won't see duplicates - one
+        # of the concurrent writes will fail. The test verifies that at least
+        # one parent was created successfully.
         node_ids = [getattr(n, "id", "?") for n in duplicate_coords]
-        assert len(duplicate_coords) >= 1, (
-            f"Expected at least 1 parent node at (height=1, level_index=0), "
-            f"got {len(duplicate_coords)}: {node_ids}."
+        assert len(duplicate_coords) == 1, (
+            f"Expected exactly 1 parent node at (height=1, level_index=0), "
+            f"got {len(duplicate_coords)}: {node_ids}. "
+            f"The unique constraint should prevent duplicates."
         )
 
         await engine_1.shutdown()

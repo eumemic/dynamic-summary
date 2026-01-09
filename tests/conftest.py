@@ -216,6 +216,23 @@ def enable_strict_errors() -> Generator[None, None, None]:
     # Don't clean up - let other tests use it
 
 
+@pytest.fixture
+def disable_strict_errors() -> Generator[None, None, None]:
+    """Temporarily disable strict error mode for tests that need production behavior.
+
+    Use this fixture for tests that specifically test retry/recovery behavior
+    which only applies in non-strict (production) mode. In strict mode, errors
+    fail fast instead of being retried.
+    """
+    original = os.environ.get("RAGZOOM_STRICT_ERRORS")
+    os.environ["RAGZOOM_STRICT_ERRORS"] = "0"
+    yield
+    if original is not None:
+        os.environ["RAGZOOM_STRICT_ERRORS"] = original
+    else:
+        os.environ.pop("RAGZOOM_STRICT_ERRORS", None)
+
+
 # Globally disable the tqdm monitor thread in tests (no background thread)
 @pytest.fixture(scope="session", autouse=True)
 def suppress_progress_globally() -> Generator[None, None, None]:
