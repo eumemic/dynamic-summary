@@ -91,16 +91,6 @@ python -m memory_service.admin inspect-uuid {session-id} {uuid}
 python -m memory_service.admin inspect-leaves {session-id} {offset}
 ```
 
-## Finding Session IDs
-
-Sessions are identified by UUIDs. For Claude Code sessions:
-
-```bash
-ls -lt ~/.claude/projects/-Users-tom-code-dynamic-summary-worktrees-worktree-1/*.jsonl | head -1
-```
-
-The session ID is the filename (without `.jsonl` extension).
-
 ## gRPC Endpoint
 
 The MCP server connects via gRPC. The address is in `.mcp.json`:
