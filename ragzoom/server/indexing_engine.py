@@ -30,6 +30,7 @@ import numpy as np
 from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.server.run_manager import TelemetryRunManager
+from ragzoom.services.summary_utils import SummaryResult
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -326,6 +327,9 @@ class IndexingEngine:
         # Track documents with pending work
         self._active_documents: set[str] = set()
 
+        # Store fatal exceptions from jobs in strict mode so wait_until_idle can raise them
+        self._fatal_exception: BaseException | None = None
+
         # Scheduling coalescing - prevents N completing jobs from triggering N
         # separate scheduling calls. Instead, they mark documents dirty and a
         # single scheduler task processes all of them.
@@ -432,8 +436,17 @@ class IndexingEngine:
         Args:
             document_id: If provided, wait only for this document.
                         If None, wait for all documents.
+
+        Raises:
+            Exception: Re-raises any fatal exception from background jobs in strict mode.
         """
         while True:
+            # Check for fatal exception from background jobs (strict mode)
+            if self._fatal_exception is not None:
+                exc = self._fatal_exception
+                self._fatal_exception = None  # Clear so next wait can proceed
+                raise exc
+
             async with self._lock:
                 if document_id is None:
                     if not self._active_jobs and not self._active_documents:
@@ -1122,11 +1135,13 @@ class IndexingEngine:
                 await self._embed_leaf(job)
             else:
                 await self._summarize_pair(job)
-        except Exception:
+        except Exception as exc:
             logger.exception("Job failed: %s", job)
             job_failed = True
-            # In strict mode (tests), re-raise to fail fast instead of silent retry
+            # In strict mode (tests), store exception and re-raise to fail fast
             if os.environ.get("RAGZOOM_STRICT_ERRORS") == "1":
+                self._fatal_exception = exc
+                self._idle_event.set()  # Wake up waiters so they can raise
                 raise
         finally:
             async with self._lock:
@@ -1558,6 +1573,12 @@ class IndexingEngine:
             prev_context=context_text,
             text_tokens=combined_tokens,
         )
+        # Fail fast if mock returns wrong type - prevents silent hangs in tests
+        if not isinstance(summary_result, SummaryResult):
+            raise TypeError(
+                f"_summarize_text returned {type(summary_result).__name__}, "
+                f"expected SummaryResult. Check mock return values."
+            )
         summary = summary_result.summary
         summary_tokens = summary_result.summary_tokens
 
