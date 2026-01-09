@@ -461,6 +461,7 @@ class TestTelemetryIntegration:
 
         # Mock embeddings with store-type specific behavior
         async def mock_embeddings(*args: object, **kwargs: object) -> object:
+            from types import SimpleNamespace
             from typing import cast
 
             input_texts = cast(list[str] | str, kwargs.get("input", []))
@@ -468,8 +469,12 @@ class TestTelemetryIntegration:
                 input_texts = [input_texts]
             # Always return numeric embeddings for backend-agnostic runs
             embedding_value = [0.1] * 1536
+            num_items = len(input_texts)
             return MagicMock(
-                data=[MagicMock(embedding=embedding_value) for _ in input_texts]
+                data=[MagicMock(embedding=embedding_value) for _ in input_texts],
+                usage=SimpleNamespace(
+                    prompt_tokens=num_items * 10, total_tokens=num_items * 10
+                ),
             )
 
         mock_async_client.embeddings.create = mock_embeddings
@@ -484,14 +489,19 @@ class TestTelemetryIntegration:
         mock_sync_client = MagicMock()
 
         def sync_mock_embeddings(*args: object, **kwargs: object) -> object:
+            from types import SimpleNamespace
             from typing import cast
 
             input_texts = cast(list[str] | str, kwargs.get("input", []))
             if isinstance(input_texts, str):
                 input_texts = [input_texts]
             embedding_value = [0.1] * 1536
+            num_items = len(input_texts)
             return MagicMock(
-                data=[MagicMock(embedding=embedding_value) for _ in input_texts]
+                data=[MagicMock(embedding=embedding_value) for _ in input_texts],
+                usage=SimpleNamespace(
+                    prompt_tokens=num_items * 10, total_tokens=num_items * 10
+                ),
             )
 
         mock_sync_client.embeddings.create = sync_mock_embeddings

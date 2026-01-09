@@ -47,6 +47,14 @@ from tests.test_builders import DocumentBuilder, TreeNodeBuilder
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# Test Environment Setup
+# =============================================================================
+# Enable strict error mode for tests - makes job failures fatal instead of
+# silently retrying. This catches broken mocks and other test issues faster.
+# =============================================================================
+os.environ["RAGZOOM_STRICT_ERRORS"] = "1"
+
 
 class BackwardCompatibilityConfig:
     """Test configuration that combines the three config types for compatibility."""

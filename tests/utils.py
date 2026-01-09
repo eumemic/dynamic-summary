@@ -380,6 +380,7 @@ def create_telemetry_summary_mock() -> tuple[object, object]:
         response.usage = MagicMock()
         response.usage.prompt_tokens = 250
         response.usage.completion_tokens = 50
+        response.usage.total_tokens = 300
         return response
 
     def mock_chat_completion_with_usage_sync(
@@ -394,6 +395,7 @@ def create_telemetry_summary_mock() -> tuple[object, object]:
         response.usage = MagicMock()
         response.usage.prompt_tokens = 250
         response.usage.completion_tokens = 50
+        response.usage.total_tokens = 300
         return response
 
     return mock_chat_completion_with_usage_sync, mock_chat_completion_with_usage
