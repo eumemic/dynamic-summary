@@ -25,7 +25,7 @@ from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
 from ragzoom.models import Document
-from ragzoom.server.lease import IndexerLease
+from ragzoom.server.lease import IndexerLease, LeaseConfig
 from ragzoom.services.cache_manager import CacheManager
 from ragzoom.services.tree_navigator import TreeNavigator
 from ragzoom.utils.locks import FileDocumentLock, document_lock_path
@@ -175,9 +175,9 @@ class SQLiteStorageBackend(StorageBackend):
 
     # jscpd:ignore-end
 
-    def create_lease(self) -> IndexerLease:
+    def create_lease(self, config: LeaseConfig | None = None) -> IndexerLease:
         """Create a global indexer lease for single-writer coordination."""
-        return IndexerLease(self.db.engine)
+        return IndexerLease(self.db.engine, config)
 
     def close(self) -> None:
         self.db.close()

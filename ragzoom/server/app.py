@@ -172,8 +172,7 @@ async def _run_with_lease(
     )
 
     # Get lease from the storage backend
-    lease = store.create_lease()
-    lease._config = lease_config  # Apply config overrides
+    lease = store.create_lease(lease_config)
 
     if not await lease.acquire():
         logger.critical("Failed to acquire indexer lease - exiting")
