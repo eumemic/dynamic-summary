@@ -58,6 +58,7 @@ RAGZOOM_DATABASE_URL="postgresql://..." python -m memory_service.admin status
 
 ```bash
 status                    # Service overview and session inventory
+status <session-id>       # Status for a specific session (prefix OK)
 reset <session-id>        # Reset session for full re-index
 validate <session-id>     # Validate indexed content matches transcript
 transcribe <session-id>   # Extract text from stored JSONL

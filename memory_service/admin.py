@@ -47,9 +47,11 @@ def get_database_url() -> str | None:
 def cmd_status(args: argparse.Namespace) -> int:
     """Show memory service status - comprehensive dashboard."""
     db_url = get_database_url()
+    session_filter = getattr(args, "session_id", None)
 
-    print("Memory Service Status")
-    print("=" * 60)
+    if not session_filter:
+        print("Memory Service Status")
+        print("=" * 60)
 
     # Database connection
     if not db_url:
@@ -63,56 +65,87 @@ def cmd_status(args: argparse.Namespace) -> int:
         parts = db_url.split("@")
         host_part = parts[-1]
         display_url = f"postgresql://***@{host_part}"
-    print(f"\n📊 Database: {display_url}")
+
+    if not session_filter:
+        print(f"\n📊 Database: {display_url}")
 
     try:
         engine = create_engine(db_url)
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        print("   ✅ Connected")
+        if not session_filter:
+            print("   ✅ Connected")
     except Exception as e:
         print(f"   ❌ Connection failed: {e}")
         return 1
 
     # Session inventory
     with Session(engine) as db:
-        sessions = db.execute(
-            select(
-                SessionRawData.session_id,
-                SessionRawData.user_id,
-                SessionRawData.original_file_offset,
-                SessionRawData.span_end,
-                SessionRawData.last_synced_uuid,
-                func.length(SessionRawData.jsonl_content).label("content_size"),
-            ).order_by(SessionRawData.session_id)
-        ).all()
+        # If filtering by session, resolve the full ID first
+        target_session_id: str | None = None
+        if session_filter:
+            session_row = _find_session(db, session_filter)
+            if session_row is None:
+                return 1
+            target_session_id = session_row.session_id
 
-        print(f"\n📋 Sessions: {len(sessions)}")
-        if sessions:
-            print()
-            for s in sessions:
-                uuid_display = s.last_synced_uuid[:8] if s.last_synced_uuid else "None"
-                print(f"   {s.session_id[:12]}...")
-                print(f"      user: {s.user_id}")
-                print(f"      offset: {s.original_file_offset:,} bytes")
-                print(f"      span_end: {s.span_end}")
-                print(f"      last_synced: {uuid_display}")
-                print(f"      stored: {s.content_size:,} bytes")
+        if not session_filter:
+            sessions = db.execute(
+                select(
+                    SessionRawData.session_id,
+                    SessionRawData.user_id,
+                    SessionRawData.original_file_offset,
+                    SessionRawData.span_end,
+                    SessionRawData.last_synced_uuid,
+                    func.length(SessionRawData.jsonl_content).label("content_size"),
+                ).order_by(SessionRawData.session_id)
+            ).all()
+
+            print(f"\n📋 Sessions: {len(sessions)}")
+            if sessions:
                 print()
+                for s in sessions:
+                    uuid_display = (
+                        s.last_synced_uuid[:8] if s.last_synced_uuid else "None"
+                    )
+                    print(f"   {s.session_id[:12]}...")
+                    print(f"      user: {s.user_id}")
+                    print(f"      offset: {s.original_file_offset:,} bytes")
+                    print(f"      span_end: {s.span_end}")
+                    print(f"      last_synced: {uuid_display}")
+                    print(f"      stored: {s.content_size:,} bytes")
+                    print()
 
         # Document stats (if ragzoom tables exist)
         try:
-            doc_count = db.execute(text("SELECT COUNT(*) FROM documents")).scalar_one()
-            node_count = db.execute(
-                text("SELECT COUNT(*) FROM tree_nodes")
-            ).scalar_one()
-            print(f"📄 Documents: {doc_count}")
-            print(f"🌳 Tree nodes: {node_count:,}")
+            if session_filter:
+                # Single document mode
+                doc_count = db.execute(
+                    text("SELECT COUNT(*) FROM documents WHERE id = :doc_id"),
+                    {"doc_id": target_session_id},
+                ).scalar_one()
+                node_count = db.execute(
+                    text("SELECT COUNT(*) FROM tree_nodes WHERE document_id = :doc_id"),
+                    {"doc_id": target_session_id},
+                ).scalar_one()
+            else:
+                doc_count = db.execute(
+                    text("SELECT COUNT(*) FROM documents")
+                ).scalar_one()
+                node_count = db.execute(
+                    text("SELECT COUNT(*) FROM tree_nodes")
+                ).scalar_one()
+                print(f"📄 Documents: {doc_count}")
+                print(f"🌳 Tree nodes: {node_count:,}")
 
             # Per-document detailed status
             if doc_count > 0:
                 full_validation = getattr(args, "full_validation", False)
-                _print_document_status(db, full_validation=full_validation)
+                _print_document_status(
+                    db,
+                    full_validation=full_validation,
+                    document_filter=target_session_id,
+                )
 
         except Exception:
             print("📄 RagZoom tables: Not found or not accessible")
@@ -120,8 +153,19 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_document_status(db: Session, *, full_validation: bool = False) -> None:
-    """Print detailed status for each document."""
+def _print_document_status(
+    db: Session,
+    *,
+    full_validation: bool = False,
+    document_filter: str | None = None,
+) -> None:
+    """Print detailed status for each document.
+
+    Args:
+        db: Database session
+        full_validation: Whether to run full tree validation
+        document_filter: Optional document/session ID prefix to filter by
+    """
     from ragzoom.config import OperationalConfig
     from ragzoom.store import create_store
 
@@ -135,9 +179,14 @@ def _print_document_status(db: Session, *, full_validation: bool = False) -> Non
         except Exception:
             pass  # Will show validation error per-document
 
+    # Build query with optional document filter
+    where_clause = ""
+    if document_filter:
+        where_clause = f"WHERE d.id LIKE '{document_filter}%'"
+
     # Get comprehensive stats per document
     progress_query = text(
-        """
+        f"""
         SELECT
             d.id,
             COUNT(*) FILTER (WHERE t.height = 0) as leaf_count,
@@ -151,6 +200,7 @@ def _print_document_status(db: Session, *, full_validation: bool = False) -> Non
             COUNT(*) as total_nodes
         FROM documents d
         LEFT JOIN tree_nodes t ON t.document_id = d.id
+        {where_clause}
         GROUP BY d.id
         ORDER BY d.id
         """
@@ -1070,6 +1120,11 @@ def main() -> int:
 
     # status command
     status_parser = subparsers.add_parser("status", help="Show memory service status")
+    status_parser.add_argument(
+        "session_id",
+        nargs="?",
+        help="Optional session ID (or prefix) to filter status output",
+    )
     status_parser.add_argument(
         "--full-validation",
         action="store_true",
