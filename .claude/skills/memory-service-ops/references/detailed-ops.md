@@ -91,24 +91,42 @@ python -m memory_service.admin inspect-uuid {session-id} {uuid}
 python -m memory_service.admin inspect-leaves {session-id} {offset}
 ```
 
-## gRPC Endpoint
+## Network Endpoints
 
-The MCP server connects via gRPC. The address is in `.mcp.json`:
+Railway exposes services via two different mechanisms. Understanding the difference is critical.
 
-```json
-{
-  "mcpServers": {
-    "ragzoom-memory": {
-      "command": "python",
-      "args": ["-m", "memory_service.ingestion.claude.mcp_server"],
-      "env": {
-        "RAGZOOM_SERVER_ADDRESS": "switchback.proxy.rlwy.net:11553",
-        "RAGZOOM_USER_ID": "tom"
-      }
-    }
-  }
-}
+### TCP Proxy (for gRPC)
+
+gRPC uses TCP proxy, **not** HTTPS. Discover the address from Railway variables:
+
+```bash
+# Link to environment first
+railway link -p 9d168ba6-ac78-4739-a53c-7ca04e211678 -e production  # or -e dynamic-summary-pr-{N}
+
+# Get gRPC address components
+railway variables --service dynamic-summary --kv | grep RAILWAY_TCP_PROXY
+# RAILWAY_TCP_PROXY_DOMAIN=<hostname>
+# RAILWAY_TCP_PROXY_PORT=<port>
 ```
+
+The gRPC address is `${RAILWAY_TCP_PROXY_DOMAIN}:${RAILWAY_TCP_PROXY_PORT}`.
+
+### HTTPS Domain (for REST)
+
+HTTPS endpoints use `RAILWAY_PUBLIC_DOMAIN:443`. The memory service doesn't expose REST endpoints, so this is unused for our purposes.
+
+**Common mistake**: Using `RAILWAY_PUBLIC_DOMAIN:443` for gRPC results in 502 errors because there's no HTTP endpoint on the gRPC service.
+
+### MCP Server Configuration
+
+The MCP server address in `.mcp.json` should match the production gRPC endpoint. Discover it with:
+
+```bash
+railway link -p 9d168ba6-ac78-4739-a53c-7ca04e211678 -e production
+railway variables --service dynamic-summary --kv | grep RAILWAY_TCP_PROXY
+```
+
+Then update `.mcp.json` with the discovered `DOMAIN:PORT`.
 
 ## Troubleshooting
 
@@ -126,6 +144,21 @@ railway link -p 9d168ba6-ac78-4739-a53c-7ca04e211678 -e production
 If you see `nodename nor servname provided`:
 - You're using an internal URL from outside Railway
 - Use `DATABASE_PUBLIC_URL` from the correct database service
+
+### gRPC 502 Errors
+
+Symptoms:
+- `test-sync` fails with "Received http2 header with status: 502"
+- gRPC calls return UNAVAILABLE
+
+Cause: Using HTTPS domain instead of TCP proxy for gRPC.
+
+Fix: Ensure gRPC uses `RAILWAY_TCP_PROXY_DOMAIN:RAILWAY_TCP_PROXY_PORT`, not `RAILWAY_PUBLIC_DOMAIN:443`.
+
+Verify correct address:
+```bash
+railway variables --service dynamic-summary --kv | grep TCP_PROXY
+```
 
 ### Tree Corruption / Validation Failures
 
