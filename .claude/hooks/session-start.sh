@@ -26,5 +26,5 @@ SESSION_ID=$(echo "$JSON" | jq -r '.session_id // ""')
 if [[ -n "$SESSION_ID" ]]; then
     # Register the PID (PPID is Claude Code's PID)
     cd "$GIT_ROOT"
-    python -m ragzoom.cli set-session-pid "$SESSION_ID" "$PPID"
+    python -m memory_service.ingestion.claude set-session-pid "$SESSION_ID" "$PPID"
 fi
