@@ -1639,12 +1639,52 @@ def prepare_delta_sync(
 
     # Build records map from delta
     records_by_uuid: dict[str, dict[str, object]] = {}
-    uuids_in_order: list[str] = []
+    all_uuids_in_order: list[str] = []
     for record in delta_records:
         uuid = record.get("uuid")
         if isinstance(uuid, str):
             records_by_uuid[uuid] = record
-            uuids_in_order.append(uuid)
+            all_uuids_in_order.append(uuid)
+
+    if not all_uuids_in_order:
+        return PreparedDeltaSync(
+            document_id=document_id,
+            truncated=False,
+            truncate_span=None,
+            segment_texts=[],
+            appended_uuids=[],
+            span_end=span_end,
+        )
+
+    # For fresh syncs (no previous sync state), filter to ancestor chain only.
+    # This handles transcripts with reverts where old messages share a parent
+    # with their replacement - only messages reachable from head get indexed.
+    if last_synced_uuid is None:
+        # Build parent map with compaction bridging from delta bytes
+        parent_map = _build_parent_map_from_bytes(delta)
+
+        # Find current head (last non-compact message)
+        current_head: str | None = None
+        for uuid in reversed(all_uuids_in_order):
+            maybe_record = records_by_uuid.get(uuid)
+            if maybe_record is not None and not maybe_record.get("isCompactSummary"):
+                current_head = uuid
+                break
+
+        if current_head is not None:
+            # Get ancestor chain and filter uuids_in_order to only chain members
+            ancestor_set = set(get_ancestor_chain(current_head, None, parent_map))
+            uuids_in_order = [u for u in all_uuids_in_order if u in ancestor_set]
+            logger.info(
+                "[SYNC] Fresh sync: filtered %d -> %d UUIDs (ancestor chain only)",
+                len(all_uuids_in_order),
+                len(uuids_in_order),
+            )
+        else:
+            uuids_in_order = all_uuids_in_order
+    else:
+        # Incremental sync - delta messages should all be in the chain by design
+        uuids_in_order = all_uuids_in_order
 
     if not uuids_in_order:
         return PreparedDeltaSync(

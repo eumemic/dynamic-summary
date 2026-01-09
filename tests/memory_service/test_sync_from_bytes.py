@@ -722,6 +722,72 @@ class TestPrepareDeltaSync:
         # The warning log is checked separately in log-based tests
         assert result.truncated is False
 
+    def test_fresh_sync_excludes_reverted_messages(self) -> None:
+        """Fresh sync should only index messages in the ancestor chain, not reverted ones.
+
+        Regression test for bug where reverted messages (which share a parent with
+        their replacement) were incorrectly indexed during fresh syncs.
+
+        Setup:
+        - msg1 (root)
+        - msg2 (parent: msg1) - assistant response
+        - msg3_old (parent: msg2) - user's ORIGINAL message (later reverted)
+        - msg3_new (parent: msg2) - user's REPLACEMENT message (current head)
+
+        Only msg1, msg2, msg3_new should be indexed. msg3_old shares parent msg2
+        but is NOT in the ancestor chain from msg3_new (the current head).
+        """
+        # Transcript with a revert: two messages share the same parent (msg2)
+        delta = _make_jsonl(
+            {
+                "uuid": "msg1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "Hello"},
+            },
+            {
+                "uuid": "msg2",
+                "parentUuid": "msg1",
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Hi there"}]},
+            },
+            {
+                "uuid": "msg3_old",
+                "parentUuid": "msg2",  # Same parent as msg3_new!
+                "type": "user",
+                "message": {"content": "Original message that was reverted"},
+            },
+            {
+                "uuid": "msg3_new",
+                "parentUuid": "msg2",  # Same parent as msg3_old!
+                "type": "user",
+                "message": {"content": "Replacement message after revert"},
+            },
+        )
+
+        # Fresh cursor - no previous data
+        cursor = SessionCursor(byte_offset=0, last_synced_uuid=None, span_end=0)
+
+        result = prepare_delta_sync(
+            session_id="session1",
+            delta=delta,
+            cursor=cursor,
+        )
+
+        # Should NOT be truncated - this is a fresh sync
+        assert result.truncated is False
+
+        # The reverted message content should NOT be in the output
+        all_text = "\n\n".join(result.segment_texts)
+        assert "Original message that was reverted" not in all_text
+
+        # The replacement message SHOULD be in the output
+        assert "Replacement message after revert" in all_text
+
+        # Only 3 UUIDs should be appended (msg1, msg2, msg3_new), NOT msg3_old
+        assert "msg3_old" not in result.appended_uuids
+        assert "msg3_new" in result.appended_uuids
+
 
 class TestGranularRevertTruncation:
     """Tests for granular revert truncation with append entries."""
