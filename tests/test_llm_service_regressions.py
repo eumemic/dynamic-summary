@@ -28,6 +28,7 @@ class MockOpenAIResponse:
         self.usage = MagicMock(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
             prompt_tokens_details={"cached_tokens": cached_tokens},
         )
 
