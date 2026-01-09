@@ -9,15 +9,26 @@ Guidance for operating the hosted RagZoom memory service.
 
 ## Environment Model
 
-**Production** is where all agents' memories live. This is the default and should be used for:
-- Checking service status
-- Debugging memory issues
-- All normal operations
+**Production** is where all agents' memories live. **PR environment** is a test sandbox for memory service development only.
 
-**PR environment** is a test sandbox for service development. Use it only for:
-- Testing sync/indexing changes before merge
-- Running manual syncs of test transcripts
-- Validating tree-building and embedding logic
+### Which Environment to Check?
+
+Use this decision tree:
+
+1. **On a PR branch touching `memory_service/`?** → Check PR environment first (`--test`)
+2. **On master or non-memory-service branch?** → Check production (default)
+3. **Session not found in your first choice?** → Try the other environment
+4. **Ambiguous?** → Start with PR if developing memory service, otherwise production
+
+### Environment Details
+
+**Production** (default):
+- All agents' real memories live here
+- Use for: status checks, debugging memory issues, normal operations
+
+**PR environment** (`--test`):
+- Isolated test sandbox with separate database
+- Use for: testing sync/indexing changes, manual test syncs, validating tree-building
 
 Agents' own memories always sync to production, even when developing memory service changes. The JSONL transcript is the source of truth - production can always be re-indexed if needed.
 
