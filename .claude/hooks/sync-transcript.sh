@@ -3,6 +3,10 @@
 #
 # Input: JSON on stdin with session info including transcript_path
 # Output: Silent on success
+#
+# Configuration:
+#   RAGZOOM_ENV - which environment to sync to (default: production)
+#   RAGZOOM_SERVER_ADDRESS - override address discovery (optional)
 
 set -euo pipefail
 
@@ -17,9 +21,10 @@ if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
     GIT_ROOT="$(git rev-parse --show-toplevel)"
     cd "$GIT_ROOT"
 
-    # Read RAGZOOM_SERVER_ADDRESS from .mcp.json if not already set
-    if [[ -z "${RAGZOOM_SERVER_ADDRESS:-}" && -f ".mcp.json" ]]; then
-        RAGZOOM_SERVER_ADDRESS=$(jq -r '.mcpServers["ragzoom-memory"].env.RAGZOOM_SERVER_ADDRESS // ""' .mcp.json)
+    # Discover gRPC address if not already set
+    if [[ -z "${RAGZOOM_SERVER_ADDRESS:-}" ]]; then
+        RAGZOOM_ENV="${RAGZOOM_ENV:-production}"
+        RAGZOOM_SERVER_ADDRESS=$("$GIT_ROOT/scripts/get-grpc-address" "$RAGZOOM_ENV")
         export RAGZOOM_SERVER_ADDRESS
     fi
 

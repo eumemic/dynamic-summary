@@ -99,16 +99,9 @@ if [[ "${ARGS[0]}" == "test-sync" ]]; then
         exit 1
     fi
 
-    # Get gRPC server address from Railway TCP proxy
-    GRPC_DOMAIN=$(railway variables --service dynamic-summary --kv 2>/dev/null | grep -E "^RAILWAY_TCP_PROXY_DOMAIN=" | cut -d= -f2-)
-    GRPC_PORT=$(railway variables --service dynamic-summary --kv 2>/dev/null | grep -E "^RAILWAY_TCP_PROXY_PORT=" | cut -d= -f2-)
-
-    if [[ -z "$GRPC_DOMAIN" || -z "$GRPC_PORT" ]]; then
-        echo "Error: Could not get RAILWAY_TCP_PROXY_DOMAIN/PORT from dynamic-summary service"
-        exit 1
-    fi
-
-    SERVER_ADDRESS="${GRPC_DOMAIN}:${GRPC_PORT}"
+    # Get gRPC server address using discovery script
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    SERVER_ADDRESS=$("$SCRIPT_DIR/get-grpc-address" "$ENV_NAME")
 
     echo ""
     echo "Syncing to: $SERVER_ADDRESS"

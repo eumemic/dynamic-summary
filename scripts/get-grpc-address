@@ -1,0 +1,55 @@
+#!/bin/bash
+# Get the gRPC address for a Railway environment
+#
+# Usage:
+#   ./scripts/get-grpc-address production
+#   ./scripts/get-grpc-address pr
+#
+# Output: gRPC address (e.g., hopper.proxy.rlwy.net:24604)
+
+set -euo pipefail
+
+PROJECT_ID="9d168ba6-ac78-4739-a53c-7ca04e211678"
+
+ENV_NAME="${1:-}"
+
+if [[ -z "$ENV_NAME" ]]; then
+    echo "Usage: get-grpc-address <environment>" >&2
+    echo "  environment: 'production' or 'pr'" >&2
+    exit 1
+fi
+
+# Resolve environment name
+case "$ENV_NAME" in
+    production|prod)
+        RAILWAY_ENV="production"
+        ;;
+    pr|test)
+        # Find PR number from current branch
+        PR_INFO=$(gh pr list --state open --head "$(git branch --show-current)" --json number 2>/dev/null || echo "[]")
+        PR_NUMBER=$(echo "$PR_INFO" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['number'] if d else '')" 2>/dev/null || echo "")
+
+        if [[ -z "$PR_NUMBER" ]]; then
+            echo "Error: No open PR found for current branch" >&2
+            exit 1
+        fi
+        RAILWAY_ENV="dynamic-summary-pr-${PR_NUMBER}"
+        ;;
+    *)
+        # Assume it's a full environment name
+        RAILWAY_ENV="$ENV_NAME"
+        ;;
+esac
+
+# Link and get TCP proxy address
+railway link -p "$PROJECT_ID" -e "$RAILWAY_ENV" >/dev/null 2>&1
+
+GRPC_DOMAIN=$(railway variables --service dynamic-summary --kv 2>/dev/null | grep -E "^RAILWAY_TCP_PROXY_DOMAIN=" | cut -d= -f2-)
+GRPC_PORT=$(railway variables --service dynamic-summary --kv 2>/dev/null | grep -E "^RAILWAY_TCP_PROXY_PORT=" | cut -d= -f2-)
+
+if [[ -z "$GRPC_DOMAIN" || -z "$GRPC_PORT" ]]; then
+    echo "Error: Could not get TCP proxy address for environment '$RAILWAY_ENV'" >&2
+    exit 1
+fi
+
+echo "${GRPC_DOMAIN}:${GRPC_PORT}"
