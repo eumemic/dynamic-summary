@@ -7,6 +7,23 @@ description: This skill should be used when the user asks to "check memory servi
 
 Guidance for operating the hosted RagZoom memory service.
 
+## Claude Transcript Storage
+
+Claude Code stores conversation transcripts locally as JSONL files:
+
+```
+~/.claude/projects/<project-path>/<session-id>.jsonl
+```
+
+- **Project path**: Working directory with `/` replaced by `-` (e.g., `-Users-tom-code-myproject`)
+- **Session ID**: UUID filename (e.g., `7cdd0798-4f29-4ce6-bfc9-6dc3b7bb2153.jsonl`)
+- **Record types**: `user`, `assistant`, `system`, `summary`, `file-history-snapshot`, `queue-operation`
+
+To find a transcript for testing:
+```bash
+ls ~/.claude/projects/-Users-tom-code-dynamic-summary-worktrees-worktree-1/*.jsonl
+```
+
 ## Environment Model
 
 **Production** is where all agents' memories live. **PR environment** is a test sandbox for memory service development only.
