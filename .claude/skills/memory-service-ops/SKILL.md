@@ -27,13 +27,13 @@ The `scripts/memory-admin` wrapper handles all Railway ceremony automatically:
 
 ```bash
 # Production (default)
-./scripts/memory-admin status
-./scripts/memory-admin reset <session-id>
-./scripts/memory-admin validate <session-id>
+scripts/memory-admin status
+scripts/memory-admin reset <session-id>
+scripts/memory-admin validate <session-id>
 
 # PR test environment
-./scripts/memory-admin status --test
-./scripts/memory-admin reset <session-id> --test
+scripts/memory-admin status --test
+scripts/memory-admin reset <session-id> --test
 ```
 
 ## Manual Workflow (If Needed)
