@@ -424,8 +424,13 @@ def _print_validation_status(
 
 
 def cmd_reset(args: argparse.Namespace) -> int:
-    """Reset a session cursor for full re-sync."""
+    """Reset a session for full re-sync.
+
+    By default, clears the document (tree nodes + vectors) AND resets sync metadata.
+    Use --only-metadata to reset just the sync cursor without clearing indexed data.
+    """
     session_id = args.session_id
+    only_metadata = getattr(args, "only_metadata", False)
     db_url = get_database_url()
 
     if not db_url:
@@ -463,21 +468,41 @@ def cmd_reset(args: argparse.Namespace) -> int:
             else:
                 row = rows[0]
 
-        print(f"Resetting session: {row.session_id}")
+        full_session_id = row.session_id
+        print(f"Resetting session: {full_session_id}")
         print(f"   Current offset: {row.original_file_offset:,}")
         print(f"   Current span_end: {row.span_end}")
         print(f"   Current last_synced: {row.last_synced_uuid}")
 
-        # Use SessionStorage.reset_cursor() to ensure consistent behavior
-        # This clears last_synced_uuid, original_file_offset, AND append entries
+        # Clear the document (tree nodes + vectors) unless --only-metadata
+        if not only_metadata:
+            deleted_nodes = _clear_session_document(db_url, full_session_id)
+            if deleted_nodes > 0:
+                print(f"   Cleared: {deleted_nodes} tree nodes")
+
+        # Reset sync metadata (cursor, append entries)
         storage = SessionStorage(db, user_id=row.user_id)
-        storage.reset_cursor(row.session_id)
+        storage.reset_cursor(full_session_id)
         db.commit()
 
         print()
-        print("✅ Cursor reset. Next sync will trigger full re-index.")
+        if only_metadata:
+            print("✅ Metadata reset. Next sync will trigger full re-index.")
+            print("   (Document tree preserved - use without --only-metadata to clear)")
+        else:
+            print("✅ Session reset. Next sync will rebuild from scratch.")
 
     return 0
+
+
+def _clear_session_document(db_url: str, session_id: str) -> int:
+    """Clear the document tree and vectors for a session."""
+    from ragzoom.config import OperationalConfig
+    from ragzoom.store import create_store
+
+    config = OperationalConfig(database_url=db_url)
+    store = create_store(config)
+    return store.clear_document(session_id)
 
 
 def _find_session(db: Session, session_id: str) -> SessionRawData | None:
@@ -1133,9 +1158,14 @@ def main() -> int:
 
     # reset command
     reset_parser = subparsers.add_parser(
-        "reset", help="Reset a session cursor for full re-sync"
+        "reset", help="Reset a session for full re-sync (clears tree by default)"
     )
     reset_parser.add_argument("session_id", help="Session ID (or prefix) to reset")
+    reset_parser.add_argument(
+        "--only-metadata",
+        action="store_true",
+        help="Reset sync cursor only, preserve indexed tree and vectors",
+    )
 
     # transcribe command
     transcribe_parser = subparsers.add_parser(
