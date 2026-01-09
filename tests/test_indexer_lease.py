@@ -12,7 +12,7 @@ Tests validate that the IndexerLease class correctly:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -168,7 +168,7 @@ class TestIndexerLease:
     ) -> None:
         """Lease can be stolen when previous holder's TTL expires."""
         # Insert an already-expired lease
-        expired_time = datetime.utcnow() - timedelta(seconds=10)
+        expired_time = datetime.now(timezone.utc) - timedelta(seconds=10)
         with lease_engine.begin() as conn:
             conn.execute(
                 text(
