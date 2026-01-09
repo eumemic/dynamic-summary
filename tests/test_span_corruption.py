@@ -100,14 +100,21 @@ class TestSpanCorruption:
         mock_client.embeddings.create = AsyncMock(
             side_effect=lambda **kwargs: Mock(
                 data=[Mock(embedding=[0.1] * 1536)]
-                * len(kwargs.get("input", [kwargs.get("input")]))
+                * len(kwargs.get("input", [kwargs.get("input")])),
+                usage=Mock(total_tokens=100),
             )
         )
         mock_client.chat.completions.create = AsyncMock(
             return_value=Mock(
                 choices=[
                     Mock(message=Mock(content="Summary of left and right content"))
-                ]
+                ],
+                usage=Mock(
+                    prompt_tokens=100,
+                    completion_tokens=10,
+                    total_tokens=110,
+                    prompt_tokens_details=Mock(cached_tokens=0),
+                ),
             )
         )
 
@@ -171,7 +178,8 @@ class TestSpanCorruption:
         mock_client.embeddings.create = AsyncMock(
             side_effect=lambda **kwargs: Mock(
                 data=[Mock(embedding=[0.1] * 1536)]
-                * len(kwargs.get("input", [kwargs.get("input")]))
+                * len(kwargs.get("input", [kwargs.get("input")])),
+                usage=Mock(total_tokens=100),
             )
         )
         mock_client.chat.completions.create = AsyncMock(
@@ -180,6 +188,7 @@ class TestSpanCorruption:
                 usage=Mock(
                     prompt_tokens=100,
                     completion_tokens=10,
+                    total_tokens=110,
                     prompt_tokens_details=Mock(cached_tokens=0),
                 ),
             )
