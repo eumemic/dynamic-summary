@@ -5,96 +5,73 @@ description: This skill should be used when the user asks to "check memory servi
 
 # Memory Service Operations
 
-Guidance for operating the hosted RagZoom memory service (currently deployed on Railway).
+Guidance for operating the hosted RagZoom memory service.
 
-## Critical: Environment and Database Mapping
+## Environment Model
 
-The hosted service has **two separate databases** for different environments:
+**Production** is where all agents' memories live. This is the default and should be used for:
+- Checking service status
+- Debugging memory issues
+- All normal operations
 
-| Environment | Database Service | Public Proxy |
-|-------------|------------------|--------------|
-| Production (`production`) | `pgvector` | `tramway.proxy.rlwy.net:48318` |
-| PR environments (`dynamic-summary-pr-XXX`) | `pgvector-rW-f` | `nozomi.proxy.rlwy.net:30284` |
+**PR environment** is a test sandbox for service development. Use it only for:
+- Testing sync/indexing changes before merge
+- Running manual syncs of test transcripts
+- Validating tree-building and embedding logic
 
-**Never assume** which database an environment uses. Always verify by checking the service variables.
+Agents' own memories always sync to production, even when developing memory service changes. The JSONL transcript is the source of truth - production can always be re-indexed if needed.
 
-## Workflow: Check Memory Service Status
+## Wrapper Script (Recommended)
 
-### Step 1: Determine the Target Environment
+The `scripts/memory-admin` wrapper handles all Railway ceremony automatically:
 
-Ask the user or determine from context:
-- **Production**: Use environment name `production`
-- **PR environment**: Use environment name `dynamic-summary-pr-{NUMBER}`
-
-To find the PR number for the current branch:
 ```bash
-gh pr list --state open --head $(git branch --show-current) --json number,title
+# Production (default)
+./scripts/memory-admin status
+./scripts/memory-admin reset <session-id>
+./scripts/memory-admin validate <session-id>
+
+# PR test environment
+./scripts/memory-admin status --test
+./scripts/memory-admin reset <session-id> --test
 ```
 
-### Step 2: Link to the Environment
+## Manual Workflow (If Needed)
+
+### Production
 
 ```bash
-railway link -p 9d168ba6-ac78-4739-a53c-7ca04e211678 -e {ENVIRONMENT_NAME}
-```
-
-### Step 3: Discover the Correct Database
-
-**Do not skip this step.** Check which database the `dynamic-summary` service connects to:
-
-```bash
-railway variables --service dynamic-summary --json | grep RAGZOOM_DATABASE_URL
-```
-
-The internal hostname reveals which database service to use:
-- `pgvector.railway.internal` → Use `pgvector` service
-- `pgvector-rw-f.railway.internal` → Use `pgvector-rW-f` service
-
-### Step 4: Get the Public Database URL
-
-Use the **correct service name** from Step 3:
-
-```bash
-# For production (pgvector)
+railway link -p 9d168ba6-ac78-4739-a53c-7ca04e211678 -e production
 railway variables --service pgvector --kv | grep DATABASE_PUBLIC_URL
-
-# For PR environments (pgvector-rW-f)
-railway variables --service pgvector-rW-f --kv | grep DATABASE_PUBLIC_URL
+RAGZOOM_DATABASE_URL="postgresql://..." python -m memory_service.admin status
 ```
 
-### Step 5: Run Admin Commands
-
-Set the database URL and run the command:
+### PR Test Environment
 
 ```bash
-RAGZOOM_DATABASE_URL="{URL_FROM_STEP_4}" python -m memory_service.admin status
+railway link -p 9d168ba6-ac78-4739-a53c-7ca04e211678 -e dynamic-summary-pr-{NUMBER}
+railway variables --service pgvector-rW-f --kv | grep DATABASE_PUBLIC_URL
+RAGZOOM_DATABASE_URL="postgresql://..." python -m memory_service.admin status
 ```
-
-**Important**: Copy-paste the URL directly. Do not use command substitution like `$(railway ...)` as it can mangle special characters in passwords.
 
 ## Common Admin Commands
 
 ```bash
-# Service status and session inventory
-python -m memory_service.admin status
-
-# Reset a session for full re-index
-python -m memory_service.admin reset {session-id}
-
-# Validate indexed content matches transcript
-python -m memory_service.admin validate {session-id}
-
-# Transcribe stored JSONL to text
-python -m memory_service.admin transcribe {session-id} [-o output.txt]
+status                    # Service overview and session inventory
+reset <session-id>        # Reset session for full re-index
+validate <session-id>     # Validate indexed content matches transcript
+transcribe <session-id>   # Extract text from stored JSONL
 ```
 
-## Deployment Notes
+## Deployment
 
-- The service auto-deploys when pushing to PR branches
-- **Never use** `railway deployment redeploy` - it redeploys old code
-- To deploy new code, push to the branch: `git push origin {branch}`
+The service auto-deploys when pushing to PR branches:
+```bash
+git push origin {branch}
+```
+
+**Never use** `railway deployment redeploy` - it redeploys old code.
 
 ## Additional Resources
 
-For detailed operational procedures:
-- **`references/detailed-ops.md`** - Complete operational procedures
-- **`scripts/check-status.sh`** - Automated status check script
+- **`references/detailed-ops.md`** - Detailed procedures and troubleshooting

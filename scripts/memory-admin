@@ -1,0 +1,81 @@
+#!/bin/bash
+# Memory service admin wrapper
+# Handles Railway environment linking and database URL resolution automatically
+#
+# Usage:
+#   ./scripts/memory-admin status                 # Check production (default)
+#   ./scripts/memory-admin status --test          # Check PR test environment
+#   ./scripts/memory-admin reset <session-id>     # Reset session in production
+#   ./scripts/memory-admin validate <session-id>  # Validate session
+#   ./scripts/memory-admin <any admin command>    # Pass through to admin CLI
+
+set -e
+
+PROJECT_ID="9d168ba6-ac78-4739-a53c-7ca04e211678"
+
+# Parse --test flag
+USE_TEST_ENV=false
+ARGS=()
+for arg in "$@"; do
+    if [[ "$arg" == "--test" || "$arg" == "--pr" ]]; then
+        USE_TEST_ENV=true
+    else
+        ARGS+=("$arg")
+    fi
+done
+
+if [[ ${#ARGS[@]} -eq 0 ]]; then
+    echo "Usage: memory-admin [--test] <command> [args...]"
+    echo ""
+    echo "Commands:"
+    echo "  status                    Show service status and session inventory"
+    echo "  reset <session-id>        Reset session for full re-index"
+    echo "  validate <session-id>     Validate indexed content matches transcript"
+    echo "  transcribe <session-id>   Extract text from stored JSONL"
+    echo ""
+    echo "Options:"
+    echo "  --test, --pr              Use PR test environment instead of production"
+    echo ""
+    echo "Examples:"
+    echo "  memory-admin status                    # Production status"
+    echo "  memory-admin status --test             # PR environment status"
+    echo "  memory-admin reset 7cdd0798            # Reset session (prefix OK)"
+    exit 1
+fi
+
+# Determine environment and database service
+if [[ "$USE_TEST_ENV" == "true" ]]; then
+    # Find PR number from current branch
+    PR_INFO=$(gh pr list --state open --head "$(git branch --show-current)" --json number,title 2>/dev/null || echo "[]")
+    PR_NUMBER=$(echo "$PR_INFO" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['number'] if d else '')" 2>/dev/null || echo "")
+
+    if [[ -z "$PR_NUMBER" ]]; then
+        echo "Error: No open PR found for current branch. Cannot determine test environment."
+        echo "Either push your branch and open a PR, or use production (omit --test)."
+        exit 1
+    fi
+
+    ENV_NAME="dynamic-summary-pr-${PR_NUMBER}"
+    DB_SERVICE="pgvector-rW-f"
+    echo "Using PR test environment: $ENV_NAME"
+else
+    ENV_NAME="production"
+    DB_SERVICE="pgvector"
+    echo "Using production environment"
+fi
+
+# Link to environment (suppress interactive prompts)
+railway link -p "$PROJECT_ID" -e "$ENV_NAME" >/dev/null 2>&1
+
+# Get database URL
+DB_URL=$(railway variables --service "$DB_SERVICE" --kv 2>/dev/null | grep DATABASE_PUBLIC_URL | cut -d= -f2-)
+
+if [[ -z "$DB_URL" ]]; then
+    echo "Error: Could not get DATABASE_PUBLIC_URL from $DB_SERVICE service"
+    echo "Make sure you're logged into Railway: railway login"
+    exit 1
+fi
+
+# Run the admin command
+echo ""
+RAGZOOM_DATABASE_URL="$DB_URL" python -m memory_service.admin "${ARGS[@]}"
