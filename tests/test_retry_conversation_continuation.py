@@ -326,6 +326,55 @@ async def test_passthrough_for_text_under_target(
     assert attempts[0]["model"] == "passthrough"
 
 
+@pytest.mark.asyncio
+async def test_empty_response_triggers_retry(
+    indexer_runtime_harness: IndexerRuntimeHarness,
+) -> None:
+    """Empty LLM response should trigger retry, not raise exception.
+
+    When the LLM returns an empty response (content is None or ""),
+    the system should retry rather than failing with LLMError.
+    """
+    config = IndexConfig.load(
+        retry_threshold=0.2,
+        max_retries=3,
+        target_chunk_tokens=100,
+    )
+    vector_index = RecordingVectorIndex()
+    _configure_runtime(indexer_runtime_harness, config, vector_index)
+
+    api_calls: list[OpenAIMockParams] = []
+
+    async def mock_create(**kwargs: OpenAIMockParams) -> object:
+        copied = cast(OpenAIMockParams, deepcopy(kwargs))
+        api_calls.append(copied)
+        if len(api_calls) == 1:
+            # First call returns empty response
+            return _response("", 100, 0, 0)
+        if len(api_calls) == 2:
+            # Second call succeeds
+            return _response("Valid summary", 100, 20, 0)
+        return _response("", 0, 0, 0)
+
+    indexer_runtime_harness.llm_service.client = AsyncMock()
+    indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
+
+    with patched_tokenizers(lambda text: [0] * len(text)):
+        result = await indexer_runtime_harness.llm_service._summarize_text(
+            "Test content" * 10 + " " + "More content" * 10,
+            100,
+            parent_id="test",
+        )
+
+    # Should have retried after empty response
+    assert len(api_calls) == 2, (
+        f"Expected 2 API calls (empty then success), got {len(api_calls)}. "
+        "Empty response should trigger retry, not raise exception."
+    )
+    assert result.retry_count == 1
+    assert result.summary == "Valid summary"
+
+
 def _response(
     content: str, prompt_tokens: int, completion_tokens: int, cached_tokens: int
 ) -> object:

@@ -12,7 +12,6 @@ from openai.types.shared_params import ResponseFormatJSONObject
 
 from ragzoom.contracts.chat_model import ChatModel, ChatResult, Message, UsageInfo
 from ragzoom.error_handling import handle_graceful_error
-from ragzoom.exceptions import LLMError
 from ragzoom.model_info import ModelInfo
 
 
@@ -88,13 +87,8 @@ class OpenAIChatModel(ChatModel):
                 response_format=response_format_arg,
             )
 
-        content = response.choices[0].message.content
-        if not content:
-            raise LLMError(
-                operation="complete",
-                model=self._model_id,
-                message="LLM returned empty response content",
-            )
+        content = response.choices[0].message.content or ""
+        # Empty responses are handled by should_retry_summary, not raised as errors
 
         # Extract usage with optional cached_tokens
         if not response.usage:
