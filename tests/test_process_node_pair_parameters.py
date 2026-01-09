@@ -8,6 +8,7 @@ import pytest
 
 from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.services.summary_utils import AccumulatedUsage, SummaryResult
 from ragzoom.splitter import TextSplitter
 from tests.conftest import IndexerRuntimeHarness
 from tests.vector_index_stubs import RecordingVectorIndex
@@ -95,7 +96,14 @@ async def test_worker_coordinator_passes_token_counts(
         summary_model=index_config.summary_model,
     )
 
-    summary_mock = AsyncMock(return_value=("summary", 0, 100))
+    summary_mock = AsyncMock(
+        return_value=SummaryResult(
+            summary="summary",
+            retry_count=0,
+            summary_tokens=100,
+            usage=AccumulatedUsage(),
+        )
+    )
 
     async def embed_side_effect(texts: list[str]) -> list[list[float]]:
         return [[0.1] * 1536 for _ in texts]
@@ -159,7 +167,14 @@ async def test_prev_context_present_when_preceding_neighbor_exists(
         summary_model=index_config.summary_model,
     )
 
-    summary_mock = AsyncMock(return_value=("summary", 0, 80))
+    summary_mock = AsyncMock(
+        return_value=SummaryResult(
+            summary="summary",
+            retry_count=0,
+            summary_tokens=80,
+            usage=AccumulatedUsage(),
+        )
+    )
 
     async def embed_side_effect(texts: list[str]) -> list[list[float]]:
         return [[0.1] * 1536 for _ in texts]

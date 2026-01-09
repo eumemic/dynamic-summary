@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import Mock, patch
 
 import pytest
-from openai import AsyncOpenAI
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.splitter import TextSplitter
 from tests.conftest import BackwardCompatibilityConfig, IndexerRuntimeHarness
-from tests.utils import create_retriever, mock_openai_context
+from tests.utils import create_retriever
 from tests.vector_index_stubs import RecordingVectorIndex
 
 
@@ -32,26 +33,32 @@ def _configure_runtime(
     harness.indexing_engine._vector_index_factory = vector_factory
 
 
+def _mock_sync_embeddings_create(**kwargs: object) -> Mock:
+    """Mock for sync OpenAI client embeddings used by EmbeddingService."""
+    input_texts = cast(list[str] | str, kwargs.get("input", []))
+    if isinstance(input_texts, str):
+        input_texts = [input_texts]
+
+    embeddings = []
+    for text in input_texts:
+        # Return embeddings based on text content for differentiation
+        if "dragon" in text.lower():
+            embedding = [0.9] * 1536
+        elif "wizard" in text.lower():
+            embedding = [0.8] * 1536
+        else:
+            embedding = [0.1] * 1536
+        embeddings.append(SimpleNamespace(embedding=embedding))
+    return Mock(data=embeddings)
+
+
 class TestDocumentIsolationSQLite:
     """Test that queries are properly isolated to specific documents."""
-
-    @pytest.fixture
-    def mock_openai(
-        self,
-    ) -> Generator[tuple[AsyncOpenAI, AsyncOpenAI, AsyncOpenAI], None, None]:
-        """Mock OpenAI API calls with specialized embedding rules."""
-        embedding_rules = {
-            "dragon": [0.9] * 1536,
-            "wizard": [0.8] * 1536,
-        }
-        with mock_openai_context(embedding_rules) as mocks:
-            yield mocks
 
     @pytest.mark.asyncio
     async def test_document_isolation(
         self,
         storage_backend: StorageBackend,
-        mock_openai: tuple[AsyncOpenAI, AsyncOpenAI, AsyncOpenAI],
         indexer_runtime_harness: IndexerRuntimeHarness,
         base_config: BackwardCompatibilityConfig,
     ) -> None:
@@ -61,7 +68,6 @@ class TestDocumentIsolationSQLite:
         vector_index = RecordingVectorIndex()
 
         _configure_runtime(indexer_runtime_harness, index_config, vector_index)
-        indexer_runtime_harness.llm_service.client = mock_openai[0]
 
         storage_backend.clear_document("dragons.txt")
         storage_backend.clear_document("wizards.txt")
@@ -82,69 +88,77 @@ class TestDocumentIsolationSQLite:
         doc1_text = "The mighty dragon breathed fire upon the castle. Dragons are powerful creatures."
         doc2_text = "The wise wizard cast a spell. Wizards study magic for many years."
 
+        # Patch the sync OpenAI client used by IndexingEngine for embeddings
+        engine_client = indexer_runtime_harness.indexing_engine._openai_client
         try:
             await indexer_runtime_harness.clear("dragons.txt")
             await indexer_runtime_harness.clear("wizards.txt")
 
-            await indexer_runtime_harness.append(
-                "dragons.txt",
-                doc1_text,
-                replace_existing=True,
-                file_path="dragons.txt",
-            )
-            await indexer_runtime_harness.append(
-                "wizards.txt",
-                doc2_text,
-                replace_existing=True,
-                file_path="wizards.txt",
-            )
-            await indexer_runtime_harness.wait_for_idle()
+            # Use patch.object to mock embeddings on the existing client
+            # Scope must include both indexing AND retrieval since both call embeddings.create
+            with patch.object(
+                engine_client.embeddings, "create", new=_mock_sync_embeddings_create
+            ):
+                await indexer_runtime_harness.append(
+                    "dragons.txt",
+                    doc1_text,
+                    replace_existing=True,
+                    file_path="dragons.txt",
+                    await_idle=True,  # Must wait within mock scope
+                )
+                await indexer_runtime_harness.append(
+                    "wizards.txt",
+                    doc2_text,
+                    replace_existing=True,
+                    file_path="wizards.txt",
+                    await_idle=True,  # Must wait within mock scope
+                )
 
-            retriever1 = create_retriever(
-                query_config,
-                dragons_store,
-                document_id="dragons.txt",
-                api_key="test-key",
-                client=mock_openai[1],
-                vector_index=vector_index,
-            )
-            retriever2 = create_retriever(
-                query_config,
-                wizards_store,
-                document_id="wizards.txt",
-                api_key="test-key",
-                client=mock_openai[1],
-                vector_index=vector_index,
-            )
+                retriever1 = create_retriever(
+                    query_config,
+                    dragons_store,
+                    document_id="dragons.txt",
+                    api_key="test-key",
+                    client=engine_client,
+                    vector_index=vector_index,
+                )
+                retriever2 = create_retriever(
+                    query_config,
+                    wizards_store,
+                    document_id="wizards.txt",
+                    api_key="test-key",
+                    client=engine_client,
+                    vector_index=vector_index,
+                )
 
-            result1 = await retriever1.retrieve_async(
-                "tell me about dragons", document_id="dragons.txt"
-            )
-            for node_id in result1.node_ids:
-                retrieved_node = dragons_store.nodes.get_node(node_id)
-                assert retrieved_node is not None
-                assert retrieved_node.document_id == "dragons.txt"
+                result1 = await retriever1.retrieve_async(
+                    "tell me about dragons", document_id="dragons.txt"
+                )
+                for node_id in result1.node_ids:
+                    retrieved_node = dragons_store.nodes.get_node(node_id)
+                    assert retrieved_node is not None
+                    assert retrieved_node.document_id == "dragons.txt"
 
-            result2 = await retriever2.retrieve_async(
-                "tell me about wizards", document_id="wizards.txt"
-            )
-            for node_id in result2.node_ids:
-                retrieved_node = wizards_store.nodes.get_node(node_id)
-                assert retrieved_node is not None
-                assert retrieved_node.document_id == "wizards.txt"
+                result2 = await retriever2.retrieve_async(
+                    "tell me about wizards", document_id="wizards.txt"
+                )
+                for node_id in result2.node_ids:
+                    retrieved_node = wizards_store.nodes.get_node(node_id)
+                    assert retrieved_node is not None
+                    assert retrieved_node.document_id == "wizards.txt"
 
-            result3 = await retriever2.retrieve_async(
-                "tell me about dragons", document_id="wizards.txt"
-            )
-            for node_id in result3.node_ids:
-                retrieved_node = wizards_store.nodes.get_node(node_id)
-                assert retrieved_node is not None
-                assert retrieved_node.document_id == "wizards.txt"
+                result3 = await retriever2.retrieve_async(
+                    "tell me about dragons", document_id="wizards.txt"
+                )
+                for node_id in result3.node_ids:
+                    retrieved_node = wizards_store.nodes.get_node(node_id)
+                    assert retrieved_node is not None
+                    assert retrieved_node.document_id == "wizards.txt"
 
-            assembler = Assembler(wizards_store)
-            summary = assembler.assemble(result3)
-            assert "wizard" in summary.lower() or "magic" in summary.lower()
-            assert "dragon" not in summary.lower()
+                assembler = Assembler(wizards_store)
+                summary = assembler.assemble(result3)
+                assert "wizard" in summary.lower() or "magic" in summary.lower()
+                assert "dragon" not in summary.lower()
         finally:
             await indexer_runtime_harness.clear("dragons.txt")
             await indexer_runtime_harness.clear("wizards.txt")
@@ -153,7 +167,6 @@ class TestDocumentIsolationSQLite:
     async def test_filename_as_default_document_id(
         self,
         storage_backend: StorageBackend,
-        mock_openai: tuple[AsyncOpenAI, AsyncOpenAI, AsyncOpenAI],
         indexer_runtime_harness: IndexerRuntimeHarness,
         base_config: BackwardCompatibilityConfig,
     ) -> None:
@@ -163,7 +176,6 @@ class TestDocumentIsolationSQLite:
         vector_index = RecordingVectorIndex()
 
         _configure_runtime(indexer_runtime_harness, index_config, vector_index)
-        indexer_runtime_harness.llm_service.client = mock_openai[0]
 
         document_id = "test_file.txt"
         storage_backend.clear_document(document_id)
@@ -176,32 +188,40 @@ class TestDocumentIsolationSQLite:
 
         text = "Test content for filename ID"
 
+        # Patch the sync OpenAI client used by IndexingEngine for embeddings
+        engine_client = indexer_runtime_harness.indexing_engine._openai_client
         try:
             await indexer_runtime_harness.clear(document_id)
-            result = await indexer_runtime_harness.append(
-                document_id,
-                text,
-                replace_existing=True,
-                file_path=document_id,
-            )
-            await indexer_runtime_harness.wait_for_idle(document_id)
 
-            assert result.document_id == document_id
+            # Use patch.object to mock embeddings on the existing client
+            # Scope must include both indexing AND retrieval since both call embeddings.create
+            with patch.object(
+                engine_client.embeddings, "create", new=_mock_sync_embeddings_create
+            ):
+                result = await indexer_runtime_harness.append(
+                    document_id,
+                    text,
+                    replace_existing=True,
+                    file_path=document_id,
+                    await_idle=True,  # Must wait within mock scope
+                )
 
-            retriever = create_retriever(
-                query_config,
-                doc_store,
-                document_id=document_id,
-                api_key="test-key",
-                client=mock_openai[1],
-                vector_index=vector_index,
-            )
+                assert result.document_id == document_id
 
-            retrieval = await retriever.retrieve_async(
-                "show me the content", document_id=document_id
-            )
-            assembler = Assembler(doc_store)
-            summary = assembler.assemble(retrieval)
-            assert "test content" in summary.lower()
+                retriever = create_retriever(
+                    query_config,
+                    doc_store,
+                    document_id=document_id,
+                    api_key="test-key",
+                    client=engine_client,
+                    vector_index=vector_index,
+                )
+
+                retrieval = await retriever.retrieve_async(
+                    "show me the content", document_id=document_id
+                )
+                assembler = Assembler(doc_store)
+                summary = assembler.assemble(retrieval)
+                assert "test content" in summary.lower()
         finally:
             await indexer_runtime_harness.clear(document_id)

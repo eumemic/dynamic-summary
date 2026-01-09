@@ -21,6 +21,7 @@ class TestImplicitRetry:
         self,
         indexer_runtime_harness: IndexerRuntimeHarness,
         storage_backend: StorageBackend,
+        disable_strict_errors: None,  # Retry tests need non-strict mode
     ) -> None:
         """Transient LLM failure should be retried on next scan.
 
@@ -122,6 +123,7 @@ class TestImplicitRetry:
         self,
         indexer_runtime_harness: IndexerRuntimeHarness,
         storage_backend: StorageBackend,
+        disable_strict_errors: None,  # Retry tests need non-strict mode
     ) -> None:
         """Multiple transient failures should all eventually retry and succeed.
 
