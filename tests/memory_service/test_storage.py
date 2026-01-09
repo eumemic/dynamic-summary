@@ -586,6 +586,45 @@ class TestAppendEntries:
         assert cursor.byte_offset == 0
         assert cursor.last_synced_uuid is None
 
+    def test_reset_cursor_truncates_content(self, db_session: Session) -> None:
+        """reset_cursor should truncate jsonl_content to prevent duplication.
+
+        Bug: reset_cursor() sets original_file_offset=0 but didn't truncate
+        jsonl_content. When the next sync runs from offset 0, it appends the
+        full content again, causing duplication.
+
+        This test ensures reset_cursor() truncates content to prevent this.
+        """
+        storage = SessionStorage(db_session, "user1")
+
+        # Initial content (no toolUseResult so it's not stripped)
+        initial_content = b'{"type":"user","uuid":"abc","message":"hello"}\n'
+        storage.append_content("session1", initial_content)
+        db_session.commit()
+
+        # Verify initial state
+        cursor = storage.get_cursor("session1")
+        assert cursor.byte_offset == len(initial_content)
+        assert storage.get_content("session1") == initial_content
+
+        # Reset cursor (simulates admin reset or revert handling)
+        storage.reset_cursor("session1")
+        db_session.commit()
+
+        # Verify cursor is reset
+        cursor = storage.get_cursor("session1")
+        assert cursor.byte_offset == 0
+
+        # Content should be truncated to prevent duplication on next sync
+        assert storage.get_content("session1") == b""
+
+        # Simulate next sync: client reads from offset 0, sends full content
+        storage.append_content("session1", initial_content)
+        db_session.commit()
+
+        # Content should be a single copy, not duplicated
+        assert storage.get_content("session1") == initial_content
+
 
 class TestTranscribeSession:
     """Tests for _transcribe_session handling of memoryview input."""

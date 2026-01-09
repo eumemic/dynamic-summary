@@ -321,8 +321,8 @@ class SessionStorage:
     def reset_cursor(self, session_id: str) -> None:
         """Reset a session's cursor to force full re-sync.
 
-        Clears last_synced_uuid and sets original_file_offset to 0,
-        causing the next sync to re-process the entire transcript.
+        Clears last_synced_uuid, sets original_file_offset to 0, AND truncates
+        jsonl_content to prevent duplication when the next sync appends.
         Also clears append entries to prevent stale entries persisting.
         """
         stmt = select(SessionRawData).where(
@@ -334,6 +334,8 @@ class SessionStorage:
         if row is not None:
             row.last_synced_uuid = None
             row.original_file_offset = 0
+            row.jsonl_content = b""
+            row.span_end = 0
             self._db.flush()
             # Clear append entries to prevent stale entries persisting
             self.clear_append_entries(session_id)
