@@ -111,7 +111,8 @@ def cmd_status(args: argparse.Namespace) -> int:
 
             # Per-document detailed status
             if doc_count > 0:
-                _print_document_status(db)
+                full_validation = getattr(args, "full_validation", False)
+                _print_document_status(db, full_validation=full_validation)
 
         except Exception:
             print("📄 RagZoom tables: Not found or not accessible")
@@ -119,7 +120,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_document_status(db: Session) -> None:
+def _print_document_status(db: Session, *, full_validation: bool = False) -> None:
     """Print detailed status for each document."""
     from ragzoom.config import OperationalConfig
     from ragzoom.store import create_store
@@ -221,7 +222,9 @@ def _print_document_status(db: Session) -> None:
 
         # Validation
         print()
-        _print_validation_status(db, doc_id, total_nodes, leaf_count, store)
+        _print_validation_status(
+            db, doc_id, total_nodes, leaf_count, store, full_validation=full_validation
+        )
 
 
 def _get_root_height_distribution(db: Session, document_id: str) -> dict[int, int]:
@@ -309,6 +312,8 @@ def _print_validation_status(
     total_nodes: int,
     leaf_count: int,
     store: StorageBackend | None,
+    *,
+    full_validation: bool = False,
 ) -> None:
     """Run validation and print results using ragzoom.validation.tree."""
     from ragzoom.validation.tree import validate_document
@@ -318,10 +323,12 @@ def _print_validation_status(
         return
 
     # Run validation (without require_complete since indexing may be in progress)
+    # Use fast=True by default for quick status checks; --full-validation disables fast mode
     report = validate_document(
         document_id=document_id,
         store=store,
         require_complete=False,
+        fast=not full_validation,
     )
 
     # Transcript validation (memory-service specific, not in ragzoom.validation)
@@ -1062,7 +1069,12 @@ def main() -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # status command
-    subparsers.add_parser("status", help="Show memory service status")
+    status_parser = subparsers.add_parser("status", help="Show memory service status")
+    status_parser.add_argument(
+        "--full-validation",
+        action="store_true",
+        help="Run full validation (slower, loads all nodes into memory)",
+    )
 
     # reset command
     reset_parser = subparsers.add_parser(

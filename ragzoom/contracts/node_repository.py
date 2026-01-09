@@ -7,7 +7,7 @@ Implementations include Postgres and SQLite repositories.
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
-from typing import Protocol, TypedDict, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, TypedDict, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -15,6 +15,9 @@ from typing_extensions import Required
 
 # jscpd:ignore-start - Protocol declares signatures mirrored by implementations
 from ragzoom.contracts.tree_node import TreeNode
+
+if TYPE_CHECKING:
+    from ragzoom.validation.types import SQLValidationResult
 
 # Value types that can appear in node data fields
 NodeFieldValue = str | int | float | bool | list[float] | NDArray[np.float64] | None
@@ -275,5 +278,36 @@ class NodeRepository(Protocol):
         Returns:
             Tuple of (total_cost, total_nodes, leaf_nodes, summary_nodes)
             where total_cost is the sum of all node costs (or 0 if no costs recorded).
+        """
+        ...
+
+    # Validation
+    def run_validation_queries(
+        self,
+        document_id: str,
+        *,
+        target_chunk_tokens: int | None = None,
+        chunk_tolerance: float = 0.2,
+    ) -> SQLValidationResult:
+        """Run SQL-based validation checks, returning violations only.
+
+        This performs fast validation by pushing checks to the database:
+        - Metrics aggregations (counts, heights, etc.)
+        - Leaf span gaps
+        - Broken parent/child references
+        - Neighbor backlink consistency
+        - Level neighbor chain validation
+        - Perfect binary tree structure
+        - Node coordinate validation
+        - Parent span union validation
+        - Leaf chunk size bounds
+
+        Args:
+            document_id: Document to validate
+            target_chunk_tokens: Target tokens for leaf size validation (optional)
+            chunk_tolerance: Tolerance for leaf size (default 0.2 = 20%)
+
+        Returns:
+            SQLValidationResult with metrics and any violations found
         """
         ...

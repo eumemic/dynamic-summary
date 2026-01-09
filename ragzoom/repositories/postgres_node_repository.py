@@ -18,6 +18,8 @@ from ragzoom.models import PostgresTreeNode
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+    from ragzoom.validation.types import SQLValidationResult
 from ragzoom.repositories.base_repository import BaseRepository
 from ragzoom.services.cache_manager import CacheManager
 from ragzoom.storage.database_manager import DatabaseManager
@@ -1302,3 +1304,370 @@ class PostgresNodeRepository(BaseRepository):
             summary_nodes = total_nodes - leaf_nodes
 
             return total_cost, total_nodes, leaf_nodes, summary_nodes
+
+    def run_validation_queries(
+        self,
+        document_id: str,
+        *,
+        target_chunk_tokens: int | None = None,
+        chunk_tolerance: float = 0.2,
+    ) -> SQLValidationResult:
+        """Run SQL-based validation checks for PostgreSQL."""
+        from ragzoom.validation.types import (
+            SQLValidationMetrics,
+            SQLValidationResult,
+            SQLViolation,
+        )
+
+        with self.SessionLocal() as session:
+            # 1. Compute metrics
+            metrics_row = session.execute(
+                text(
+                    """
+                    SELECT
+                        COUNT(*) as node_count,
+                        SUM(CASE WHEN height = 0 THEN 1 ELSE 0 END) as leaf_count,
+                        SUM(CASE WHEN parent_id IS NULL THEN 1 ELSE 0 END) as root_count,
+                        MAX(height) as max_height,
+                        SUM(CASE WHEN height = 0 AND embedding IS NOT NULL THEN 1 ELSE 0 END)
+                            as embedded_count
+                    FROM tree_nodes
+                    WHERE document_id = :doc_id
+                """
+                ),
+                {"doc_id": document_id},
+            ).fetchone()
+            # COUNT(*) always returns a row, even for empty tables
+            assert metrics_row is not None, "COUNT(*) should always return a row"
+
+            node_count = int(metrics_row[0] or 0)
+            leaf_count = int(metrics_row[1] or 0)
+            root_count = int(metrics_row[2] or 0)
+            max_height = int(metrics_row[3] or 0)
+            embedded_count = int(metrics_row[4] or 0)
+
+            # 2. Calculate mergeable pairs
+            mergeable_rows = session.execute(
+                text(
+                    """
+                    SELECT height, COUNT(*) as count
+                    FROM tree_nodes
+                    WHERE document_id = :doc_id AND parent_id IS NULL
+                    GROUP BY height
+                """
+                ),
+                {"doc_id": document_id},
+            ).fetchall()
+            height_counts = {int(r[0]): int(r[1]) for r in mergeable_rows}
+            mergeable_pairs = sum(c // 2 for c in height_counts.values())
+
+            metrics = SQLValidationMetrics(
+                node_count=node_count,
+                leaf_count=leaf_count,
+                root_count=root_count,
+                max_height=max_height,
+                embedded_count=embedded_count,
+                mergeable_pairs=mergeable_pairs,
+            )
+
+            result = SQLValidationResult(document_id=document_id, metrics=metrics)
+            result.checks_run = []
+
+            # 3. Empty document check
+            result.empty_document = []
+            result.checks_run.append("empty_document")
+            if node_count == 0:
+                result.empty_document.append(
+                    SQLViolation(
+                        code="tree.empty",
+                        message="Document has no nodes",
+                    )
+                )
+
+            # 4. Leaf span gaps (window function)
+            result.checks_run.append("leaf_gaps")
+            gap_rows = session.execute(
+                text(
+                    """
+                    WITH ordered_leaves AS (
+                        SELECT id, span_start, span_end,
+                               LAG(span_end) OVER (ORDER BY span_start) as prev_end
+                        FROM tree_nodes
+                        WHERE document_id = :doc_id AND height = 0
+                    )
+                    SELECT id, span_start, prev_end
+                    FROM ordered_leaves
+                    WHERE prev_end IS NOT NULL AND span_start != prev_end
+                    LIMIT 10
+                """
+                ),
+                {"doc_id": document_id},
+            ).fetchall()
+            result.leaf_gaps = [
+                SQLViolation(
+                    code="leaf.gap",
+                    message=f"Gap: previous ends at {r[2]}, this starts at {r[1]}",
+                    node_id=str(r[0]),
+                )
+                for r in gap_rows
+            ]
+
+            # 5. Broken parent references (child points to non-existent parent)
+            result.checks_run.append("broken_parent_refs")
+            broken_parent_rows = session.execute(
+                text(
+                    """
+                    SELECT c.id, c.parent_id
+                    FROM tree_nodes c
+                    LEFT JOIN tree_nodes p ON c.parent_id = p.id
+                    WHERE c.document_id = :doc_id
+                      AND c.parent_id IS NOT NULL
+                      AND p.id IS NULL
+                    LIMIT 10
+                """
+                ),
+                {"doc_id": document_id},
+            ).fetchall()
+            result.broken_parent_refs = [
+                SQLViolation(
+                    code="ref.broken_parent",
+                    message=f"Parent {r[1]} does not exist",
+                    node_id=str(r[0]),
+                )
+                for r in broken_parent_rows
+            ]
+
+            # 6. Broken child references (parent points to child that doesn't point back)
+            result.checks_run.append("broken_child_refs")
+            broken_child_rows = session.execute(
+                text(
+                    """
+                    SELECT p.id, p.left_child_id, p.right_child_id
+                    FROM tree_nodes p
+                    WHERE p.document_id = :doc_id
+                      AND (p.left_child_id IS NOT NULL OR p.right_child_id IS NOT NULL)
+                      AND (
+                          (p.left_child_id IS NOT NULL AND NOT EXISTS (
+                              SELECT 1 FROM tree_nodes c
+                              WHERE c.id = p.left_child_id AND c.parent_id = p.id
+                          ))
+                          OR
+                          (p.right_child_id IS NOT NULL AND NOT EXISTS (
+                              SELECT 1 FROM tree_nodes c
+                              WHERE c.id = p.right_child_id AND c.parent_id = p.id
+                          ))
+                      )
+                    LIMIT 10
+                """
+                ),
+                {"doc_id": document_id},
+            ).fetchall()
+            result.broken_child_refs = [
+                SQLViolation(
+                    code="ref.broken_child",
+                    message=f"Child refs ({r[1]}, {r[2]}) don't point back",
+                    node_id=str(r[0]),
+                )
+                for r in broken_child_rows
+            ]
+
+            # 7. Neighbor backlink consistency
+            result.checks_run.append("neighbor_backlinks")
+            neighbor_rows = session.execute(
+                text(
+                    """
+                    SELECT n.id, n.following_neighbor_id, f.preceding_neighbor_id
+                    FROM tree_nodes n
+                    JOIN tree_nodes f ON n.following_neighbor_id = f.id
+                    WHERE n.document_id = :doc_id
+                      AND (f.preceding_neighbor_id IS NULL OR f.preceding_neighbor_id != n.id)
+                    LIMIT 10
+                """
+                ),
+                {"doc_id": document_id},
+            ).fetchall()
+            result.neighbor_backlinks = [
+                SQLViolation(
+                    code="neighbor.backlink",
+                    message=f"Following neighbor {r[1]} has preceding={r[2]}, expected {r[0]}",
+                    node_id=str(r[0]),
+                )
+                for r in neighbor_rows
+            ]
+
+            # 8. Perfect binary tree (both children or neither)
+            result.checks_run.append("perfect_binary_tree")
+            binary_rows = session.execute(
+                text(
+                    """
+                    SELECT id, left_child_id, right_child_id
+                    FROM tree_nodes
+                    WHERE document_id = :doc_id
+                      AND (left_child_id IS NULL) != (right_child_id IS NULL)
+                    LIMIT 10
+                """
+                ),
+                {"doc_id": document_id},
+            ).fetchall()
+            result.perfect_binary_tree = [
+                SQLViolation(
+                    code="tree.not_binary",
+                    message=f"Has left={r[1]}, right={r[2]} (must have both or neither)",
+                    node_id=str(r[0]),
+                )
+                for r in binary_rows
+            ]
+
+            # 9. Node coordinates validation
+            result.checks_run.append("node_coordinates")
+            coord_rows = session.execute(
+                text(
+                    """
+                    SELECT c.id, c.height, c.level_index, p.height as parent_height,
+                           p.level_index as parent_level_index,
+                           p.left_child_id, p.right_child_id
+                    FROM tree_nodes c
+                    JOIN tree_nodes p ON c.parent_id = p.id
+                    WHERE c.document_id = :doc_id
+                      AND (
+                          p.height != c.height + 1
+                          OR (c.id = p.left_child_id AND c.level_index != p.level_index * 2)
+                          OR (c.id = p.right_child_id AND c.level_index != p.level_index * 2 + 1)
+                      )
+                    LIMIT 10
+                """
+                ),
+                {"doc_id": document_id},
+            ).fetchall()
+            result.node_coordinates = [
+                SQLViolation(
+                    code="coord.invalid",
+                    message=(
+                        f"height={r[1]}, level_index={r[2]}, "
+                        f"parent height={r[3]}, parent level_index={r[4]}"
+                    ),
+                    node_id=str(r[0]),
+                )
+                for r in coord_rows
+            ]
+
+            # 10. Parent span union validation
+            result.checks_run.append("parent_span_union")
+            span_rows = session.execute(
+                text(
+                    """
+                    SELECT p.id, p.span_start, p.span_end,
+                           l.span_start as left_start, r.span_end as right_end
+                    FROM tree_nodes p
+                    JOIN tree_nodes l ON p.left_child_id = l.id
+                    JOIN tree_nodes r ON p.right_child_id = r.id
+                    WHERE p.document_id = :doc_id
+                      AND (p.span_start != l.span_start OR p.span_end != r.span_end)
+                    LIMIT 10
+                """
+                ),
+                {"doc_id": document_id},
+            ).fetchall()
+            result.parent_span_union = [
+                SQLViolation(
+                    code="span.union",
+                    message=(
+                        f"Parent span [{r[1]}, {r[2]}) != "
+                        f"children union [{r[3]}, {r[4]})"
+                    ),
+                    node_id=str(r[0]),
+                )
+                for r in span_rows
+            ]
+
+            # 11. Duplicate coordinates check
+            result.checks_run.append("duplicate_coordinates")
+            dup_rows = session.execute(
+                text(
+                    """
+                    SELECT height, level_index, COUNT(*) as cnt
+                    FROM tree_nodes
+                    WHERE document_id = :doc_id
+                    GROUP BY height, level_index
+                    HAVING COUNT(*) > 1
+                    LIMIT 10
+                """
+                ),
+                {"doc_id": document_id},
+            ).fetchall()
+            result.duplicate_coordinates = [
+                SQLViolation(
+                    code="coord.duplicate",
+                    message=f"Duplicate coordinate (height={r[0]}, level_index={r[1]}): {r[2]} nodes",
+                )
+                for r in dup_rows
+            ]
+
+            # 12. Level neighbor chain validation (partial - checks for breaks)
+            result.checks_run.append("level_neighbor_chains")
+            chain_rows = session.execute(
+                text(
+                    """
+                    WITH ordered_at_height AS (
+                        SELECT id, height, level_index, following_neighbor_id,
+                               LEAD(id) OVER (PARTITION BY height ORDER BY level_index) as next_id
+                        FROM tree_nodes
+                        WHERE document_id = :doc_id
+                    )
+                    SELECT id, height, level_index, following_neighbor_id, next_id
+                    FROM ordered_at_height
+                    WHERE next_id IS NOT NULL
+                      AND (following_neighbor_id IS NULL OR following_neighbor_id != next_id)
+                    LIMIT 10
+                """
+                ),
+                {"doc_id": document_id},
+            ).fetchall()
+            result.level_neighbor_chains = [
+                SQLViolation(
+                    code="neighbor.chain_break",
+                    message=(
+                        f"At height {r[1]}, level_index {r[2]}: "
+                        f"following_neighbor={r[3]}, expected {r[4]}"
+                    ),
+                    node_id=str(r[0]),
+                )
+                for r in chain_rows
+            ]
+
+            # 13. Optional: Leaf chunk size validation
+            if target_chunk_tokens is not None:
+                result.checks_run.append("leaf_chunk_size")
+                min_tokens = int(target_chunk_tokens * (1 - chunk_tolerance))
+                max_tokens = int(target_chunk_tokens * (1 + chunk_tolerance))
+                chunk_rows = session.execute(
+                    text(
+                        """
+                        SELECT id, token_count
+                        FROM tree_nodes
+                        WHERE document_id = :doc_id
+                          AND height = 0
+                          AND (token_count < :min_tokens OR token_count > :max_tokens)
+                        LIMIT 10
+                    """
+                    ),
+                    {
+                        "doc_id": document_id,
+                        "min_tokens": min_tokens,
+                        "max_tokens": max_tokens,
+                    },
+                ).fetchall()
+                result.leaf_chunk_size = [
+                    SQLViolation(
+                        code="chunk.size",
+                        message=(
+                            f"Token count {r[1]} outside range "
+                            f"[{min_tokens}, {max_tokens}]"
+                        ),
+                        node_id=str(r[0]),
+                        severity="warning",
+                    )
+                    for r in chunk_rows
+                ]
+
+            return result

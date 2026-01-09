@@ -694,12 +694,21 @@ def telemetry_export(document_id: str, output: str, server_address: str | None) 
         "against stored nodes."
     ),
 )
+@click.option(
+    "--fast",
+    is_flag=True,
+    help=(
+        "Use SQL-only validation for faster results (~7x speedup). "
+        "Skips: preceding_context checks, telemetry consistency, vector index checks."
+    ),
+)
 @click.pass_context
 def validate(
     ctx: click.Context,
     document_id: str,
     complete: bool,
     telemetry_file: str | None,
+    fast: bool,
 ) -> None:
     """Validate invariants for a document tree."""
 
@@ -749,6 +758,7 @@ def validate(
         require_complete=complete,
         target_chunk_tokens=index_config.target_chunk_tokens,
         telemetry=telemetry_payload,
+        fast=fast,
     )
 
     heading = (
