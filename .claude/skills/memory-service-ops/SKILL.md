@@ -13,12 +13,8 @@ Guidance for operating the hosted RagZoom memory service.
 
 ### Which Environment to Check?
 
-Use this decision tree:
-
-1. **On a PR branch touching `memory_service/`?** → Check PR environment first (`--test`)
-2. **On master or non-memory-service branch?** → Check production (default)
-3. **Session not found in your first choice?** → Try the other environment
-4. **Ambiguous?** → Start with PR if developing memory service, otherwise production
+1. **On `master`?** → Use production
+2. **On any other branch?** → Check PR environment first (`--test`), then production if not found
 
 ### Environment Details
 
