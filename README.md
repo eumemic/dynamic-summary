@@ -647,10 +647,6 @@ hotspots over the document without re-embedding anything.
 # - Claude hooks: Runs Python checks on every edit
 ```
 
-## Hosted Service (Railway)
-
-@docs/railway-operations.md
-
 ## License
 
 MIT License - see LICENSE file for details.
