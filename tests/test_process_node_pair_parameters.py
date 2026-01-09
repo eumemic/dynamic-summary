@@ -26,7 +26,8 @@ def _create_mock_sync_openai_client() -> MagicMock:
             input_texts = [input_texts]
         embedding_value = [0.1] * 1536
         return MagicMock(
-            data=[MagicMock(embedding=embedding_value) for _ in input_texts]
+            data=[MagicMock(embedding=embedding_value) for _ in input_texts],
+            usage=MagicMock(total_tokens=len(input_texts) * 100),
         )
 
     mock_client.embeddings.create = sync_mock_embeddings
@@ -45,7 +46,8 @@ def _create_mock_async_openai_client() -> AsyncMock:
             input_texts = [input_texts]
         embedding_value = [0.1] * 1536
         return MagicMock(
-            data=[MagicMock(embedding=embedding_value) for _ in input_texts]
+            data=[MagicMock(embedding=embedding_value) for _ in input_texts],
+            usage=MagicMock(total_tokens=len(input_texts) * 100),
         )
 
     mock_client.embeddings.create = async_mock_embeddings
