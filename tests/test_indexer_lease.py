@@ -12,7 +12,7 @@ Tests validate that the IndexerLease class correctly:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
@@ -168,10 +168,47 @@ class TestIndexerLease:
         await lease1.release()
 
     @pytest.mark.asyncio
-    async def test_steal_expired_lease(
+    async def test_acquire_steals_expired_lease(
         self, lease_engine: Engine, fast_config: LeaseConfig
     ) -> None:
-        """Take over lease after TTL expires."""
+        """Lease can be stolen when previous holder's TTL expires."""
+        # Insert an already-expired lease
+        expired_time = datetime.now(timezone.utc) - timedelta(seconds=10)
+        with lease_engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                INSERT INTO indexer_leases
+                (id, holder_id, acquired_at, last_heartbeat, expires_at)
+                VALUES (1, 'old-holder', :now, :now, :expired)
+            """
+                ),
+                {"now": expired_time, "expired": expired_time},
+            )
+
+        # New lease should steal it
+        lease = IndexerLease(lease_engine, fast_config)
+        acquired = await lease.acquire()
+
+        assert acquired is True
+        assert lease.is_acquired
+
+        # Verify we're now the holder
+        with lease_engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT holder_id FROM indexer_leases WHERE id = 1")
+            )
+            row = result.fetchone()
+            assert row is not None
+            assert row[0] == lease.holder_id
+
+        await lease.release()
+
+    @pytest.mark.asyncio
+    async def test_steal_expired_lease_live(
+        self, lease_engine: Engine, fast_config: LeaseConfig
+    ) -> None:
+        """Take over lease after TTL expires (live wait)."""
         lease1 = IndexerLease(lease_engine, fast_config)
         lease2 = IndexerLease(lease_engine, fast_config)
 
@@ -206,14 +243,14 @@ class TestIndexerLease:
         await lease2.release()
 
     @pytest.mark.asyncio
-    async def test_heartbeat_refreshes_ttl(
+    async def test_heartbeat_extends_ttl(
         self, lease_engine: Engine, fast_config: LeaseConfig
     ) -> None:
-        """Heartbeat updates expires_at."""
+        """Heartbeat updates expires_at to prevent expiration."""
         lease = IndexerLease(lease_engine, fast_config)
         await lease.acquire()
 
-        # Get initial expires_at
+        # Get initial expiration
         with lease_engine.connect() as conn:
             result = conn.execute(
                 text("SELECT expires_at FROM indexer_leases WHERE id = 1")
@@ -223,15 +260,22 @@ class TestIndexerLease:
         # Wait for heartbeat
         await asyncio.sleep(fast_config.heartbeat_interval + 0.1)
 
-        # Check expires_at was updated
+        # Check expiration was extended
         with lease_engine.connect() as conn:
             result = conn.execute(
                 text("SELECT expires_at FROM indexer_leases WHERE id = 1")
             )
             new_expires = result.scalar()
 
-        # SQLite stores as string, so compare as strings or parse
-        assert new_expires != initial_expires, "Heartbeat should update expires_at"
+        # Parse timestamps if needed (SQLite returns strings)
+        if isinstance(initial_expires, str):
+            initial_expires = datetime.fromisoformat(initial_expires)
+        if isinstance(new_expires, str):
+            new_expires = datetime.fromisoformat(new_expires)
+
+        assert initial_expires is not None
+        assert new_expires is not None
+        assert new_expires > initial_expires
 
         await lease.release()
 
@@ -322,20 +366,19 @@ class TestIndexerLease:
         await lease.release()
 
     @pytest.mark.asyncio
-    @pytest.mark.slow_threshold(3.0)  # Allow longer for this test
-    async def test_graceful_handoff(
+    async def test_second_lease_acquires_after_release(
         self, lease_engine: Engine, fast_config: LeaseConfig
     ) -> None:
-        """New instance acquires immediately after graceful release."""
+        """Second lease can acquire after first releases."""
         lease1 = IndexerLease(lease_engine, fast_config)
         lease2 = IndexerLease(lease_engine, fast_config)
 
         await lease1.acquire()
         await lease1.release()
 
-        # Second should acquire immediately (no TTL wait)
         acquired = await lease2.acquire()
         assert acquired is True
+        assert lease2.is_acquired
 
         await lease2.release()
 
@@ -411,7 +454,7 @@ class TestLeaseTableSchema:
 
     def test_singleton_constraint(self, lease_engine: Engine) -> None:
         """Only one row can exist (id must be 1)."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expires = now + timedelta(seconds=60)
 
         with lease_engine.begin() as conn:
@@ -441,7 +484,7 @@ class TestLeaseTableSchema:
 
     def test_check_constraint_id_equals_1(self, lease_engine: Engine) -> None:
         """Cannot insert row with id != 1."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expires = now + timedelta(seconds=60)
 
         with pytest.raises(Exception):  # Check constraint violation

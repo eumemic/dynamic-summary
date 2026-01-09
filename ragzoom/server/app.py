@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,7 +83,6 @@ def build_state(
         store: Pre-created storage backend. If None, one will be created.
         operational_cfg: Pre-created operational config. If None, one will be created.
     """
-
     config_path = Path(options.config_path) if options.config_path else None
     index_cfg = IndexConfig.load(config_path=config_path)
 
@@ -132,8 +132,6 @@ def build_state(
     # Allow env var override for max_parallelism
     max_parallelism = options.max_parallelism
     if max_parallelism is None:
-        import os
-
         env_parallelism = os.environ.get("RAGZOOM_MAX_PARALLELISM")
         if env_parallelism is not None:
             max_parallelism = int(env_parallelism)
@@ -166,8 +164,6 @@ async def _run_with_lease(
     at a time, preventing corruption during deployments where multiple server
     instances may briefly run simultaneously.
     """
-    import os
-
     # Load lease config from environment
     lease_config = LeaseConfig(
         ttl_seconds=float(os.environ.get("RAGZOOM_LEASE_TTL", "60")),
@@ -176,8 +172,7 @@ async def _run_with_lease(
     )
 
     # Get lease from the storage backend
-    lease = store.create_lease()
-    lease._config = lease_config  # Apply config overrides
+    lease = store.create_lease(lease_config)
 
     if not await lease.acquire():
         logger.critical("Failed to acquire indexer lease - exiting")

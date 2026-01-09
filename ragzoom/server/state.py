@@ -64,7 +64,6 @@ class ServerState:
             max_parallelism: Maximum parallel operations.
             store: Pre-created storage backend. If None, one will be created.
         """
-
         index_cfg = index_config or IndexConfig.load()
         query_cfg = query_config or QueryConfig()
         operational_cfg = operational_config or OperationalConfig()

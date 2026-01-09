@@ -23,7 +23,7 @@ import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from sqlalchemy import text
@@ -192,7 +192,7 @@ class IndexerLease:
         Returns:
             True if lease was acquired, False if held by another active instance.
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=self._config.ttl_seconds)
 
         # Lock the row (or nothing if no row exists)
@@ -241,6 +241,9 @@ class IndexerLease:
         # SQLite stores timestamps as strings, PostgreSQL as datetime
         if isinstance(current_expires, str):
             current_expires = datetime.fromisoformat(current_expires)
+        # Ensure timezone-aware comparison (stored times are UTC)
+        if current_expires.tzinfo is None:
+            current_expires = current_expires.replace(tzinfo=timezone.utc)
 
         if current_expires < now:
             # Lease expired - steal it
@@ -283,7 +286,7 @@ class IndexerLease:
                 await asyncio.sleep(self._config.heartbeat_interval)
 
                 with self._engine.begin() as conn:
-                    now = datetime.utcnow()
+                    now = datetime.now(timezone.utc)
                     expires_at = now + timedelta(seconds=self._config.ttl_seconds)
 
                     # SQLite doesn't support RETURNING, use rowcount instead
