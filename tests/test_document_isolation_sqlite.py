@@ -49,7 +49,7 @@ def _mock_sync_embeddings_create(**kwargs: object) -> Mock:
         else:
             embedding = [0.1] * 1536
         embeddings.append(SimpleNamespace(embedding=embedding))
-    return Mock(data=embeddings)
+    return Mock(data=embeddings, usage=Mock(total_tokens=len(input_texts) * 100))
 
 
 class TestDocumentIsolationSQLite:
