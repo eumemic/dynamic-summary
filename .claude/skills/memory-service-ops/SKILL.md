@@ -70,6 +70,7 @@ reset <session-id>        # Full reset: clear tree + vectors + metadata
 reset <session-id> --only-metadata  # Preserve tree, just reset sync cursor
 validate <session-id>     # Validate indexed content matches transcript
 transcribe <session-id>   # Extract text from stored JSONL
+test-sync <jsonl-path>    # Sync transcript to PR env (always uses --test)
 ```
 
 ## Deployment
