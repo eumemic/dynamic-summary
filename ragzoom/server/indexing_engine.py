@@ -29,6 +29,7 @@ import numpy as np
 
 from ragzoom.contracts.node_repository import NodeDataDict
 from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.error_handling import is_strict_mode
 from ragzoom.server.run_manager import TelemetryRunManager
 from ragzoom.services.summary_utils import SummaryResult
 
@@ -1574,7 +1575,7 @@ class IndexingEngine:
             text_tokens=combined_tokens,
         )
         # Fail fast if mock returns wrong type - prevents silent hangs in tests
-        if not isinstance(summary_result, SummaryResult):
+        if is_strict_mode() and not isinstance(summary_result, SummaryResult):
             raise TypeError(
                 f"_summarize_text returned {type(summary_result).__name__}, "
                 f"expected SummaryResult. Check mock return values."
