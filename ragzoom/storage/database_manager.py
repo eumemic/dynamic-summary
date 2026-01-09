@@ -280,18 +280,13 @@ class DatabaseManager:
                     )
                 )
 
-                # Unique constraint to prevent duplicate coordinates from concurrent
-                # indexers. This prevents the TOCTOU race where multiple
-                # IndexingEngine instances (e.g., during Railway rolling deployments)
-                # can both discover the same eligible sibling pair and create
-                # duplicate parent nodes at the same (height, level_index).
-                # NOTE: Will fail if duplicates already exist in the database.
-                # Clean up duplicates first (e.g., reset session and re-sync).
+                # Drop the unique constraint on (document_id, height, level_index).
+                # Single-writer coordination is now enforced by the IndexerLease
+                # mechanism instead (see ragzoom/server/lease.py).
                 conn.execute(
                     text(
                         """
-                    CREATE UNIQUE INDEX IF NOT EXISTS uq_tree_nodes_document_height_level
-                    ON tree_nodes (document_id, height, level_index);
+                    DROP INDEX IF EXISTS uq_tree_nodes_document_height_level;
                 """
                     )
                 )
@@ -552,6 +547,24 @@ class DatabaseManager:
                         """
                     CREATE INDEX IF NOT EXISTS ix_append_entries_session_index
                         ON session_append_entries(session_raw_data_id, entry_index);
+                """
+                    )
+                )
+
+                # Create indexer_leases table for single-writer coordination.
+                # Uses a singleton row pattern (id=1) with TTL-based expiration
+                # to ensure only one IndexingEngine instance can write at a time.
+                # This prevents corruption during Railway blue/green deployments.
+                conn.execute(
+                    text(
+                        """
+                    CREATE TABLE IF NOT EXISTS indexer_leases (
+                        id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                        holder_id VARCHAR(255) NOT NULL,
+                        acquired_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        last_heartbeat TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        expires_at TIMESTAMP NOT NULL
+                    );
                 """
                     )
                 )

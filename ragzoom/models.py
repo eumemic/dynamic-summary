@@ -12,7 +12,6 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -111,16 +110,10 @@ class PostgresTreeNode(TreeNodeColumnsMixin, Base):
         ),
         # Composite index for multi-tenant queries (user + document)
         Index("idx_tree_nodes_user_document", "user_id", "document_id"),
-        # Unique constraint to prevent duplicate coordinates from concurrent indexers.
-        # Without this, multiple IndexingEngine instances (e.g., during Railway
-        # rolling deployments) can both discover the same eligible sibling pair
-        # and create duplicate parent nodes at the same (height, level_index).
-        UniqueConstraint(
-            "document_id",
-            "height",
-            "level_index",
-            name="uq_tree_nodes_document_height_level",
-        ),
+        # Note: The unique constraint on (document_id, height, level_index) was removed.
+        # Single-writer coordination is now enforced by the IndexerLease mechanism
+        # which ensures only one IndexingEngine can write to the database at a time.
+        # See ragzoom/server/lease.py for details.
     )
 
     def is_leaf(self) -> bool:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,8 +16,11 @@ from ragzoom.config import (
     QueryConfig,
 )
 from ragzoom.constants import DEFAULT_GRPC_HOST, DEFAULT_GRPC_PORT
+from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.server.lease import LeaseConfig
 from ragzoom.server.servicers import serve
 from ragzoom.server.state import ServerState
+from ragzoom.store import create_store
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +69,19 @@ def _apply_config_overrides(
     )
 
 
-def build_state(options: ServerOptions) -> ServerState:
-    """Create ServerState using the supplied options."""
+def build_state(
+    options: ServerOptions,
+    *,
+    store: StorageBackend | None = None,
+    operational_cfg: OperationalConfig | None = None,
+) -> ServerState:
+    """Create ServerState using the supplied options.
+
+    Args:
+        options: Server command-line options.
+        store: Pre-created storage backend. If None, one will be created.
+        operational_cfg: Pre-created operational config. If None, one will be created.
+    """
 
     config_path = Path(options.config_path) if options.config_path else None
     index_cfg = IndexConfig.load(config_path=config_path)
@@ -111,7 +126,8 @@ def build_state(options: ServerOptions) -> ServerState:
         )
 
     query_cfg = QueryConfig()
-    operational_cfg = OperationalConfig()
+    if operational_cfg is None:
+        operational_cfg = OperationalConfig()
 
     # Allow env var override for max_parallelism
     max_parallelism = options.max_parallelism
@@ -131,6 +147,7 @@ def build_state(options: ServerOptions) -> ServerState:
             Path(options.telemetry_dir) if options.telemetry_dir is not None else None
         ),
         max_parallelism=max_parallelism,
+        store=store,
     )
 
 
@@ -138,12 +155,60 @@ async def _serve_async(state: ServerState, options: ServerOptions) -> None:
     await serve(state, host=options.host, port=options.port)
 
 
-def run_server(options: ServerOptions) -> None:
-    """Blocking helper used by CLI to start the server."""
+async def _run_with_lease(
+    options: ServerOptions,
+    store: StorageBackend,
+    operational_cfg: OperationalConfig,
+) -> None:
+    """Run server with lease acquisition for single-writer coordination.
 
-    state = build_state(options)
+    The lease mechanism ensures only one IndexingEngine writes to the database
+    at a time, preventing corruption during deployments where multiple server
+    instances may briefly run simultaneously.
+    """
+    import os
+
+    # Load lease config from environment
+    lease_config = LeaseConfig(
+        ttl_seconds=float(os.environ.get("RAGZOOM_LEASE_TTL", "60")),
+        heartbeat_interval=float(os.environ.get("RAGZOOM_LEASE_HEARTBEAT", "15")),
+        acquire_timeout=float(os.environ.get("RAGZOOM_LEASE_TIMEOUT", "90")),
+    )
+
+    # Get lease from the storage backend
+    lease = store.create_lease()
+    lease._config = lease_config  # Apply config overrides
+
+    if not await lease.acquire():
+        logger.critical("Failed to acquire indexer lease - exiting")
+        sys.exit(1)  # Container orchestrator will restart us
 
     try:
-        asyncio.run(_serve_async(state, options))
+        state = build_state(options, store=store, operational_cfg=operational_cfg)
+        await _serve_async(state, options)
+    finally:
+        await lease.release()
+
+
+def run_server(options: ServerOptions) -> None:
+    """Blocking helper used by CLI to start the server.
+
+    Acquires a global lease before starting to ensure only one IndexingEngine
+    writes to the database at a time. This prevents corruption during
+    deployments where old and new containers briefly run simultaneously.
+    """
+    operational_cfg = OperationalConfig()
+
+    # Create store first so we can get a lease from it
+    index_cfg = IndexConfig.load(
+        config_path=Path(options.config_path) if options.config_path else None
+    )
+    store = create_store(operational_cfg, embedding_model=index_cfg.embedding_model)
+
+    logger.info("Acquiring global indexer lease")
+    try:
+        asyncio.run(_run_with_lease(options, store, operational_cfg))
     except KeyboardInterrupt:  # pragma: no cover - CLI convenience
         logger.info("Shutting down RagZoom gRPC server")
+    finally:
+        store.close()

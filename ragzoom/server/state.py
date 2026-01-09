@@ -51,16 +51,28 @@ class ServerState:
         collect_telemetry: bool = False,
         telemetry_dir: Path | None = None,
         max_parallelism: int | None = None,
+        store: StorageBackend | None = None,
     ) -> ServerState:
-        """Instantiate server state using the provided or default configs."""
+        """Instantiate server state using the provided or default configs.
+
+        Args:
+            index_config: Indexing configuration.
+            query_config: Query configuration.
+            operational_config: Operational configuration.
+            collect_telemetry: Whether to collect telemetry.
+            telemetry_dir: Directory for telemetry output.
+            max_parallelism: Maximum parallel operations.
+            store: Pre-created storage backend. If None, one will be created.
+        """
 
         index_cfg = index_config or IndexConfig.load()
         query_cfg = query_config or QueryConfig()
         operational_cfg = operational_config or OperationalConfig()
 
-        store = create_store_with_docker(
-            operational_cfg, embedding_model=index_cfg.embedding_model
-        )
+        if store is None:
+            store = create_store_with_docker(
+                operational_cfg, embedding_model=index_cfg.embedding_model
+            )
         query_log = QueryLog(_resolve_query_log_path(operational_cfg))
         query_service = QueryService(store, query_cfg, operational_cfg, query_log)
         llm_service = LLMService(

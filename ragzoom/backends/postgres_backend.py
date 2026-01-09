@@ -22,6 +22,7 @@ from ragzoom.repositories.document_repository import (
     DocumentRepository as PostgresDocumentRepository,
 )
 from ragzoom.repositories.postgres_node_repository import PostgresNodeRepository
+from ragzoom.server.lease import IndexerLease
 from ragzoom.services.cache_manager import CacheManager
 from ragzoom.services.tree_navigator import TreeNavigator
 from ragzoom.storage.database_manager import DatabaseManager
@@ -153,6 +154,10 @@ class PostgresStorageBackend(StorageBackend):
         return self.doc_repo.get_document_by_path(file_path)
 
     # jscpd:ignore-end
+
+    def create_lease(self) -> IndexerLease:
+        """Create a global indexer lease for single-writer coordination."""
+        return IndexerLease(self.db_manager.engine)
 
     def close(self) -> None:
         self.db_manager.close()
