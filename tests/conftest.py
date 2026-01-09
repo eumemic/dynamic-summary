@@ -47,6 +47,14 @@ from tests.test_builders import DocumentBuilder, TreeNodeBuilder
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# Test Environment Setup
+# =============================================================================
+# Enable strict error mode for tests - makes job failures fatal instead of
+# silently retrying. This catches broken mocks and other test issues faster.
+# =============================================================================
+os.environ["RAGZOOM_STRICT_ERRORS"] = "1"
+
 
 class BackwardCompatibilityConfig:
     """Test configuration that combines the three config types for compatibility."""
@@ -206,6 +214,23 @@ def enable_strict_errors() -> Generator[None, None, None]:
     os.environ["RAGZOOM_STRICT_ERRORS"] = "1"
     yield
     # Don't clean up - let other tests use it
+
+
+@pytest.fixture
+def disable_strict_errors() -> Generator[None, None, None]:
+    """Temporarily disable strict error mode for tests that need production behavior.
+
+    Use this fixture for tests that specifically test retry/recovery behavior
+    which only applies in non-strict (production) mode. In strict mode, errors
+    fail fast instead of being retried.
+    """
+    original = os.environ.get("RAGZOOM_STRICT_ERRORS")
+    os.environ["RAGZOOM_STRICT_ERRORS"] = "0"
+    yield
+    if original is not None:
+        os.environ["RAGZOOM_STRICT_ERRORS"] = original
+    else:
+        os.environ.pop("RAGZOOM_STRICT_ERRORS", None)
 
 
 # Globally disable the tqdm monitor thread in tests (no background thread)
