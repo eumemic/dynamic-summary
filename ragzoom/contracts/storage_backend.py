@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from contextlib import AbstractContextManager
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from ragzoom.document_store import DocumentStore
 from ragzoom.models import Document
+
+if TYPE_CHECKING:
+    from ragzoom.server.lease import IndexerLease, LeaseConfig
 
 
 @runtime_checkable
@@ -14,6 +17,18 @@ class StorageBackend(Protocol):
     def for_document(self, doc_id: str | None) -> DocumentStore: ...
 
     def lock_document(self, doc_id: str | None) -> AbstractContextManager[None]: ...
+
+    def create_lease(self, config: LeaseConfig | None = None) -> IndexerLease:
+        """Create a global indexer lease for single-writer coordination.
+
+        Args:
+            config: Optional lease configuration. Uses defaults if not provided.
+
+        The lease ensures only one IndexingEngine can write to the database
+        at a time, preventing corruption during deployments where multiple
+        server instances may briefly run simultaneously.
+        """
+        ...
 
     def list_documents(self) -> list[Document]: ...
 
