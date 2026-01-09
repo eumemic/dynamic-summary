@@ -17,6 +17,7 @@ The fix wraps all three in a single transaction.
 import pytest
 
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
+from ragzoom.services.summary_utils import AccumulatedUsage, SummaryResult
 
 
 class TestSummaryJobAtomicity:
@@ -582,10 +583,11 @@ class TestSummaryJobIntegration:
         # Create engine with mocked LLM
         mock_llm = MagicMock()
         mock_llm._summarize_text = AsyncMock(
-            return_value=MagicMock(
+            return_value=SummaryResult(
                 summary="Summary of left and right",
+                retry_count=0,
                 summary_tokens=30,
-                usage=MagicMock(
+                usage=AccumulatedUsage(
                     prompt_tokens=100,
                     cached_tokens=0,
                     completion_tokens=30,

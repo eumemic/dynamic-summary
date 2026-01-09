@@ -230,6 +230,8 @@ class TestIndexerLease:
         if isinstance(new_expires, str):
             new_expires = datetime.fromisoformat(new_expires)
 
+        assert initial_expires is not None
+        assert new_expires is not None
         assert new_expires > initial_expires
 
         await lease.release()
