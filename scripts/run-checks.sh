@@ -279,7 +279,7 @@ run_check_background() {
     local check_cmd="$2"
     local output_file="$tmpdir/${check_name}.output"
     local result_file="$tmpdir/${check_name}.result"
-    
+
     # Choose a portable time command
     local TIME_BIN="/usr/bin/time"
     if command -v gtime >/dev/null 2>&1; then
@@ -289,7 +289,7 @@ run_check_background() {
     (
         # Handle SIGTERM gracefully in subshell
         trap 'exit 143' TERM
-        
+
         echo "[$check_name] Starting..." > "$output_file"
         # Measure wall time for the check; append timing to output
         if $TIME_BIN -p bash -lc "$check_cmd" >> "$output_file" 2>&1; then
@@ -309,6 +309,29 @@ run_check_background() {
     local pid=$!
     pids+=("$pid")
     ANY_PIDS=1
+}
+
+# Function to run tests with live output streaming (for CI visibility into hangs)
+run_tests_streaming() {
+    local check_name="$1"
+    local check_cmd="$2"
+    local output_file="$tmpdir/${check_name}.output"
+    local result_file="$tmpdir/${check_name}.result"
+
+    echo "[$check_name] Starting..." | tee "$output_file"
+
+    # Run with tee to both stream to stdout AND capture to file
+    if bash -lc "$check_cmd" 2>&1 | tee -a "$output_file"; then
+        echo 0 > "$result_file"
+        if ! grep -q "✅\|✨" "$output_file"; then
+            echo "[$check_name] ✅ Passed!" | tee -a "$output_file"
+        fi
+    else
+        echo 1 > "$result_file"
+        if ! grep -q "❌\|⚠️" "$output_file"; then
+            echo "[$check_name] ❌ Failed!" | tee -a "$output_file"
+        fi
+    fi
 }
 
 # Start non-test checks in parallel; tests will run after type checking passes
@@ -517,12 +540,29 @@ if [ "$RUN_TESTS" = true ]; then
             dur_flag="--durations=$PYTEST_DURATIONS"
         fi
 
+        # In CI, use verbose mode and stream output to identify hangs
+        # Locally, use quiet mode and buffer output for cleaner display
+        IS_CI=false
+        if [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+            IS_CI=true
+            PYTEST_VERBOSITY="-v"
+        else
+            PYTEST_VERBOSITY="-q"
+        fi
+
+        # Choose runner function: streaming in CI for hang visibility, background locally
+        if [ "$IS_CI" = true ]; then
+            run_tests_fn="run_tests_streaming"
+        else
+            run_tests_fn="run_check_background"
+        fi
+
         if [ -n "$PER_TEST_TIMEOUT" ]; then
             runner_cmd="python $GIT_ROOT/scripts/run_tests_with_timeouts.py --per-test-seconds $PER_TEST_TIMEOUT"
             if [ "$INCLUDE_INTEGRATION" = true ] || [ "$TEST_SCOPE" = "all" ]; then
                 runner_cmd="$runner_cmd --include-integration"
             fi
-            run_check_background "Tests" "$runner_cmd"
+            $run_tests_fn "Tests" "$runner_cmd"
         elif [ "$IMPACTED_ONLY" = true ]; then
             impacted="$(python "$GIT_ROOT/scripts/find-impacted-tests.py" ${IMPACTED_FILES[@]} || true)"
             if [ -n "$impacted" ]; then
@@ -537,13 +577,13 @@ if [ "$RUN_TESTS" = true ]; then
                 fi
                 # Wrap pytest to treat exit code 5 (no tests collected) as success
                 # This happens when impacted files have no matching tests after marker filtering
-                run_check_background "Tests" "pytest $impacted -q --tb=short -m '$impacted_marker' -n \${PYTEST_XDIST_WORKERS:-8} --dist=worksteal --no-header --max-test-duration \${RZ_MAX_TEST_DURATION} \${dur_flag}; ret=\$?; if [ \$ret -eq 5 ]; then echo '[Tests] ✅ Passed (no matching tests)'; exit 0; else exit \$ret; fi"
+                $run_tests_fn "Tests" "pytest $impacted $PYTEST_VERBOSITY --tb=short -m '$impacted_marker' -n \${PYTEST_XDIST_WORKERS:-8} --dist=worksteal --no-header --max-test-duration \${RZ_MAX_TEST_DURATION} \${dur_flag}; ret=\$?; if [ \$ret -eq 5 ]; then echo '[Tests] ✅ Passed (no matching tests)'; exit 0; else exit \$ret; fi"
             else
                 echo "[Tests] Skipped (no impacted tests)" > "$tmpdir/Tests.output"
                 echo 0 > "$tmpdir/Tests.result"
             fi
         else
-            run_check_background "Tests" "pytest tests/ -q --tb=short -m '$marker_expr' -n \${PYTEST_XDIST_WORKERS:-8} --dist=worksteal --no-header --max-test-duration \${RZ_MAX_TEST_DURATION} \${dur_flag}"
+            $run_tests_fn "Tests" "pytest tests/ $PYTEST_VERBOSITY --tb=short -m '$marker_expr' -n \${PYTEST_XDIST_WORKERS:-8} --dist=worksteal --no-header --max-test-duration \${RZ_MAX_TEST_DURATION} \${dur_flag}"
         fi
     else
         echo "[Tests] Skipped (pytest not installed)" > "$tmpdir/Tests.output"
