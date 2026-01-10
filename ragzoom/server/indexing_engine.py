@@ -438,16 +438,27 @@ class IndexingEngine:
         async with self._lock:
             self._document_contexts.pop(document_id, None)
 
-    async def wait_until_idle(self, document_id: str | None = None) -> None:
+    async def wait_until_idle(
+        self, document_id: str | None = None, timeout: float | None = None
+    ) -> None:
         """Wait until all work is complete.
 
         Args:
             document_id: If provided, wait only for this document.
                         If None, wait for all documents.
+            timeout: Maximum seconds to wait. If None, uses RAGZOOM_WAIT_IDLE_TIMEOUT
+                    env var (default 60.0). Set to 0 or negative to wait forever.
 
         Raises:
+            TimeoutError: If timeout is exceeded while waiting.
             Exception: Re-raises any fatal exception from background jobs in strict mode.
         """
+        if timeout is None:
+            timeout = float(os.environ.get("RAGZOOM_WAIT_IDLE_TIMEOUT", "60.0"))
+
+        start_time = time.monotonic()
+        use_timeout = timeout > 0
+
         while True:
             # Check for fatal exception from background jobs (strict mode)
             if self._fatal_exception is not None:
@@ -469,8 +480,26 @@ class IndexingEngine:
                 # Clear event before waiting so we can detect new signals
                 self._idle_event.clear()
 
+            # Calculate remaining time for this wait iteration
+            if use_timeout:
+                elapsed = time.monotonic() - start_time
+                remaining = timeout - elapsed
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"wait_until_idle timed out after {timeout}s waiting for "
+                        f"document_id={document_id!r}"
+                    )
+            else:
+                remaining = None
+
             # Wait for state change signal (job completion or no more work)
-            await self._idle_event.wait()
+            try:
+                await asyncio.wait_for(self._idle_event.wait(), timeout=remaining)
+            except asyncio.TimeoutError:
+                raise TimeoutError(
+                    f"wait_until_idle timed out after {timeout}s waiting for "
+                    f"document_id={document_id!r}"
+                ) from None
 
     async def status(self) -> IndexingStatus:
         """Get current indexing activity snapshot.
