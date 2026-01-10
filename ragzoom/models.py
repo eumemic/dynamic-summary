@@ -1,7 +1,7 @@
 """SQLAlchemy models for RagZoom (storage only; no embeddings)."""
 
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     DateTime,
@@ -60,7 +60,9 @@ class PostgresTreeNode(TreeNodeColumnsMixin, Base):
         String, ForeignKey("tree_nodes.id"), nullable=True
     )
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
     document_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("documents.id"), nullable=True
     )
@@ -143,7 +145,9 @@ class Document(Base):
     file_path: Mapped[str | None] = mapped_column(
         String, nullable=True, unique=True
     )  # Path to the source file
-    indexed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    indexed_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
     embedding_model: Mapped[str] = mapped_column(String, nullable=False)
     summary_model: Mapped[str] = mapped_column(String, nullable=False)
 
@@ -163,4 +167,6 @@ class User(Base):
     api_key: Mapped[str] = mapped_column(
         String, nullable=False, unique=True, index=True, default=generate_api_key
     )  # API key for authentication
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )

@@ -161,7 +161,7 @@ class TestLeaseIntegration:
     ) -> None:
         """Server can acquire when there's an already-expired lease in DB."""
         # Pre-populate with an expired lease from a "crashed" server
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expired_time = now - timedelta(seconds=10)  # Long expired
 
         with integration_engine.begin() as conn:

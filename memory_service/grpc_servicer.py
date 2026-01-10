@@ -27,12 +27,16 @@ logger = logging.getLogger(__name__)
 def _session_lock_id(user_id: str, session_id: str) -> int:
     """Generate a stable lock ID for a user/session pair.
 
-    Uses hash to convert string IDs to a 32-bit integer for pg_advisory_lock.
+    Uses SHA-256 hash to convert string IDs to a 64-bit signed integer
+    for pg_advisory_lock, matching the pattern in postgres_backend.py.
     """
     key = f"{user_id}:{session_id}"
-    # Use first 8 hex chars (32 bits) of MD5 hash
-    hash_hex = hashlib.md5(key.encode(), usedforsecurity=False).hexdigest()[:8]
-    return int(hash_hex, 16)
+    digest = hashlib.sha256(key.encode("utf-8")).digest()
+    lock_key = int.from_bytes(digest[:8], "big", signed=False)
+    # Convert to signed 64-bit integer (PostgreSQL bigint is signed)
+    if lock_key >= 2**63:
+        lock_key = lock_key - 2**64
+    return lock_key
 
 
 async def _validate_request(
@@ -415,7 +419,16 @@ class SessionIngestionServicer(pb2_grpc.SessionIngestionServiceServicer):
 
 
 def _get_user_id_from_context(context: pb2_grpc.ServicerContext) -> str | None:
-    """Extract user_id from gRPC context metadata."""
+    """Extract user_id from gRPC context metadata.
+
+    This is a trusted passthrough pattern: the user_id is set by the API gateway
+    after validating the user's API key. It differs from ragzoom.server.auth.py
+    which validates API keys directly against the database.
+
+    The two patterns serve different use cases:
+    - This function: gRPC services behind an authenticating gateway (Claude Code)
+    - auth.py: Direct API access requiring database lookup for key validation
+    """
     metadata = context.invocation_metadata()
     if metadata is None:
         return None

@@ -42,7 +42,7 @@ class SQLiteTreeNode(TreeNodeColumnsMixin, SqliteBase):
     parent_id: Mapped[str | None] = mapped_column(String, nullable=True)
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[dt.datetime] = mapped_column(
-        DateTime, default=dt.datetime.utcnow
+        DateTime, default=lambda: dt.datetime.now(dt.timezone.utc)
     )
     document_id: Mapped[str | None] = mapped_column(String, nullable=True)
     preceding_neighbor_id: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -71,7 +71,7 @@ class SqliteDocument(SqliteBase):
     user_id: Mapped[str | None] = mapped_column(String, nullable=True)
     file_path: Mapped[str | None] = mapped_column(String, nullable=True)
     indexed_at: Mapped[dt.datetime] = mapped_column(
-        DateTime, default=dt.datetime.utcnow
+        DateTime, default=lambda: dt.datetime.now(dt.timezone.utc)
     )
     embedding_model: Mapped[str] = mapped_column(String, nullable=False)
     summary_model: Mapped[str] = mapped_column(String, nullable=False)
