@@ -9,7 +9,7 @@ These tests verify lease behavior in more realistic scenarios:
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -220,7 +220,7 @@ class TestLeaseIntegration:
                 expires_at = datetime.fromisoformat(expires_str)
             else:
                 expires_at = expires_str
-            assert expires_at > datetime.utcnow()
+            assert expires_at > datetime.now(timezone.utc)
 
         await server.release()
 
