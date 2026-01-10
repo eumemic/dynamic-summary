@@ -291,7 +291,7 @@ class TestDocumentAPISQLite:
                 "document_id": "test-operations",
                 "token_count": 3,
                 "height": 0,
-                "level_index": 0,
+                "level_index": 1,
             },
         ]
         store.nodes.add_batch(nodes)

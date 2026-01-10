@@ -38,10 +38,11 @@ class SQLiteTreeNode(TreeNodeColumnsMixin, SqliteBase):
     __tablename__ = "tree_nodes"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(String, nullable=True)
     parent_id: Mapped[str | None] = mapped_column(String, nullable=True)
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[dt.datetime] = mapped_column(
-        DateTime, default=dt.datetime.utcnow
+        DateTime, default=lambda: dt.datetime.now(dt.timezone.utc)
     )
     document_id: Mapped[str | None] = mapped_column(String, nullable=True)
     preceding_neighbor_id: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -67,9 +68,10 @@ class SqliteDocument(SqliteBase):
     __tablename__ = "documents"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(String, nullable=True)
     file_path: Mapped[str | None] = mapped_column(String, nullable=True)
     indexed_at: Mapped[dt.datetime] = mapped_column(
-        DateTime, default=dt.datetime.utcnow
+        DateTime, default=lambda: dt.datetime.now(dt.timezone.utc)
     )
     embedding_model: Mapped[str] = mapped_column(String, nullable=False)
     summary_model: Mapped[str] = mapped_column(String, nullable=False)
@@ -133,6 +135,13 @@ class SqliteDatabaseManager:
                     )
                 except Exception:
                     pass
+                # Unique constraint to prevent duplicate coordinates from concurrent indexers
+                try:
+                    conn.exec_driver_sql(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS uq_tree_nodes_document_height_level ON tree_nodes (document_id, height, level_index)"
+                    )
+                except Exception:
+                    pass
                 # Add contextual indexing columns for issue #287
                 try:
                     conn.exec_driver_sql(
@@ -156,6 +165,56 @@ class SqliteDatabaseManager:
                 # Add cost column for issue #310
                 try:
                     conn.exec_driver_sql("ALTER TABLE tree_nodes ADD COLUMN cost REAL")
+                except Exception:
+                    pass
+                # Add user_id columns for multi-tenancy
+                try:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE tree_nodes ADD COLUMN user_id TEXT"
+                    )
+                except Exception:
+                    pass
+                try:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE documents ADD COLUMN user_id TEXT"
+                    )
+                except Exception:
+                    pass
+                try:
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS idx_tree_nodes_user_id ON tree_nodes (user_id)"
+                    )
+                except Exception:
+                    pass
+                try:
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS idx_documents_user_id ON documents (user_id)"
+                    )
+                except Exception:
+                    pass
+                # Create users table for auth
+                try:
+                    conn.exec_driver_sql(
+                        """CREATE TABLE IF NOT EXISTS users (
+                            id TEXT PRIMARY KEY,
+                            github_id TEXT UNIQUE,
+                            email TEXT,
+                            api_key TEXT NOT NULL UNIQUE,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )"""
+                    )
+                except Exception:
+                    pass
+                try:
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS idx_users_api_key ON users (api_key)"
+                    )
+                except Exception:
+                    pass
+                try:
+                    conn.exec_driver_sql(
+                        "CREATE INDEX IF NOT EXISTS idx_users_github_id ON users (github_id)"
+                    )
                 except Exception:
                     pass
                 # Create indexer_leases table for single-writer coordination.

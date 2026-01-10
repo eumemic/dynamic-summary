@@ -1,10 +1,11 @@
 # Build stage for the RagZoom gRPC server
 FROM python:3.11-slim AS base
 
-# Install system dependencies
+# Install system dependencies (including libpq for psycopg)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     git \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set workdir and copy only dependency manifests first (speed up build caching)
@@ -24,17 +25,19 @@ RUN pip install protobuf
 # Copy the rest of the repository
 COPY . .
 
-# Install project (and chroma extras for default vector backend) in editable mode
-RUN pip install -e '.[chroma]'
+# Install project (postgres and chroma are already in lockfile)
+RUN pip install -e '.[chroma,postgres]'
 
-# Default environment vars
-ENV RAGZOOM_DATABASE_URL=sqlite:////data/sqlite.db \
-    PYTHONUNBUFFERED=1
+# Default environment vars (Railway will override DATABASE_URL)
+ENV PYTHONUNBUFFERED=1 \
+    RAGZOOM_BACKEND=postgres
 
 # Create data dir (will be mounted as volume at runtime)
 RUN mkdir -p /data
 
-# Expose gRPC port via environment to compose
+# Expose gRPC port (Railway overrides via PORT env var)
 EXPOSE 50051
 
-CMD ["python", "-m", "ragzoom.cli", "server", "start", "--host", "0.0.0.0", "--port", "50051", "--collect-telemetry"]
+# Use shell form to expand PORT env var (Railway sets this dynamically)
+CMD python -m ragzoom.cli server start --host 0.0.0.0 --port ${PORT:-50051} --collect-telemetry
+

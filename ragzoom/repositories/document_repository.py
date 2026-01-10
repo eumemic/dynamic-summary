@@ -195,9 +195,41 @@ class DocumentRepository(BaseRepository):
         with self._session_scope(session) as db_session:
             from sqlalchemy import text
 
-            # Delete nodes whose span extends beyond the truncation point
+            # Step 1: NULL out parent_id on kept children whose parents will be deleted.
+            # This prevents FK violations where children point to deleted parents.
+            # A kept child (span_end <= span_start) may have a parent that spans
+            # beyond the truncation point (parent.span_end > span_start).
+            db_session.execute(
+                text(
+                    "UPDATE tree_nodes SET parent_id = NULL "
+                    "WHERE document_id = :document_id "
+                    "AND span_end <= :span_start "
+                    "AND parent_id IN ("
+                    "    SELECT id FROM tree_nodes "
+                    "    WHERE document_id = :document_id AND span_end > :span_start"
+                    ")"
+                ),
+                {"document_id": document_id, "span_start": span_start},
+            )
+
+            # Step 2: NULL out following_neighbor_id on kept nodes whose neighbors
+            # will be deleted. This prevents dangling neighbor references.
+            db_session.execute(
+                text(
+                    "UPDATE tree_nodes SET following_neighbor_id = NULL "
+                    "WHERE document_id = :document_id "
+                    "AND span_end <= :span_start "
+                    "AND following_neighbor_id IN ("
+                    "    SELECT id FROM tree_nodes "
+                    "    WHERE document_id = :document_id AND span_end > :span_start"
+                    ")"
+                ),
+                {"document_id": document_id, "span_start": span_start},
+            )
+
+            # Step 3: Delete nodes whose span extends beyond the truncation point.
             # This catches both leaves starting after the point AND internal
-            # nodes that summarize content beyond the point
+            # nodes that summarize content beyond the point.
             result = db_session.execute(
                 text(
                     "DELETE FROM tree_nodes "

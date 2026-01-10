@@ -52,6 +52,7 @@ def _mock_sync_embeddings_create(**kwargs: object) -> Mock:
     return Mock(data=embeddings, usage=Mock(total_tokens=len(input_texts) * 100))
 
 
+@pytest.mark.slow_threshold(10.0)
 class TestDocumentIsolationSQLite:
     """Test that queries are properly isolated to specific documents."""
 

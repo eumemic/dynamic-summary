@@ -22,6 +22,7 @@ from ragzoom.services.tree_navigator import TreeNavigator
 
 if TYPE_CHECKING:
     from ragzoom.models import Document
+    from ragzoom.validation.types import SQLValidationResult
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +303,12 @@ class DocumentNodeRepository:
             return int(counter(self.document_id))
         return len(self.get_leaves())
 
+    def count_leaves_with_embeddings(self) -> int:
+        """Get count of leaf nodes that have embeddings for this document."""
+        if not self.document_id:
+            return 0
+        return self._repo.count_leaves_with_embeddings_for_document(self.document_id)
+
     def max_height(self) -> int:
         """Get maximum height for nodes in this document efficiently."""
         getter = getattr(self._repo, "max_height_for_document", None)
@@ -435,6 +442,33 @@ class DocumentNodeRepository:
             )
         result = getter(target_doc)
         return float(result) if result is not None else None
+
+    def run_validation_queries(
+        self,
+        document_id: str | None = None,
+        *,
+        target_chunk_tokens: int | None = None,
+        chunk_tolerance: float = 0.2,
+    ) -> "SQLValidationResult":
+        """Run SQL-based validation checks for this document.
+
+        Args:
+            document_id: Document to validate (defaults to this repository's document_id)
+            target_chunk_tokens: Target token count for leaf chunks (for size validation)
+            chunk_tolerance: Tolerance for chunk size validation (default 0.2 = 20%)
+
+        Returns:
+            SQLValidationResult with metrics and any violations found
+        """
+
+        target_doc = document_id or self.document_id
+        if target_doc is None:
+            raise ValueError("document_id is required for validation queries")
+        return self._repo.run_validation_queries(
+            target_doc,
+            target_chunk_tokens=target_chunk_tokens,
+            chunk_tolerance=chunk_tolerance,
+        )
 
     # jscpd:ignore-end
 

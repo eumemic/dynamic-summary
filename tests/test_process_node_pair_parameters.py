@@ -16,6 +16,8 @@ from tests.vector_index_stubs import RecordingVectorIndex
 
 def _create_mock_sync_openai_client() -> MagicMock:
     """Create a mock sync OpenAI client for IndexingEngine's retriever."""
+    from types import SimpleNamespace
+
     mock_client = MagicMock()
 
     def sync_mock_embeddings(*args: object, **kwargs: object) -> object:
@@ -25,9 +27,12 @@ def _create_mock_sync_openai_client() -> MagicMock:
         if isinstance(input_texts, str):
             input_texts = [input_texts]
         embedding_value = [0.1] * 1536
+        num_items = len(input_texts)
         return MagicMock(
             data=[MagicMock(embedding=embedding_value) for _ in input_texts],
-            usage=MagicMock(total_tokens=len(input_texts) * 100),
+            usage=SimpleNamespace(
+                prompt_tokens=num_items * 10, total_tokens=num_items * 10
+            ),
         )
 
     mock_client.embeddings.create = sync_mock_embeddings
@@ -36,6 +41,8 @@ def _create_mock_sync_openai_client() -> MagicMock:
 
 def _create_mock_async_openai_client() -> AsyncMock:
     """Create a mock async OpenAI client for IndexingEngine's retriever."""
+    from types import SimpleNamespace
+
     mock_client = AsyncMock()
 
     async def async_mock_embeddings(*args: object, **kwargs: object) -> object:
@@ -45,9 +52,12 @@ def _create_mock_async_openai_client() -> AsyncMock:
         if isinstance(input_texts, str):
             input_texts = [input_texts]
         embedding_value = [0.1] * 1536
+        num_items = len(input_texts)
         return MagicMock(
             data=[MagicMock(embedding=embedding_value) for _ in input_texts],
-            usage=MagicMock(total_tokens=len(input_texts) * 100),
+            usage=SimpleNamespace(
+                prompt_tokens=num_items * 10, total_tokens=num_items * 10
+            ),
         )
 
     mock_client.embeddings.create = async_mock_embeddings
@@ -103,7 +113,7 @@ async def test_worker_coordinator_passes_token_counts(
             summary="summary",
             retry_count=0,
             summary_tokens=100,
-            usage=AccumulatedUsage(),
+            usage=AccumulatedUsage(prompt_tokens=50, completion_tokens=100),
         )
     )
 
@@ -174,7 +184,7 @@ async def test_prev_context_present_when_preceding_neighbor_exists(
             summary="summary",
             retry_count=0,
             summary_tokens=80,
-            usage=AccumulatedUsage(),
+            usage=AccumulatedUsage(prompt_tokens=50, completion_tokens=80),
         )
     )
 

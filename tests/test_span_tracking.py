@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ragzoom.claude_memory.transcript_sync import (
+from memory_service.ingestion.claude.transcript_sync import (
     AppendEntry,
     SessionState,
     SessionStateHeader,
@@ -376,7 +376,7 @@ class TestCompactionSegmentBridging:
 
     def test_streaming_bridges_compaction_boundary(self, tmp_path: Path) -> None:
         """Streaming should connect post-compaction messages to pre-compaction chain."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             stream_find_common_ancestor_and_records,
         )
 
@@ -494,7 +494,7 @@ class TestCompactionSegmentBridging:
 
     def test_ancestor_chain_spans_multiple_compactions(self, tmp_path: Path) -> None:
         """With multiple compactions, ancestor chain should span all of them."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             get_ancestor_chain,
             stream_find_common_ancestor_and_records,
         )

@@ -12,10 +12,18 @@ from .dynamic_summary_pb2 import (
     BatchAppendTextResponse,
     ExecuteQueryRequest,
     ExecuteQueryResponse,
+    GetCompactionBoundaryRequest,
+    GetCompactionBoundaryResponse,
     GetDocumentRequest,
     GetDocumentResponse,
+    GetSessionCursorRequest,
+    GetSessionCursorResponse,
     IndexDocumentRequest,
     IndexDocumentResponse,
+    IngestSessionRequest,
+    IngestSessionResponse,
+    ResetSessionCursorRequest,
+    ResetSessionCursorResponse,
     RetrieveRequest,
     RetrieveResponse,
     RunWorkersRequest,
@@ -28,6 +36,7 @@ Channel = object
 Server = object
 
 class ServicerContext(Protocol):
+    def invocation_metadata(self) -> list[tuple[str, str]] | None: ...
     async def abort(self, code: object, details: str) -> NoReturn: ...
 
 class IndexerServiceStub:
@@ -63,6 +72,33 @@ class WorkerServiceStub:
         self, request: GetDocumentRequest, timeout: float | None = ...
     ) -> GetDocumentResponse: ...
 
+class SessionIngestionServiceStub:
+    def __init__(self, channel: Channel) -> None: ...
+    def GetSessionCursor(
+        self,
+        request: GetSessionCursorRequest,
+        timeout: float | None = ...,
+        metadata: list[tuple[str, str]] | None = ...,
+    ) -> GetSessionCursorResponse: ...
+    def IngestSession(
+        self,
+        request: IngestSessionRequest,
+        timeout: float | None = ...,
+        metadata: list[tuple[str, str]] | None = ...,
+    ) -> IngestSessionResponse: ...
+    def GetCompactionBoundary(
+        self,
+        request: GetCompactionBoundaryRequest,
+        timeout: float | None = ...,
+        metadata: list[tuple[str, str]] | None = ...,
+    ) -> GetCompactionBoundaryResponse: ...
+    def ResetSessionCursor(
+        self,
+        request: ResetSessionCursorRequest,
+        timeout: float | None = ...,
+        metadata: list[tuple[str, str]] | None = ...,
+    ) -> ResetSessionCursorResponse: ...
+
 class IndexerServiceServicer:
     def IndexDocument(
         self, request: IndexDocumentRequest, context: ServicerContext
@@ -93,8 +129,25 @@ class WorkerServiceServicer:
         self, request: GetDocumentRequest, context: ServicerContext
     ) -> Awaitable[GetDocumentResponse]: ...
 
+class SessionIngestionServiceServicer:
+    def GetSessionCursor(
+        self, request: GetSessionCursorRequest, context: ServicerContext
+    ) -> Awaitable[GetSessionCursorResponse]: ...
+    def IngestSession(
+        self, request: IngestSessionRequest, context: ServicerContext
+    ) -> Awaitable[IngestSessionResponse]: ...
+    def GetCompactionBoundary(
+        self, request: GetCompactionBoundaryRequest, context: ServicerContext
+    ) -> Awaitable[GetCompactionBoundaryResponse]: ...
+    def ResetSessionCursor(
+        self, request: ResetSessionCursorRequest, context: ServicerContext
+    ) -> Awaitable[ResetSessionCursorResponse]: ...
+
 add_IndexerServiceServicer_to_server: Callable[[IndexerServiceServicer, Server], None]
 add_RetrievalServiceServicer_to_server: Callable[
     [RetrievalServiceServicer, Server], None
 ]
 add_WorkerServiceServicer_to_server: Callable[[WorkerServiceServicer, Server], None]
+add_SessionIngestionServiceServicer_to_server: Callable[
+    [SessionIngestionServiceServicer, Server], None
+]

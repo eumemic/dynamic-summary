@@ -1,6 +1,6 @@
 """Tests for SQLAlchemy models and database schema validation."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine
@@ -154,7 +154,7 @@ class TestModelIntegration:
     def test_datetime_fields(self) -> None:
         """Test that datetime fields work correctly."""
         # Test that datetime fields accept datetime objects
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         node = TreeNode(
             id="test_node",

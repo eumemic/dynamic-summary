@@ -1,13 +1,10 @@
-"""JSONL file reader with support for reverse streaming."""
+"""JSONL reader with support for reverse streaming from files and bytes."""
 
 from __future__ import annotations
 
 import json
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TypeVar
-
-T = TypeVar("T")
 
 
 def iter_jsonl(
@@ -83,3 +80,29 @@ def iter_jsonl_reversed(
             line_str = buffer.decode("utf-8").strip()
             if line_str:
                 yield json.loads(line_str)
+
+
+def iter_jsonl_bytes_reversed(
+    content: bytes,
+) -> Iterator[dict[str, object]]:
+    """Iterate over JSONL records from bytes in reverse order.
+
+    Parses the bytes and yields JSON objects from last line to first.
+    This is the in-memory equivalent of iter_jsonl_reversed for file paths.
+
+    Args:
+        content: JSONL content as bytes (newline-delimited JSON records).
+
+    Yields:
+        Parsed JSON objects, from last record to first.
+    """
+    if not content:
+        return
+
+    # Split into lines and iterate in reverse
+    lines = content.split(b"\n")
+
+    for line in reversed(lines):
+        line_str = line.decode("utf-8").strip()
+        if line_str:
+            yield json.loads(line_str)

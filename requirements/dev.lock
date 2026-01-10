@@ -4,8 +4,8 @@
 #
 #    pip-compile --output-file=requirements/dev.lock requirements/dev.in
 #
--e .[chroma]
-    # via -[chroma]
+-e .[chroma,postgres]
+    # via -[chroma,postgres]
 aiohappyeyeballs==2.6.1
     # via aiohttp
 aiohttp==3.12.15
@@ -17,7 +17,9 @@ annotated-types==0.7.0
 anyio==4.10.0
     # via
     #   httpx
+    #   mcp
     #   openai
+    #   sse-starlette
     #   starlette
     #   watchfiles
 attrs==25.3.0
@@ -43,6 +45,8 @@ certifi==2025.8.3
     #   httpx
     #   kubernetes
     #   requests
+cffi==2.0.0
+    # via cryptography
 cfgv==3.4.0
     # via pre-commit
 charset-normalizer==3.4.3
@@ -61,6 +65,8 @@ contourpy==1.3.3
     # via matplotlib
 coverage[toml]==7.10.6
     # via pytest-cov
+cryptography==46.0.3
+    # via pyjwt
 cycler==0.12.1
     # via matplotlib
 dataclasses-json==0.6.7
@@ -119,10 +125,13 @@ httpx==0.28.1
     # via
     #   chromadb
     #   langsmith
+    #   mcp
     #   openai
     #   ragzoom
 httpx-sse==0.4.1
-    # via langchain-community
+    # via
+    #   langchain-community
+    #   mcp
 huggingface-hub==0.34.5
     # via tokenizers
 humanfriendly==10.0
@@ -148,7 +157,9 @@ jsonpatch==1.33
 jsonpointer==3.0.0
     # via jsonpatch
 jsonschema==4.25.1
-    # via chromadb
+    # via
+    #   chromadb
+    #   mcp
 jsonschema-specifications==2025.9.1
     # via jsonschema
 kiwisolver==1.4.9
@@ -179,6 +190,8 @@ marshmallow==3.26.1
     # via dataclasses-json
 matplotlib==3.10.6
     # via types-seaborn
+mcp==1.25.0
+    # via ragzoom
 mdurl==0.1.2
     # via markdown-it-py
 mmh3==5.2.0
@@ -206,6 +219,7 @@ numpy==2.3.2
     #   matplotlib
     #   onnxruntime
     #   pandas-stubs
+    #   pgvector
     #   ragzoom
     #   types-seaborn
 oauthlib==3.3.1
@@ -261,6 +275,8 @@ pathspec==0.12.1
     # via
     #   black
     #   mypy
+pgvector==0.4.1
+    # via ragzoom
 pillow==11.3.0
     # via matplotlib
 platformdirs==4.4.0
@@ -289,6 +305,10 @@ psutil==7.0.0
     # via
     #   mypy
     #   ragzoom
+psycopg[binary]==3.2.9
+    # via ragzoom
+psycopg-binary==3.2.9
+    # via psycopg
 pyasn1==0.6.1
     # via
     #   pyasn1-modules
@@ -297,6 +317,8 @@ pyasn1-modules==0.4.2
     # via google-auth
 pybase64==1.4.2
     # via chromadb
+pycparser==2.23
+    # via cffi
 pydantic==2.11.7
     # via
     #   chromadb
@@ -304,6 +326,7 @@ pydantic==2.11.7
     #   langchain
     #   langchain-core
     #   langsmith
+    #   mcp
     #   openai
     #   pydantic-settings
     #   ragzoom
@@ -312,11 +335,14 @@ pydantic-core==2.33.2
 pydantic-settings==2.10.1
     # via
     #   langchain-community
+    #   mcp
     #   ragzoom
 pygments==2.19.2
     # via
     #   pytest
     #   rich
+pyjwt[crypto]==2.10.1
+    # via mcp
 pyparsing==3.2.4
     # via matplotlib
 pypika==0.48.9
@@ -345,6 +371,8 @@ python-dotenv==1.1.1
     #   pydantic-settings
     #   ragzoom
     #   uvicorn
+python-multipart==0.0.21
+    # via mcp
 pyyaml==6.0.2
     # via
     #   bandit
@@ -406,8 +434,12 @@ sqlalchemy==2.0.43
     #   langchain
     #   langchain-community
     #   ragzoom
+sse-starlette==3.0.3
+    # via mcp
 starlette==0.47.3
-    # via fastapi
+    # via
+    #   fastapi
+    #   mcp
 stevedore==5.5.0
     # via bandit
 sympy==1.14.0
@@ -447,12 +479,14 @@ typing-extensions==4.15.0
     #   grpcio
     #   huggingface-hub
     #   langchain-core
+    #   mcp
     #   mypy
     #   openai
     #   opentelemetry-api
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
+    #   psycopg
     #   pydantic
     #   pydantic-core
     #   referencing
@@ -465,6 +499,7 @@ typing-inspect==0.9.0
     # via dataclasses-json
 typing-inspection==0.4.1
     # via
+    #   mcp
     #   pydantic
     #   pydantic-settings
 urllib3==2.5.0
@@ -475,6 +510,7 @@ urllib3==2.5.0
 uvicorn[standard]==0.35.0
     # via
     #   chromadb
+    #   mcp
     #   ragzoom
 uvloop==0.21.0
     # via uvicorn

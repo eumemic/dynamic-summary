@@ -272,33 +272,19 @@ class WorkerProgressDisplay:
                         f"{doc_id}: awaiting work (queue={self._last_queue_depth})"
                     )
                 else:
-                    self._print(
-                        _format_progress_line(
-                            doc_id,
-                            progress,
-                            inflight_total=self._last_inflight,
-                        )
-                    )
+                    self._print(_format_progress_line(doc_id, progress))
         else:
             if not visible_docs:
                 self._print("No active documents")
                 return
             for doc_id in visible_docs:
                 progress = documents[doc_id]
-                self._print(
-                    _format_progress_line(
-                        doc_id,
-                        progress,
-                        inflight_total=self._last_inflight,
-                    )
-                )
+                self._print(_format_progress_line(doc_id, progress))
 
 
 def _format_progress_line(
     doc_id: str,
     progress: DocumentProgressTotals,
-    *,
-    inflight_total: int,
 ) -> str:
     total = (
         progress.total if progress.total > 0 else progress.completed + progress.inflight
@@ -307,7 +293,4 @@ def _format_progress_line(
         total_str = "?"
     else:
         total_str = str(total)
-    return (
-        f"{doc_id}: completed={progress.completed}/{total_str} "
-        f"inflight={progress.inflight} (workers={inflight_total})"
-    )
+    return f"{doc_id}: completed={progress.completed}/{total_str} inflight={progress.inflight}"

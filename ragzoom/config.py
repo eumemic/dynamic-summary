@@ -549,8 +549,10 @@ class OperationalConfig:
         # Data dir override for SQLite/vector persistence
         data_dir = os.environ.get("RAGZOOM_DATA_DIR")
 
-        # Database URL resolution
-        env_db = os.environ.get("RAGZOOM_DATABASE_URL")
+        # Database URL resolution (support both RAGZOOM_DATABASE_URL and DATABASE_URL for Railway)
+        env_db = os.environ.get("RAGZOOM_DATABASE_URL") or os.environ.get(
+            "DATABASE_URL"
+        )
         if env_db:
             self.database_url = env_db
         else:
@@ -582,7 +584,15 @@ class OperationalConfig:
                 )
 
         # Apply worktree isolation when using PostgreSQL default name
-        if self.backend == "postgres":
+        # Skip if RAGZOOM_SKIP_WORKTREE_ISOLATION is set (for admin tools connecting to production)
+        skip_isolation = os.environ.get(
+            "RAGZOOM_SKIP_WORKTREE_ISOLATION", ""
+        ).lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if self.backend == "postgres" and not skip_isolation:
             from ragzoom.worktree_utils import get_worktree_database_url
 
             self.database_url = get_worktree_database_url(self.database_url)
