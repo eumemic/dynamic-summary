@@ -31,6 +31,7 @@ from ragzoom.constants import (
     DEFAULT_GRPC_ADDRESS,
     DEFAULT_GRPC_HOST,
     DEFAULT_GRPC_PORT,
+    DEFAULT_SESSION_INGEST_TIMEOUT,
 )
 from ragzoom.error_handling import handle_graceful_error
 from ragzoom.exceptions import (
@@ -693,12 +694,21 @@ def telemetry_export(document_id: str, output: str, server_address: str | None) 
         "against stored nodes."
     ),
 )
+@click.option(
+    "--fast",
+    is_flag=True,
+    help=(
+        "Use SQL-only validation for faster results (~7x speedup). "
+        "Skips: preceding_context checks, telemetry consistency, vector index checks."
+    ),
+)
 @click.pass_context
 def validate(
     ctx: click.Context,
     document_id: str,
     complete: bool,
     telemetry_file: str | None,
+    fast: bool,
 ) -> None:
     """Validate invariants for a document tree."""
 
@@ -748,6 +758,7 @@ def validate(
         require_complete=complete,
         target_chunk_tokens=index_config.target_chunk_tokens,
         telemetry=telemetry_payload,
+        fast=fast,
     )
 
     heading = (
@@ -762,8 +773,19 @@ def validate(
     click.echo(
         f"   Nodes: {report.metrics.get('node_count', 0)}, "
         f"Leaves: {report.metrics.get('leaf_count', 0)}, "
-        f"Parentless: {report.metrics.get('parentless_count', 0)}"
+        f"Roots: {report.metrics.get('root_count', 0)}"
     )
+
+    # Show pending work if any
+    pending_embeddings = report.metrics.get("pending_embeddings", 0)
+    pending_summaries = report.metrics.get("pending_summaries", 0)
+    if pending_embeddings > 0 or pending_summaries > 0:
+        parts = []
+        if pending_embeddings > 0:
+            parts.append(f"{pending_embeddings} embeddings")
+        if pending_summaries > 0:
+            parts.append(f"{pending_summaries} summaries")
+        click.echo(f"   Pending: {', '.join(parts)}")
 
     if report.findings:
         click.echo("\nFindings:")
@@ -2159,16 +2181,23 @@ def report(
     show_default=True,
     help=GRPC_ADDRESS_HELP,
 )
+@click.option(
+    "--user-id",
+    "-u",
+    envvar="RAGZOOM_USER_ID",
+    default=None,
+    help="User ID for multi-tenant isolation. Defaults to $USER.",
+)
 def sync_claude_code_transcript(
     jsonl_path: Path,
     server_address: str,
+    user_id: str | None,
 ) -> None:
-    """Sync a Claude Code JSONL log to a RagZoom document.
+    """Sync a Claude Code JSONL log to the RagZoom server.
 
-    Incrementally transcribes new conversation records and indexes them.
-    Uses UUID-based ancestry tracking to detect and handle reverts.
+    Incrementally sends new transcript content to the server for indexing.
+    The server tracks the cursor position and handles revert detection.
     Uses the session ID (JSONL filename without extension) as the document ID.
-    Tracks progress via state files (configurable via RAGZOOM_STATE_DIR env var).
 
     The JSONL files are typically found in:
     ~/.claude/projects/<project-path>/<session-id>.jsonl
@@ -2176,49 +2205,94 @@ def sync_claude_code_transcript(
     Example:
       ragzoom sync-claude-code-transcript ~/.claude/projects/.../session.jsonl
     """
-    from ragzoom.claude_memory.transcript_sync import execute_sync, get_state_path
-    from ragzoom.wrapper import RagZoom
+    import os
 
-    # State file uses same naming convention but with .jsonl extension
-    state_path = get_state_path(jsonl_path.stem)
+    from ragzoom.client.grpc_client import GrpcRagzoomClient
 
-    client = RagZoom(server_address=server_address)
+    session_id = jsonl_path.stem
+    resolved_user_id = user_id or os.environ.get("USER") or "anonymous"
 
     try:
-        result = execute_sync(jsonl_path, state_path, client)
-        if result.truncated:
-            click.echo(
-                f"🔄 Reverted document '{result.document_id}' to span {result.truncate_span}"
+        # Use longer timeout for session ingestion (may trigger full re-index)
+        with GrpcRagzoomClient(
+            server_address, timeout=DEFAULT_SESSION_INGEST_TIMEOUT
+        ) as client:
+            # Get current cursor from server
+            cursor = client.get_session_cursor(
+                session_id=session_id, user_id=resolved_user_id
             )
-        if result.appended_uuids:
-            click.echo(
-                f"✅ Synced {len(result.appended_uuids)} messages to '{result.document_id}'"
+            byte_offset = cursor.byte_offset
+
+            # Read transcript from cursor position
+            file_size = jsonl_path.stat().st_size
+            if byte_offset >= file_size:
+                click.echo(f"✅ No new content to sync for '{session_id}'")
+                return
+
+            with open(jsonl_path, "rb") as f:
+                f.seek(byte_offset)
+                delta = f.read()
+
+            if not delta:
+                click.echo(f"✅ No new content to sync for '{session_id}'")
+                return
+
+            # Send delta to server
+            result = client.ingest_session(
+                session_id=session_id,
+                user_id=resolved_user_id,
+                jsonl_delta=delta,
             )
-        else:
-            click.echo(f"✅ No new content to sync for '{result.document_id}'")
+
+            if result.truncated:
+                click.echo(
+                    f"🔄 Reverted document '{session_id}' to span {result.truncate_span}"
+                )
+            if result.messages_processed > 0:
+                click.echo(
+                    f"✅ Synced {result.messages_processed} messages to '{session_id}'"
+                )
+            else:
+                click.echo(f"✅ No new content to sync for '{session_id}'")
     except Exception as e:
         handle_cli_error(e, "syncing Claude Code transcript")
 
 
-@cli.command("set-session-pid")
+@cli.command("reset-session")
 @click.argument("session_id")
-@click.argument("pid", type=int)
-def set_session_pid_cmd(session_id: str, pid: int) -> None:
-    """Register a Claude Code session's PID for MCP server lookup.
+@click.option(
+    "--user-id",
+    envvar="RAGZOOM_USER_ID",
+    required=True,
+    help="User ID for multi-tenant isolation (or set RAGZOOM_USER_ID)",
+)
+@click.option(
+    "--server",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default="localhost:50051",
+    help="gRPC server address",
+)
+def reset_session_cmd(session_id: str, user_id: str, server: str) -> None:
+    """Reset a session's cursor to force full re-sync.
 
-    Called by SessionStart hook to associate the session with its process.
-    Creates the state file if it doesn't exist, preserving other fields if it does.
+    Clears the sync state on the server, causing the next sync to
+    re-process the entire transcript from scratch.
 
     Example:
-      ragzoom set-session-pid e0d9b972-3bad-472f-a570-a4e02d0a1ff4 12345
+      ragzoom reset-session 7cdd0798-4f29-4ce6-bfc9-6dc3b7bb2153
     """
-    from ragzoom.claude_memory.transcript_sync import set_session_pid
-
     try:
-        set_session_pid(session_id, pid)
-        click.echo(f"✅ Registered PID {pid} for session '{session_id}'")
+        with GrpcRagzoomClient(server) as client:
+            success, message = client.reset_session_cursor(
+                session_id=session_id, user_id=user_id
+            )
+            if success:
+                click.echo(f"✅ {message}")
+            else:
+                click.echo(f"❌ {message}", err=True)
+                raise SystemExit(1)
     except Exception as e:
-        handle_cli_error(e, "setting session PID")
+        handle_cli_error(e, "resetting session")
 
 
 if __name__ == "__main__":

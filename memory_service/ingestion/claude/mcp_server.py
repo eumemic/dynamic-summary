@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel
 
-from ragzoom.claude_memory.jsonl_reader import iter_jsonl_reversed
-from ragzoom.claude_memory.transcript_sync import SessionState, _get_state_dir
+from memory_service.ingestion.claude.transcript_sync import (
+    SessionPidMapping,
+    _get_state_dir,
+)
 from ragzoom.client.grpc_client import GrpcRagzoomClient
 
 
@@ -32,14 +33,14 @@ class RememberResult(BaseModel):  # type: ignore[explicit-any]
 mcp = FastMCP(name="RagZoom Memory")
 
 
-def _get_session_id() -> tuple[str, SessionState]:
+def _get_session_id() -> str:
     """Find the session ID by matching our parent PID to transcript state files.
 
     The sync hook writes Claude Code's PID to the state file. We find our session
     by scanning state files for one whose last_pid matches our parent process.
 
     Returns:
-        Tuple of (document_id, session_state)
+        document_id (session_id)
     """
     claude_code_pid = os.getppid()
 
@@ -52,9 +53,9 @@ def _get_session_id() -> tuple[str, SessionState]:
         )
 
     for state_file in state_dir.glob("*.jsonl"):
-        state = SessionState.load(state_file)
-        if state is not None and state.header.last_pid == claude_code_pid:
-            return state.header.document_id, state
+        mapping = SessionPidMapping.load(state_file)
+        if mapping is not None and mapping.last_pid == claude_code_pid:
+            return mapping.document_id
 
     raise ValueError(
         f"No session found for PID {claude_code_pid}. "
@@ -63,60 +64,21 @@ def _get_session_id() -> tuple[str, SessionState]:
     )
 
 
-def _get_transcript_path(document_id: str) -> Path:
-    """Get the transcript path for a session."""
-    projects_dir = Path.home() / ".claude" / "projects"
-    # The project path is encoded in the document_id filename convention
-    # For now, scan for the matching transcript
-    for project_dir in projects_dir.iterdir():
-        if not project_dir.is_dir():
-            continue
-        transcript_path = project_dir / f"{document_id}.jsonl"
-        if transcript_path.exists():
-            return transcript_path
-    raise ValueError(f"Transcript not found for document {document_id}")
+def _get_compaction_span_end(session_id: str, user_id: str) -> int | None:
+    """Get the compaction boundary span_end from the server.
 
-
-def _get_compaction_span_end(state: SessionState) -> int | None:
-    """Compute the compaction boundary span_end on-demand.
-
-    Scans the transcript to find UUIDs that appear after compaction,
-    then finds the first segment containing post-compaction content.
-    Returns the previous segment's span_end as the compaction boundary.
+    The server tracks the compaction boundary during ingestion.
+    This is much more efficient than scanning the transcript locally.
 
     Returns:
-        span_end of the last pre-compaction segment, or None if no compaction.
+        span_end just before post-compaction content, or None if no compaction.
     """
-    transcript_path = _get_transcript_path(state.header.document_id)
-
-    # Collect all UUIDs that appear after compaction
-    post_compaction_uuids: set[str] = set()
-    found_compaction = False
-
-    for record in iter_jsonl_reversed(transcript_path):
-        if record.get("isCompactSummary"):
-            found_compaction = True
-            break
-
-        uuid = record.get("uuid")
-        if isinstance(uuid, str):
-            post_compaction_uuids.add(uuid)
-
-    if not found_compaction:
+    server_address = os.environ.get("RAGZOOM_SERVER_ADDRESS", "localhost:50051")
+    with GrpcRagzoomClient(server_address) as client:
+        result = client.get_compaction_boundary(session_id=session_id, user_id=user_id)
+        if result.has_boundary:
+            return result.span_end
         return None
-
-    # Find the first segment whose last_uuid is post-compaction
-    # Return the previous segment's span_end
-    prev_span_end = 0
-    for entry in state.entries:
-        if entry.last_uuid in post_compaction_uuids:
-            # This segment contains post-compaction content
-            # Return the boundary before this segment
-            return prev_span_end
-        prev_span_end = entry.span_end
-
-    # All segments are pre-compaction (shouldn't happen normally)
-    return None
 
 
 @mcp.tool()
@@ -191,11 +153,19 @@ def remember(
     - **Recent content:** Spans near the compaction boundary are often
       already height=0 (verbatim) since they haven't been summarized yet.
     """
-    doc_id, state = _get_session_id()
+    doc_id = _get_session_id()
+
+    # Get user_id from environment (set by sync hook)
+    user_id = os.environ.get("RAGZOOM_USER_ID", "")
+    if not user_id:
+        raise ValueError(
+            "RAGZOOM_USER_ID environment variable not set. "
+            "The sync hook should set this when starting the MCP server."
+        )
 
     # Compute compaction boundary on-demand if span_end not specified
     if span_end is None:
-        span_end = _get_compaction_span_end(state)
+        span_end = _get_compaction_span_end(doc_id, user_id)
 
     # Query RagZoom via gRPC
     server_address = os.environ.get("RAGZOOM_SERVER_ADDRESS", "localhost:50051")

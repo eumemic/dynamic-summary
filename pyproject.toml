@@ -65,7 +65,7 @@ ragzoom = "ragzoom.cli:cli"
 ragzoom-telemetry = "ragzoom.telemetry_cli:cli"
 
 [tool.setuptools.packages.find]
-include = ["ragzoom*"]
+include = ["ragzoom*", "memory_service*"]
 
 [tool.black]
 line-length = 88

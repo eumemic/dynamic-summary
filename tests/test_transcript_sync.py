@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ragzoom.claude_memory.transcript_sync import (
+from memory_service.ingestion.claude.transcript_sync import (
     AppendEntry,
     AppendLog,
 )
@@ -18,7 +18,7 @@ class TestStreamingParentMap:
 
     def test_builds_map_from_linear_transcript(self, tmp_path: Path) -> None:
         """Should map each uuid to its parent."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             stream_find_common_ancestor_and_records,
         )
 
@@ -42,7 +42,7 @@ class TestStreamingParentMap:
 
     def test_builds_map_from_branched_transcript(self, tmp_path: Path) -> None:
         """Should include all branches in the map."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             stream_find_common_ancestor_and_records,
         )
 
@@ -71,7 +71,7 @@ class TestStreamingParentMap:
 
     def test_handles_empty_file(self, tmp_path: Path) -> None:
         """Should return empty map for empty file."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             stream_find_common_ancestor_and_records,
         )
 
@@ -85,7 +85,7 @@ class TestStreamingParentMap:
 
     def test_skips_records_without_uuid(self, tmp_path: Path) -> None:
         """Should skip non-message records."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             stream_find_common_ancestor_and_records,
         )
 
@@ -112,7 +112,7 @@ class TestStreamingCommonAncestor:
 
     def test_x_is_ancestor_of_y(self, tmp_path: Path) -> None:
         """When X is on Y's branch, common ancestor is found."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             stream_find_common_ancestor_and_records,
         )
 
@@ -136,7 +136,7 @@ class TestStreamingCommonAncestor:
 
     def test_finds_branch_point(self, tmp_path: Path) -> None:
         """Should find where branches diverged."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             stream_find_common_ancestor_and_records,
         )
 
@@ -163,7 +163,7 @@ class TestStreamingCommonAncestor:
 
     def test_disjoint_branches_returns_none(self, tmp_path: Path) -> None:
         """When branches have no common ancestor, returns None."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             stream_find_common_ancestor_and_records,
         )
 
@@ -291,7 +291,7 @@ class TestGetAncestorChain:
 
     def test_gets_chain_exclusive_of_ancestor(self) -> None:
         """Should return chain from ancestor to target, exclusive of ancestor."""
-        from ragzoom.claude_memory.transcript_sync import get_ancestor_chain
+        from memory_service.ingestion.claude.transcript_sync import get_ancestor_chain
 
         # msg1 -> msg2 -> msg3 -> msg4
         parent_map: dict[str, str | None] = {
@@ -308,7 +308,7 @@ class TestGetAncestorChain:
 
     def test_gets_chain_to_root(self) -> None:
         """When ancestor is None, returns full chain from root."""
-        from ragzoom.claude_memory.transcript_sync import get_ancestor_chain
+        from memory_service.ingestion.claude.transcript_sync import get_ancestor_chain
 
         parent_map: dict[str, str | None] = {
             "msg1": None,
@@ -322,7 +322,7 @@ class TestGetAncestorChain:
 
     def test_immediate_child(self) -> None:
         """Chain from parent to child is just the child."""
-        from ragzoom.claude_memory.transcript_sync import get_ancestor_chain
+        from memory_service.ingestion.claude.transcript_sync import get_ancestor_chain
 
         parent_map: dict[str, str | None] = {
             "msg1": None,
@@ -335,7 +335,7 @@ class TestGetAncestorChain:
 
     def test_same_node_returns_empty(self) -> None:
         """When target equals ancestor, returns empty list."""
-        from ragzoom.claude_memory.transcript_sync import get_ancestor_chain
+        from memory_service.ingestion.claude.transcript_sync import get_ancestor_chain
 
         parent_map: dict[str, str | None] = {"msg1": None, "msg2": "msg1"}
 
@@ -345,7 +345,7 @@ class TestGetAncestorChain:
 
     def test_raises_if_ancestor_not_in_chain(self) -> None:
         """Should raise if claimed ancestor isn't actually an ancestor."""
-        from ragzoom.claude_memory.transcript_sync import get_ancestor_chain
+        from memory_service.ingestion.claude.transcript_sync import get_ancestor_chain
 
         parent_map: dict[str, str | None] = {
             "msg1": None,
@@ -362,7 +362,7 @@ class TestComputeSyncPlan:
 
     def test_no_op_when_already_synced(self, tmp_path: Path) -> None:
         """When transcript head matches last indexed, nothing to do."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             AppendLog,
             compute_sync_plan_streaming,
@@ -395,7 +395,7 @@ class TestComputeSyncPlan:
 
     def test_append_new_messages(self, tmp_path: Path) -> None:
         """When new messages added, transcribe them."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             AppendLog,
             compute_sync_plan_streaming,
@@ -429,7 +429,7 @@ class TestComputeSyncPlan:
 
     def test_revert_and_new_branch(self, tmp_path: Path) -> None:
         """When user reverted and continued, truncate and re-transcribe."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             AppendLog,
             compute_sync_plan_streaming,
@@ -472,7 +472,7 @@ class TestComputeSyncPlan:
 
     def test_empty_log_transcribes_full_chain(self, tmp_path: Path) -> None:
         """When append log is empty, transcribe from root."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendLog,
             compute_sync_plan_streaming,
         )
@@ -503,7 +503,7 @@ class TestComputeSyncPlan:
 
     def test_disjoint_branches_truncates_all(self, tmp_path: Path) -> None:
         """When branches are disjoint, truncate everything and start fresh."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             AppendLog,
             compute_sync_plan_streaming,
@@ -546,7 +546,7 @@ class TestSessionState:
 
     def test_save_and_load(self, tmp_path: Path) -> None:
         """Should persist and restore state."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             SessionState,
             SessionStateHeader,
@@ -572,14 +572,14 @@ class TestSessionState:
 
     def test_load_nonexistent_returns_none(self, tmp_path: Path) -> None:
         """Should return None for missing file."""
-        from ragzoom.claude_memory.transcript_sync import SessionState
+        from memory_service.ingestion.claude.transcript_sync import SessionState
 
         state = SessionState.load(tmp_path / "missing.jsonl")
         assert state is None
 
     def test_append_log_view(self, tmp_path: Path) -> None:
         """append_log() should return working AppendLog."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             SessionState,
             SessionStateHeader,
@@ -602,7 +602,7 @@ class TestSessionState:
 
     def test_append_log_truncate(self, tmp_path: Path) -> None:
         """append_log().truncate_to() should modify state entries."""
-        from ragzoom.claude_memory.transcript_sync import (
+        from memory_service.ingestion.claude.transcript_sync import (
             AppendEntry,
             SessionState,
             SessionStateHeader,
@@ -629,7 +629,7 @@ class TestGetCurrentHead:
 
     def test_gets_last_uuid(self, tmp_path: Path) -> None:
         """Should return the last UUID in the transcript."""
-        from ragzoom.claude_memory.transcript_sync import get_current_head
+        from memory_service.ingestion.claude.transcript_sync import get_current_head
 
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text(
@@ -650,7 +650,7 @@ class TestGetCurrentHead:
 
     def test_empty_transcript_returns_none(self, tmp_path: Path) -> None:
         """Should return None for empty transcript."""
-        from ragzoom.claude_memory.transcript_sync import get_current_head
+        from memory_service.ingestion.claude.transcript_sync import get_current_head
 
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text("")
@@ -660,7 +660,7 @@ class TestGetCurrentHead:
 
     def test_skips_records_without_uuid(self, tmp_path: Path) -> None:
         """Should skip non-message records."""
-        from ragzoom.claude_memory.transcript_sync import get_current_head
+        from memory_service.ingestion.claude.transcript_sync import get_current_head
 
         jsonl = tmp_path / "transcript.jsonl"
         jsonl.write_text(
@@ -682,7 +682,9 @@ class TestTranscribeUuids:
 
     def test_transcribes_user_message(self) -> None:
         """Should transcribe user messages."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids_from_map
+        from memory_service.ingestion.claude.transcript_sync import (
+            transcribe_uuids_from_map,
+        )
 
         records: dict[str, dict[str, object]] = {
             "msg1": {
@@ -697,7 +699,9 @@ class TestTranscribeUuids:
 
     def test_transcribes_assistant_message(self) -> None:
         """Should transcribe assistant messages with tool count."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids_from_map
+        from memory_service.ingestion.claude.transcript_sync import (
+            transcribe_uuids_from_map,
+        )
 
         records: dict[str, dict[str, object]] = {
             "msg1": {
@@ -719,7 +723,9 @@ class TestTranscribeUuids:
 
     def test_transcribes_multiple_in_order(self) -> None:
         """Should transcribe multiple UUIDs in specified order."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids_from_map
+        from memory_service.ingestion.claude.transcript_sync import (
+            transcribe_uuids_from_map,
+        )
 
         records: dict[str, dict[str, object]] = {
             "msg1": {
@@ -748,7 +754,9 @@ class TestTranscribeUuids:
 
     def test_empty_uuids_returns_empty(self) -> None:
         """Should return empty string for empty UUID list."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids_from_map
+        from memory_service.ingestion.claude.transcript_sync import (
+            transcribe_uuids_from_map,
+        )
 
         records: dict[str, dict[str, object]] = {
             "msg1": {"uuid": "msg1", "type": "user", "message": {"content": "Hello"}}
@@ -759,7 +767,9 @@ class TestTranscribeUuids:
 
     def test_skips_missing_uuids(self) -> None:
         """Should skip UUIDs not found in records."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids_from_map
+        from memory_service.ingestion.claude.transcript_sync import (
+            transcribe_uuids_from_map,
+        )
 
         records: dict[str, dict[str, object]] = {
             "msg1": {"uuid": "msg1", "type": "user", "message": {"content": "Hello"}}
@@ -767,3 +777,221 @@ class TestTranscribeUuids:
 
         text = transcribe_uuids_from_map(["msg1", "missing", "also-missing"], records)
         assert text == "[USER]\nHello"
+
+
+class TestCompactionBoundary:
+    """Tests for dynamic compaction boundary detection."""
+
+    def test_no_compaction_returns_none(self) -> None:
+        """Should return None if no compaction in transcript."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            compute_compaction_boundary_from_bytes,
+        )
+
+        # Transcript without any compaction
+        content = b"\n".join(
+            [
+                json.dumps(
+                    {
+                        "uuid": "msg1",
+                        "parentUuid": None,
+                        "type": "user",
+                        "message": {"content": "Hello"},
+                    }
+                ).encode(),
+                json.dumps(
+                    {
+                        "uuid": "msg2",
+                        "parentUuid": "msg1",
+                        "type": "assistant",
+                        "message": {"content": [{"type": "text", "text": "Hi there"}]},
+                    }
+                ).encode(),
+            ]
+        )
+
+        boundary = compute_compaction_boundary_from_bytes(content)
+        assert boundary is None
+
+    def test_single_compaction_finds_boundary(self) -> None:
+        """Should return span_end just before compaction."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            compute_compaction_boundary_from_bytes,
+        )
+
+        # Pre-compaction messages
+        pre_msg1 = json.dumps(
+            {
+                "uuid": "pre1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "Before compaction"},
+            }
+        ).encode()
+        pre_msg2 = json.dumps(
+            {
+                "uuid": "pre2",
+                "parentUuid": "pre1",
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Response"}]},
+            }
+        ).encode()
+
+        # Compaction summary
+        compact = json.dumps(
+            {
+                "uuid": "compact1",
+                "parentUuid": "pre2",
+                "type": "assistant",
+                "isCompactSummary": True,
+                "message": {"content": [{"type": "text", "text": "Summary"}]},
+            }
+        ).encode()
+
+        # Post-compaction messages
+        post_msg1 = json.dumps(
+            {
+                "uuid": "post1",
+                "parentUuid": None,  # Compaction resets parent
+                "type": "user",
+                "message": {"content": "After compaction"},
+            }
+        ).encode()
+        post_msg2 = json.dumps(
+            {
+                "uuid": "post2",
+                "parentUuid": "post1",
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "New response"}]},
+            }
+        ).encode()
+
+        content = b"\n".join([pre_msg1, pre_msg2, compact, post_msg1, post_msg2])
+
+        boundary = compute_compaction_boundary_from_bytes(content)
+
+        # Boundary should be the span_end just before post-compaction content
+        # This is the cumulative length of pre-compaction transcribed segments
+        assert boundary is not None
+        assert boundary > 0  # Should have some pre-compaction content
+
+    def test_multiple_compactions_finds_most_recent(self) -> None:
+        """Should return span_end for MOST RECENT compaction, not first."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            compute_compaction_boundary_from_bytes,
+        )
+
+        # First pre-compaction messages
+        pre1_msg = json.dumps(
+            {
+                "uuid": "pre1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "Before first compaction"},
+            }
+        ).encode()
+
+        # First compaction
+        compact1 = json.dumps(
+            {
+                "uuid": "compact1",
+                "parentUuid": "pre1",
+                "type": "assistant",
+                "isCompactSummary": True,
+                "message": {"content": [{"type": "text", "text": "First summary"}]},
+            }
+        ).encode()
+
+        # Middle section (between compactions)
+        mid_msg = json.dumps(
+            {
+                "uuid": "mid1",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "Between compactions"},
+            }
+        ).encode()
+
+        # Second compaction
+        compact2 = json.dumps(
+            {
+                "uuid": "compact2",
+                "parentUuid": "mid1",
+                "type": "assistant",
+                "isCompactSummary": True,
+                "message": {"content": [{"type": "text", "text": "Second summary"}]},
+            }
+        ).encode()
+
+        # Post-second-compaction messages
+        post2_msg = json.dumps(
+            {
+                "uuid": "post2",
+                "parentUuid": None,
+                "type": "user",
+                "message": {"content": "After second compaction"},
+            }
+        ).encode()
+
+        content = b"\n".join([pre1_msg, compact1, mid_msg, compact2, post2_msg])
+
+        # First, get boundary with just one compaction
+        single_compact_content = b"\n".join([pre1_msg, compact1, mid_msg])
+        single_boundary = compute_compaction_boundary_from_bytes(single_compact_content)
+
+        # Now get boundary with two compactions
+        boundary = compute_compaction_boundary_from_bytes(content)
+
+        # The boundary with two compactions should be LARGER than with one
+        # Because it includes the "mid" section as pre-compaction content
+        assert boundary is not None
+        assert single_boundary is not None
+        assert boundary > single_boundary, (
+            f"With multiple compactions, boundary ({boundary}) should be > "
+            f"single compaction boundary ({single_boundary})"
+        )
+
+    def test_get_post_compaction_uuids_finds_correct_uuids(self) -> None:
+        """Should collect all UUIDs after the most recent compaction."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            get_post_compaction_uuids_from_bytes,
+        )
+
+        content = b"\n".join(
+            [
+                json.dumps({"uuid": "pre1", "type": "user"}).encode(),
+                json.dumps(
+                    {"uuid": "compact1", "isCompactSummary": True, "type": "assistant"}
+                ).encode(),
+                json.dumps({"uuid": "mid1", "type": "user"}).encode(),
+                json.dumps(
+                    {"uuid": "compact2", "isCompactSummary": True, "type": "assistant"}
+                ).encode(),
+                json.dumps({"uuid": "post1", "type": "user"}).encode(),
+                json.dumps({"uuid": "post2", "type": "assistant"}).encode(),
+            ]
+        )
+
+        post_uuids = get_post_compaction_uuids_from_bytes(content)
+
+        # Should only contain UUIDs after the MOST RECENT compaction
+        assert post_uuids == {"post1", "post2"}
+        # Should NOT contain mid1 (that's pre-second-compaction)
+        assert "mid1" not in post_uuids
+        assert "pre1" not in post_uuids
+
+    def test_no_compaction_returns_empty_set(self) -> None:
+        """Should return empty set if no compaction in transcript."""
+        from memory_service.ingestion.claude.transcript_sync import (
+            get_post_compaction_uuids_from_bytes,
+        )
+
+        content = b"\n".join(
+            [
+                json.dumps({"uuid": "msg1", "type": "user"}).encode(),
+                json.dumps({"uuid": "msg2", "type": "assistant"}).encode(),
+            ]
+        )
+
+        post_uuids = get_post_compaction_uuids_from_bytes(content)
+        assert post_uuids == set()

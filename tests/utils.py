@@ -29,46 +29,56 @@ def create_mock_openai_clients() -> tuple[Mock, Mock, Mock]:
     async def mock_embeddings_create_async(*args: object, **kwargs: object) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
         if isinstance(input_data, list):
-            from types import SimpleNamespace
-
+            num_items = len(input_data)
             return Mock(
                 data=[SimpleNamespace(embedding=[0.1] * 1536) for _ in input_data],
-                usage=Mock(total_tokens=len(input_data) * 100),
+                usage=SimpleNamespace(
+                    prompt_tokens=num_items * 10, total_tokens=num_items * 10
+                ),
             )
         else:
-            from types import SimpleNamespace
-
             return Mock(
                 data=[SimpleNamespace(embedding=[0.1] * 1536)],
-                usage=Mock(total_tokens=100),
+                usage=SimpleNamespace(prompt_tokens=10, total_tokens=10),
             )
 
     def mock_embeddings_create_sync(*args: object, **kwargs: object) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
         if isinstance(input_data, list):
-            from types import SimpleNamespace
-
+            num_items = len(input_data)
             return Mock(
                 data=[SimpleNamespace(embedding=[0.1] * 1536) for _ in input_data],
-                usage=Mock(total_tokens=len(input_data) * 100),
+                usage=SimpleNamespace(
+                    prompt_tokens=num_items * 10, total_tokens=num_items * 10
+                ),
             )
         else:
-            from types import SimpleNamespace
-
             return Mock(
                 data=[SimpleNamespace(embedding=[0.1] * 1536)],
-                usage=Mock(total_tokens=100),
+                usage=SimpleNamespace(prompt_tokens=10, total_tokens=10),
             )
 
     # Standard chat completion response
     async def mock_chat_create_async(*args: object, **kwargs: object) -> Mock:
         return Mock(
-            choices=[Mock(message=Mock(content="Summary of left and right content"))]
+            choices=[Mock(message=Mock(content="Summary of left and right content"))],
+            usage=SimpleNamespace(
+                prompt_tokens=50,
+                completion_tokens=20,
+                total_tokens=70,
+                prompt_tokens_details=None,
+            ),
         )
 
     def mock_chat_create_sync(*args: object, **kwargs: object) -> Mock:
         return Mock(
-            choices=[Mock(message=Mock(content="Summary of left and right content"))]
+            choices=[Mock(message=Mock(content="Summary of left and right content"))],
+            usage=SimpleNamespace(
+                prompt_tokens=50,
+                completion_tokens=20,
+                total_tokens=70,
+                prompt_tokens_details=None,
+            ),
         )
 
     # Create mock clients
@@ -348,7 +358,7 @@ def create_hash_based_embedding_mock() -> tuple[object, object]:
             from types import SimpleNamespace
 
             embeddings.append(SimpleNamespace(embedding=embedding))
-        return Mock(data=embeddings, usage=Mock(total_tokens=len(texts) * 100))
+        return Mock(data=embeddings)
 
     def hash_embeddings_create_sync(*args: object, **kwargs: object) -> Mock:
         texts = kwargs.get("input")
@@ -363,7 +373,7 @@ def create_hash_based_embedding_mock() -> tuple[object, object]:
             from types import SimpleNamespace
 
             embeddings.append(SimpleNamespace(embedding=embedding))
-        return Mock(data=embeddings, usage=Mock(total_tokens=len(texts) * 100))
+        return Mock(data=embeddings)
 
     return hash_embeddings_create_sync, hash_embeddings_create_async
 
@@ -454,37 +464,54 @@ def create_specialized_openai_mocks(
             for text in input_data:
                 text_str = str(text) if not isinstance(text, str) else text
                 embedding = _calculate_embedding_from_rules(text_str, embedding_rules)
-                from types import SimpleNamespace
-
                 embeddings.append(SimpleNamespace(embedding=embedding))
-            return Mock(data=embeddings, usage=Mock(total_tokens=len(input_data) * 100))
+            num_items = len(embeddings)
+            return Mock(
+                data=embeddings,
+                usage=SimpleNamespace(
+                    prompt_tokens=num_items * 10, total_tokens=num_items * 10
+                ),
+            )
         else:
             text_str = (
                 str(input_data) if not isinstance(input_data, str) else input_data
             )
             embedding = _calculate_embedding_from_rules(text_str, embedding_rules)
-            from types import SimpleNamespace
-
             return Mock(
                 data=[SimpleNamespace(embedding=embedding)],
-                usage=Mock(total_tokens=100),
+                usage=SimpleNamespace(prompt_tokens=10, total_tokens=10),
             )
 
     def specialized_embeddings_create_sync(*args: object, **kwargs: object) -> Mock:
         input_data = kwargs.get("input", args[0] if args else "")
         text_str = str(input_data) if not isinstance(input_data, str) else input_data
         embedding = _calculate_embedding_from_rules(text_str, embedding_rules)
-        return Mock(data=[Mock(embedding=embedding)], usage=Mock(total_tokens=100))
+        return Mock(
+            data=[Mock(embedding=embedding)],
+            usage=SimpleNamespace(prompt_tokens=10, total_tokens=10),
+        )
 
     # Standard chat completion
     async def mock_chat_create_async(*args: object, **kwargs: object) -> Mock:
         return Mock(
-            choices=[Mock(message=Mock(content="Summary of left and right content"))]
+            choices=[Mock(message=Mock(content="Summary of left and right content"))],
+            usage=SimpleNamespace(
+                prompt_tokens=50,
+                completion_tokens=20,
+                total_tokens=70,
+                prompt_tokens_details=None,
+            ),
         )
 
     def mock_chat_create_sync(*args: object, **kwargs: object) -> Mock:
         return Mock(
-            choices=[Mock(message=Mock(content="Summary of left and right content"))]
+            choices=[Mock(message=Mock(content="Summary of left and right content"))],
+            usage=SimpleNamespace(
+                prompt_tokens=50,
+                completion_tokens=20,
+                total_tokens=70,
+                prompt_tokens_details=None,
+            ),
         )
 
     # Create mock clients

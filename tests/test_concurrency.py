@@ -53,7 +53,7 @@ class TestConcurrency:
                         document_id="concurrent-doc",
                         token_count=25,
                         height=0,
-                        level_index=0,
+                        level_index=i,
                     )
                 ]
             )
@@ -282,7 +282,7 @@ class TestConcurrency:
                         document_id="batch-doc",
                         token_count=25,
                         height=0,
-                        level_index=0,
+                        level_index=batch_num * 2 + i,
                     )
                 )
             batches.append(batch_nodes)
@@ -336,7 +336,7 @@ class TestConcurrency:
                     document_id="search-doc",
                     token_count=25,
                     height=0,
-                    level_index=0,
+                    level_index=1,
                 ),
             ]
         )

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -149,16 +150,20 @@ class TestIndexerLease:
     async def test_acquire_blocks_when_held(
         self, lease_engine: Engine, fast_config: LeaseConfig
     ) -> None:
-        """Second lease cannot acquire while first holds it."""
+        """Second instance blocks while first holds lease."""
         lease1 = IndexerLease(lease_engine, fast_config)
         lease2 = IndexerLease(lease_engine, fast_config)
 
+        # First instance acquires
         await lease1.acquire()
 
-        # Second lease should timeout
+        # Second instance times out
         acquired = await lease2.acquire()
         assert acquired is False
         assert not lease2.is_acquired
+
+        # First still holds
+        assert lease1.is_acquired
 
         await lease1.release()
 
@@ -200,6 +205,44 @@ class TestIndexerLease:
         await lease.release()
 
     @pytest.mark.asyncio
+    async def test_steal_expired_lease_live(
+        self, lease_engine: Engine, fast_config: LeaseConfig
+    ) -> None:
+        """Take over lease after TTL expires (live wait)."""
+        lease1 = IndexerLease(lease_engine, fast_config)
+        lease2 = IndexerLease(lease_engine, fast_config)
+
+        # First instance acquires
+        await lease1.acquire()
+        # Stop heartbeat so it expires
+        if lease1._heartbeat_task:
+            lease1._heartbeat_task.cancel()
+            try:
+                await lease1._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            lease1._heartbeat_task = None
+
+        # Wait for TTL to expire
+        await asyncio.sleep(fast_config.ttl_seconds + 0.2)
+
+        # Second instance should steal it
+        acquired = await lease2.acquire()
+        assert acquired is True
+        assert lease2.is_acquired
+
+        # Verify new holder
+        with lease_engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT holder_id FROM indexer_leases WHERE id = 1")
+            )
+            row = result.fetchone()
+            assert row is not None
+            assert row[0] == lease2.holder_id
+
+        await lease2.release()
+
+    @pytest.mark.asyncio
     async def test_heartbeat_extends_ttl(
         self, lease_engine: Engine, fast_config: LeaseConfig
     ) -> None:
@@ -237,6 +280,92 @@ class TestIndexerLease:
         await lease.release()
 
     @pytest.mark.asyncio
+    async def test_timeout_returns_false(
+        self, lease_engine: Engine, fast_config: LeaseConfig
+    ) -> None:
+        """Returns False on timeout, doesn't raise."""
+        lease1 = IndexerLease(lease_engine, fast_config)
+        lease2 = IndexerLease(lease_engine, fast_config)
+
+        await lease1.acquire()
+
+        # Second should timeout and return False
+        result = await lease2.acquire()
+        assert result is False
+        assert not lease2.is_acquired
+
+        await lease1.release()
+
+    @pytest.mark.asyncio
+    async def test_reacquire_own_lease(
+        self, lease_engine: Engine, fast_config: LeaseConfig
+    ) -> None:
+        """Re-acquiring our own lease succeeds immediately."""
+        lease = IndexerLease(lease_engine, fast_config)
+
+        await lease.acquire()
+
+        # Stop heartbeat
+        if lease._heartbeat_task:
+            lease._heartbeat_task.cancel()
+            try:
+                await lease._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            lease._heartbeat_task = None
+
+        # Re-acquire with same lease object
+        # This tests the "already hold it" branch
+        with lease_engine.begin() as conn:
+            result = lease._try_acquire_or_steal_expired(conn)
+            assert result is True
+
+        await lease.release()
+
+    @pytest.mark.asyncio
+    async def test_release_stops_heartbeat(
+        self, lease_engine: Engine, fast_config: LeaseConfig
+    ) -> None:
+        """Release cancels the heartbeat task."""
+        lease = IndexerLease(lease_engine, fast_config)
+        await lease.acquire()
+
+        assert lease._heartbeat_task is not None
+        heartbeat_task = lease._heartbeat_task
+
+        await lease.release()
+
+        assert lease._heartbeat_task is None
+        assert heartbeat_task.cancelled() or heartbeat_task.done()
+
+    @pytest.mark.asyncio
+    async def test_acquire_handles_db_error(
+        self, lease_engine: Engine, fast_config: LeaseConfig
+    ) -> None:
+        """Acquisition retries on transient DB errors and eventually succeeds."""
+        lease = IndexerLease(lease_engine, fast_config)
+
+        call_count = 0
+        original_begin = lease_engine.begin
+
+        def failing_begin(*args, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise Exception("Transient DB error")
+            return original_begin(*args, **kwargs)
+
+        with patch.object(lease_engine, "begin", side_effect=failing_begin):
+            # Should retry and eventually succeed on 3rd attempt
+            result = await lease.acquire()
+
+        # Retried through errors and eventually succeeded
+        assert result is True
+        assert call_count == 3  # Failed 2 times, succeeded on 3rd
+
+        await lease.release()
+
+    @pytest.mark.asyncio
     async def test_second_lease_acquires_after_release(
         self, lease_engine: Engine, fast_config: LeaseConfig
     ) -> None:
@@ -252,3 +381,120 @@ class TestIndexerLease:
         assert lease2.is_acquired
 
         await lease2.release()
+
+
+class TestHeartbeatLoop:
+    """Test heartbeat loop behavior."""
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_continues_on_transient_error(
+        self, lease_engine: Engine, fast_config: LeaseConfig
+    ) -> None:
+        """Heartbeat logs but continues on transient errors."""
+        lease = IndexerLease(lease_engine, fast_config)
+        await lease.acquire()
+
+        error_count = 0
+        original_begin = lease_engine.begin
+
+        def sometimes_failing_begin(*args, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal error_count
+            error_count += 1
+            if error_count == 2:
+                raise Exception("Transient error")
+            return original_begin(*args, **kwargs)
+
+        with patch.object(lease_engine, "begin", side_effect=sometimes_failing_begin):
+            # Wait for multiple heartbeats
+            await asyncio.sleep(fast_config.heartbeat_interval * 3)
+
+        # Lease should still be acquired (heartbeat recovered)
+        assert lease.is_acquired
+
+        await lease.release()
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_detects_lost_lease(
+        self, lease_engine: Engine, fast_config: LeaseConfig
+    ) -> None:
+        """Heartbeat detects when lease was stolen."""
+        lease = IndexerLease(lease_engine, fast_config)
+        await lease.acquire()
+
+        # Simulate another instance stealing the lease
+        with lease_engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                UPDATE indexer_leases
+                SET holder_id = 'other-holder'
+                WHERE id = 1
+            """
+                )
+            )
+
+        # Wait for heartbeat to detect the theft
+        await asyncio.sleep(fast_config.heartbeat_interval + 0.2)
+
+        # Lease should mark itself as not acquired
+        # (heartbeat UPDATE returns no rows)
+        assert not lease.is_acquired
+
+        # Cleanup - heartbeat task should have stopped
+        if lease._heartbeat_task:
+            lease._heartbeat_task.cancel()
+            try:
+                await lease._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+
+
+class TestLeaseTableSchema:
+    """Test lease table constraints and schema."""
+
+    def test_singleton_constraint(self, lease_engine: Engine) -> None:
+        """Only one row can exist (id must be 1)."""
+        now = datetime.now(timezone.utc)
+        expires = now + timedelta(seconds=60)
+
+        with lease_engine.begin() as conn:
+            # First insert succeeds
+            conn.execute(
+                text(
+                    """
+                INSERT INTO indexer_leases (id, holder_id, acquired_at, last_heartbeat, expires_at)
+                VALUES (1, 'holder-1', :now, :now, :expires)
+            """
+                ),
+                {"now": now, "expires": expires},
+            )
+
+        # Second insert with id=1 fails
+        with pytest.raises(Exception):  # IntegrityError
+            with lease_engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """
+                    INSERT INTO indexer_leases (id, holder_id, acquired_at, last_heartbeat, expires_at)
+                    VALUES (1, 'holder-2', :now, :now, :expires)
+                """
+                    ),
+                    {"now": now, "expires": expires},
+                )
+
+    def test_check_constraint_id_equals_1(self, lease_engine: Engine) -> None:
+        """Cannot insert row with id != 1."""
+        now = datetime.now(timezone.utc)
+        expires = now + timedelta(seconds=60)
+
+        with pytest.raises(Exception):  # Check constraint violation
+            with lease_engine.begin() as conn:
+                conn.execute(
+                    text(
+                        """
+                    INSERT INTO indexer_leases (id, holder_id, acquired_at, last_heartbeat, expires_at)
+                    VALUES (2, 'holder-1', :now, :now, :expires)
+                """
+                    ),
+                    {"now": now, "expires": expires},
+                )

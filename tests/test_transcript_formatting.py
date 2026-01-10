@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ragzoom.claude_memory.transcript_sync import (
+from memory_service.ingestion.claude.transcript_sync import (
     SessionState,
     execute_sync,
 )

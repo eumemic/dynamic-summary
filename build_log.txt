@@ -1,0 +1,108 @@
+Collecting pip<24.1
+  Using cached pip-24.0-py3-none-any.whl.metadata (3.6 kB)
+Using cached pip-24.0-py3-none-any.whl (2.1 MB)
+Installing collected packages: pip
+  Attempting uninstall: pip
+    Found existing installation: pip 25.3
+    Uninstalling pip-25.3:
+      Successfully uninstalled pip-25.3
+Successfully installed pip-24.0
+Notice:  A new release of pip is available: 24.0 -> 25.3
+Notice:  To update, run: pip install --upgrade pip
+Collecting pip-tools
+  Using cached pip_tools-7.5.2-py3-none-any.whl.metadata (26 kB)
+Collecting build>=1.0.0 (from pip-tools)
+  Downloading build-1.4.0-py3-none-any.whl.metadata (5.8 kB)
+Collecting click>=8 (from pip-tools)
+  Using cached click-8.3.1-py3-none-any.whl.metadata (2.6 kB)
+Requirement already satisfied: pip>=22.2 in /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages (from pip-tools) (24.0)
+Collecting pyproject_hooks (from pip-tools)
+  Using cached pyproject_hooks-1.2.0-py3-none-any.whl.metadata (1.3 kB)
+Requirement already satisfied: setuptools in /opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/site-packages (from pip-tools) (79.0.1)
+Collecting wheel (from pip-tools)
+  Using cached wheel-0.45.1-py3-none-any.whl.metadata (2.3 kB)
+Collecting packaging>=24.0 (from build>=1.0.0->pip-tools)
+  Using cached packaging-25.0-py3-none-any.whl.metadata (3.3 kB)
+Using cached pip_tools-7.5.2-py3-none-any.whl (66 kB)
+Downloading build-1.4.0-py3-none-any.whl (24 kB)
+Using cached click-8.3.1-py3-none-any.whl (108 kB)
+Using cached pyproject_hooks-1.2.0-py3-none-any.whl (10 kB)
+Using cached wheel-0.45.1-py3-none-any.whl (72 kB)
+Using cached packaging-25.0-py3-none-any.whl (66 kB)
+Installing collected packages: wheel, pyproject_hooks, packaging, click, build, pip-tools
+Successfully installed build-1.4.0 click-8.3.1 packaging-25.0 pip-tools-7.5.2 pyproject_hooks-1.2.0 wheel-0.45.1
+Notice:  A new release of pip is available: 24.0 -> 25.3
+Notice:  To update, run: pip install --upgrade pip
+Obtaining file:///home/runner/work/dynamic-summary/dynamic-summary
+  Installing build dependencies: started
+1s
+4m 57s
+tests/memory_service/test_sync_lightweight.py::TestTruncation::test_truncate_at_exact_leaf_boundary 
+[gw6] [ 95%] PASSED tests/memory_service/test_sync_lightweight.py::TestTreeInvariants::test_leaves_start_at_zero 
+tests/memory_service/test_sync_lightweight.py::TestTreeInvariants::test_forest_structure 
+[gw3] [ 95%] PASSED tests/memory_service/test_sync_lightweight.py::TestBasicAppend::test_append_with_replace_existing_clears_first 
+tests/memory_service/test_sync_lightweight.py::TestBasicAppend::test_append_creates_expected_leaf_count 
+[gw4] [ 96%] PASSED tests/memory_service/test_sync_lightweight.py::TestTruncation::test_truncate_at_exact_leaf_boundary 
+tests/memory_service/test_sync_lightweight.py::TestTruncation::test_truncate_at_document_end_is_noop 
+[gw6] [ 96%] PASSED tests/memory_service/test_sync_lightweight.py::TestTreeInvariants::test_forest_structure 
+tests/memory_service/test_sync_lightweight.py::TestBoundaryConditions::test_single_leaf_document 
+[gw5] [ 96%] PASSED tests/memory_service/test_sync_lightweight.py::TestTruncateThenAppend::test_alternating_truncate_append 
+tests/memory_service/test_sync_lightweight.py::TestTruncateThenAppend::test_small_truncate_large_append 
+[gw6] [ 96%] PASSED tests/memory_service/test_sync_lightweight.py::TestBoundaryConditions::test_single_leaf_document 
+tests/memory_service/test_sync_lightweight.py::TestBoundaryConditions::test_two_leaf_document 
+[gw4] [ 96%] PASSED tests/memory_service/test_sync_lightweight.py::TestTruncation::test_truncate_at_document_end_is_noop 
+tests/memory_service/test_sync_lightweight.py::TestTruncation::test_truncate_near_beginning 
+[gw6] [ 96%] PASSED tests/memory_service/test_sync_lightweight.py::TestBoundaryConditions::test_two_leaf_document 
+tests/memory_service/test_sync_lightweight.py::TestContentVerification::test_leaf_spans_cover_document 
+[gw3] [ 96%] PASSED tests/memory_service/test_sync_lightweight.py::TestBasicAppend::test_append_creates_expected_leaf_count 
+tests/memory_service/test_sync_lightweight.py::TestBasicAppend::test_append_updates_document_span_end 
+[gw3] [ 96%] PASSED tests/memory_service/test_sync_lightweight.py::TestBasicAppend::test_append_updates_document_span_end 
+tests/memory_service/test_sync_lightweight.py::TestBasicAppend::test_append_empty_text_raises_error 
+[gw6] [ 96%] PASSED tests/memory_service/test_sync_lightweight.py::TestContentVerification::test_leaf_spans_cover_document 
+tests/test_api_documents_sqlite.py::TestDocumentAPISQLite::test_sqlite_backend_document_storage_isolation 
+[gw6] [ 96%] PASSED tests/test_api_documents_sqlite.py::TestDocumentAPISQLite::test_sqlite_backend_document_storage_isolation 
+tests/test_api_documents_sqlite.py::TestDocumentAPISQLite::test_sqlite_backend_multi_document_isolation 
+[gw6] [ 97%] PASSED tests/test_api_documents_sqlite.py::TestDocumentAPISQLite::test_sqlite_backend_multi_document_isolation 
+tests/test_api_documents_sqlite.py::TestDocumentAPISQLite::test_sqlite_backend_vector_search_isolation 
+[gw6] [ 97%] PASSED tests/test_api_documents_sqlite.py::TestDocumentAPISQLite::test_sqlite_backend_vector_search_isolation 
+tests/memory_service/test_sync_lightweight.py::TestTruncation::test_truncate_clears_parent_refs 
+[gw3] [ 97%] PASSED tests/memory_service/test_sync_lightweight.py::TestBasicAppend::test_append_empty_text_raises_error 
+tests/memory_service/test_sync_lightweight.py::TestTruncationReferentialIntegrity::test_partial_truncation_no_orphaned_nodes 
+[gw4] [ 97%] PASSED tests/memory_service/test_sync_lightweight.py::TestTruncation::test_truncate_near_beginning 
+tests/test_indexer_lease.py::TestIndexerLease::test_initial_state 
+[gw4] [ 97%] PASSED tests/test_indexer_lease.py::TestIndexerLease::test_initial_state 
+tests/test_indexer_lease.py::TestIndexerLease::test_acquire_fresh_lease 
+[gw4] [ 97%] PASSED tests/test_indexer_lease.py::TestIndexerLease::test_acquire_fresh_lease 
+tests/test_indexer_lease.py::TestIndexerLease::test_release_clears_lease 
+[gw4] [ 97%] PASSED tests/test_indexer_lease.py::TestIndexerLease::test_release_clears_lease 
+tests/memory_service/test_sync_lightweight.py::TestContentVerification::test_truncate_preserves_kept 
+[gw4] [ 97%] PASSED tests/memory_service/test_sync_lightweight.py::TestContentVerification::test_truncate_preserves_kept 
+[gw6] [ 97%] PASSED tests/memory_service/test_sync_lightweight.py::TestTruncation::test_truncate_clears_parent_refs 
+tests/memory_service/test_sync_lightweight.py::TestContentVerification::test_internal_nodes_have_summaries 
+tests/memory_service/test_sync_lightweight.py::TestTruncation::test_truncate_clears_neighbor_refs 
+[gw5] [ 97%] FAILED tests/memory_service/test_sync_lightweight.py::TestTruncateThenAppend::test_small_truncate_large_append 
+tests/memory_service/test_sync_lightweight.py::TestTruncateThenAppend::test_large_truncate_small_append 
+[gw6] [ 98%] PASSED tests/memory_service/test_sync_lightweight.py::TestTruncation::test_truncate_clears_neighbor_refs 
+tests/memory_service/test_sync_lightweight.py::TestTruncateThenAppend::test_truncate_then_append 
+[gw4] [ 98%] PASSED tests/memory_service/test_sync_lightweight.py::TestContentVerification::test_internal_nodes_have_summaries 
+tests/test_indexer_lease.py::TestLeaseConfig::test_custom_values 
+[gw4] [ 98%] PASSED tests/test_indexer_lease.py::TestLeaseConfig::test_custom_values 
+tests/test_indexer_lease.py::TestIndexerLease::test_holder_id_is_unique 
+[gw4] [ 98%] PASSED tests/test_indexer_lease.py::TestIndexerLease::test_holder_id_is_unique 
+tests/memory_service/test_sync_lightweight.py::TestContentVerification::test_append_preserves_existing 
+[gw4] [ 98%] PASSED tests/memory_service/test_sync_lightweight.py::TestContentVerification::test_append_preserves_existing 
+tests/memory_service/test_sync_lightweight.py::TestBasicAppend::test_append_to_empty_document 
+[gw6] [ 98%] PASSED tests/memory_service/test_sync_lightweight.py::TestTruncateThenAppend::test_truncate_then_append 
+tests/memory_service/test_sync_lightweight.py::TestMultipleTruncateAppendCycles::test_multiple_cycles_maintain_integrity 
+[gw4] [ 98%] PASSED tests/memory_service/test_sync_lightweight.py::TestBasicAppend::test_append_to_empty_document 
+tests/memory_service/test_sync_lightweight.py::TestTruncation::test_truncate_preserves_kept_content 
+[gw4] [ 98%] PASSED tests/memory_service/test_sync_lightweight.py::TestTruncation::test_truncate_preserves_kept_content 
+[gw6] [ 98%] PASSED tests/memory_service/test_sync_lightweight.py::TestMultipleTruncateAppendCycles::test_multiple_cycles_maintain_integrity 
+[gw5] [ 98%] FAILED tests/memory_service/test_sync_lightweight.py::TestTruncateThenAppend::test_large_truncate_small_append 
+[gw3] [ 99%] FAILED tests/memory_service/test_sync_lightweight.py::TestTruncationReferentialIntegrity::test_partial_truncation_no_orphaned_nodes 
+tests/memory_service/test_sync_lightweight.py::TestTruncationReferentialIntegrity::test_truncation_preserves_parent_child_relationships 
+tests/memory_service/test_sync_lightweight.py::TestTreeInvariants::test_sibling_adjacency_no_gaps 
+[gw5] [ 99%] PASSED tests/memory_service/test_sync_lightweight.py::TestTreeInvariants::test_sibling_adjacency_no_gaps 
+[gw3] [ 99%] PASSED tests/memory_service/test_sync_lightweight.py::TestTruncationReferentialIntegrity::test_truncation_preserves_parent_child_relationships 
+[gw2] [ 99%] PASSED tests/test_incrementally_index_script.py::test_incremental_index_cli_validates_document 
+tests/test_indexer_lease.py::TestLeaseConfig::test_default_values 

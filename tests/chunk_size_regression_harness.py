@@ -133,7 +133,7 @@ def seed_manual_chunk_tree(document_id: str, store: DocumentStore) -> None:
             document_id=document_id,
             token_count=3,
             height=0,
-            level_index=0,
+            level_index=1,
         ),
         NodePayload(
             node_id="target1",
@@ -144,7 +144,7 @@ def seed_manual_chunk_tree(document_id: str, store: DocumentStore) -> None:
             document_id=document_id,
             token_count=200,
             height=0,
-            level_index=0,
+            level_index=2,
         ),
         NodePayload(
             node_id="target2",
@@ -155,7 +155,7 @@ def seed_manual_chunk_tree(document_id: str, store: DocumentStore) -> None:
             document_id=document_id,
             token_count=195,
             height=0,
-            level_index=0,
+            level_index=3,
         ),
         NodePayload(
             node_id="left_parent",
@@ -178,7 +178,7 @@ def seed_manual_chunk_tree(document_id: str, store: DocumentStore) -> None:
             span_end=2408,
             document_id=document_id,
             height=1,
-            level_index=0,
+            level_index=1,
             left_child_id="target1",
             right_child_id="target2",
             token_count=5,
