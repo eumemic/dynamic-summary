@@ -26,6 +26,7 @@ class TestAppendDuringIndexing:
     """Tests for appending while background indexing is in-flight."""
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(5.0)
     async def test_append_during_indexing_maintains_tree_integrity(
         self, memory_service_harness: MemoryServiceTestHarness
     ) -> None:
@@ -230,6 +231,7 @@ class TestTruncationReferentialIntegrity:
     """
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(5.0)
     async def test_partial_truncation_no_orphaned_nodes(
         self, memory_service_harness: MemoryServiceTestHarness
     ) -> None:
@@ -901,6 +903,7 @@ class TestTruncateThenAppend:
             ), f"Cycle {i} validation failed: {report.errors}"
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(5.0)
     async def test_small_truncate_large_append(
         self, memory_service_harness: MemoryServiceTestHarness
     ) -> None:
@@ -927,6 +930,7 @@ class TestTruncateThenAppend:
         assert report.status == "ok", f"Validation failed: {report.errors}"
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(5.0)
     async def test_large_truncate_small_append(
         self, memory_service_harness: MemoryServiceTestHarness
     ) -> None:
@@ -1211,6 +1215,7 @@ class TestBoundaryConditions:
         assert report.status == "ok"
 
     @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(5.0)
     async def test_very_large_append(
         self, memory_service_harness: MemoryServiceTestHarness
     ) -> None:
