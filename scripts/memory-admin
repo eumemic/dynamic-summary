@@ -13,13 +13,17 @@
 set -e
 
 PROJECT_ID="9d168ba6-ac78-4739-a53c-7ca04e211678"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Parse --test flag and check for test-sync command
+# Parse --test/--local flags and check for test-sync command
 USE_TEST_ENV=false
+USE_LOCAL_ENV=false
 ARGS=()
 for arg in "$@"; do
     if [[ "$arg" == "--test" || "$arg" == "--pr" ]]; then
         USE_TEST_ENV=true
+    elif [[ "$arg" == "--local" ]]; then
+        USE_LOCAL_ENV=true
     else
         ARGS+=("$arg")
     fi
@@ -42,6 +46,7 @@ if [[ ${#ARGS[@]} -eq 0 ]]; then
     echo ""
     echo "Options:"
     echo "  --test, --pr              Use PR test environment instead of production"
+    echo "  --local                   Use local docker-compose stack"
     echo ""
     echo "Examples:"
     echo "  memory-admin status                    # Production status"
@@ -52,7 +57,15 @@ if [[ ${#ARGS[@]} -eq 0 ]]; then
 fi
 
 # Determine environment and database service
-if [[ "$USE_TEST_ENV" == "true" ]]; then
+if [[ "$USE_LOCAL_ENV" == "true" ]]; then
+    # Local docker-compose stack
+    # shellcheck source=lib/devstack-check.sh
+    source "$SCRIPT_DIR/lib/devstack-check.sh"
+    require_devstack_running
+    DB_URL=$(get_local_database_url)
+    ENV_NAME="local"
+    echo "Using local docker-compose stack"
+elif [[ "$USE_TEST_ENV" == "true" ]]; then
     # Find PR number from current branch
     PR_INFO=$(gh pr list --state open --head "$(git branch --show-current)" --json number,title 2>/dev/null || echo "[]")
     PR_NUMBER=$(echo "$PR_INFO" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['number'] if d else '')" 2>/dev/null || echo "")
@@ -66,22 +79,34 @@ if [[ "$USE_TEST_ENV" == "true" ]]; then
     ENV_NAME="dynamic-summary-pr-${PR_NUMBER}"
     DB_SERVICE="pgvector-rW-f"
     echo "Using PR test environment: $ENV_NAME"
+
+    # Link to environment (suppress interactive prompts)
+    railway link -p "$PROJECT_ID" -e "$ENV_NAME" >/dev/null 2>&1
+
+    # Get database URL
+    DB_URL=$(railway variables --service "$DB_SERVICE" --kv 2>/dev/null | grep DATABASE_PUBLIC_URL | cut -d= -f2-)
+
+    if [[ -z "$DB_URL" ]]; then
+        echo "Error: Could not get DATABASE_PUBLIC_URL from $DB_SERVICE service"
+        echo "Make sure you're logged into Railway: railway login"
+        exit 1
+    fi
 else
     ENV_NAME="production"
     DB_SERVICE="pgvector"
     echo "Using production environment"
-fi
 
-# Link to environment (suppress interactive prompts)
-railway link -p "$PROJECT_ID" -e "$ENV_NAME" >/dev/null 2>&1
+    # Link to environment (suppress interactive prompts)
+    railway link -p "$PROJECT_ID" -e "$ENV_NAME" >/dev/null 2>&1
 
-# Get database URL
-DB_URL=$(railway variables --service "$DB_SERVICE" --kv 2>/dev/null | grep DATABASE_PUBLIC_URL | cut -d= -f2-)
+    # Get database URL
+    DB_URL=$(railway variables --service "$DB_SERVICE" --kv 2>/dev/null | grep DATABASE_PUBLIC_URL | cut -d= -f2-)
 
-if [[ -z "$DB_URL" ]]; then
-    echo "Error: Could not get DATABASE_PUBLIC_URL from $DB_SERVICE service"
-    echo "Make sure you're logged into Railway: railway login"
-    exit 1
+    if [[ -z "$DB_URL" ]]; then
+        echo "Error: Could not get DATABASE_PUBLIC_URL from $DB_SERVICE service"
+        echo "Make sure you're logged into Railway: railway login"
+        exit 1
+    fi
 fi
 
 # Handle test-sync specially - it uses gRPC and always targets PR environment
@@ -100,7 +125,6 @@ if [[ "${ARGS[0]}" == "test-sync" ]]; then
     fi
 
     # Get gRPC server address using discovery script
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     SERVER_ADDRESS=$("$SCRIPT_DIR/get-grpc-address" "$ENV_NAME")
 
     echo ""

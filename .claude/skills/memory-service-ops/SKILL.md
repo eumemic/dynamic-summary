@@ -9,12 +9,13 @@ Guidance for operating the hosted RagZoom memory service.
 
 ## Environment Model
 
-**Production** is where all agents' memories live. **PR environment** is a test sandbox for memory service development only.
+**Production** is where all agents' memories live. **PR environment** is a test sandbox for memory service development only. **Local** runs everything via docker-compose for offline development.
 
 ### Which Environment to Check?
 
 1. **On `master`?** → Use production
 2. **On any other branch?** → Check PR environment first (`--test`), then production if not found
+3. **Testing locally?** → Use local docker-compose stack (`--local`)
 
 ### Environment Details
 
@@ -25,6 +26,12 @@ Guidance for operating the hosted RagZoom memory service.
 **PR environment** (`--test`):
 - Isolated test sandbox with separate database
 - Use for: testing sync/indexing changes, manual test syncs, validating tree-building
+
+**Local** (`--local`):
+- Docker-compose stack running locally via `./scripts/devstack start`
+- Database: `postgresql://ragzoom:ragzoom@localhost:5433/ragzoom`
+- gRPC: `localhost:50051`
+- Use for: local development, testing before pushing, offline work
 
 Agents' own memories always sync to production, even when developing memory service changes. The JSONL transcript is the source of truth - production can always be re-indexed if needed.
 
@@ -41,6 +48,10 @@ scripts/memory-admin validate <session-id>
 # PR test environment
 scripts/memory-admin status --test
 scripts/memory-admin reset <session-id> --test
+
+# Local docker-compose stack
+scripts/memory-admin status --local
+scripts/memory-admin test-sync <jsonl-path> --local
 ```
 
 ## Manual Workflow (If Needed)
@@ -59,6 +70,16 @@ RAGZOOM_DATABASE_URL="postgresql://..." python -m memory_service.admin status
 railway link -p 9d168ba6-ac78-4739-a53c-7ca04e211678 -e dynamic-summary-pr-{NUMBER}
 railway variables --service pgvector-rW-f --kv | grep DATABASE_PUBLIC_URL
 RAGZOOM_DATABASE_URL="postgresql://..." python -m memory_service.admin status
+```
+
+### Local (Docker Compose)
+
+```bash
+# Start the stack first
+./scripts/devstack start
+
+# Then run admin commands against local database
+RAGZOOM_DATABASE_URL="postgresql://ragzoom:ragzoom@localhost:5433/ragzoom" python -m memory_service.admin status
 ```
 
 ## Common Admin Commands

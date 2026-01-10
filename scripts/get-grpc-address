@@ -1,26 +1,36 @@
 #!/bin/bash
-# Get the gRPC address for a Railway environment
+# Get the gRPC address for a memory service environment
 #
 # Usage:
-#   ./scripts/get-grpc-address production
-#   ./scripts/get-grpc-address pr
+#   ./scripts/get-grpc-address production  # Railway production
+#   ./scripts/get-grpc-address pr          # Railway PR environment
+#   ./scripts/get-grpc-address local       # Local docker-compose stack
 #
-# Output: gRPC address (e.g., hopper.proxy.rlwy.net:24604)
+# Output: gRPC address (e.g., hopper.proxy.rlwy.net:24604 or localhost:50051)
 
 set -euo pipefail
 
 PROJECT_ID="9d168ba6-ac78-4739-a53c-7ca04e211678"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ENV_NAME="${1:-}"
 
 if [[ -z "$ENV_NAME" ]]; then
     echo "Usage: get-grpc-address <environment>" >&2
-    echo "  environment: 'production' or 'pr'" >&2
+    echo "  environment: 'production', 'pr', or 'local'" >&2
     exit 1
 fi
 
 # Resolve environment name
 case "$ENV_NAME" in
+    local)
+        # Local docker-compose stack
+        # shellcheck source=lib/devstack-check.sh
+        source "$SCRIPT_DIR/lib/devstack-check.sh"
+        require_devstack_running
+        get_local_grpc_address
+        exit 0
+        ;;
     production|prod)
         RAILWAY_ENV="production"
         ;;
