@@ -51,6 +51,7 @@ def fast_config() -> LeaseConfig:
 
 
 @pytest.mark.integration
+@pytest.mark.slow_threshold(10.0)
 class TestLeaseIntegration:
     """Integration tests for lease coordination between multiple instances."""
 
