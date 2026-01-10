@@ -75,7 +75,7 @@ class TestCoverageTreeCompletenessSQLite:
                 "document_id": "test-doc",
                 "token_count": 5,
                 "height": 0,
-                "level_index": 0,
+                "level_index": 1,
             },
             {
                 "node_id": "L3",
@@ -85,7 +85,7 @@ class TestCoverageTreeCompletenessSQLite:
                 "document_id": "test-doc",
                 "token_count": 5,
                 "height": 0,
-                "level_index": 0,
+                "level_index": 2,
             },
             {
                 "node_id": "L4",
@@ -95,7 +95,7 @@ class TestCoverageTreeCompletenessSQLite:
                 "document_id": "test-doc",
                 "token_count": 5,
                 "height": 0,
-                "level_index": 0,
+                "level_index": 3,
             },
             # Parent nodes
             {
@@ -118,7 +118,7 @@ class TestCoverageTreeCompletenessSQLite:
                 "document_id": "test-doc",
                 "height": 1,
                 "token_count": 10,
-                "level_index": 0,
+                "level_index": 1,
                 "left_child_id": "L3",
                 "right_child_id": "L4",
             },

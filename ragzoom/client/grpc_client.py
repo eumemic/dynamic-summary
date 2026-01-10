@@ -169,6 +169,31 @@ class TruncateResult:
 
 
 @dataclass
+class SessionCursor:
+    """Cursor position for session ingestion."""
+
+    byte_offset: int
+
+
+@dataclass
+class SessionIngestResult:
+    """Result from ingesting a session delta."""
+
+    new_byte_offset: int
+    messages_processed: int
+    truncated: bool
+    truncate_span: int
+
+
+@dataclass
+class CompactionBoundaryResult:
+    """Result from getting the compaction boundary for a session."""
+
+    has_boundary: bool
+    span_end: int
+
+
+@dataclass
 class DocumentStatusView:
     document_id: str
     leaf_count: int
@@ -185,11 +210,20 @@ class GrpcRagzoomClient:
         *,
         timeout: float | None = None,
         stream_timeout: float | None = DEFAULT_GRPC_STREAM_TIMEOUT,
+        secure: bool | None = None,
     ) -> None:
         self._address = address
         self._timeout = DEFAULT_GRPC_TIMEOUT if timeout is None else timeout
         self._stream_timeout = stream_timeout
-        self._channel = grpc.insecure_channel(address)
+
+        # Auto-detect TLS: use secure channel for port 443 or explicit secure=True
+        if secure is None:
+            secure = address.endswith(":443")
+
+        if secure:
+            self._channel = grpc.secure_channel(address, grpc.ssl_channel_credentials())
+        else:
+            self._channel = grpc.insecure_channel(address)
         self._indexer: pb2_grpc.IndexerServiceStub = pb2_grpc.IndexerServiceStub(
             self._channel
         )
@@ -198,6 +232,9 @@ class GrpcRagzoomClient:
         )
         self._workers: pb2_grpc.WorkerServiceStub = pb2_grpc.WorkerServiceStub(
             self._channel
+        )
+        self._session: pb2_grpc.SessionIngestionServiceStub = (
+            pb2_grpc.SessionIngestionServiceStub(self._channel)
         )
 
     def __enter__(self) -> GrpcRagzoomClient:
@@ -573,3 +610,124 @@ class GrpcRagzoomClient:
             deleted_node_ids=list(response.deleted_node_ids),
             span_start=response.span_start,
         )
+
+    def get_session_cursor(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+    ) -> SessionCursor:
+        """Get the current byte offset for a session.
+
+        Args:
+            session_id: The session to get cursor for
+            user_id: User identifier for multi-tenant isolation
+
+        Returns:
+            SessionCursor with the current byte offset
+        """
+        request = pb2.GetSessionCursorRequest(session_id=session_id)
+        metadata = [("user_id", user_id)]
+        try:
+            response = self._session.GetSessionCursor(
+                request, timeout=self._timeout, metadata=metadata
+            )
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        return SessionCursor(byte_offset=response.byte_offset)
+
+    def ingest_session(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+        jsonl_delta: bytes,
+    ) -> SessionIngestResult:
+        """Ingest a JSONL delta for a session.
+
+        Args:
+            session_id: The session to ingest into
+            user_id: User identifier for multi-tenant isolation
+            jsonl_delta: New JSONL content since the last cursor position
+
+        Returns:
+            SessionIngestResult with new cursor position and processing stats
+        """
+        request = pb2.IngestSessionRequest(
+            session_id=session_id,
+            jsonl_delta=jsonl_delta,
+        )
+        metadata = [("user_id", user_id)]
+        try:
+            response = self._session.IngestSession(
+                request, timeout=self._timeout, metadata=metadata
+            )
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        return SessionIngestResult(
+            new_byte_offset=response.new_byte_offset,
+            messages_processed=response.messages_processed,
+            truncated=response.truncated,
+            truncate_span=response.truncate_span,
+        )
+
+    def get_compaction_boundary(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+    ) -> CompactionBoundaryResult:
+        """Get the compaction boundary span_end for a session.
+
+        The compaction boundary is the span_end just before post-compaction content.
+        This allows queries to be limited to pre-compaction history only.
+
+        Args:
+            session_id: The session to get boundary for
+            user_id: User identifier for multi-tenant isolation
+
+        Returns:
+            CompactionBoundaryResult with has_boundary=True and span_end if
+            compaction has occurred, or has_boundary=False otherwise.
+        """
+        request = pb2.GetCompactionBoundaryRequest(session_id=session_id)
+        metadata = [("user_id", user_id)]
+        try:
+            response = self._session.GetCompactionBoundary(
+                request, timeout=self._timeout, metadata=metadata
+            )
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        return CompactionBoundaryResult(
+            has_boundary=response.has_boundary,
+            span_end=response.span_end,
+        )
+
+    def reset_session_cursor(
+        self,
+        *,
+        session_id: str,
+        user_id: str,
+    ) -> tuple[bool, str]:
+        """Reset a session's cursor to force full re-sync.
+
+        Args:
+            session_id: The session to reset
+            user_id: User identifier for multi-tenant isolation
+
+        Returns:
+            Tuple of (success, message)
+        """
+        request = pb2.ResetSessionCursorRequest(session_id=session_id)
+        metadata = [("user_id", user_id)]
+        try:
+            response = self._session.ResetSessionCursor(
+                request, timeout=self._timeout, metadata=metadata
+            )
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        return (response.success, response.message)

@@ -379,12 +379,19 @@ class IndexingEngine:
                     ctx.leaves_at_last_idle
                 )
                 ctx.expected_total_jobs = total_expected - baseline_expected
-                # Don't reset completed_jobs - they accumulate until idle
+                # Reset completed count when starting new work after idle
+                if document_id not in self._active_documents:
+                    ctx.completed_jobs = 0
 
             self._active_documents.add(document_id)
             self._idle_event.clear()
 
-        await self._find_and_start_jobs(document_id)
+        # Fire-and-forget: don't block append on job discovery
+        # Jobs will be discovered and started in background
+        asyncio.create_task(
+            self._safe_find_and_start_jobs(document_id),
+            name=f"trigger_work:{document_id[:8]}",
+        )
 
     async def register_run(
         self,
@@ -431,16 +438,27 @@ class IndexingEngine:
         async with self._lock:
             self._document_contexts.pop(document_id, None)
 
-    async def wait_until_idle(self, document_id: str | None = None) -> None:
+    async def wait_until_idle(
+        self, document_id: str | None = None, timeout: float | None = None
+    ) -> None:
         """Wait until all work is complete.
 
         Args:
             document_id: If provided, wait only for this document.
                         If None, wait for all documents.
+            timeout: Maximum seconds to wait. If None, uses RAGZOOM_WAIT_IDLE_TIMEOUT
+                    env var (default 60.0). Set to 0 or negative to wait forever.
 
         Raises:
+            TimeoutError: If timeout is exceeded while waiting.
             Exception: Re-raises any fatal exception from background jobs in strict mode.
         """
+        if timeout is None:
+            timeout = float(os.environ.get("RAGZOOM_WAIT_IDLE_TIMEOUT", "60.0"))
+
+        start_time = time.monotonic()
+        use_timeout = timeout > 0
+
         while True:
             # Check for fatal exception from background jobs (strict mode)
             if self._fatal_exception is not None:
@@ -462,11 +480,34 @@ class IndexingEngine:
                 # Clear event before waiting so we can detect new signals
                 self._idle_event.clear()
 
+            # Calculate remaining time for this wait iteration
+            if use_timeout:
+                elapsed = time.monotonic() - start_time
+                remaining = timeout - elapsed
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"wait_until_idle timed out after {timeout}s waiting for "
+                        f"document_id={document_id!r}"
+                    )
+            else:
+                remaining = None
+
             # Wait for state change signal (job completion or no more work)
-            await self._idle_event.wait()
+            try:
+                await asyncio.wait_for(self._idle_event.wait(), timeout=remaining)
+            except asyncio.TimeoutError:
+                raise TimeoutError(
+                    f"wait_until_idle timed out after {timeout}s waiting for "
+                    f"document_id={document_id!r}"
+                ) from None
 
     async def status(self) -> IndexingStatus:
-        """Get current indexing activity snapshot."""
+        """Get current indexing activity snapshot.
+
+        Progress is computed from actual database state:
+        - completed = leaves with embeddings + inner nodes (all existing inner nodes are complete)
+        - expected = 2*N - popcount(N) where N = leaf count (total nodes in a complete forest)
+        """
         async with self._lock:
             in_flight_by_doc: dict[str, int] = {}
             for job in self._active_jobs:
@@ -474,20 +515,43 @@ class IndexingEngine:
                     in_flight_by_doc.get(job.document_id, 0) + 1
                 )
 
-            completed_by_doc: dict[str, int] = {}
-            expected_total_by_doc: dict[str, int] = {}
-            for doc_id, ctx in self._document_contexts.items():
-                if ctx.completed_jobs > 0:
-                    completed_by_doc[doc_id] = ctx.completed_jobs
-                if ctx.expected_total_jobs > 0:
-                    expected_total_by_doc[doc_id] = ctx.expected_total_jobs
-
-            return IndexingStatus(
-                in_flight=len(self._active_jobs),
-                in_flight_by_document=in_flight_by_doc,
-                completed_by_document=completed_by_doc,
-                expected_total_by_document=expected_total_by_doc,
+            # Get active document IDs (either have active jobs or are being tracked)
+            active_doc_ids = set(in_flight_by_doc.keys()) | set(
+                self._document_contexts.keys()
             )
+
+        # Query actual DB state outside the lock to avoid blocking
+        completed_by_doc: dict[str, int] = {}
+        expected_total_by_doc: dict[str, int] = {}
+
+        for doc_id in active_doc_ids:
+            store = self._store.for_document(doc_id)
+
+            # Completed = leaves with embeddings + inner nodes
+            # Inner nodes are created atomically with their summary, so all existing
+            # inner nodes (height > 0) are complete
+            leaves_with_embeddings = store.nodes.count_leaves_with_embeddings()
+            total_nodes = store.nodes.count()
+            leaf_count = store.nodes.leaf_count()
+            inner_nodes = total_nodes - leaf_count
+
+            completed = leaves_with_embeddings + inner_nodes
+
+            # Expected total = 2*N - popcount(N) where N = leaf count
+            # This is the number of nodes in a complete binary forest
+            expected = _expected_total_from_leaf_count(leaf_count)
+
+            if completed > 0:
+                completed_by_doc[doc_id] = completed
+            if expected > 0:
+                expected_total_by_doc[doc_id] = expected
+
+        return IndexingStatus(
+            in_flight=len(in_flight_by_doc),
+            in_flight_by_document=in_flight_by_doc,
+            completed_by_document=completed_by_doc,
+            expected_total_by_document=expected_total_by_doc,
+        )
 
     async def shutdown(self) -> None:
         """Wait for all work to complete."""
@@ -496,6 +560,13 @@ class IndexingEngine:
     # -----------------------------------------------------------------------
     # Job discovery and scheduling
     # -----------------------------------------------------------------------
+
+    async def _safe_find_and_start_jobs(self, document_id: str) -> None:
+        """Wrapper around _find_and_start_jobs that logs errors."""
+        try:
+            await self._find_and_start_jobs(document_id)
+        except Exception:
+            logger.exception("Error in background job discovery for %s", document_id)
 
     def _request_scheduling(self, document_id: str) -> None:
         """Request scheduling for a document, coalescing multiple requests.
@@ -576,13 +647,13 @@ class IndexingEngine:
                     self._active_documents.discard(document_id)
                     self._notify_state_change()
 
-                    # Reset progress counters for next work cycle
+                    # Update leaves count but keep progress counters so displays
+                    # can show the final "completed=X/X inflight=0" state.
+                    # Counters reset on the next trigger_work() call.
                     ctx = self._document_contexts.get(document_id)
                     if ctx is not None:
                         store = self._store.for_document(document_id)
                         ctx.leaves_at_last_idle = store.nodes.leaf_count()
-                        ctx.completed_jobs = 0
-                        ctx.expected_total_jobs = 0
 
                     # Fire callback outside lock - document is truly idle
                     if self._on_document_idle is not None:
@@ -619,11 +690,10 @@ class IndexingEngine:
                     for job in new_jobs:
                         asyncio.create_task(self._run_job(job))
 
-                    logger.debug(
-                        "engine: started %d jobs (active=%d)",
-                        len(new_jobs),
-                        len(self._active_jobs),
-                    )
+                    # Yield to event loop to let newly created tasks start running
+                    # This is critical because _find_next_n_jobs is synchronous and
+                    # would otherwise block the event loop indefinitely
+                    await asyncio.sleep(0)
 
             if finalize_runs:
                 await self._maybe_complete_runs(document_id)
@@ -1136,6 +1206,8 @@ class IndexingEngine:
                 await self._embed_leaf(job)
             else:
                 await self._summarize_pair(job)
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             logger.exception("Job failed: %s", job)
             job_failed = True
@@ -1238,6 +1310,9 @@ class IndexingEngine:
                 )
 
         # Retrieve preceding context (pass pre-computed embedding to skip API call)
+        logger.info(
+            "EMBED_CONTEXT_START: leaf=%s span_start=%s", job.leaf_id, span_start
+        )
         context_result = await self._get_preceding_context(
             store=store,
             document_id=job.document_id,
@@ -1245,6 +1320,11 @@ class IndexingEngine:
             config=leaf_config,
             query_text=leaf_text,
             query_embedding=query_embedding,
+        )
+        logger.info(
+            "EMBED_CONTEXT_END: leaf=%s tiling_count=%s",
+            job.leaf_id,
+            len(context_result.tiling_ids),
         )
         tiling_ids = context_result.tiling_ids
         context_nodes = context_result.nodes
@@ -1281,6 +1361,7 @@ class IndexingEngine:
         if context_prefix:
             # Generate a contextualizing summary of preceding context
             # (extracts only information relevant to understanding the leaf)
+            logger.info("EMBED_LLM_START: leaf=%s contextualize", job.leaf_id)
             contextualization_result = await self._llm_service._contextualize_text(
                 preceding_context=context_prefix,
                 target_text=leaf_text,
@@ -1288,6 +1369,7 @@ class IndexingEngine:
                 parent_id=job.leaf_id,
                 reporter=telemetry,
             )
+            logger.info("EMBED_LLM_END: leaf=%s contextualize", job.leaf_id)
             context_summary = contextualization_result.summary
             # Store the summary in the database
             store.nodes._repo.update_preceding_context_summary(
@@ -1302,7 +1384,9 @@ class IndexingEngine:
 
         # Record embedding start time for telemetry
         embed_start_time = time.time()
+        logger.info("EMBED_API_START: leaf=%s", job.leaf_id)
         embed_result = await self._llm_service.embed_texts_with_usage([text_to_embed])
+        logger.info("EMBED_API_END: leaf=%s", job.leaf_id)
         embeddings = embed_result["embeddings"]
         leaf_embedding_usage = embed_result["usage"]
         if not embeddings:
@@ -1378,6 +1462,8 @@ class IndexingEngine:
             "span_start": span_start,
             "span_end": span_end,
             "height": 0,
+            "level_index": getattr(leaf, "level_index", 0),
+            "coord_version": 1,
             "is_leaf": 1,
             "parent_id": getattr(leaf, "parent_id", None) or "",
         }
@@ -1491,6 +1577,16 @@ class IndexingEngine:
             )
             return
 
+        # DEBUG: Inject delay to reproduce TOCTOU race (set RAGZOOM_SUMMARIZE_DELAY_MS)
+        import os
+
+        delay_ms = int(os.environ.get("RAGZOOM_SUMMARIZE_DELAY_MS", "0"))
+        if delay_ms > 0:
+            logger.warning(
+                "summarize: INJECTING %dms DELAY for race reproduction", delay_ms
+            )
+            await asyncio.sleep(delay_ms / 1000.0)
+
         run_id, telemetry = await self._run_context_for_node(
             job.document_id, job.left_id
         )
@@ -1527,12 +1623,18 @@ class IndexingEngine:
         import json
 
         retrieval_start_time = time.time()
+        logger.info("CONTEXT_START: span_start=%s doc=%s", span_start, job.document_id)
         context_result = await self._get_preceding_context(
             store=store,
             document_id=job.document_id,
             span_start=span_start,
             config=inner_config,
             query_text=None,
+        )
+        logger.info(
+            "CONTEXT_END: span_start=%s tiling_count=%s",
+            span_start,
+            len(context_result.tiling_ids),
         )
         tiling_ids = context_result.tiling_ids
         context_nodes = context_result.nodes
@@ -1566,6 +1668,11 @@ class IndexingEngine:
             if left_tokens is not None and right_tokens is not None
             else None
         )
+        logger.info(
+            "SUMMARIZE_START: parent_id=%s combined_tokens=%s",
+            parent_id,
+            combined_tokens,
+        )
         summary_result = await self._llm_service._summarize_text(
             combined_text,
             self._index_config.target_chunk_tokens,
@@ -1574,6 +1681,7 @@ class IndexingEngine:
             prev_context=context_text,
             text_tokens=combined_tokens,
         )
+        logger.info("SUMMARIZE_END: parent_id=%s", parent_id)
         # Fail fast if mock returns wrong type - prevents silent hangs in tests
         if is_strict_mode() and not isinstance(summary_result, SummaryResult):
             raise TypeError(
@@ -1675,6 +1783,11 @@ class IndexingEngine:
         # update_parent_references_batch would leave children with parent_id=NULL
         # while the parent exists, causing permanent stalls in the height
         # differential check (see test_summary_job_atomicity_sqlite.py).
+        #
+        # Note: Single-writer coordination is enforced by the IndexerLease
+        # mechanism (see ragzoom/server/lease.py), which ensures only one
+        # IndexingEngine can write to the database at a time. This eliminates
+        # the need for IntegrityError handling for concurrent writes.
         with store.transaction() as session:
             store.nodes.add_batch([node_payload], session=session)
             store.nodes.update_parent_references_batch(

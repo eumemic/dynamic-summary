@@ -1,0 +1,26 @@
+#!/bin/bash
+# Start the MCP server with dynamically discovered gRPC address
+#
+# Reads MEMORY_ENV from data/.memory-env (default: production)
+# Discovers gRPC address and launches the MCP server
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GIT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+cd "$GIT_ROOT"
+
+# Read config from data/.memory-env
+if [[ -f "data/.memory-env" ]]; then
+    source "data/.memory-env"
+fi
+MEMORY_ENV="${MEMORY_ENV:-production}"
+MEMORY_USER_ID="${MEMORY_USER_ID:-$USER}"
+
+# Export for MCP server
+export RAGZOOM_SERVER_ADDRESS=$("$SCRIPT_DIR/get-grpc-address" "$MEMORY_ENV")
+export RAGZOOM_USER_ID="$MEMORY_USER_ID"
+
+# Launch MCP server
+exec python -m memory_service.ingestion.claude.mcp_server "$@"

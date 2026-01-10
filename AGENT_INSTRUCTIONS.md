@@ -155,6 +155,9 @@ cd worktrees/worktree-N && claude
 - Use `/merge` to merge PR and sync with master
 - The same branch is reused for multiple sequential PRs
 
+### Worktree Path Resolution
+When in a worktree, your current working directory IS the project root. All relative paths in skills, commands, and documentation refer to paths within the worktree, not the parent repo. Never `cd` to `/Users/tom/code/dynamic-summary` to run commands - stay in the worktree and run them directly (e.g., `scripts/memory-admin`, not `cd /Users/tom/code/dynamic-summary && scripts/memory-admin`).
+
 ### 13. Memory Usage
 
 When this agent has access to the RagZoom memory tool (`remember`), use it proactively to recall details from earlier in the conversation.

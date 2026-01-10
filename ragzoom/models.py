@@ -1,6 +1,7 @@
 """SQLAlchemy models for RagZoom (storage only; no embeddings)."""
 
-from datetime import datetime
+import secrets
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     DateTime,
@@ -13,6 +14,11 @@ from sqlalchemy import (
     Text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+def generate_api_key() -> str:
+    """Generate a secure API key with 'rz_' prefix."""
+    return f"rz_{secrets.token_urlsafe(32)}"
 
 
 class Base(DeclarativeBase):
@@ -47,11 +53,16 @@ class PostgresTreeNode(TreeNodeColumnsMixin, Base):
     __tablename__ = "tree_nodes"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(
+        String, nullable=True, index=True
+    )  # Owner of this node (denormalized from document for query efficiency)
     parent_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("tree_nodes.id"), nullable=True
     )
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
     document_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("documents.id"), nullable=True
     )
@@ -99,6 +110,12 @@ class PostgresTreeNode(TreeNodeColumnsMixin, Base):
             "height",
             "span_start",
         ),
+        # Composite index for multi-tenant queries (user + document)
+        Index("idx_tree_nodes_user_document", "user_id", "document_id"),
+        # Note: The unique constraint on (document_id, height, level_index) was removed.
+        # Single-writer coordination is now enforced by the IndexerLease mechanism
+        # which ensures only one IndexingEngine can write to the database at a time.
+        # See ragzoom/server/lease.py for details.
     )
 
     def is_leaf(self) -> bool:
@@ -122,9 +139,34 @@ class Document(Base):
     __tablename__ = "documents"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(
+        String, nullable=True, index=True
+    )  # Owner of this document (None for legacy/local usage)
     file_path: Mapped[str | None] = mapped_column(
         String, nullable=True, unique=True
     )  # Path to the source file
-    indexed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    indexed_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
     embedding_model: Mapped[str] = mapped_column(String, nullable=False)
     summary_model: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class User(Base):
+    """Database model for authenticated users."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    github_id: Mapped[str | None] = mapped_column(
+        String, nullable=True, unique=True, index=True
+    )  # GitHub user ID for OAuth
+    email: Mapped[str | None] = mapped_column(
+        String, nullable=True, index=True
+    )  # Email address
+    api_key: Mapped[str] = mapped_column(
+        String, nullable=False, unique=True, index=True, default=generate_api_key
+    )  # API key for authentication
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )

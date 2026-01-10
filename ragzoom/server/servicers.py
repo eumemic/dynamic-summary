@@ -663,6 +663,7 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
                 documents=document_progress,
             )
 
+            # Return AFTER yielding the final idle status
             if mode == _UNTIL_IDLE_WORKER_MODE and idle:
                 return
 
@@ -875,10 +876,52 @@ async def shutdown_gracefully(server: GrpcServerProto) -> None:
 
 
 async def serve(state: ServerState, *, host: str, port: int) -> None:
-    server = cast(GrpcServerProto, grpc.aio.server())
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session, sessionmaker
+
+    from memory_service.grpc_servicer import SessionIngestionServicer
+    from ragzoom.wrapper import AsyncRagZoom
+
+    # 100MB max message size for large transcript uploads
+    max_message_size = 100 * 1024 * 1024
+    server = cast(
+        GrpcServerProto,
+        grpc.aio.server(
+            options=[
+                ("grpc.max_receive_message_length", max_message_size),
+                ("grpc.max_send_message_length", max_message_size),
+            ]
+        ),
+    )
     pb2_grpc.add_IndexerServiceServicer_to_server(IndexerServicer(state), server)
     pb2_grpc.add_RetrievalServiceServicer_to_server(RetrievalServicer(state), server)
     pb2_grpc.add_WorkerServiceServicer_to_server(WorkerServicer(state), server)
+
+    # Add session ingestion service for Claude Code memory sync
+    database_url = state.operational_config.database_url
+    if database_url:
+        # Ensure psycopg3-compatible URL
+        if database_url.startswith("postgresql://"):
+            database_url = database_url.replace(
+                "postgresql://", "postgresql+psycopg://", 1
+            )
+        engine = create_engine(database_url, pool_pre_ping=True)
+        db_session_factory: sessionmaker[Session] = sessionmaker(bind=engine)
+
+        def get_db_session() -> Session:
+            return db_session_factory()
+
+        def get_async_ragzoom_client(user_id: str) -> AsyncRagZoom:
+            # For now, all users share the same runtime (no per-user isolation)
+            # Document IDs should include user_id prefix for isolation
+            return AsyncRagZoom(runtime=state.index_runtime)
+
+        session_servicer = SessionIngestionServicer(
+            get_db_session=get_db_session,
+            get_async_ragzoom_client=get_async_ragzoom_client,
+        )
+        pb2_grpc.add_SessionIngestionServiceServicer_to_server(session_servicer, server)
+        logger.info("Session ingestion service enabled")
 
     listen_addr = f"{host}:{port}"
     server.add_insecure_port(listen_addr)
@@ -919,6 +962,7 @@ async def _render_indexing_progress(engine: IndexingEngine) -> None:
     try:
         while True:
             status = await engine.status()
+            # Only show documents with active inflight work
             active_doc_ids = {
                 doc_id
                 for doc_id, count in status.in_flight_by_document.items()

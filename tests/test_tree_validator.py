@@ -693,3 +693,160 @@ def test_cli_validate_command_reports_telemetry_mismatch(
     assert "Database node is missing from telemetry payload" in result.output
 
     validator_store.clear_document(document_id)
+
+
+# --- Fast (SQL-based) Validation Tests ---
+
+
+def test_fast_validation_accepts_complete_tree(validator_store: StorageBackend) -> None:
+    """Test that fast validation passes for a valid complete tree."""
+    document_id = "test-fast-validation-complete"
+    doc_store = validator_store.for_document(document_id)
+    _build_two_leaf_tree(doc_store, document_id)
+
+    # Run fast validation
+    report = validate_document(
+        document_id=document_id,
+        store=validator_store,
+        fast=True,
+    )
+
+    assert report.status == "ok", f"Unexpected errors: {report.errors}"
+    assert report.metrics["node_count"] == 3  # 2 leaves + 1 parent
+    assert report.metrics["leaf_count"] == 2
+    assert report.metrics["root_count"] == 1
+
+    validator_store.clear_document(document_id)
+
+
+def test_fast_validation_detects_leaf_gap(validator_store: StorageBackend) -> None:
+    """Test that fast validation detects gaps between leaves."""
+    document_id = "test-fast-validation-gap"
+    doc_store = validator_store.for_document(document_id)
+
+    # Create leaves with a gap (0-100, 150-200 instead of 100-150)
+    _add_leaf(doc_store, node_id="leaf-0", start=0, end=100, level_index=0)
+    _add_leaf(doc_store, node_id="leaf-1", start=150, end=200, level_index=1)  # Gap!
+
+    report = validate_document(
+        document_id=document_id,
+        store=validator_store,
+        fast=True,
+    )
+
+    assert report.status == "failed"
+    gap_errors = [e for e in report.errors if e.code == "leaf.gap"]
+    assert len(gap_errors) > 0, f"Expected leaf.gap error, got: {report.errors}"
+
+    validator_store.clear_document(document_id)
+
+
+def test_fast_validation_detects_broken_parent_ref(
+    validator_store: StorageBackend,
+) -> None:
+    """Test that fast validation detects broken parent references."""
+    document_id = "test-fast-validation-broken-parent"
+    doc_store = validator_store.for_document(document_id)
+
+    # Create leaf with a non-existent parent
+    doc_store.nodes.add_node(
+        node_id="orphan-leaf",
+        text="orphan",
+        embedding=[0.0],
+        span_start=0,
+        span_end=100,
+        parent_id="non-existent-parent",  # Broken reference
+        token_count=100,
+        height=0,
+        level_index=0,
+    )
+
+    report = validate_document(
+        document_id=document_id,
+        store=validator_store,
+        fast=True,
+    )
+
+    assert report.status == "failed"
+    # Full validation uses 'parent.mismatch' for this case
+    broken_refs = [
+        e
+        for e in report.errors
+        if "parent" in e.code.lower() or "broken" in e.code.lower()
+    ]
+    assert len(broken_refs) > 0, f"Expected parent ref error, got: {report.errors}"
+
+    validator_store.clear_document(document_id)
+
+
+def test_fast_validation_detects_non_binary_tree(
+    validator_store: StorageBackend,
+) -> None:
+    """Test that fast validation detects nodes with only one child."""
+    document_id = "test-fast-validation-non-binary"
+    doc_store = validator_store.for_document(document_id)
+
+    # Create a leaf
+    _add_leaf(doc_store, node_id="only-child", start=0, end=100, level_index=0)
+
+    # Create parent with only left child (violates perfect binary tree)
+    doc_store.nodes.add_node(
+        node_id="bad-parent",
+        text="parent",
+        embedding=[0.0],
+        span_start=0,
+        span_end=100,
+        left_child_id="only-child",
+        right_child_id=None,  # Missing right child!
+        token_count=100,
+        height=1,
+        level_index=0,
+    )
+    doc_store.nodes._repo.update_parent_references_batch([("only-child", "bad-parent")])
+
+    report = validate_document(
+        document_id=document_id,
+        store=validator_store,
+        fast=True,
+    )
+
+    assert report.status == "failed"
+    # Full validation uses 'tree.one_child', SQL validation uses 'tree.not_binary'
+    binary_errors = [
+        e
+        for e in report.errors
+        if "binary" in e.code.lower() or "child" in e.code.lower()
+    ]
+    assert len(binary_errors) > 0, f"Expected binary tree error, got: {report.errors}"
+
+    validator_store.clear_document(document_id)
+
+
+def test_fast_validation_same_results_as_full(validator_store: StorageBackend) -> None:
+    """Test that fast validation finds same structural issues as full validation."""
+    document_id = "test-fast-vs-full"
+    doc_store = validator_store.for_document(document_id)
+    _build_two_leaf_tree(doc_store, document_id)
+
+    # Run both validation modes
+    fast_report = validate_document(
+        document_id=document_id,
+        store=validator_store,
+        fast=True,
+    )
+    full_report = validate_document(
+        document_id=document_id,
+        store=validator_store,
+        fast=False,
+    )
+
+    # Both should pass for a valid tree
+    assert fast_report.status == "ok"
+    assert full_report.status == "ok"
+
+    # Metrics should match
+    assert fast_report.metrics["node_count"] == full_report.metrics["node_count"]
+    assert fast_report.metrics["leaf_count"] == full_report.metrics["leaf_count"]
+    assert fast_report.metrics["root_count"] == full_report.metrics["root_count"]
+
+    validator_store.clear_document(document_id)

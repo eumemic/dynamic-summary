@@ -58,7 +58,7 @@ def test_document_isolation_prevents_contamination_sqlite(
                 parent_id="doc1_root",
                 token_count=25,
                 height=0,
-                level_index=0,
+                level_index=1,
             ),
         ]
     )
@@ -96,7 +96,7 @@ def test_document_isolation_prevents_contamination_sqlite(
                 parent_id="doc2_root",
                 token_count=25,
                 height=0,
-                level_index=0,
+                level_index=1,
             ),
         ]
     )

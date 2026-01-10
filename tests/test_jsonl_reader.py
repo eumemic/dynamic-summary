@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from ragzoom.claude_memory.jsonl_reader import iter_jsonl, iter_jsonl_reversed
+from memory_service.ingestion.claude.jsonl_reader import iter_jsonl, iter_jsonl_reversed
 
 
 def _write_jsonl(path: Path, records: Sequence[Mapping[str, object]]) -> None:

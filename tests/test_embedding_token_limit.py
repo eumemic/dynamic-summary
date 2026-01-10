@@ -316,3 +316,99 @@ async def test_embed_leaf_records_telemetry() -> None:
     assert (
         node_telemetry.embedding.model == config.embedding_model
     ), f"model should be {config.embedding_model}"
+
+
+@pytest.mark.asyncio
+async def test_embed_leaf_includes_level_index_in_vector_metadata() -> None:
+    """Regression test: vector metadata must include level_index and coord_version.
+
+    Bug: _embed_leaf builds metadata for vector_index.upsert but omits level_index
+    and coord_version. This causes all vectors to get level_index=0 by default,
+    which breaks the coverage builder optimization that uses vector metadata to
+    avoid database fetches during retrieval.
+
+    Impact: Without proper coordinates in vector metadata, every retrieval falls
+    back to database fetches for seed nodes, causing ~1200ms latency on Railway
+    (with network latency) vs ~4ms locally.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
+
+    # Create mocks
+    mock_store = MagicMock()
+    mock_doc_store = MagicMock()
+    mock_store.for_document.return_value = mock_doc_store
+
+    # Create a leaf with level_index = 42 (not 0, to verify it's passed correctly)
+    mock_leaf = MagicMock()
+    mock_leaf.text = "Test leaf content"
+    mock_leaf.id = "test-leaf-id"
+    mock_leaf.span_start = 0
+    mock_leaf.span_end = 100
+    mock_leaf.level_index = 42  # Key: non-zero to detect if it's being passed
+    mock_leaf.coord_version = 1
+    mock_leaf.parent_id = "parent-123"
+    mock_doc_store.nodes.get.return_value = mock_leaf
+
+    config = IndexConfig.load()
+
+    # Create mock LLM service
+    mock_llm_service = MagicMock()
+
+    from ragzoom.contracts.embedding_model import EmbeddingResult
+
+    async def mock_embed_texts_with_usage(texts: list[str]) -> EmbeddingResult:
+        return {
+            "embeddings": [[0.1] * 1536 for _ in texts],
+            "usage": {"total_tokens": 50, "model": "text-embedding-3-small"},
+        }
+
+    mock_llm_service.embed_texts_with_usage = mock_embed_texts_with_usage
+
+    # Create engine
+    engine = IndexingEngine(
+        store=mock_store,
+        llm_service=mock_llm_service,
+        index_config=config,
+        openai_client=AsyncMock(),
+    )
+
+    # Create mock vector index that captures upsert calls
+    mock_vector_index = MagicMock()
+    upsert_calls: list[tuple[str, object, dict[str, object]]] = []
+
+    def capture_upsert(items: list[tuple[str, object, dict[str, object]]]) -> None:
+        upsert_calls.extend(items)
+
+    mock_vector_index.upsert = capture_upsert
+
+    # Run _embed_leaf
+    with patch.object(engine, "_get_vector_index", return_value=mock_vector_index):
+        job = EmbeddingJob(document_id="test-doc", leaf_id="test-leaf-id")
+        await engine._embed_leaf(job)
+
+    # Verify upsert was called
+    assert len(upsert_calls) == 1, "vector_index.upsert should have been called once"
+
+    node_id, _embedding, metadata = upsert_calls[0]
+    assert node_id == "test-leaf-id"
+
+    # Key assertions: level_index and coord_version must be present and correct
+    assert "level_index" in metadata, (
+        "metadata must include level_index for coverage builder optimization. "
+        "Without it, retrieval falls back to slow database fetches."
+    )
+    assert metadata["level_index"] == 42, (
+        f"level_index should be 42 (from leaf), got {metadata.get('level_index')}. "
+        "This indicates level_index is defaulting to 0 instead of using the leaf's value."
+    )
+
+    assert "coord_version" in metadata, (
+        "metadata must include coord_version for coverage builder optimization. "
+        "coord_version=1 signals valid coordinates; 0 triggers database fallback."
+    )
+    assert metadata["coord_version"] == 1, (
+        f"coord_version should be 1 (valid coordinates), got {metadata.get('coord_version')}. "
+        "coord_version=0 causes coverage builder to ignore the metadata."
+    )
