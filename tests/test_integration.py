@@ -298,3 +298,45 @@ class TestIntegration:
 
         result = await retriever.retrieve_async("unrelated query")
         assert important_node.id in result.coverage_map
+
+    @pytest.mark.asyncio
+    async def test_client_managed_chunking_end_to_end(
+        self,
+        storage_backend: StorageBackend,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        """Test that target_chunk_tokens=None creates one atomic leaf per input unit.
+
+        Spec: specs/client-managed-chunking.md § Acceptance Criteria #1
+        """
+        index_config = IndexConfig.load(
+            target_chunk_tokens=None,
+            target_embedding_context_tokens=200,
+        )
+        vector_index = RecordingVectorIndex()
+        self._bind_vector_index(indexer_runtime_harness, vector_index)
+        configure_runtime(indexer_runtime_harness, index_config)
+
+        units = ["Turn A: First conversation turn", "Turn B: Second conversation turn"]
+
+        session = indexer_runtime_harness.runtime.get_session(
+            "client-managed-test", file_path="test.txt"
+        )
+        await session.batch_append_text(units, collect_telemetry=False)
+        await indexer_runtime_harness.indexing_engine.wait_until_idle(
+            "client-managed-test"
+        )
+
+        doc_store = storage_backend.for_document("client-managed-test")
+        leaf_nodes = doc_store.nodes.get_leaves()
+
+        assert len(leaf_nodes) == len(units)
+        assert [node.text for node in leaf_nodes] == units
+        assert all(node.height == 0 for node in leaf_nodes)
+
+        # Verify contiguous span coverage
+        expected_offset = 0
+        for i, node in enumerate(leaf_nodes):
+            assert node.span_start == expected_offset
+            assert node.span_end == expected_offset + len(units[i])
+            expected_offset = node.span_end
