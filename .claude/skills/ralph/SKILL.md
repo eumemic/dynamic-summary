@@ -77,6 +77,8 @@ This is the human's primary activity. Collaborate with Claude to turn fuzzy idea
 
 Let the user talk through the idea. This is a *conversation*, not an interrogation:
 
+- **Even if a starting point exists** (e.g., a GitHub issue), don't assume it's complete
+- Summarize your understanding, then ask: "Is there anything else you want to add or discuss before I start asking specific questions?"
 - Let the user explain in their own words - don't interrupt with structured questions yet
 - Understand the JTBD (Job to Be Done) - what is the *user* trying to accomplish?
 - Note design issues the user raises
@@ -84,20 +86,22 @@ Let the user talk through the idea. This is a *conversation*, not an interrogati
 - **Consult skills** - use relevant skills (e.g., `ragzoom-development`) to understand the system
 - Ask clarifying questions naturally as they arise, but keep it conversational
 - Do NOT create any files yet
-- Do NOT jump to Phase 2 until the user has fully expressed their initial thoughts
+- Do NOT jump to Phase 2 until the user explicitly indicates they're ready
 
 #### Phase 2: Structured Interrogation
 
-Once the user has shared their initial thoughts and the conversation naturally slows, systematically probe for gaps:
+Once the user confirms they're ready for questions, systematically probe for gaps using the AskUserQuestion tool:
 
-- **Use the AskUserQuestion tool** (not bullet points in prose) to clarify specific design decisions
-- AskUserQuestion presents multiple-choice options - use it for decisions with clear alternatives
+- **You MUST use the AskUserQuestion tool** - not bullet points, not numbered lists, not prose questions
+- AskUserQuestion is a tool that presents multiple-choice options to the user
+- Keep asking questions until every design decision is resolved with zero ambiguity
 - Continue investigating code as new areas come up
 - Identify edge cases, constraints, acceptance criteria
 - Surface tradeoffs and get the user's preference
-- Keep probing until both parties feel the design is complete
 
-**Signs you're not done:** Open questions remain, user seems uncertain, key decisions are deferred with "we'll figure it out later", you haven't looked at the code that will be affected.
+**The goal of Phase 2 is a completely unambiguous spec.** No "open questions", no "TBD", no "we'll figure it out later". If something is unclear, ask another question.
+
+**Signs you're not done:** Any decision could go multiple ways, user seems uncertain, you're tempted to write "open questions" in the spec, you haven't looked at all the code that will be affected.
 
 #### Phase 3: Draft the Spec
 
