@@ -1636,7 +1636,7 @@ class PostgresNodeRepository(BaseRepository):
             ]
 
             # 13. Optional: Leaf chunk size validation
-            if target_chunk_tokens is not None:
+            if target_chunk_tokens is not None and target_chunk_tokens > 0:
                 result.checks_run.append("leaf_chunk_size")
                 min_tokens = int(target_chunk_tokens * (1 - chunk_tolerance))
                 max_tokens = int(target_chunk_tokens * (1 + chunk_tolerance))
