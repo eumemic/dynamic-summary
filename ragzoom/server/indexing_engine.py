@@ -141,6 +141,46 @@ def _forest_completeness(num_roots: int, max_height: int, leaf_count: int) -> fl
     return optimal_cost / actual_cost
 
 
+def get_summary_target(
+    node_span_chars: int, height: int, chars_per_token: float
+) -> int:
+    """Calculate dynamic summary target for client-managed chunking.
+
+    When target_chunk_tokens is None, this function computes a summary target
+    that scales by 2x compression per tree level. Below 50 tokens, the function
+    signals passthrough (no summarization) by returning 0.
+
+    Args:
+        node_span_chars: Size of node span in characters (span_end - span_start)
+        height: Height of the node in the tree (0 = leaf, 1+ = internal nodes)
+        chars_per_token: Document-level character-to-token ratio
+
+    Returns:
+        Target token count for summarization, or 0 to signal passthrough
+
+    Examples:
+        >>> # 8000 chars = 2000 tokens at 4 chars/token
+        >>> get_summary_target(8000, 1, 4.0)
+        1000
+        >>> get_summary_target(8000, 2, 4.0)
+        500
+        >>> # Below floor: 100 chars = 25 tokens → height 1: 12.5 tokens → 0
+        >>> get_summary_target(100, 1, 4.0)
+        0
+        >>> # At floor: 400 chars = 100 tokens → height 1: 50 tokens
+        >>> get_summary_target(400, 1, 4.0)
+        50
+    """
+    span_tokens = node_span_chars / chars_per_token
+    target = span_tokens / (2**height)
+
+    # Floor: below 50 tokens, pass through without summarization
+    if target < 50:
+        return 0  # Signal passthrough
+
+    return int(target)
+
+
 @dataclass
 class PrecedingContextResult:
     """Result from preceding context retrieval."""
