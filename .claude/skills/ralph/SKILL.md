@@ -75,20 +75,23 @@ This is the human's primary activity. Collaborate with Claude to turn fuzzy idea
 
 #### Phase 1: Freeform Discussion
 
-Let the user talk through the idea. Listen actively and:
+Let the user talk through the idea. This is a *conversation*, not an interrogation:
 
+- Let the user explain in their own words - don't interrupt with structured questions yet
 - Understand the JTBD (Job to Be Done) - what is the *user* trying to accomplish?
 - Note design issues the user raises
 - **Investigate the codebase** - read relevant code to understand what exists and how it works
 - **Consult skills** - use relevant skills (e.g., `ragzoom-development`) to understand the system
-- Ask clarifying questions naturally as they arise
+- Ask clarifying questions naturally as they arise, but keep it conversational
 - Do NOT create any files yet
+- Do NOT jump to Phase 2 until the user has fully expressed their initial thoughts
 
 #### Phase 2: Structured Interrogation
 
-Once the user has shared their initial thoughts, systematically probe for gaps:
+Once the user has shared their initial thoughts and the conversation naturally slows, systematically probe for gaps:
 
-- Use AskUserQuestion to clarify specific design decisions
+- **Use the AskUserQuestion tool** (not bullet points in prose) to clarify specific design decisions
+- AskUserQuestion presents multiple-choice options - use it for decisions with clear alternatives
 - Continue investigating code as new areas come up
 - Identify edge cases, constraints, acceptance criteria
 - Surface tradeoffs and get the user's preference
