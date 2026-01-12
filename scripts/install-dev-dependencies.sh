@@ -77,6 +77,7 @@ install_gh_cli() {
 install_gh_cli || true
 
 # Install Python dependencies - this is the critical part
+# Uses uv for speed (~16s vs minutes with pip)
 install_python_deps() {
     # Check if core packages are importable
     if python -c "import ragzoom; import numpy; import pytest; import grpc; import mypy" &> /dev/null; then
@@ -87,13 +88,19 @@ install_python_deps() {
     echo "Installing Python dependencies from lockfile..."
     cd "$GIT_ROOT"
 
-    # Upgrade pip first (avoid compatibility issues)
-    pip install --quiet --upgrade "pip<24.1" || true
+    # Use uv if available (10-100x faster than pip)
+    if command -v uv &> /dev/null; then
+        if uv pip install --system -r requirements/dev.lock; then
+            echo "✓ Python dependencies installed (via uv)"
+            return 0
+        fi
+    fi
 
-    # Install from lockfile - includes all dev dependencies
-    # Use --ignore-installed to avoid conflicts with system packages
+    # Fallback to pip if uv unavailable or fails
+    echo "Falling back to pip..."
+    pip install --quiet --upgrade "pip<24.1" || true
     if pip install --quiet --ignore-installed -r requirements/dev.lock; then
-        echo "✓ Python dependencies installed"
+        echo "✓ Python dependencies installed (via pip)"
         return 0
     else
         echo "❌ Failed to install Python dependencies"
