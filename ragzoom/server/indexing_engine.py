@@ -377,6 +377,46 @@ class IndexingEngine:
         self._dirty_documents: set[str] = set()
         self._scheduler_task: asyncio.Task[None] | None = None
 
+        # chars_per_token cache for dynamic summary target calculation
+        # Computed on startup for existing documents with target_chunk_tokens=None
+        self._document_chars_per_token: dict[str, float] = {}
+        self._initialize_chars_per_token_cache()
+
+    def _initialize_chars_per_token_cache(self) -> None:
+        """Compute and cache chars_per_token for existing documents on startup.
+
+        Required by client-managed chunking (target_chunk_tokens=None) to
+        calculate dynamic summary targets based on span size.
+
+        Spec: specs/client-managed-chunking.md § chars_per_token Tracking
+        """
+        if self._index_config.target_chunk_tokens is not None:
+            return
+
+        for doc in self._store.list_documents():
+            doc_store = self._store.for_document(doc.id)
+            avg_chars = doc_store.nodes.get_avg_chars_per_token(doc.id)
+            if avg_chars is not None:
+                self._document_chars_per_token[doc.id] = avg_chars
+
+    def get_chars_per_token(self, document_id: str) -> float:
+        """Get cached chars_per_token for a document, or compute and cache it.
+
+        Returns the cached value if available, otherwise queries the database
+        and caches the result. Falls back to 4.0 (typical English text ratio)
+        if no leaf data exists yet.
+        """
+        if document_id in self._document_chars_per_token:
+            return self._document_chars_per_token[document_id]
+
+        store = self._store.for_document(document_id)
+        avg_chars = store.nodes.get_avg_chars_per_token(document_id)
+        if avg_chars is not None:
+            self._document_chars_per_token[document_id] = avg_chars
+            return avg_chars
+
+        return 4.0  # Default for English text before first append
+
     # -----------------------------------------------------------------------
     # Public interface
     # -----------------------------------------------------------------------
@@ -1715,15 +1755,10 @@ class IndexingEngine:
         )
         # Phase 4: Use dynamic summary targets when target_chunk_tokens is None
         if self._index_config.target_chunk_tokens is not None:
-            # Fixed target mode: use the configured value
             target_tokens = self._index_config.target_chunk_tokens
         else:
-            # Dynamic target mode: compute from span size and height
             node_span_chars = span_end - span_start
-            chars_per_token = store.nodes.get_avg_chars_per_token(job.document_id)
-            if chars_per_token is None:
-                # Fallback to 4.0 for English text before first append completes
-                chars_per_token = 4.0
+            chars_per_token = self.get_chars_per_token(job.document_id)
             target_tokens = get_summary_target(
                 node_span_chars, parent_height, chars_per_token
             )
