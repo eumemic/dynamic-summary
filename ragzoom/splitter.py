@@ -18,22 +18,27 @@ class TextSplitter:
         self.config = config
         self.tokenizer = tokenizer
 
-        # Use token counts directly since our length_function returns tokens
-        # Set overlap to 0 since RagZoom requires non-overlapping sequential chunks
-        self.splitter = RecursiveCharacterTextSplitter(
-            chunk_size=config.target_chunk_tokens,
-            chunk_overlap=0,  # No overlap - RagZoom needs sequential chunks
-            separators=[
-                "\n\n",  # Paragraph breaks
-                r"(?<=[.!?])\s+",  # After sentence-ending punctuation
-                "\n",  # Line breaks
-                " ",  # Spaces
-                "",  # Any character
-            ],
-            length_function=self._token_length,
-            is_separator_regex=True,  # Enable regex for better sentence detection
-            keep_separator="end",  # Keep separator at end of chunk to avoid gaps
-        )
+        # When target_chunk_tokens is None, we're in client-managed chunking mode
+        # and don't need the LangChain splitter
+        if config.target_chunk_tokens is None:
+            self.splitter = None
+        else:
+            # Use token counts directly since our length_function returns tokens
+            # Set overlap to 0 since RagZoom requires non-overlapping sequential chunks
+            self.splitter = RecursiveCharacterTextSplitter(
+                chunk_size=config.target_chunk_tokens,
+                chunk_overlap=0,  # No overlap - RagZoom needs sequential chunks
+                separators=[
+                    "\n\n",  # Paragraph breaks
+                    r"(?<=[.!?])\s+",  # After sentence-ending punctuation
+                    "\n",  # Line breaks
+                    " ",  # Spaces
+                    "",  # Any character
+                ],
+                length_function=self._token_length,
+                is_separator_regex=True,  # Enable regex for better sentence detection
+                keep_separator="end",  # Keep separator at end of chunk to avoid gaps
+            )
 
     def _token_length(self, text: str) -> int:
         """Calculate token length of text."""
@@ -136,6 +141,13 @@ class TextSplitter:
 
     def split_text(self, text: str) -> list[str]:
         """Split text into leaf chunks with gap reconstruction."""
+        # Client-managed chunking mode: return text as-is in a single chunk
+        if self.config.target_chunk_tokens is None:
+            return [text]
+
+        # Normal mode: use the LangChain splitter
+        assert self.splitter is not None  # For type checker
+
         # Get initial chunks from LangChain splitter
         raw_chunks = self.splitter.split_text(text)
 
