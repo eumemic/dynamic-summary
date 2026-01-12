@@ -125,9 +125,7 @@ def validate_chunk_sizes(
     Returns:
         Error message if invalid, None if valid
     """
-    from tiktoken import get_encoding
-
-    encoding = get_encoding("cl100k_base")
+    from ragzoom.utils.tokenization import tokenizer
 
     min_allowed = int(target_tokens * (1 - tolerance))
     max_allowed = int(target_tokens * (1 + tolerance))
@@ -136,7 +134,7 @@ def validate_chunk_sizes(
     undersized = []
 
     for i, node in enumerate(leaf_nodes):
-        tokens = len(encoding.encode(node.text))
+        tokens = tokenizer.count_tokens(node.text)
 
         # Last chunk can be smaller
         if i == len(leaf_nodes) - 1 and tokens < min_allowed:

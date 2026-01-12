@@ -11,7 +11,7 @@ from ragzoom.config import IndexConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.document_store import DocumentStore
 from ragzoom.splitter import TextSplitter
-from ragzoom.utils.tokenization import tokenizer
+from ragzoom.utils.tokenization import is_using_fallback_tokenizer, tokenizer
 from tests.chunk_size_regression_harness import (
     SPLITTER_SAMPLE_PARAGRAPH,
     build_test_document,
@@ -19,6 +19,12 @@ from tests.chunk_size_regression_harness import (
     seed_manual_chunk_tree,
 )
 from tests.conftest import IndexerRuntimeHarness
+
+# Skip marker for tests that require exact tiktoken token counts
+requires_tiktoken = pytest.mark.skipif(
+    is_using_fallback_tokenizer(),
+    reason="Requires real tiktoken encoder for accurate token counts",
+)
 
 
 class TestChunkSizeRegression:
@@ -30,6 +36,7 @@ class TestChunkSizeRegression:
 
         return IndexConfig.load(target_chunk_tokens=200)
 
+    @requires_tiktoken
     def test_splitter_creates_correct_chunk_size(self, config: IndexConfig) -> None:
         """TextSplitter should emit chunks near the configured token target."""
 
@@ -58,6 +65,7 @@ class TestChunkSizeRegression:
         )
         assert 50 <= avg_tokens <= config.target_chunk_tokens * 1.2
 
+    @requires_tiktoken
     @pytest.mark.asyncio
     @pytest.mark.slow_threshold(6.0)
     async def test_indexed_chunks_have_correct_size(
