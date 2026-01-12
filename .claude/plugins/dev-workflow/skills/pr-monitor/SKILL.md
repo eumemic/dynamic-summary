@@ -19,20 +19,26 @@ gh pr list --head $(git branch --show-current) --state open --json number -q '.[
 gh pr checks --json name,state,link
 ```
 
-### 2. Monitor Loop
+### 2. Poll Until Complete
 
-Poll CI status every 30 seconds until all checks pass:
+Poll CI status until all checks finish:
 
 ```bash
-gh pr checks --json name,state -q '.[] | select(.state != "SUCCESS")'
+# Loop until no pending checks remain
+while gh pr checks --json state -q '.[] | select(.state == "PENDING")' | grep -q PENDING; do
+  sleep 10
+done
+
+# Check final status
+gh pr checks --json name,state,link
 ```
 
-**States to watch for:**
+**States:**
 - `PENDING` - Still running, keep waiting
 - `FAILURE` - Failed, needs fixing
 - `SUCCESS` - Passed
 
-**Exit the loop immediately on first failure** to start fixing.
+Note: Avoid `--watch` flag as it produces excessive output in Claude Code.
 
 ### 3. Fix Failures
 
