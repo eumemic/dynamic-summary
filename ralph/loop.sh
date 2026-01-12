@@ -125,9 +125,14 @@ while true; do
     # -p: Headless mode (non-interactive, reads from stdin)
     # --dangerously-skip-permissions: Auto-approve all tool calls
     # --model: Use appropriate model for the task
+    # --output-format stream-json: Stream JSONL for real-time progress
+    # --verbose: Required for stream-json in print mode
     cat "$PROMPT_FILE" | claude -p \
         --dangerously-skip-permissions \
-        --model sonnet
+        --model sonnet \
+        --output-format stream-json \
+        --verbose \
+        | "$RALPH_DIR/stream-progress.sh"
 
     # Check if plan changed (for planning mode termination)
     PLAN_HASH_AFTER=$(get_plan_hash)
