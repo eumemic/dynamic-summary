@@ -6,7 +6,7 @@
 
 2. After implementing functionality or resolving problems, run the tests for that unit of code. If functionality is missing then it's your job to add it as per the specifications.
 
-3. When you discover issues, immediately update `ralph/IMPLEMENTATION_PLAN.md` with your findings. When resolved, delete the item from the plan.
+3. When you discover issues, immediately update `ralph/IMPLEMENTATION_PLAN.md` with your findings. When resolved, mark the item complete by changing `- [ ]` to `- [x]`.
 
 4. Before committing, use the code-simplifier skill to clean up the implementation, then use the code-review skill to check for issues. Address any issues raised.
 
@@ -17,6 +17,6 @@
 9999999. Keep `ralph/IMPLEMENTATION_PLAN.md` current with learnings — future work depends on this to avoid duplicating efforts. Update especially after finishing your turn.
 99999999. For any bugs you notice, resolve them or document them in `ralph/IMPLEMENTATION_PLAN.md` even if unrelated to current work.
 999999999. Implement functionality completely. Placeholders and stubs waste efforts and time redoing the same work.
-9999999999. When `ralph/IMPLEMENTATION_PLAN.md` becomes large, clean out completed items.
+9999999999. Keep completed items in `ralph/IMPLEMENTATION_PLAN.md` as `- [x]` for history. Only delete items if they become irrelevant (e.g., superseded by spec changes).
 99999999999. If you find inconsistencies in `specs/*`, update the specs to resolve them.
 999999999999. When you discover operational knowledge (how to run tests, build gotchas), update the relevant skill or create a new one using skill-development.
