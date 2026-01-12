@@ -281,10 +281,14 @@ run_check_background() {
     local result_file="$tmpdir/${check_name}.result"
 
     # Choose a portable time command
-    local TIME_BIN="/usr/bin/time"
+    # Prefer gtime (macOS coreutils), then /usr/bin/time, then shell builtin
+    local TIME_CMD=""
     if command -v gtime >/dev/null 2>&1; then
-        TIME_BIN="gtime"
+        TIME_CMD="gtime -p"
+    elif [ -x /usr/bin/time ]; then
+        TIME_CMD="/usr/bin/time -p"
     fi
+    # If neither external time command exists, we'll use shell builtin below
 
     (
         # Handle SIGTERM gracefully in subshell
@@ -292,7 +296,13 @@ run_check_background() {
 
         echo "[$check_name] Starting..." > "$output_file"
         # Measure wall time for the check; append timing to output
-        if $TIME_BIN -p bash -lc "$check_cmd" >> "$output_file" 2>&1; then
+        if [ -n "$TIME_CMD" ]; then
+            run_with_time() { $TIME_CMD bash -lc "$1"; }
+        else
+            # Fall back to shell builtin time
+            run_with_time() { time bash -lc "$1"; }
+        fi
+        if run_with_time "$check_cmd" >> "$output_file" 2>&1; then
             echo 0 > "$result_file"
             # Don't add generic "Passed!" message - let each check provide its own
             if ! grep -q "✅\|✨" "$output_file"; then
