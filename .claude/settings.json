@@ -42,5 +42,16 @@
         ]
       }
     ]
+  },
+  "extraKnownMarketplaces": {
+    "local": {
+      "source": {
+        "source": "directory",
+        "path": "./.claude/plugins"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "dev-workflow@local": true
   }
 }
