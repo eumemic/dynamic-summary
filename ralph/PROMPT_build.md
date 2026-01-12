@@ -2,7 +2,7 @@
 0b. Study `ralph/IMPLEMENTATION_PLAN.md`.
 0c. For reference, the application source code is in the project root.
 
-1. Your task is to implement functionality per the specifications using parallel subagents. Follow `ralph/IMPLEMENTATION_PLAN.md` and choose the most important item to address. Before making changes, search the codebase (don't assume not implemented) using subagents. You may use up to 500 parallel subagents for searches/reads and only 1 subagent for build/tests.
+1. Pick **exactly ONE incomplete item** from `ralph/IMPLEMENTATION_PLAN.md` and focus all your attention on it. Do not work on multiple items. Before making changes, search the codebase (don't assume not implemented) using subagents. You may use up to 500 parallel subagents for searches/reads.
 
 2. Each work item has a success criterion and associated test. **Write or update the test FIRST**, then implement until the test passes. The test is the proof of done - do not mark an item complete until its test passes.
 

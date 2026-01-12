@@ -2,28 +2,66 @@
 # Ralph Loop - Spec-to-Code Synchronization Engine
 #
 # Usage:
-#   ./ralph/loop.sh              # Build mode, unlimited iterations
-#   ./ralph/loop.sh 20           # Build mode, max 20 iterations
 #   ./ralph/loop.sh plan         # Plan mode, unlimited iterations
 #   ./ralph/loop.sh plan 5       # Plan mode, max 5 iterations
+#   ./ralph/loop.sh build        # Build mode, unlimited iterations
+#   ./ralph/loop.sh build 20     # Build mode, max 20 iterations
 
 set -euo pipefail
 
 RALPH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Help
+show_help() {
+    cat <<'EOF'
+Ralph Loop - Spec-to-Code Synchronization Engine
+
+Usage:
+  ./ralph/loop.sh <mode> [max_iterations]
+
+Modes:
+  plan         Plan mode - analyzes specs/ and updates IMPLEMENTATION_PLAN.md
+  build        Build mode - implements tasks from IMPLEMENTATION_PLAN.md
+
+Options:
+  -h, --help   Show this help message
+
+Examples:
+  ./ralph/loop.sh plan         # Plan mode, unlimited iterations
+  ./ralph/loop.sh plan 5       # Plan mode, max 5 iterations
+  ./ralph/loop.sh build        # Build mode, unlimited iterations
+  ./ralph/loop.sh build 20     # Build mode, max 20 iterations
+
+Termination:
+  - Plan mode: stops when plan file unchanged after an iteration
+  - Build mode: stops when all tasks are checked off (no more "- [ ]" items)
+  - Both modes: stops when max_iterations reached (if specified)
+
+Files:
+  specs/                       Source of truth (human-authored specifications)
+  ralph/IMPLEMENTATION_PLAN.md Generated task list (machine-authored)
+  ralph/PROMPT_plan.md         Instructions for planning mode
+  ralph/PROMPT_build.md        Instructions for building mode
+EOF
+}
+
 # Parse arguments
-if [ "${1:-}" = "plan" ]; then
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+    show_help
+    exit 0
+elif [ "${1:-}" = "plan" ]; then
     MODE="plan"
     PROMPT_FILE="$RALPH_DIR/PROMPT_plan.md"
     MAX_ITERATIONS=${2:-0}
-elif [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+elif [ "${1:-}" = "build" ]; then
     MODE="build"
     PROMPT_FILE="$RALPH_DIR/PROMPT_build.md"
-    MAX_ITERATIONS=$1
+    MAX_ITERATIONS=${2:-0}
 else
-    MODE="build"
-    PROMPT_FILE="$RALPH_DIR/PROMPT_build.md"
-    MAX_ITERATIONS=0
+    echo "Error: Mode required. Use 'plan' or 'build'."
+    echo ""
+    show_help
+    exit 1
 fi
 
 ITERATION=0

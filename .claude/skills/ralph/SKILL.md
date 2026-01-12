@@ -146,9 +146,11 @@ Specs should be detailed enough that a planning agent can do gap analysis agains
 The loops are **separate processes** run from the terminal, not something the current agent executes inline:
 
 ```bash
-./ralph/loop.sh plan    # Run planning loop
-./ralph/loop.sh         # Run building loop
-./ralph/loop.sh 10      # Run building loop, max 10 iterations
+./ralph/loop.sh plan         # Run planning loop
+./ralph/loop.sh plan 5       # Run planning loop, max 5 iterations
+./ralph/loop.sh build        # Run building loop
+./ralph/loop.sh build 10     # Run building loop, max 10 iterations
+./ralph/loop.sh --help       # Show help
 ```
 
 When the user asks to "run the planning loop" or "run the building loop", run the command in the background (`run_in_background: true`). **Do NOT attempt to act out the loop yourself** by reading the prompts and doing gap analysis - that defeats the purpose of fresh context each iteration.
