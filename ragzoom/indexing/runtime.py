@@ -413,6 +413,11 @@ class DocumentIndexSession:
                     new_leaf_ids=outcome.new_leaf_ids,
                 )
 
+            # Update chars_per_token after append (client-managed chunking mode)
+            self._runtime._indexing_engine.update_chars_per_token_after_append(
+                self._document_id
+            )
+
             # Trigger indexing work - engine discovers leaves and sibling pairs
             await self._runtime._indexing_engine.trigger_work(self._document_id)
 
@@ -574,6 +579,11 @@ class DocumentIndexSession:
                     telemetry_collector=run_context.telemetry_collector,
                     new_leaf_ids=outcome.new_leaf_ids,
                 )
+
+            # Update chars_per_token after append (client-managed chunking mode)
+            self._runtime._indexing_engine.update_chars_per_token_after_append(
+                self._document_id
+            )
 
             # Trigger indexing work - engine discovers leaves and sibling pairs
             t_before_trigger = time.perf_counter()

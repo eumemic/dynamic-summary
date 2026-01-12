@@ -417,6 +417,24 @@ class IndexingEngine:
 
         return 4.0  # Default for English text before first append
 
+    def update_chars_per_token_after_append(self, document_id: str) -> None:
+        """Recompute and update chars_per_token cache after an append operation.
+
+        Spec: specs/client-managed-chunking.md § chars_per_token Tracking
+
+        This should be called after each append() or append_batch() operation
+        when target_chunk_tokens is None, to keep the ratio up-to-date with
+        the latest leaf data.
+        """
+        if self._index_config.target_chunk_tokens is not None:
+            # Only update for client-managed chunking mode
+            return
+
+        store = self._store.for_document(document_id)
+        avg_chars = store.nodes.get_avg_chars_per_token(document_id)
+        if avg_chars is not None:
+            self._document_chars_per_token[document_id] = avg_chars
+
     # -----------------------------------------------------------------------
     # Public interface
     # -----------------------------------------------------------------------
