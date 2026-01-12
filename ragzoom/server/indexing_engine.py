@@ -1713,13 +1713,20 @@ class IndexingEngine:
             parent_id,
             combined_tokens,
         )
-        # TODO: Phase 4 - Use dynamic summary targets when target_chunk_tokens is None
-        # For now, use target_embedding_context_tokens as fallback
-        target_tokens = (
-            self._index_config.target_chunk_tokens
-            if self._index_config.target_chunk_tokens is not None
-            else self._index_config.target_embedding_context_tokens
-        )
+        # Phase 4: Use dynamic summary targets when target_chunk_tokens is None
+        if self._index_config.target_chunk_tokens is not None:
+            # Fixed target mode: use the configured value
+            target_tokens = self._index_config.target_chunk_tokens
+        else:
+            # Dynamic target mode: compute from span size and height
+            node_span_chars = span_end - span_start
+            chars_per_token = store.nodes.get_avg_chars_per_token(job.document_id)
+            if chars_per_token is None:
+                # Fallback to 4.0 for English text before first append completes
+                chars_per_token = 4.0
+            target_tokens = get_summary_target(
+                node_span_chars, parent_height, chars_per_token
+            )
         summary_result = await self._llm_service._summarize_text(
             combined_text,
             target_tokens,
