@@ -1,9 +1,11 @@
 ---
 name: ralph
-description: This skill should be used when the user asks to "write a spec", "create a spec", "define requirements", "use ralph", "ralph methodology", "autonomous development", "sync specs to code", or mentions the Ralph workflow for AI-assisted development.
+description: This skill should be used when the user asks to "write a spec", "create a spec", "define requirements", "use ralph", "ralph methodology", "autonomous development", "sync specs to code", "run the planning loop", "run the building loop", or mentions the Ralph workflow for AI-assisted development.
 ---
 
 # Ralph: Spec-to-Code Synchronization
+
+**IMPORTANT: If user asks to "run the planning loop" or "run the building loop", just run `./ralph/loop.sh plan` or `./ralph/loop.sh`. Do NOT try to act out the loop by reading specs and doing gap analysis yourself - that defeats the purpose of fresh context.**
 
 Ralph is a methodology for autonomous AI development where humans write specs and the machine syncs code to match. The human stays in the problem space (defining what to build), while the machine handles the solution space (implementing it).
 
@@ -134,6 +136,20 @@ Specs should be detailed enough that a planning agent can do gap analysis agains
 - **Key design decisions** - choices made during Phase 2 and their rationale
 
 ## Operations
+
+**Infrastructure assumption:** The `specs/` and `ralph/` directories already exist and are set up. Do not check if they exist or try to create them.
+
+### Running the Loops
+
+The loops are **separate processes** run from the terminal, not something the current agent executes inline:
+
+```bash
+./ralph/loop.sh plan    # Run planning loop
+./ralph/loop.sh         # Run building loop
+./ralph/loop.sh 10      # Run building loop, max 10 iterations
+```
+
+When the user asks to "run the planning loop" or "run the building loop", run the command in the background (`run_in_background: true`). **Do NOT attempt to act out the loop yourself** by reading the prompts and doing gap analysis - that defeats the purpose of fresh context each iteration.
 
 ### When to Run Planning
 
