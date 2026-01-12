@@ -1,16 +1,11 @@
 ---
-allowed-tools: Read, Grep, Bash, Task
-description: Systematically diagnose problems using scientific method
-argument-hint: <problem description>
+name: diagnose
+description: This skill should be used when the user asks to "diagnose", "debug", "investigate", "why is this broken", "find the root cause", "figure out why", or mentions a problem that needs systematic investigation.
 ---
 
-# /diagnose
-# This command was created with the `/command` command. If you are making changes to this
-# file, make sure to observe the rubric laid out in `.claude/commands/command.md`.
+# Systematic Diagnosis
 
-Arguments: "$ARGUMENTS"
-
-Apply the scientific method to systematically diagnose problems without implementing solutions.
+Apply the scientific method to diagnose problems without implementing solutions.
 
 ## Core Intent
 
@@ -52,18 +47,10 @@ When something's broken, resist the urge to guess. Use extended thinking to trac
 
 ## Examples
 
-Arguments: "API returns 500 on file upload"
+**"API returns 500 on file upload"**
 → Test file size limits, check logs at failure point, verify multipart handling, isolate to specific file types
 
-Arguments: "Memory usage grows over time"
+**"Memory usage grows over time"**
 → Profile allocation patterns, check for retained references, test with minimal workload, identify leak source
 
-Remember: Let evidence guide you, not intuition. A well-diagnosed problem is half-solved.
-
-## Retrospective
-After diagnosing, reflect on three levels:
-1. **Command**: Did this guide effective problem investigation?
-2. **Conformance**: Does it balance structure with investigative freedom?
-3. **Meta**: Should commands include more domain-specific debugging patterns?
-
-ONLY if you spot a significant issue or opportunity for improvement, bring it to the user's attention. Don't waste the user's time and your tokens with pedantic corrections or things that are not broadly applicable to all uses of the command.
+Let evidence guide you, not intuition. A well-diagnosed problem is half-solved.
