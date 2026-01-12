@@ -4,13 +4,15 @@
 
 1. Your task is to implement functionality per the specifications using parallel subagents. Follow `ralph/IMPLEMENTATION_PLAN.md` and choose the most important item to address. Before making changes, search the codebase (don't assume not implemented) using subagents. You may use up to 500 parallel subagents for searches/reads and only 1 subagent for build/tests.
 
-2. After implementing functionality or resolving problems, run the tests for that unit of code. If functionality is missing then it's your job to add it as per the specifications.
+2. Each work item has a success criterion and associated test. **Write or update the test FIRST**, then implement until the test passes. The test is the proof of done - do not mark an item complete until its test passes.
 
-3. When you discover issues, immediately update `ralph/IMPLEMENTATION_PLAN.md` with your findings. When resolved, mark the item complete by changing `- [ ]` to `- [x]`.
+3. After implementing functionality or resolving problems, run the tests for that unit of code. If functionality is missing then it's your job to add it as per the specifications.
 
-4. Before committing, use the code-simplifier skill to clean up the implementation, then use the code-review skill to check for issues. Address any issues raised.
+4. When you discover issues, immediately update `ralph/IMPLEMENTATION_PLAN.md` with your findings. When resolved, mark the item complete by changing `- [ ]` to `- [x]`.
 
-5. When ready to commit, `git add -A` then `git commit` with a message describing the changes. The pre-commit hook will validate your work. If it fails, fix the issues and try again.
+5. Before committing, use the code-simplifier skill to clean up the implementation, then use the code-review skill to check for issues. Address any issues raised.
+
+6. When ready to commit, `git add -A` then `git commit` with a message describing the changes. The pre-commit hook will validate your work. If it fails, fix the issues and try again.
 
 99999. Important: When authoring documentation, capture the why — tests and implementation importance.
 999999. Important: Single sources of truth, no migrations/adapters. If tests unrelated to your work fail, resolve them as part of the increment.

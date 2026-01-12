@@ -130,10 +130,12 @@ Break each JTBD into topics. Each topic becomes one spec file.
 Specs should be detailed enough that a planning agent can do gap analysis against the codebase. Focus on:
 
 - **What success looks like** - observable outcomes
-- **Acceptance criteria** - how to verify it works
-- **Edge cases** - what could go wrong
+- **Acceptance criteria** - testable conditions that prove the feature works. Each criterion should be concrete enough to become a test case (e.g., "`append_batch(['A', 'B', 'C'])` creates exactly 3 leaves" not "batch append works correctly")
+- **Edge cases** - what could go wrong, with expected behavior for each
 - **Constraints** - performance, security, compatibility
 - **Key design decisions** - choices made during Phase 2 and their rationale
+
+**Testability principle:** If you can't describe how to test a requirement, the requirement isn't clear enough. Every acceptance criterion should map to a test.
 
 ## Operations
 
