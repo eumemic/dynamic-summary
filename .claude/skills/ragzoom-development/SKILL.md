@@ -96,10 +96,27 @@ Use exceptions from `ragzoom.exceptions`:
 ## Benchmarking
 
 ```bash
-./scripts/run-indexing-benchmarks --baseline baseline.json document.txt
+./scripts/run-indexing-benchmarks --baseline telemetry-baseline.json document.txt
 ```
 
-Outputs in `benchmarks/`: `telemetry.json`, `log.txt`, `comparison.md`
+Outputs: `telemetry.json`, `comparison.md`, `visualization.png`, `log.txt`
+
+### Running Benchmarks
+
+The script has smart defaults - runs with zero arguments if `telemetry-baseline.json` exists.
+
+**Before running:**
+1. Check if `telemetry-baseline.json` exists and is suitable for the experiment
+2. Consider: Is chunk_size appropriate? Is document_id relevant? When was it created?
+
+**If no suitable baseline:**
+- Create from existing telemetry file, or
+- Run initial indexing to create a baseline
+
+**Analysis:**
+- Always scan ALL metrics (token accuracy, API costs, tree height, retry patterns)
+- Flag any regression immediately, regardless of experiment focus
+- Use conversation context to emphasize relevant metrics
 
 ## Protobuf Generation
 
