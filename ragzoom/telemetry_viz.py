@@ -2096,10 +2096,10 @@ class TelemetryVisualizer:
                 if attempts:
                     node_summary_duration = 0.0
                     for attempt in attempts:
-                        start_time = _to_float(attempt.get("start_time"))
-                        end_time = _to_float(attempt.get("end_time"))
-                        if start_time is not None and end_time is not None:
-                            node_summary_duration += end_time - start_time
+                        att_start = _to_float(attempt.get("start_time"))
+                        att_end = _to_float(attempt.get("end_time"))
+                        if att_start is not None and att_end is not None:
+                            node_summary_duration += att_end - att_start
                     if node_summary_duration > 0:
                         summary_durations.append(node_summary_duration)
 
