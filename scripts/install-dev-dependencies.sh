@@ -40,52 +40,41 @@ remove_conflicting_uv_tools() {
 # Remove conflicting uv tools before installing
 remove_conflicting_uv_tools
 
-# Try to install apt packages, but don't fail if apt-get doesn't work
-# (common in sandboxed/restricted environments)
-install_apt_packages() {
-    # Check for gh CLI
+# Install gh CLI from pre-built binary (works in sandboxed environments where apt fails)
+GH_VERSION="2.63.2"
+
+install_gh_cli() {
     if command -v gh &> /dev/null; then
         echo "✓ gh CLI already installed"
         return 0
     fi
 
-    echo "Attempting to install system packages (gh CLI)..."
+    echo "Installing gh CLI from binary..."
 
-    # Try setting up gh repo and installing
-    if [[ ! -f /etc/apt/sources.list.d/github-cli.list ]]; then
-        # Ensure wget is available
-        if ! command -v wget &> /dev/null; then
-            if ! apt-get update -qq 2>/dev/null && apt-get install -y wget 2>/dev/null; then
-                echo "⚠ Could not install wget (apt-get unavailable or restricted)"
-                return 1
-            fi
-        fi
+    local arch
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64) arch="amd64" ;;
+        aarch64) arch="arm64" ;;
+        *) echo "⚠ Unsupported architecture: $arch"; return 1 ;;
+    esac
 
-        # Set up gh CLI repo
-        mkdir -p -m 755 /etc/apt/keyrings 2>/dev/null || true
-        local keyring_file
-        keyring_file=$(mktemp 2>/dev/null) || keyring_file="/tmp/gh-keyring-$$"
-        if wget -nv -O"$keyring_file" https://cli.github.com/packages/githubcli-archive-keyring.gpg 2>/dev/null; then
-            cat "$keyring_file" > /etc/apt/keyrings/githubcli-archive-keyring.gpg 2>/dev/null || true
-            chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg 2>/dev/null || true
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list 2>/dev/null || true
-        fi
-        rm -f "$keyring_file" 2>/dev/null || true
-    fi
+    local tarball="gh_${GH_VERSION}_linux_${arch}.tar.gz"
+    local url="https://github.com/cli/cli/releases/download/v${GH_VERSION}/${tarball}"
 
-    # Try to install gh
-    if apt-get update -qq 2>/dev/null && apt-get install -y gh 2>/dev/null; then
+    if curl -sL "$url" | tar xz -C /tmp && \
+       mv "/tmp/gh_${GH_VERSION}_linux_${arch}/bin/gh" /usr/local/bin/; then
+        rm -rf "/tmp/gh_${GH_VERSION}_linux_${arch}"
         echo "✓ gh CLI installed"
         return 0
     else
-        echo "⚠ Could not install gh CLI (apt-get unavailable or restricted)"
-        echo "  This is optional - PR creation will require manual gh setup"
+        echo "⚠ Could not install gh CLI"
         return 1
     fi
 }
 
-# Attempt apt installations (non-fatal if they fail)
-install_apt_packages || true
+# Install gh CLI (non-fatal if it fails)
+install_gh_cli || true
 
 # Install Python dependencies - this is the critical part
 install_python_deps() {
