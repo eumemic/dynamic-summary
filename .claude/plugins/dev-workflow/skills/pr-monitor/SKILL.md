@@ -16,7 +16,7 @@ Monitor CI status, fix any failures, and loop until all checks pass. When CI goe
 gh pr list --head $(git branch --show-current) --state open --json number -q '.[0].number'
 
 # Check CI status
-gh pr checks --json name,state,conclusion
+gh pr checks --json name,state,link
 ```
 
 ### 2. Monitor Loop
@@ -24,11 +24,11 @@ gh pr checks --json name,state,conclusion
 Poll CI status every 30 seconds until all checks pass:
 
 ```bash
-gh pr checks --json name,state,conclusion -q '.[] | select(.state != "SUCCESS")'
+gh pr checks --json name,state -q '.[] | select(.state != "SUCCESS")'
 ```
 
 **States to watch for:**
-- `IN_PROGRESS` - Still running, keep waiting
+- `PENDING` - Still running, keep waiting
 - `FAILURE` - Failed, needs fixing
 - `SUCCESS` - Passed
 
@@ -40,7 +40,7 @@ When a check fails:
 
 1. **Identify the failure:**
    ```bash
-   gh pr checks --json name,state,conclusion,link -q '.[] | select(.conclusion == "FAILURE")'
+   gh pr checks --json name,state,link -q '.[] | select(.state == "FAILURE")'
    ```
 
 2. **Get failure details** from the check's log link or run locally
