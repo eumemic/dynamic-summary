@@ -69,14 +69,43 @@ If validation fails, the agent fixes and retries. Bad work doesn't escape.
 
 This is the human's primary activity. Collaborate with Claude to turn fuzzy ideas into clear specs.
 
-### Jobs to Be Done (JTBD)
+**CRITICAL: Do NOT write the spec file until Phase 3.** The conversation must reach closure first.
 
-Start with user outcomes, not implementation tasks:
+### Three-Phase Process
 
-- **JTBD (user's job):** "Export my data to share with finance"
-- **NOT:** "Implement CSV export function"
+#### Phase 1: Freeform Discussion
 
-JTBD answers: What is the *user* trying to accomplish?
+Let the user talk through the idea. Listen actively and:
+
+- Understand the JTBD (Job to Be Done) - what is the *user* trying to accomplish?
+- Note design issues the user raises
+- **Investigate the codebase** - read relevant code to understand what exists and how it works
+- **Consult skills** - use relevant skills (e.g., `ragzoom-development`) to understand the system
+- Ask clarifying questions naturally as they arise
+- Do NOT create any files yet
+
+#### Phase 2: Structured Interrogation
+
+Once the user has shared their initial thoughts, systematically probe for gaps:
+
+- Use AskUserQuestion to clarify specific design decisions
+- Continue investigating code as new areas come up
+- Identify edge cases, constraints, acceptance criteria
+- Surface tradeoffs and get the user's preference
+- Keep probing until both parties feel the design is complete
+
+**Signs you're not done:** Open questions remain, user seems uncertain, key decisions are deferred with "we'll figure it out later", you haven't looked at the code that will be affected.
+
+#### Phase 3: Draft the Spec
+
+Only when the user confirms readiness, write the spec:
+
+- Write directly to `specs/filename.md` (directory already exists)
+- Format is flexible - capture what matters clearly
+- Include: JTBD, acceptance criteria, edge cases, constraints, key design decisions
+- No "open questions" section - those should be resolved in Phase 2
+
+If the user isn't satisfied with the draft, return to Phase 1 for another round.
 
 ### Topics of Concern
 
@@ -87,28 +116,15 @@ Break each JTBD into topics. Each topic becomes one spec file.
 - "The color extraction system analyzes images to identify dominant colors" (one topic)
 - "The user system handles authentication, profiles, and billing" (three topics - split it)
 
-### Writing Specs
+### Spec Content
 
-Format is flexible - let the spec take whatever shape captures the requirements clearly. Focus on:
+Specs should be detailed enough that a planning agent can do gap analysis against the codebase. Focus on:
 
 - **What success looks like** - observable outcomes
 - **Acceptance criteria** - how to verify it works
 - **Edge cases** - what could go wrong
 - **Constraints** - performance, security, compatibility
-
-Specs should be detailed enough that a planning agent can do gap analysis against the codebase.
-
-### Conversation Flow
-
-When developing a spec (assume `specs/` directory already exists):
-
-1. **Explore** - Discuss the JTBD, understand the user need
-2. **Scope** - Identify topics of concern, decide what's in/out
-3. **Detail** - Elaborate acceptance criteria, edge cases
-4. **Decide** - Use AskUserQuestion for specific choices when needed
-5. **Write** - Write the spec file directly to `specs/filename.md`
-
-Do not check if directories exist or set up infrastructure - that's already done.
+- **Key design decisions** - choices made during Phase 2 and their rationale
 
 ## Operations
 
