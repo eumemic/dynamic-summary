@@ -3,11 +3,20 @@
 from typing import cast
 from unittest.mock import MagicMock
 
+import pytest
+
 from ragzoom.contracts.tree_node import TreeNode
+from ragzoom.utils.tokenization import is_using_fallback_tokenizer
 from ragzoom.validate import (
     validate_chunk_sizes,
     validate_document_coverage,
     validate_tree_structure,
+)
+
+# Skip marker for tests that require exact tiktoken token counts
+requires_tiktoken = pytest.mark.skipif(
+    is_using_fallback_tokenizer(),
+    reason="Requires real tiktoken encoder for accurate token counts",
 )
 
 
@@ -64,8 +73,9 @@ class TestDocumentCoverage:
         assert "Non-contiguous chunks found" in error
 
 
+@requires_tiktoken
 class TestChunkSizes:
-    """Test chunk size validation."""
+    """Test chunk size validation (requires tiktoken for accurate token counts)."""
 
     def test_valid_chunk_sizes(self) -> None:
         """Test chunks within tolerance pass."""
