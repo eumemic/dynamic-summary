@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "local",
+  "description": "Local project plugins",
+  "owner": {
+    "name": "Tom White"
+  },
+  "plugins": [
+    {
+      "name": "dev-workflow",
+      "description": "Git-based development workflow: commit, push, PR lifecycle, and merge",
+      "version": "1.0.0",
+      "source": "./dev-workflow"
+    }
+  ]
+}
