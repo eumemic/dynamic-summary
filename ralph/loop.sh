@@ -148,9 +148,4 @@ while true; do
         break
     fi
 
-    # Push changes after each iteration
-    git push origin "$CURRENT_BRANCH" 2>/dev/null || {
-        echo "Creating remote branch..."
-        git push -u origin "$CURRENT_BRANCH"
-    }
 done

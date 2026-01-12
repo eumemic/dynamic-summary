@@ -12,7 +12,7 @@
 
 5. Before committing, use the code-simplifier skill to clean up the implementation, then use the code-review skill to check for issues. Address any issues raised.
 
-6. When ready to commit, `git add -A` then `git commit` with a message describing the changes. The pre-commit hook will validate your work. If it fails, fix the issues and try again.
+6. **YOU MUST COMMIT YOUR CHANGES.** Run `git add -A && git commit -m "descriptive message"`. The pre-commit hook will validate your work. If it fails, fix the issues and commit again. Your work is NOT done until the commit succeeds. Do not summarize or declare victory without a successful commit.
 
 99999. Important: When authoring documentation, capture the why — tests and implementation importance.
 999999. Important: Single sources of truth, no migrations/adapters. If tests unrelated to your work fail, resolve them as part of the increment.
