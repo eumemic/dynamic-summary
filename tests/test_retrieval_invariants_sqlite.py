@@ -98,7 +98,14 @@ class TestRetrievalInvariantsSQLite:
                 "python", "sqlite:///:memory:", qcfg.embedding_model
             )
             emb = EmbeddingService(mock_instance, doc_store, qcfg.embedding_model)
-            planner = BudgetPlanner(doc_store, IndexConfig.load().target_chunk_tokens)
+            cfg = IndexConfig.load()
+            # For retrieval operations, use target_embedding_context_tokens as fallback
+            chunk_tokens = (
+                cfg.target_chunk_tokens
+                if cfg.target_chunk_tokens is not None
+                else cfg.target_embedding_context_tokens
+            )
+            planner = BudgetPlanner(doc_store, chunk_tokens)
             retriever = Retriever(qcfg, doc_store, emb, planner, vi)
 
             # Return one real and one stale vector (staleX does not exist in store)

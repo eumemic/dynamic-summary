@@ -53,6 +53,8 @@ def test_summarized_context_and_leaf_within_embedding_limit() -> None:
     summarized down to target_chunk_tokens before being prepended to the leaf.
     """
     config = IndexConfig.load()
+    # This test is for fixed-chunking mode
+    assert config.target_chunk_tokens is not None
 
     # The embedding text is: context_summary (~target_chunk_tokens) + leaf (~target_chunk_tokens)
     # With gap reconstruction, chunks can be up to ~3x target in edge cases

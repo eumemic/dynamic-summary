@@ -1365,7 +1365,7 @@ class IndexingEngine:
             contextualization_result = await self._llm_service._contextualize_text(
                 preceding_context=context_prefix,
                 target_text=leaf_text,
-                target_tokens=self._index_config.target_chunk_tokens,
+                target_tokens=self._index_config.target_embedding_context_tokens,
                 parent_id=job.leaf_id,
                 reporter=telemetry,
             )
@@ -1673,9 +1673,16 @@ class IndexingEngine:
             parent_id,
             combined_tokens,
         )
+        # TODO: Phase 4 - Use dynamic summary targets when target_chunk_tokens is None
+        # For now, use target_embedding_context_tokens as fallback
+        target_tokens = (
+            self._index_config.target_chunk_tokens
+            if self._index_config.target_chunk_tokens is not None
+            else self._index_config.target_embedding_context_tokens
+        )
         summary_result = await self._llm_service._summarize_text(
             combined_text,
-            self._index_config.target_chunk_tokens,
+            target_tokens,
             parent_id=parent_id,
             reporter=telemetry,
             prev_context=context_text,
@@ -1838,9 +1845,16 @@ class IndexingEngine:
             self._index_config.embedding_model,
             async_client=self._llm_service.client,
         )
+        # For retrieval operations, use target_embedding_context_tokens as fallback
+        # when target_chunk_tokens is None (client-managed chunking mode)
+        chunk_tokens = (
+            self._index_config.target_chunk_tokens
+            if self._index_config.target_chunk_tokens is not None
+            else self._index_config.target_embedding_context_tokens
+        )
         budget_planner = BudgetPlanner(
             document_store,
-            self._index_config.target_chunk_tokens,
+            chunk_tokens,
         )
 
         query_config = QueryConfig(

@@ -85,7 +85,14 @@ class QueryService:
             client, document_store, self.query_config.embedding_model
         )
         index_cfg = IndexConfig.load()
-        budget_planner = BudgetPlanner(document_store, index_cfg.target_chunk_tokens)
+        # For retrieval operations, use target_embedding_context_tokens as fallback
+        # when target_chunk_tokens is None (client-managed chunking mode)
+        chunk_tokens = (
+            index_cfg.target_chunk_tokens
+            if index_cfg.target_chunk_tokens is not None
+            else index_cfg.target_embedding_context_tokens
+        )
+        budget_planner = BudgetPlanner(document_store, chunk_tokens)
         vector_index = create_vector_index(
             self.operational_config.vector_backend,
             self.operational_config.database_url,
