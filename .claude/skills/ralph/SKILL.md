@@ -100,13 +100,15 @@ Specs should be detailed enough that a planning agent can do gap analysis agains
 
 ### Conversation Flow
 
-When developing a spec:
+When developing a spec (assume `specs/` directory already exists):
 
 1. **Explore** - Discuss the JTBD, understand the user need
 2. **Scope** - Identify topics of concern, decide what's in/out
 3. **Detail** - Elaborate acceptance criteria, edge cases
 4. **Decide** - Use AskUserQuestion for specific choices when needed
-5. **Write** - Produce the spec file in specs/
+5. **Write** - Write the spec file directly to `specs/filename.md`
+
+Do not check if directories exist or set up infrastructure - that's already done.
 
 ## Operations
 
