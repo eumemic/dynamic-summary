@@ -1,0 +1,9 @@
+# Ralph Configuration
+# See: https://github.com/eumemic/ralph
+
+# Where to find specification files (relative to project root)
+specs_dir: ./specs
+
+# Model configuration (optional - defaults shown)
+# main_model: opus
+# subagent_model: sonnet

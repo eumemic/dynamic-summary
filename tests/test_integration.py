@@ -6,6 +6,7 @@ retrieval to final assembly, using mock OpenAI clients.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Generator
 from unittest.mock import Mock
 
@@ -14,6 +15,7 @@ import pytest
 from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.server.indexing_engine import get_summary_target
 from tests.chunk_size_regression_harness import configure_runtime
 from tests.conftest import IndexerRuntimeHarness
 from tests.utils import mock_openai_context
@@ -298,3 +300,395 @@ class TestIntegration:
 
         result = await retriever.retrieve_async("unrelated query")
         assert important_node.id in result.coverage_map
+
+    @pytest.mark.asyncio
+    async def test_client_managed_chunking_end_to_end(
+        self,
+        storage_backend: StorageBackend,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        """Test that target_chunk_tokens=None creates one atomic leaf per input unit.
+
+        Spec: specs/client-managed-chunking.md § Acceptance Criteria #1
+        """
+        index_config = IndexConfig.load(
+            target_chunk_tokens=None,
+            target_embedding_context_tokens=200,
+        )
+        vector_index = RecordingVectorIndex()
+        self._bind_vector_index(indexer_runtime_harness, vector_index)
+        configure_runtime(indexer_runtime_harness, index_config)
+
+        units = ["Turn A: First conversation turn", "Turn B: Second conversation turn"]
+
+        session = indexer_runtime_harness.runtime.get_session(
+            "client-managed-test", file_path="test.txt"
+        )
+        await session.batch_append_text(units, collect_telemetry=False)
+        await indexer_runtime_harness.indexing_engine.wait_until_idle(
+            "client-managed-test"
+        )
+
+        doc_store = storage_backend.for_document("client-managed-test")
+        leaf_nodes = doc_store.nodes.get_leaves()
+
+        assert len(leaf_nodes) == len(units)
+        assert [node.text for node in leaf_nodes] == units
+        assert all(node.height == 0 for node in leaf_nodes)
+
+        # Verify contiguous span coverage
+        expected_offset = 0
+        for i, node in enumerate(leaf_nodes):
+            assert node.span_start == expected_offset
+            assert node.span_end == expected_offset + len(units[i])
+            expected_offset = node.span_end
+
+    @pytest.mark.asyncio
+    async def test_dynamic_targets_scale_by_height(
+        self,
+        storage_backend: StorageBackend,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        """Test that dynamic summary targets produce 2x compression per level.
+
+        Spec: specs/client-managed-chunking.md § Acceptance Criteria #3
+
+        When target_chunk_tokens=None, summary targets should scale dynamically:
+        - Height 1: span_tokens / 2^1 = span_tokens / 2
+        - Height 2: span_tokens / 2^2 = span_tokens / 4
+        - Height 3: span_tokens / 2^3 = span_tokens / 8
+        """
+        index_config = IndexConfig.load(
+            target_chunk_tokens=None,
+            target_embedding_context_tokens=200,
+        )
+        vector_index = RecordingVectorIndex()
+        self._bind_vector_index(indexer_runtime_harness, vector_index)
+        configure_runtime(indexer_runtime_harness, index_config)
+
+        # Create enough units to build a tree with height >= 2
+        # Each unit should be large enough to create a reasonable span
+        # Using ~400 chars per unit to get ~100 tokens (at 4 chars/token)
+        units = [
+            f"Turn {i}: " + ("This is a substantial conversation turn. " * 10)
+            for i in range(8)
+        ]
+
+        session = indexer_runtime_harness.runtime.get_session(
+            "dynamic-target-test", file_path="test.txt"
+        )
+        await session.batch_append_text(units, collect_telemetry=False)
+        await indexer_runtime_harness.indexing_engine.wait_until_idle(
+            "dynamic-target-test"
+        )
+
+        doc_store = storage_backend.for_document("dynamic-target-test")
+
+        # Verify tree was built with sufficient height
+        max_height = doc_store.nodes.max_height()
+        assert max_height >= 2, f"Tree should have height >= 2, got {max_height}"
+
+        # Get chars_per_token ratio for this document
+
+        chars_per_token = indexer_runtime_harness.indexing_engine.get_chars_per_token(
+            "dynamic-target-test"
+        )
+
+        # Query all nodes to find height-2 nodes
+        all_nodes = doc_store.nodes.get_all()
+        height_2_nodes = [node for node in all_nodes if node.height == 2]
+
+        assert len(height_2_nodes) > 0, "Should have at least one height-2 node"
+
+        # Verify each height-2 node's summary target is ~1/4 of span tokens
+        for node in height_2_nodes:
+            span_chars = node.span_end - node.span_start
+            span_tokens = span_chars / chars_per_token
+            expected_target = get_summary_target(span_chars, 2, chars_per_token)
+
+            # At height 2, target should be span_tokens / 4
+            # (unless below 50-token floor, in which case target = 0)
+            if span_tokens / 4 >= 50:
+                # Above floor: should be approximately 1/4 of span
+                assert expected_target > 0, "Target should not be passthrough"
+                actual_compression = span_tokens / expected_target
+                # Should be close to 4x compression (2^2)
+                assert (
+                    3.5 <= actual_compression <= 4.5
+                ), f"Expected ~4x compression, got {actual_compression:.2f}x"
+            else:
+                # Below floor: should passthrough (target = 0)
+                assert expected_target == 0, "Target should signal passthrough"
+
+            # Verify the node was summarized (internal nodes have summaries as text)
+            assert node.text is not None, "Height-2 node should have text content"
+            assert len(node.text) > 0, "Height-2 node text should not be empty"
+
+    @pytest.mark.asyncio
+    async def test_passthrough_floor_integration(
+        self,
+        storage_backend: StorageBackend,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        """Test that summaries targeting < 50 tokens pass through unchanged.
+
+        Spec: specs/client-managed-chunking.md § Acceptance Criteria #4
+
+        When dynamic targets fall below the 50-token floor, text should pass
+        through unsummarized. This test creates small units that will trigger
+        passthrough behavior at higher tree heights.
+        """
+        index_config = IndexConfig.load(
+            target_chunk_tokens=None,
+            target_embedding_context_tokens=200,
+        )
+        vector_index = RecordingVectorIndex()
+        self._bind_vector_index(indexer_runtime_harness, vector_index)
+        configure_runtime(indexer_runtime_harness, index_config)
+
+        # Create 8 very small units (each ~20 chars = ~5 tokens at 4 chars/token)
+        # This ensures that at higher heights, the target will fall below 50 tokens
+        units = [f"Turn {i}: Small text" for i in range(8)]
+
+        session = indexer_runtime_harness.runtime.get_session(
+            "passthrough-test", file_path="test.txt"
+        )
+        await session.batch_append_text(units, collect_telemetry=False)
+        await indexer_runtime_harness.indexing_engine.wait_until_idle(
+            "passthrough-test"
+        )
+
+        doc_store = storage_backend.for_document("passthrough-test")
+
+        # Get chars_per_token ratio for this document
+        chars_per_token = indexer_runtime_harness.indexing_engine.get_chars_per_token(
+            "passthrough-test"
+        )
+
+        # Get all nodes to examine passthrough behavior
+        all_nodes = doc_store.nodes.get_all()
+
+        # Find nodes where the dynamic target would be below 50 tokens
+        passthrough_nodes = []
+        for node in all_nodes:
+            if node.height > 0:  # Only check internal nodes
+                span_chars = node.span_end - node.span_start
+                target = get_summary_target(span_chars, node.height, chars_per_token)
+                if target == 0:  # Signals passthrough
+                    passthrough_nodes.append(node)
+
+        # Should have at least one passthrough node due to small units
+        assert (
+            len(passthrough_nodes) > 0
+        ), "Should have nodes that triggered passthrough floor"
+
+        # Verify passthrough nodes: their text should be the concatenation of children
+        # Note: Summarization joins child texts with a space, and passthrough returns
+        # this prepared text unchanged (no LLM call, but space-separated)
+        for node in passthrough_nodes:
+            # Get child nodes
+            left_child, right_child = doc_store.tree.get_children(node.id)
+            assert left_child is not None, "Left child should exist"
+            assert right_child is not None, "Right child should exist"
+
+            # Expected text is space-separated concatenation (as per summary preparation)
+            expected_text = f"{left_child.text} {right_child.text}"
+
+            # Verify the node's text matches (passthrough = no summarization)
+            assert (
+                node.text == expected_text
+            ), f"Passthrough node text should be space-separated concatenation of children (height={node.height})"
+
+    @pytest.mark.asyncio
+    async def test_backward_compatibility_fixed_chunking(
+        self,
+        storage_backend: StorageBackend,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        """Test that existing configs with target_chunk_tokens=int work identically.
+
+        Spec: specs/client-managed-chunking.md § Acceptance Criteria #5
+
+        When target_chunk_tokens is set to an integer value (the original behavior),
+        the system should:
+        1. Split text into fixed-size chunks based on the token target
+        2. Use fixed summary targets (not dynamic)
+        3. Produce the same tree structure as before the feature was added
+        """
+        target_chunk_tokens = 200
+        index_config = IndexConfig.load(
+            target_chunk_tokens=target_chunk_tokens,
+            target_embedding_context_tokens=target_chunk_tokens,
+        )
+        vector_index = RecordingVectorIndex()
+        self._bind_vector_index(indexer_runtime_harness, vector_index)
+        configure_runtime(indexer_runtime_harness, index_config)
+
+        # ~2500 chars = ~625 tokens, should create multiple leaves at 200 tokens each
+        text = "This is a test sentence. " * 100
+
+        await self._index_document(
+            indexer_runtime_harness,
+            storage_backend,
+            document_id="backward-compat-test",
+            text=text,
+        )
+
+        doc_store = storage_backend.for_document("backward-compat-test")
+        leaf_nodes = doc_store.nodes.get_leaves()
+
+        assert (
+            len(leaf_nodes) > 1
+        ), "Fixed chunking should split text into multiple leaves"
+
+        chars_per_token = indexer_runtime_harness.indexing_engine.get_chars_per_token(
+            "backward-compat-test"
+        )
+        target_chars = target_chunk_tokens * chars_per_token
+
+        for node in leaf_nodes:
+            assert len(node.text) <= target_chars * 1.5, (
+                f"Leaf chunk exceeds target by >50%: "
+                f"{len(node.text)} chars vs {target_chars:.0f} target"
+            )
+
+        full_text = "".join(node.text for node in leaf_nodes)
+        assert full_text == text, "Reconstructed text should match original"
+
+        expected_offset = 0
+        for node in leaf_nodes:
+            assert node.span_start == expected_offset
+            expected_offset = node.span_end
+
+    @pytest.mark.asyncio
+    async def test_large_unit_truncation_integration(
+        self,
+        storage_backend: StorageBackend,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Test that units > MAX_UNIT_CHARS are truncated with warning.
+
+        Spec: specs/client-managed-chunking.md § Acceptance Criteria #6
+
+        When target_chunk_tokens=None (client-managed chunking mode) and a unit
+        exceeds MAX_UNIT_CHARS:
+        1. The unit should be truncated to exactly MAX_UNIT_CHARS
+        2. A warning should be logged indicating truncation
+        3. The leaf node should contain the truncated text
+        4. The tree structure should remain valid
+
+        Note: We use a smaller limit (1000 chars) in tests because tokenizing
+        50k+ characters is slow and causes timeouts in CI.
+        """
+        # Patch to smaller limit for faster tests
+        import ragzoom.server.append_executor as append_module
+
+        test_limit = 1000
+        monkeypatch.setattr(append_module, "MAX_UNIT_CHARS", test_limit)
+
+        index_config = IndexConfig.load(
+            target_chunk_tokens=None,
+            target_embedding_context_tokens=200,
+        )
+        vector_index = RecordingVectorIndex()
+        self._bind_vector_index(indexer_runtime_harness, vector_index)
+        configure_runtime(indexer_runtime_harness, index_config)
+
+        large_text = "A" * 1500
+
+        with caplog.at_level(logging.WARNING):
+            await self._index_document(
+                indexer_runtime_harness,
+                storage_backend,
+                document_id="large-unit-test",
+                text=large_text,
+            )
+
+        assert any(
+            "truncating" in record.message.lower() and "1000" in record.message
+            for record in caplog.records
+        ), "Expected warning about truncation to 1,000 characters"
+
+        doc_store = storage_backend.for_document("large-unit-test")
+        leaf_nodes = doc_store.nodes.get_leaves()
+        assert (
+            len(leaf_nodes) == 1
+        ), "Client-managed mode should create exactly one leaf"
+
+        leaf = leaf_nodes[0]
+        assert (
+            len(leaf.text) == test_limit
+        ), f"Expected {test_limit} chars, got {len(leaf.text)}"
+        assert leaf.text == "A" * test_limit
+
+        assert leaf.height == 0
+        assert leaf.span_start == 0
+        assert leaf.span_end == test_limit
+
+        root = doc_store.tree.get_root()
+        assert root is not None
+        assert root.span_start == 0
+        assert root.span_end == test_limit
+
+    @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(10.0)
+    async def test_empty_string_embedding(
+        self,
+        mock_openai: tuple[Mock, Mock, Mock],
+        storage_backend: StorageBackend,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        """Test that empty string units are embedded successfully in client-managed mode.
+
+        Spec: specs/client-managed-chunking.md § Append Operations
+
+        When target_chunk_tokens=None (client-managed chunking mode) and an empty
+        string is appended:
+        1. A leaf node should be created with empty text
+        2. The leaf should be embedded (appear in the vector index)
+        3. The embedding should be retrievable and valid
+        """
+        index_config = IndexConfig.load(
+            target_chunk_tokens=None,
+            target_embedding_context_tokens=200,
+        )
+        vector_index = RecordingVectorIndex()
+        self._bind_vector_index(indexer_runtime_harness, vector_index)
+        configure_runtime(indexer_runtime_harness, index_config)
+
+        await self._index_document(
+            indexer_runtime_harness,
+            storage_backend,
+            document_id="empty-string-test",
+            text="",
+        )
+
+        doc_store = storage_backend.for_document("empty-string-test")
+        leaf_nodes = doc_store.nodes.get_leaves()
+        assert len(leaf_nodes) == 1, "Should create exactly one leaf for empty string"
+
+        leaf = leaf_nodes[0]
+        assert leaf.text == "", "Leaf text should be empty"
+        assert leaf.height == 0, "Leaf should be at height 0"
+        assert leaf.span_start == 0
+        assert leaf.span_end == 0, "Empty string should have zero span"
+
+        # Verify the leaf was embedded (appears in vector index)
+        assert (
+            len(vector_index) >= 1
+        ), "Empty string leaf should be embedded in vector index"
+
+        # Verify we can retrieve the vector for this leaf
+        vectors = vector_index.get_vectors([leaf.id])
+        assert len(vectors) == 1, "Should be able to retrieve empty string embedding"
+
+        retrieved_vector = vectors[0]
+        assert (
+            retrieved_vector.id == leaf.id
+        ), "Retrieved vector should match leaf node ID"
+        assert retrieved_vector.meta.get("document_id") == "empty-string-test"
+        assert retrieved_vector.meta.get("is_leaf") == 1
+        assert retrieved_vector.vec is not None, "Vector embedding should exist"
+        assert len(retrieved_vector.vec) > 0, "Vector should have dimensions"

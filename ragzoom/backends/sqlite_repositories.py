@@ -1548,9 +1548,8 @@ class SqliteNodeRepository:
             ]
 
             # 13. Leaf chunk size (if target specified)
-            result.checks_run.append("leaf_chunk_size")
-            result.leaf_chunk_size = []
             if target_chunk_tokens and target_chunk_tokens > 0:
+                result.checks_run.append("leaf_chunk_size")
                 upper_bound = int(target_chunk_tokens * (1 + chunk_tolerance))
                 chunk_rows = session.execute(
                     text(

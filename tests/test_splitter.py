@@ -110,3 +110,53 @@ class TestTextSplitter:
         # Verify complete coverage
         reconstructed = "".join(chunks)
         assert len(reconstructed) == len(text), "Should have complete coverage"
+
+    def test_text_splitter_handles_none_target(self) -> None:
+        """Test that TextSplitter handles target_chunk_tokens=None.
+
+        Spec: specs/client-managed-chunking.md § Append Operations
+        Success: When target_chunk_tokens is None, splitter doesn't initialize RecursiveCharacterTextSplitter
+        """
+        index_config = IndexConfig.load(target_chunk_tokens=None)
+        splitter = TextSplitter(index_config)
+
+        # When target_chunk_tokens is None, the splitter should not have initialized
+        # the RecursiveCharacterTextSplitter
+        assert splitter.config.target_chunk_tokens is None
+        # The splitter attribute should not exist or be None
+        assert not hasattr(splitter, "splitter") or splitter.splitter is None
+
+    def test_split_text_passthrough_when_none(self) -> None:
+        """Test that split_text returns [text] unchanged when target_chunk_tokens is None.
+
+        Spec: specs/client-managed-chunking.md § Append Operations
+        Success: split_text("foo") returns ["foo"] when target_chunk_tokens is None
+        """
+        index_config = IndexConfig.load(target_chunk_tokens=None)
+        splitter = TextSplitter(index_config)
+
+        text = "This is a whole conversation turn that should not be split."
+        chunks = splitter.split_text(text)
+
+        # Should return exactly one chunk with the original text
+        assert len(chunks) == 1
+        assert chunks[0] == text
+
+    def test_split_text_backward_compatible(self) -> None:
+        """Test that split_text preserves existing behavior when target_chunk_tokens is int.
+
+        Spec: specs/client-managed-chunking.md § Append Operations
+        Success: Existing behavior preserved when int
+        """
+        index_config = IndexConfig.load(target_chunk_tokens=50)
+        splitter = TextSplitter(index_config)
+
+        # Long text that should be split into multiple chunks
+        text = "This is a test. " * 50  # ~200 tokens
+
+        chunks = splitter.split_text(text)
+
+        # Should split into multiple chunks
+        assert len(chunks) > 1
+        # All chunks should be non-empty
+        assert all(chunk and chunk.strip() for chunk in chunks)

@@ -39,6 +39,8 @@ class TestChunkSizeRegression:
     @requires_tiktoken
     def test_splitter_creates_correct_chunk_size(self, config: IndexConfig) -> None:
         """TextSplitter should emit chunks near the configured token target."""
+        # This test is for fixed-chunking mode
+        assert config.target_chunk_tokens is not None
 
         splitter = TextSplitter(config)
         test_text = SPLITTER_SAMPLE_PARAGRAPH * 5
@@ -76,6 +78,8 @@ class TestChunkSizeRegression:
         mock_openai_async_client: AsyncOpenAI,
     ) -> None:
         """End-to-end runtime append should respect chunk sizing constraints."""
+        # This test is for fixed-chunking mode
+        assert config.target_chunk_tokens is not None
 
         configure_runtime(indexer_runtime_harness, config)
         indexer_runtime_harness.llm_service.client = mock_openai_async_client
