@@ -22,6 +22,15 @@ from ragzoom.retrieval.embedding_service import EmbeddingService
 class TestEmbeddingServiceIsolation:
     """Test that EmbeddingService properly uses DocumentStore for isolation."""
 
+    @staticmethod
+    def _create_mock_openai_client() -> Mock:
+        """Create a mock OpenAI client with embedding response."""
+        mock_client = Mock(spec=OpenAI)
+        mock_response = Mock()
+        mock_response.data = [Mock(embedding=[0.5] * 1536)]
+        mock_client.embeddings.create.return_value = mock_response
+        return mock_client
+
     def test_embedding_service_uses_document_store(
         self, sqlite_store_factory: Callable[[str | None], DocumentStore]
     ) -> None:
@@ -30,32 +39,27 @@ class TestEmbeddingServiceIsolation:
         doc1_store = sqlite_store_factory("doc1")
         doc2_store = sqlite_store_factory("doc2")
 
-        # Create mock OpenAI client
-        mock_client = Mock(spec=OpenAI)
-        mock_response = Mock()
-        mock_response.data = [Mock(embedding=[0.5] * 1536)]
-        mock_client.embeddings.create.return_value = mock_response
+        default_model = "text-embedding-ada-002"
+        mock_client = self._create_mock_openai_client()
 
-        # Test with doc1_store - uses default fallback since SQLite doesn't have document metadata
-        service1 = EmbeddingService(mock_client, doc1_store, "text-embedding-ada-002")
+        # Test with doc1_store
+        service1 = EmbeddingService(mock_client, doc1_store, default_model)
         _ = service1.get_query_embedding("test query", document_id="doc1")
 
         # Verify default model was used (SQLite backend uses fallback behavior)
         mock_client.embeddings.create.assert_called_with(
-            model="text-embedding-ada-002",
+            model=default_model,
             input="test query",
         )
 
-        # Reset mock
-        mock_client.reset_mock()
-
         # Test with doc2_store
-        service2 = EmbeddingService(mock_client, doc2_store, "text-embedding-ada-002")
+        mock_client.reset_mock()
+        service2 = EmbeddingService(mock_client, doc2_store, default_model)
         _ = service2.get_query_embedding("test query", document_id="doc2")
 
         # Verify same default model was used
         mock_client.embeddings.create.assert_called_with(
-            model="text-embedding-ada-002",
+            model=default_model,
             input="test query",
         )
 
@@ -65,14 +69,10 @@ class TestEmbeddingServiceIsolation:
         """Test that EmbeddingService falls back to default when no document model."""
         doc_store = sqlite_store_factory("doc1")
 
-        # Create mock OpenAI client
-        mock_client = Mock(spec=OpenAI)
-        mock_response = Mock()
-        mock_response.data = [Mock(embedding=[0.5] * 1536)]
-        mock_client.embeddings.create.return_value = mock_response
+        default_model = "text-embedding-ada-002"
+        mock_client = self._create_mock_openai_client()
 
         # Test with DocumentStore
-        default_model = "text-embedding-ada-002"
         service = EmbeddingService(mock_client, doc_store, default_model)
         _ = service.get_query_embedding("test query")
 
@@ -191,3 +191,17 @@ class TestBudgetPlannerIsolation:
         # Even with tiny budget, should return at least 1 seed
         seeds = planner.calculate_conservative_num_seeds(10)
         assert seeds == 1
+
+    def test_budget_planner_validates_positive_tokens(
+        self, sqlite_store_factory: Callable[[str | None], DocumentStore]
+    ) -> None:
+        """Test that BudgetPlanner raises ValueError for non-positive chunk tokens."""
+        doc_store = sqlite_store_factory("doc1")
+
+        # Test with zero tokens
+        with pytest.raises(ValueError, match="default_chunk_tokens must be positive"):
+            BudgetPlanner(doc_store, default_chunk_tokens=0)
+
+        # Test with negative tokens
+        with pytest.raises(ValueError, match="default_chunk_tokens must be positive"):
+            BudgetPlanner(doc_store, default_chunk_tokens=-100)

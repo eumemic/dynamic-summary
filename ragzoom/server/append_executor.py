@@ -22,6 +22,11 @@ from ragzoom.utils.tokenization import tokenizer
 
 logger = logging.getLogger(__name__)
 
+# Maximum characters per unit in client-managed chunking mode.
+# Units exceeding this limit are truncated with a warning.
+# Exposed as module constant for test overriding.
+MAX_UNIT_CHARS = 50000
+
 
 @dataclass
 class LeafSpec:
@@ -78,8 +83,20 @@ class AppendExecutor:
         modified. New leaves are created starting from the span_end of the
         rightmost existing leaf.
         """
-        if not new_text:
+        # Only reject empty text when not in client-managed chunking mode
+        if not new_text and self._config.target_chunk_tokens is not None:
             raise ValueError("append requires non-empty text")
+
+        # Client-managed chunking: truncate units > MAX_UNIT_CHARS
+        if self._config.target_chunk_tokens is None and len(new_text) > MAX_UNIT_CHARS:
+            logger.warning(
+                "append[%s]: truncating unit from %d to %d characters "
+                "(client-managed chunking mode)",
+                document_id,
+                len(new_text),
+                MAX_UNIT_CHARS,
+            )
+            new_text = new_text[:MAX_UNIT_CHARS]
 
         right_leaf = store.nodes.get_rightmost_leaf_for_document(document_id)
         logger.debug(
@@ -284,8 +301,25 @@ class AppendExecutor:
         Returns:
             AppendOutcome with all new leaf IDs and span info
         """
-        # Filter out empty units
-        non_empty_units = [u for u in units if u and u.strip()]
+        # Client-managed chunking: truncate units > MAX_UNIT_CHARS and preserve all
+        if self._config.target_chunk_tokens is None:
+            processed_units: list[str] = []
+            for unit in units:
+                if len(unit) > MAX_UNIT_CHARS:
+                    logger.warning(
+                        "append_batch[%s]: truncating unit from %d to %d characters "
+                        "(client-managed chunking mode)",
+                        document_id,
+                        len(unit),
+                        MAX_UNIT_CHARS,
+                    )
+                    processed_units.append(unit[:MAX_UNIT_CHARS])
+                else:
+                    processed_units.append(unit)
+            non_empty_units = processed_units
+        else:
+            # Normal mode: filter out empty units
+            non_empty_units = [u for u in units if u and u.strip()]
 
         if not non_empty_units:
             # No content to append - return empty outcome
@@ -353,7 +387,7 @@ class AppendExecutor:
             # Split this unit (may produce 1+ chunks)
             chunks = self._splitter.split_text(unit_text)
             if not chunks:
-                continue
+                raise ValueError("splitter returned no chunks for unit in append_batch")
 
             # Build leaf specs for this unit's chunks
             unit_specs = self._build_leaf_specs(
@@ -364,7 +398,9 @@ class AppendExecutor:
             )
 
             if not unit_specs:
-                continue
+                raise ValueError(
+                    "build_leaf_specs returned no specs for unit in append_batch"
+                )
 
             # Build payload for this unit
             payload: list[NodeDataDict] = []

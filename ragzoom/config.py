@@ -29,7 +29,8 @@ class PrecedingContextSettingsDict(TypedDict, total=False):
 class IndexConfigDict(TypedDict, total=False):
     """Type definition for IndexConfig dictionary representation."""
 
-    target_chunk_tokens: int
+    target_chunk_tokens: int | None
+    target_embedding_context_tokens: int
     max_parallelism: int
     summary_model: str
     embedding_model: str
@@ -42,10 +43,19 @@ class IndexConfigDict(TypedDict, total=False):
     summary_reasoning_level: str | None
 
 
+# Sentinel value to distinguish "not provided" from "explicitly None"
+class _NotProvided:
+    """Sentinel value to indicate a parameter was not provided."""
+
+    pass
+
+
+_NOT_PROVIDED = _NotProvided()
+
 # Type for configuration values that can be primitives
 ConfigValue = str | int | float | bool
 # Type that includes None for CLI parameters
-ConfigValueOrNone = str | int | float | bool | None
+ConfigValueOrNone = str | int | float | bool | None | _NotProvided
 
 
 class SecretStr(str):
@@ -274,7 +284,8 @@ class IndexConfig:
     Note: Always use IndexConfig.load() to create instances. Do not instantiate directly.
     """
 
-    target_chunk_tokens: int
+    target_chunk_tokens: int | None
+    target_embedding_context_tokens: int
     max_parallelism: int
     summary_model: str
     embedding_model: str
@@ -290,6 +301,10 @@ class IndexConfig:
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
+        if self.target_chunk_tokens is not None and self.target_chunk_tokens <= 0:
+            raise ValueError(
+                f"target_chunk_tokens must be positive when set, got {self.target_chunk_tokens}"
+            )
         if not 0.0 <= self.retry_threshold <= 1.0:
             raise ValueError(
                 f"retry_threshold must be between 0.0 and 1.0, got {self.retry_threshold}"
@@ -332,8 +347,17 @@ class IndexConfig:
             str(raw_reasoning) if raw_reasoning is not None else None
         )
 
+        # Handle target_chunk_tokens which can be int or None
+        raw_target_chunk = config_dict.get("target_chunk_tokens")
+        target_chunk_tokens_value: int | None = (
+            int(raw_target_chunk) if raw_target_chunk is not None else None
+        )
+
         return cls(
-            target_chunk_tokens=int(config_dict["target_chunk_tokens"]),
+            target_chunk_tokens=target_chunk_tokens_value,
+            target_embedding_context_tokens=int(
+                config_dict.get("target_embedding_context_tokens", 200)
+            ),
             max_parallelism=int(config_dict.get("max_parallelism", 30)),
             summary_model=str(config_dict["summary_model"]),
             embedding_model=str(config_dict["embedding_model"]),
@@ -361,7 +385,8 @@ class IndexConfig:
         Args:
             config_path: Optional path to user config file. If not specified,
                         loads from internal defaults.
-            **cli_options: CLI options that override config file
+            **cli_options: CLI options that override config file. Use None to explicitly
+                          set a field to None (e.g., target_chunk_tokens=None).
 
         Returns:
             IndexConfig instance
@@ -372,6 +397,7 @@ class IndexConfig:
     def replace(
         self,
         target_chunk_tokens: int | None = None,
+        target_embedding_context_tokens: int | None = None,
         max_parallelism: int | None = None,
         summary_model: str | None = None,
         embedding_model: str | None = None,
@@ -392,6 +418,11 @@ class IndexConfig:
                 target_chunk_tokens
                 if target_chunk_tokens is not None
                 else self.target_chunk_tokens
+            ),
+            target_embedding_context_tokens=(
+                target_embedding_context_tokens
+                if target_embedding_context_tokens is not None
+                else self.target_embedding_context_tokens
             ),
             max_parallelism=(
                 max_parallelism if max_parallelism is not None else self.max_parallelism
@@ -444,9 +475,12 @@ class IndexConfig:
         """Get the preceding context budget derived from the summary model's context window.
 
         The budget is calculated as the model's context window minus overhead for:
-        - The chunk being summarized (~target_chunk_tokens)
-        - The output summary (~target_chunk_tokens)
+        - The chunk being summarized (~target_chunk_tokens or target_embedding_context_tokens)
+        - The output summary (~target_chunk_tokens or target_embedding_context_tokens)
         - System prompt and formatting (~1000 tokens)
+
+        When target_chunk_tokens is None (client-managed chunking), uses
+        target_embedding_context_tokens as the basis for overhead calculation.
 
         Capped at _MAX_PRECEDING_CONTEXT_BUDGET to prevent performance issues
         when num_seeds is calculated from budget (budget // chunk_tokens).
@@ -454,8 +488,14 @@ class IndexConfig:
         from ragzoom.model_info import ModelInfo
 
         context_window = ModelInfo().get_context_window(self.summary_model)
-        overhead = self.target_chunk_tokens * 2 + 1000
-        uncapped = max(context_window - overhead, self.target_chunk_tokens)
+        # Use target_embedding_context_tokens as fallback when target_chunk_tokens is None
+        chunk_size = (
+            self.target_chunk_tokens
+            if self.target_chunk_tokens is not None
+            else self.target_embedding_context_tokens
+        )
+        overhead = chunk_size * 2 + 1000
+        uncapped = max(context_window - overhead, chunk_size)
         return min(uncapped, self._MAX_PRECEDING_CONTEXT_BUDGET)
 
 
@@ -667,9 +707,10 @@ def _load_index_config(
             user_config = json.load(f)
             config.update(user_config)
 
-    # Override with CLI options (filter out None values)
+    # Override with CLI options
+    # Note: We filter out _NOT_PROVIDED sentinel but allow None (which is valid for target_chunk_tokens)
     for key, value in cli_options.items():
-        if value is not None and key in config:
+        if not isinstance(value, _NotProvided) and key in config:
             config[key] = value
 
     return dict(config)

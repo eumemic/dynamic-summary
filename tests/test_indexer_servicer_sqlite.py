@@ -76,6 +76,10 @@ class StubIndexingEngine:
     async def wait_until_idle(self, document_id: str | None = None) -> None:
         return None
 
+    def update_chars_per_token_after_append(self, document_id: str) -> None:
+        """Stub for chars_per_token update (no-op in tests)."""
+        pass
+
     async def status(self) -> IndexingStatus:
         return IndexingStatus(
             in_flight=0,

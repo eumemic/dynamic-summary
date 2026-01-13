@@ -295,7 +295,8 @@ class DocumentIndexSession:
         replace_existing: bool,
         collect_telemetry: bool = False,
     ) -> IndexingResult:
-        if not text:
+        # Allow empty text only when target_chunk_tokens=None (client-managed mode)
+        if not text and self._runtime._index_config.target_chunk_tokens is not None:
             raise ValueError("text must be non-empty")
 
         if replace_existing:
@@ -412,6 +413,11 @@ class DocumentIndexSession:
                     telemetry_collector=run_context.telemetry_collector,
                     new_leaf_ids=outcome.new_leaf_ids,
                 )
+
+            # Update chars_per_token after append (client-managed chunking mode)
+            self._runtime._indexing_engine.update_chars_per_token_after_append(
+                self._document_id
+            )
 
             # Trigger indexing work - engine discovers leaves and sibling pairs
             await self._runtime._indexing_engine.trigger_work(self._document_id)
@@ -574,6 +580,11 @@ class DocumentIndexSession:
                     telemetry_collector=run_context.telemetry_collector,
                     new_leaf_ids=outcome.new_leaf_ids,
                 )
+
+            # Update chars_per_token after append (client-managed chunking mode)
+            self._runtime._indexing_engine.update_chars_per_token_after_append(
+                self._document_id
+            )
 
             # Trigger indexing work - engine discovers leaves and sibling pairs
             t_before_trigger = time.perf_counter()

@@ -156,9 +156,14 @@ def test_query_performance(
     embedding_service = EmbeddingService(
         client, doc_store, query_config.embedding_model
     )
-    budget_planner = BudgetPlanner(
-        doc_store, IndexConfig.load(target_chunk_tokens=200).target_chunk_tokens
+    cfg = IndexConfig.load(target_chunk_tokens=200)
+    # For retrieval operations, use target_embedding_context_tokens as fallback
+    chunk_tokens = (
+        cfg.target_chunk_tokens
+        if cfg.target_chunk_tokens is not None
+        else cfg.target_embedding_context_tokens
     )
+    budget_planner = BudgetPlanner(doc_store, chunk_tokens)
 
     # Create retriever and assembler
     retriever = Retriever(

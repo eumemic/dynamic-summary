@@ -591,9 +591,17 @@ def create_retriever(
     # Get chunk tokens from IndexConfig if not provided
     if target_chunk_tokens is None:
         index_cfg = IndexConfig.load()
-        target_chunk_tokens = index_cfg.target_chunk_tokens
+        # For retrieval operations, use target_embedding_context_tokens as fallback
+        # when target_chunk_tokens is None (client-managed chunking mode)
+        chunk_tokens_value = (
+            index_cfg.target_chunk_tokens
+            if index_cfg.target_chunk_tokens is not None
+            else index_cfg.target_embedding_context_tokens
+        )
+    else:
+        chunk_tokens_value = target_chunk_tokens
 
-    budget_planner = BudgetPlanner(doc_store, target_chunk_tokens)
+    budget_planner = BudgetPlanner(doc_store, chunk_tokens_value)
 
     # Require caller to pass the VectorIndex explicitly (no implicit creation)
     # vector_index is required; no implicit creation here
