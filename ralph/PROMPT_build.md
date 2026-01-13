@@ -1,6 +1,7 @@
 0a. Study `specs/*` with up to 500 parallel subagents to learn the application specifications.
 0b. Study `ralph/IMPLEMENTATION_PLAN.md`.
 0c. For reference, the application source code is in the project root.
+0d. When spawning subagents via the Task tool, use `model: "${RALPH_SUBAGENT_MODEL}"` for efficiency.
 
 1. Pick **exactly ONE incomplete item** (a single `- [ ]` checkbox) from `ralph/IMPLEMENTATION_PLAN.md`. **Announce your choice**: "I am working on: [copy the exact item text]". ONE means ONE - do not combine items, do not do "while I'm here" work, do not batch related items. Complete that single item, commit, and exit. The loop will restart you with fresh context for the next item. Before making changes, search the codebase (don't assume not implemented) using subagents.
 

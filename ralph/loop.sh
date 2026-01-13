@@ -11,6 +11,10 @@ set -euo pipefail
 
 RALPH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Defaults (can be overridden via environment variables)
+: "${RALPH_MODEL:=opus}"
+: "${RALPH_SUBAGENT_MODEL:=sonnet}"
+
 # Help
 show_help() {
     cat <<'EOF'
@@ -26,11 +30,15 @@ Modes:
 Options:
   -h, --help   Show this help message
 
+Environment Variables:
+  RALPH_MODEL          Model for main agent (default: opus)
+  RALPH_SUBAGENT_MODEL Model for subagents (default: sonnet)
+
 Examples:
-  ./ralph/loop.sh plan         # Plan mode, unlimited iterations
-  ./ralph/loop.sh plan 5       # Plan mode, max 5 iterations
-  ./ralph/loop.sh build        # Build mode, unlimited iterations
-  ./ralph/loop.sh build 20     # Build mode, max 20 iterations
+  ./ralph/loop.sh plan                           # Plan with opus
+  ./ralph/loop.sh build 10                       # Build with opus, max 10 iterations
+  RALPH_MODEL=sonnet ./ralph/loop.sh build       # Build with sonnet (cheaper)
+  RALPH_SUBAGENT_MODEL=haiku ./ralph/loop.sh plan # Plan with haiku subagents (faster)
 
 Termination:
   - Plan mode: stops when plan file unchanged after an iteration
@@ -69,13 +77,13 @@ CURRENT_BRANCH=$(git branch --show-current)
 PLAN_FILE="$RALPH_DIR/IMPLEMENTATION_PLAN.md"
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Mode:   $MODE"
-echo "Prompt: $PROMPT_FILE"
-echo "Branch: $CURRENT_BRANCH"
+echo "Mode:      $MODE"
+echo "Model:     $RALPH_MODEL (subagents: $RALPH_SUBAGENT_MODEL)"
+echo "Branch:    $CURRENT_BRANCH"
 if [ $MAX_ITERATIONS -gt 0 ]; then
-    echo "Max:    $MAX_ITERATIONS iterations"
+    echo "Max:       $MAX_ITERATIONS iterations"
 else
-    echo "Max:    unlimited"
+    echo "Max:       unlimited"
 fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
@@ -128,12 +136,15 @@ while true; do
     # Run Ralph iteration
     # -p: Headless mode (non-interactive, reads from stdin)
     # --dangerously-skip-permissions: Auto-approve all tool calls
-    # --model: Use appropriate model for the task
+    # --model: Main agent model (default opus)
     # --output-format stream-json: Stream JSONL for real-time progress
     # --verbose: Required for stream-json in print mode
-    cat "$PROMPT_FILE" | claude -p \
+    #
+    # envsubst templates the prompt file, replacing ${RALPH_SUBAGENT_MODEL}
+    export RALPH_SUBAGENT_MODEL
+    envsubst < "$PROMPT_FILE" | claude -p \
         --dangerously-skip-permissions \
-        --model sonnet \
+        --model "$RALPH_MODEL" \
         --output-format stream-json \
         --verbose \
         | "$RALPH_DIR/stream-progress.sh"
