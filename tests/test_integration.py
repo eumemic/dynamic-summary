@@ -6,6 +6,7 @@ retrieval to final assembly, using mock OpenAI clients.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Generator
 from unittest.mock import Mock
 
@@ -558,3 +559,63 @@ class TestIntegration:
         for node in leaf_nodes:
             assert node.span_start == expected_offset
             expected_offset = node.span_end
+
+    @pytest.mark.asyncio
+    async def test_large_unit_truncation_integration(
+        self,
+        storage_backend: StorageBackend,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Test that units > 50k chars are truncated with warning in client-managed mode.
+
+        Spec: specs/client-managed-chunking.md § Acceptance Criteria #6
+
+        When target_chunk_tokens=None (client-managed chunking mode) and a unit
+        exceeds 50,000 characters:
+        1. The unit should be truncated to exactly 50,000 characters
+        2. A warning should be logged indicating truncation
+        3. The leaf node should contain the truncated text
+        4. The tree structure should remain valid
+        """
+        index_config = IndexConfig.load(
+            target_chunk_tokens=None,
+            target_embedding_context_tokens=200,
+        )
+        vector_index = RecordingVectorIndex()
+        self._bind_vector_index(indexer_runtime_harness, vector_index)
+        configure_runtime(indexer_runtime_harness, index_config)
+
+        large_text = "A" * 60_000
+
+        with caplog.at_level(logging.WARNING):
+            await self._index_document(
+                indexer_runtime_harness,
+                storage_backend,
+                document_id="large-unit-test",
+                text=large_text,
+            )
+
+        assert any(
+            "truncating" in record.message.lower() and "50000" in record.message
+            for record in caplog.records
+        ), "Expected warning about truncation to 50,000 characters"
+
+        doc_store = storage_backend.for_document("large-unit-test")
+        leaf_nodes = doc_store.nodes.get_leaves()
+        assert (
+            len(leaf_nodes) == 1
+        ), "Client-managed mode should create exactly one leaf"
+
+        leaf = leaf_nodes[0]
+        assert len(leaf.text) == 50_000, f"Expected 50k chars, got {len(leaf.text)}"
+        assert leaf.text == "A" * 50_000
+
+        assert leaf.height == 0
+        assert leaf.span_start == 0
+        assert leaf.span_end == 50_000
+
+        root = doc_store.tree.get_root()
+        assert root is not None
+        assert root.span_start == 0
+        assert root.span_end == 50_000
