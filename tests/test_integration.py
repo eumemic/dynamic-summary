@@ -14,6 +14,7 @@ import pytest
 from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.server.indexing_engine import get_summary_target
 from tests.chunk_size_regression_harness import configure_runtime
 from tests.conftest import IndexerRuntimeHarness
 from tests.utils import mock_openai_context
@@ -340,3 +341,84 @@ class TestIntegration:
             assert node.span_start == expected_offset
             assert node.span_end == expected_offset + len(units[i])
             expected_offset = node.span_end
+
+    @pytest.mark.asyncio
+    async def test_dynamic_targets_scale_by_height(
+        self,
+        storage_backend: StorageBackend,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        """Test that dynamic summary targets produce 2x compression per level.
+
+        Spec: specs/client-managed-chunking.md § Acceptance Criteria #3
+
+        When target_chunk_tokens=None, summary targets should scale dynamically:
+        - Height 1: span_tokens / 2^1 = span_tokens / 2
+        - Height 2: span_tokens / 2^2 = span_tokens / 4
+        - Height 3: span_tokens / 2^3 = span_tokens / 8
+        """
+        index_config = IndexConfig.load(
+            target_chunk_tokens=None,
+            target_embedding_context_tokens=200,
+        )
+        vector_index = RecordingVectorIndex()
+        self._bind_vector_index(indexer_runtime_harness, vector_index)
+        configure_runtime(indexer_runtime_harness, index_config)
+
+        # Create enough units to build a tree with height >= 2
+        # Each unit should be large enough to create a reasonable span
+        # Using ~400 chars per unit to get ~100 tokens (at 4 chars/token)
+        units = [
+            f"Turn {i}: " + ("This is a substantial conversation turn. " * 10)
+            for i in range(8)
+        ]
+
+        session = indexer_runtime_harness.runtime.get_session(
+            "dynamic-target-test", file_path="test.txt"
+        )
+        await session.batch_append_text(units, collect_telemetry=False)
+        await indexer_runtime_harness.indexing_engine.wait_until_idle(
+            "dynamic-target-test"
+        )
+
+        doc_store = storage_backend.for_document("dynamic-target-test")
+
+        # Verify tree was built with sufficient height
+        max_height = doc_store.nodes.max_height()
+        assert max_height >= 2, f"Tree should have height >= 2, got {max_height}"
+
+        # Get chars_per_token ratio for this document
+
+        chars_per_token = indexer_runtime_harness.indexing_engine.get_chars_per_token(
+            "dynamic-target-test"
+        )
+
+        # Query all nodes to find height-2 nodes
+        all_nodes = doc_store.nodes.get_all()
+        height_2_nodes = [node for node in all_nodes if node.height == 2]
+
+        assert len(height_2_nodes) > 0, "Should have at least one height-2 node"
+
+        # Verify each height-2 node's summary target is ~1/4 of span tokens
+        for node in height_2_nodes:
+            span_chars = node.span_end - node.span_start
+            span_tokens = span_chars / chars_per_token
+            expected_target = get_summary_target(span_chars, 2, chars_per_token)
+
+            # At height 2, target should be span_tokens / 4
+            # (unless below 50-token floor, in which case target = 0)
+            if span_tokens / 4 >= 50:
+                # Above floor: should be approximately 1/4 of span
+                assert expected_target > 0, "Target should not be passthrough"
+                actual_compression = span_tokens / expected_target
+                # Should be close to 4x compression (2^2)
+                assert (
+                    3.5 <= actual_compression <= 4.5
+                ), f"Expected ~4x compression, got {actual_compression:.2f}x"
+            else:
+                # Below floor: should passthrough (target = 0)
+                assert expected_target == 0, "Target should signal passthrough"
+
+            # Verify the node was summarized (internal nodes have summaries as text)
+            assert node.text is not None, "Height-2 node should have text content"
+            assert len(node.text) > 0, "Height-2 node text should not be empty"
