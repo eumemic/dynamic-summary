@@ -45,14 +45,16 @@ def test_summarized_context_and_leaf_within_embedding_limit() -> None:
     """Test that context_summary + leaf_text stays under the embedding limit.
 
     The embedding text is composed of:
-    - context_summary: summary of preceding context (target: target_chunk_tokens)
+    - context_summary: summary of preceding context (target: target_embedding_context_tokens)
     - leaf_text: the leaf chunk itself (target: target_chunk_tokens)
 
     Note: preceding_context_budget controls how much context is retrieved for
     summarization (sent to the LLM), NOT what gets embedded. The context is
-    summarized down to target_chunk_tokens before being prepended to the leaf.
+    summarized down to target_embedding_context_tokens before being prepended to the leaf.
     """
     config = IndexConfig.load()
+    # This test is for fixed-chunking mode
+    assert config.target_chunk_tokens is not None
 
     # The embedding text is: context_summary (~target_chunk_tokens) + leaf (~target_chunk_tokens)
     # With gap reconstruction, chunks can be up to ~3x target in edge cases
@@ -68,6 +70,131 @@ def test_summarized_context_and_leaf_within_embedding_limit() -> None:
         f"summary ({max_summary_tokens}) + leaf ({max_leaf_tokens}) = {combined_max} "
         f"exceeds limit ({EMBEDDING_TOKEN_LIMIT}). "
         f"Reduce target_chunk_tokens."
+    )
+
+
+@pytest.mark.asyncio
+async def test_embed_leaf_uses_embedding_context_tokens() -> None:
+    """Test that _embed_leaf uses target_embedding_context_tokens for contextualization.
+
+    Verifies that when contextualizing preceding context for embedding, the engine
+    uses config.target_embedding_context_tokens instead of config.target_chunk_tokens.
+    This allows client-managed chunking (target_chunk_tokens=None) while still having
+    sensible embedding context summarization.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
+    from ragzoom.services.summary_utils import AccumulatedUsage, SummaryResult
+
+    # Create mocks
+    mock_store = MagicMock()
+    mock_doc_store = MagicMock()
+    mock_store.for_document.return_value = mock_doc_store
+
+    # Create a leaf with some text
+    leaf_text = "This is a test leaf."
+    mock_leaf = MagicMock()
+    mock_leaf.text = leaf_text
+    mock_leaf.id = "test-leaf-id"
+    mock_leaf.span_start = 1000  # Non-zero to trigger context retrieval
+    mock_leaf.span_end = 1100
+    mock_doc_store.nodes.get.return_value = mock_leaf
+
+    # Create config with custom target_embedding_context_tokens
+    config = IndexConfig.load().replace(
+        target_chunk_tokens=None,  # Client-managed chunking mode
+        target_embedding_context_tokens=300,  # Custom embedding context target
+    )
+
+    # Create mock LLM service
+    mock_llm_service = MagicMock()
+
+    # Track what target_tokens is passed to _contextualize_text
+    contextualize_calls: list[int] = []
+
+    async def mock_contextualize(
+        preceding_context: str,
+        target_text: str,
+        target_tokens: int,
+        *,
+        parent_id: str | None = None,
+        reporter: object = None,
+    ) -> SummaryResult:
+        contextualize_calls.append(target_tokens)
+        return SummaryResult(
+            summary="summarized context",
+            retry_count=0,
+            summary_tokens=50,
+            usage=AccumulatedUsage(),
+        )
+
+    mock_llm_service._contextualize_text = mock_contextualize
+
+    # Mock embed_texts_with_usage
+    from ragzoom.contracts.embedding_model import EmbeddingResult
+
+    async def mock_embed_texts_with_usage(texts: list[str]) -> EmbeddingResult:
+        return {
+            "embeddings": [[0.1] * 1536 for _ in texts],
+            "usage": {"total_tokens": 50, "model": "text-embedding-3-small"},
+        }
+
+    mock_llm_service.embed_texts_with_usage = mock_embed_texts_with_usage
+
+    # Mock _get_preceding_context to return some context
+    from ragzoom.server.indexing_engine import PrecedingContextResult
+
+    mock_context_node = MagicMock()
+    mock_context_node.id = "context-node"
+    mock_context_node.span_start = 0
+    mock_context_node.span_end = 1000
+    mock_context_node.height = 1
+    mock_context_node.token_count = 100
+    mock_context_node.text = "Some preceding context"
+
+    async def mock_get_preceding_context(
+        store: object,
+        document_id: str,
+        span_start: int,
+        config: object,
+        query_text: str | None,
+        query_embedding: list[float] | None = None,
+    ) -> PrecedingContextResult:
+        return PrecedingContextResult(
+            tiling_ids=["context-node"],
+            nodes={"context-node": mock_context_node},
+            tiling_tokens=100,
+        )
+
+    # Create engine
+    engine = IndexingEngine(
+        store=mock_store,
+        llm_service=mock_llm_service,
+        index_config=config,
+        openai_client=AsyncMock(),
+    )
+
+    # Create mock vector index
+    mock_vector_index = MagicMock()
+
+    # Run _embed_leaf
+    with patch.object(
+        engine, "_get_preceding_context", side_effect=mock_get_preceding_context
+    ):
+        with patch.object(engine, "_get_vector_index", return_value=mock_vector_index):
+            job = EmbeddingJob(document_id="test-doc", leaf_id="test-leaf-id")
+            await engine._embed_leaf(job)
+
+    # Verify _contextualize_text was called with target_embedding_context_tokens
+    assert (
+        len(contextualize_calls) == 1
+    ), "_contextualize_text should have been called once"
+    assert contextualize_calls[0] == 300, (
+        f"_contextualize_text should use target_embedding_context_tokens (300), "
+        f"but was called with {contextualize_calls[0]}. "
+        f"This is the bug: it's using target_chunk_tokens instead of "
+        f"target_embedding_context_tokens for embedding contextualization."
     )
 
 

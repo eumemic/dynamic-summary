@@ -94,7 +94,5 @@
       }
     }
   },
-  "enabledPlugins": {
-    "dev-workflow@local": true
-  }
+  "enabledPlugins": {}
 }

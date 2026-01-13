@@ -115,3 +115,176 @@ async def test_append_preserves_existing_leaves_and_links_neighbors(
     assert new_leaf.preceding_neighbor_id == "tail"
     # New leaf starts where tail ended
     assert new_leaf.span_start == 6
+
+
+@pytest.mark.asyncio
+async def test_append_truncates_large_units_with_warning(
+    sqlite_backend: SQLiteStorageBackend,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When target_chunk_tokens is None, units > MAX_UNIT_CHARS are truncated."""
+    # Use smaller limit for faster tests (tokenizing 50k chars is slow)
+    import ragzoom.server.append_executor as append_module
+
+    monkeypatch.setattr(append_module, "MAX_UNIT_CHARS", 1000)
+
+    config = IndexConfig.load(target_chunk_tokens=None)
+    store = _create_document(sqlite_backend, "doc-truncate")
+    executor = AppendExecutor(config, StubEmbedder())
+
+    # Create a unit larger than the limit
+    large_text = "A" * 1500
+
+    await executor.append(
+        store=store,
+        document_id="doc-truncate",
+        new_text=large_text,
+    )
+
+    # Should log a warning
+    assert any(
+        "truncating" in record.message.lower() and "1000" in record.message
+        for record in caplog.records
+    )
+
+    # Should create exactly one leaf (client-managed chunking)
+    leaves = store.nodes.get_leaves()
+    assert len(leaves) == 1
+
+    # Leaf should contain exactly 1000 characters (the patched limit)
+    leaf = leaves[0]
+    assert len(leaf.text) == 1000
+    assert leaf.text == "A" * 1000
+
+
+@pytest.mark.asyncio
+async def test_append_empty_string_creates_leaf_when_none(
+    sqlite_backend: SQLiteStorageBackend,
+) -> None:
+    """When target_chunk_tokens is None, empty strings create a leaf."""
+    config = IndexConfig.load(target_chunk_tokens=None)
+    store = _create_document(sqlite_backend, "doc-empty")
+    executor = AppendExecutor(config, StubEmbedder())
+
+    outcome = await executor.append(
+        store=store,
+        document_id="doc-empty",
+        new_text="",
+    )
+
+    # Should create exactly one leaf with empty text
+    leaves = store.nodes.get_leaves()
+    assert len(leaves) == 1
+    assert len(outcome.new_leaf_ids) == 1
+
+    leaf = leaves[0]
+    assert leaf.text == ""
+    assert leaf.span_start == 0
+    assert leaf.span_end == 0
+
+
+@pytest.mark.asyncio
+async def test_append_batch_truncates_large_units(
+    sqlite_backend: SQLiteStorageBackend,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When target_chunk_tokens is None, units > MAX_UNIT_CHARS are truncated."""
+    # Use smaller limit for faster tests (tokenizing 50k chars is slow)
+    import ragzoom.server.append_executor as append_module
+
+    monkeypatch.setattr(append_module, "MAX_UNIT_CHARS", 1000)
+
+    config = IndexConfig.load(target_chunk_tokens=None)
+    store = _create_document(sqlite_backend, "doc-batch-truncate")
+    executor = AppendExecutor(config, StubEmbedder())
+
+    # Create batch with one large unit and one normal unit
+    large_unit = "B" * 1500
+    normal_unit = "C" * 100
+
+    await executor.append_batch(
+        store=store,
+        document_id="doc-batch-truncate",
+        units=[large_unit, normal_unit],
+    )
+
+    # Should log a warning for the large unit
+    assert any(
+        "truncating" in record.message.lower() and "1000" in record.message
+        for record in caplog.records
+    )
+
+    # Should create exactly 2 leaves (client-managed chunking)
+    leaves = store.nodes.get_leaves()
+    assert len(leaves) == 2
+
+    # First leaf should be truncated to 1000 (the patched limit)
+    assert len(leaves[0].text) == 1000
+    assert leaves[0].text == "B" * 1000
+
+    # Second leaf should be unchanged
+    assert len(leaves[1].text) == 100
+    assert leaves[1].text == "C" * 100
+
+
+@pytest.mark.asyncio
+async def test_append_batch_preserves_empty_units_when_none(
+    sqlite_backend: SQLiteStorageBackend,
+) -> None:
+    """When target_chunk_tokens is None, empty and whitespace units create leaves."""
+    config = IndexConfig.load(target_chunk_tokens=None)
+    store = _create_document(sqlite_backend, "doc-batch-empty")
+    executor = AppendExecutor(config, StubEmbedder())
+
+    await executor.append_batch(
+        store=store,
+        document_id="doc-batch-empty",
+        units=["", "  ", "foo"],
+    )
+
+    # Should create exactly 3 leaves
+    leaves = store.nodes.get_leaves()
+    assert len(leaves) == 3
+
+    # Verify each leaf preserves the original unit
+    assert leaves[0].text == ""
+    assert leaves[1].text == "  "
+    assert leaves[2].text == "foo"
+
+
+@pytest.mark.asyncio
+async def test_append_batch_preserves_atomic_units(
+    sqlite_backend: SQLiteStorageBackend,
+) -> None:
+    """When target_chunk_tokens is None, each unit becomes exactly one leaf."""
+    config = IndexConfig.load(target_chunk_tokens=None)
+    store = _create_document(sqlite_backend, "doc-batch-atomic")
+    executor = AppendExecutor(config, StubEmbedder())
+
+    units = ["Turn A", "Turn B", "Turn C"]
+
+    outcome = await executor.append_batch(
+        store=store,
+        document_id="doc-batch-atomic",
+        units=units,
+    )
+
+    # Should create exactly N leaves for N units
+    leaves = store.nodes.get_leaves()
+    assert len(leaves) == 3
+    assert len(outcome.new_leaf_ids) == 3
+
+    # Each leaf should contain the full unit text (no splitting)
+    assert leaves[0].text == "Turn A"
+    assert leaves[1].text == "Turn B"
+    assert leaves[2].text == "Turn C"
+
+    # Verify span continuity
+    assert leaves[0].span_start == 0
+    assert leaves[0].span_end == len("Turn A")
+    assert leaves[1].span_start == len("Turn A")
+    assert leaves[1].span_end == len("Turn A") + len("Turn B")
+    assert leaves[2].span_start == len("Turn A") + len("Turn B")
+    assert leaves[2].span_end == len("Turn A") + len("Turn B") + len("Turn C")

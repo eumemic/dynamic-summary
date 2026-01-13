@@ -321,7 +321,12 @@ async def test_passthrough_for_text_under_target(
     assert result.summary == "Short Text"
     assert result.summary_tokens == len("Short Text")
 
-    data = reporter.get_telemetry_data("test_doc", config.target_chunk_tokens)
+    chunk_tokens = (
+        config.target_chunk_tokens
+        if config.target_chunk_tokens is not None
+        else config.target_embedding_context_tokens
+    )
+    data = reporter.get_telemetry_data("test_doc", chunk_tokens)
     attempts = data["nodes"][0]["summary_attempts"]
     assert attempts[0]["model"] == "passthrough"
 

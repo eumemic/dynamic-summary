@@ -467,7 +467,9 @@ async def run_summary_workflow(
         use_anti_verbatim_vaccine=config.use_anti_verbatim_vaccine,
     )
 
-    if preparation.combined_tokens <= target_tokens:
+    # Passthrough when: (1) target <= 0 (signal from dynamic targets), OR
+    # (2) content already fits within target
+    if target_tokens <= 0 or preparation.combined_tokens <= target_tokens:
         record_passthrough_attempt(
             reporter,
             parent_id,
@@ -652,8 +654,9 @@ async def run_contextualization_workflow(
         target_tokens=target_tokens,
     )
 
-    # Passthrough: if context is already under target, use it directly
-    if preparation.combined_tokens <= target_tokens:
+    # Passthrough when: (1) target <= 0 (signal from dynamic targets), OR
+    # (2) content already fits within target
+    if target_tokens <= 0 or preparation.combined_tokens <= target_tokens:
         record_passthrough_attempt(
             reporter,
             parent_id,

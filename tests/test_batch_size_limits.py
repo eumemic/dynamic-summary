@@ -111,16 +111,27 @@ class TestBatchSizeLimits:
         assert len(result) == 1001
 
     @pytest.mark.asyncio
-    async def test_empty_text_validation_still_works(
-        self, llm_service: LLMService
-    ) -> None:
-        """Test that empty text validation still works after batch splitting."""
+    async def test_empty_text_is_allowed(self, llm_service: LLMService) -> None:
+        """Test that empty text is allowed for client-managed chunking mode.
+
+        Empty strings should be allowed because they represent valid conversation
+        turns in client-managed mode (target_chunk_tokens=None). OpenAI's
+        embedding API handles empty strings gracefully.
+        """
+        mock_response = Mock()
+        mock_response.data = [
+            SimpleNamespace(embedding=[0.1, 0.2, 0.3]),
+            SimpleNamespace(embedding=[0.4, 0.5, 0.6]),
+            SimpleNamespace(embedding=[0.7, 0.8, 0.9]),
+        ]
+        mock_response.usage = SimpleNamespace(total_tokens=30)
+        llm_service.client.embeddings.create.return_value = mock_response  # type: ignore[attr-defined]
+
         texts = ["valid text", "", "another valid text"]
 
-        with pytest.raises(
-            ValueError, match="Empty text at index 1 in embedding batch"
-        ):
-            await llm_service._get_embeddings_batch(texts)
+        # Empty strings should not raise - they're valid in client-managed mode
+        result = await llm_service._get_embeddings_batch(texts)
+        assert len(result) == 3  # All three texts should be embedded
 
     @pytest.mark.asyncio
     async def test_empty_batch_handling(self, llm_service: LLMService) -> None:

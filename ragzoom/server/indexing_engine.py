@@ -141,6 +141,46 @@ def _forest_completeness(num_roots: int, max_height: int, leaf_count: int) -> fl
     return optimal_cost / actual_cost
 
 
+def get_summary_target(
+    node_span_chars: int, height: int, chars_per_token: float
+) -> int:
+    """Calculate dynamic summary target for client-managed chunking.
+
+    When target_chunk_tokens is None, this function computes a summary target
+    that scales by 2x compression per tree level. Below 50 tokens, the function
+    signals passthrough (no summarization) by returning 0.
+
+    Args:
+        node_span_chars: Size of node span in characters (span_end - span_start)
+        height: Height of the node in the tree (0 = leaf, 1+ = internal nodes)
+        chars_per_token: Document-level character-to-token ratio
+
+    Returns:
+        Target token count for summarization, or 0 to signal passthrough
+
+    Examples:
+        >>> # 8000 chars = 2000 tokens at 4 chars/token
+        >>> get_summary_target(8000, 1, 4.0)
+        1000
+        >>> get_summary_target(8000, 2, 4.0)
+        500
+        >>> # Below floor: 100 chars = 25 tokens → height 1: 12.5 tokens → 0
+        >>> get_summary_target(100, 1, 4.0)
+        0
+        >>> # At floor: 400 chars = 100 tokens → height 1: 50 tokens
+        >>> get_summary_target(400, 1, 4.0)
+        50
+    """
+    span_tokens = node_span_chars / chars_per_token
+    target = span_tokens / (2**height)
+
+    # Floor: below 50 tokens, pass through without summarization
+    if target < 50:
+        return 0  # Signal passthrough
+
+    return int(target)
+
+
 @dataclass
 class PrecedingContextResult:
     """Result from preceding context retrieval."""
@@ -336,6 +376,64 @@ class IndexingEngine:
         # single scheduler task processes all of them.
         self._dirty_documents: set[str] = set()
         self._scheduler_task: asyncio.Task[None] | None = None
+
+        # chars_per_token cache for dynamic summary target calculation
+        # Computed on startup for existing documents with target_chunk_tokens=None
+        self._document_chars_per_token: dict[str, float] = {}
+        self._initialize_chars_per_token_cache()
+
+    def _initialize_chars_per_token_cache(self) -> None:
+        """Compute and cache chars_per_token for existing documents on startup.
+
+        Required by client-managed chunking (target_chunk_tokens=None) to
+        calculate dynamic summary targets based on span size.
+
+        Spec: specs/client-managed-chunking.md § chars_per_token Tracking
+        """
+        if self._index_config.target_chunk_tokens is not None:
+            return
+
+        for doc in self._store.list_documents():
+            doc_store = self._store.for_document(doc.id)
+            avg_chars = doc_store.nodes.get_avg_chars_per_token(doc.id)
+            if avg_chars is not None:
+                self._document_chars_per_token[doc.id] = avg_chars
+
+    def get_chars_per_token(self, document_id: str) -> float:
+        """Get cached chars_per_token for a document, or compute and cache it.
+
+        Returns the cached value if available, otherwise queries the database
+        and caches the result. Falls back to 4.0 (typical English text ratio)
+        if no leaf data exists yet.
+        """
+        if document_id in self._document_chars_per_token:
+            return self._document_chars_per_token[document_id]
+
+        store = self._store.for_document(document_id)
+        avg_chars = store.nodes.get_avg_chars_per_token(document_id)
+        if avg_chars is not None:
+            self._document_chars_per_token[document_id] = avg_chars
+            return avg_chars
+
+        return 4.0  # Default for English text before first append
+
+    def update_chars_per_token_after_append(self, document_id: str) -> None:
+        """Recompute and update chars_per_token cache after an append operation.
+
+        Spec: specs/client-managed-chunking.md § chars_per_token Tracking
+
+        This should be called after each append() or append_batch() operation
+        when target_chunk_tokens is None, to keep the ratio up-to-date with
+        the latest leaf data.
+        """
+        if self._index_config.target_chunk_tokens is not None:
+            # Only update for client-managed chunking mode
+            return
+
+        store = self._store.for_document(document_id)
+        avg_chars = store.nodes.get_avg_chars_per_token(document_id)
+        if avg_chars is not None:
+            self._document_chars_per_token[document_id] = avg_chars
 
     # -----------------------------------------------------------------------
     # Public interface
@@ -1271,15 +1369,8 @@ class IndexingEngine:
             return
 
         leaf_text = leaf.text or ""
-        if not leaf_text:
-            logger.warning(
-                "embed: leaf has no text doc=%s leaf=%s",
-                job.document_id,
-                job.leaf_id,
-            )
-            # Still set preceding_context to empty string for consistency
-            store.nodes._repo.update_preceding_context(job.leaf_id, "")
-            return
+        # Allow empty text in client-managed mode (target_chunk_tokens=None)
+        # Empty conversation turns should still be embedded
 
         span_start = int(getattr(leaf, "span_start", 0))
         span_end = int(getattr(leaf, "span_end", 0))
@@ -1365,7 +1456,7 @@ class IndexingEngine:
             contextualization_result = await self._llm_service._contextualize_text(
                 preceding_context=context_prefix,
                 target_text=leaf_text,
-                target_tokens=self._index_config.target_chunk_tokens,
+                target_tokens=self._index_config.target_embedding_context_tokens,
                 parent_id=job.leaf_id,
                 reporter=telemetry,
             )
@@ -1673,9 +1764,18 @@ class IndexingEngine:
             parent_id,
             combined_tokens,
         )
+        # Phase 4: Use dynamic summary targets when target_chunk_tokens is None
+        if self._index_config.target_chunk_tokens is not None:
+            target_tokens = self._index_config.target_chunk_tokens
+        else:
+            node_span_chars = span_end - span_start
+            chars_per_token = self.get_chars_per_token(job.document_id)
+            target_tokens = get_summary_target(
+                node_span_chars, parent_height, chars_per_token
+            )
         summary_result = await self._llm_service._summarize_text(
             combined_text,
-            self._index_config.target_chunk_tokens,
+            target_tokens,
             parent_id=parent_id,
             reporter=telemetry,
             prev_context=context_text,
@@ -1838,9 +1938,16 @@ class IndexingEngine:
             self._index_config.embedding_model,
             async_client=self._llm_service.client,
         )
+        # For retrieval operations, use target_embedding_context_tokens as fallback
+        # when target_chunk_tokens is None (client-managed chunking mode)
+        chunk_tokens = (
+            self._index_config.target_chunk_tokens
+            if self._index_config.target_chunk_tokens is not None
+            else self._index_config.target_embedding_context_tokens
+        )
         budget_planner = BudgetPlanner(
             document_store,
-            self._index_config.target_chunk_tokens,
+            chunk_tokens,
         )
 
         query_config = QueryConfig(

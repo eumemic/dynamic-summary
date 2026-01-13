@@ -80,7 +80,13 @@ class BackwardCompatibilityConfig:
 
     @property
     def target_chunk_tokens(self) -> int:
-        return self.index_config.target_chunk_tokens
+        # For test fixtures, use target_embedding_context_tokens as fallback
+        # when target_chunk_tokens is None (client-managed chunking mode)
+        return (
+            self.index_config.target_chunk_tokens
+            if self.index_config.target_chunk_tokens is not None
+            else self.index_config.target_embedding_context_tokens
+        )
 
     @property
     def preceding_context_budget(self) -> int:

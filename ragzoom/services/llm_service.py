@@ -229,15 +229,9 @@ class LLMService:
         token_limit = getattr(self, "_embedding_batch_token_limit", None)
         max_items = getattr(self, "_provider_max_embedding_batch_size", 1000)
 
-        # Safety net: Check for empty strings that could cause API errors
-        for i, text in enumerate(texts):
-            if not text or not text.strip():
-                logger.error(
-                    f"Empty text at index {i} in embedding batch - this will cause API errors"
-                )
-                raise ValueError(
-                    f"Empty text at index {i} in embedding batch. This should be filtered by the caller."
-                )
+        # Note: OpenAI's embedding API handles empty strings gracefully by returning
+        # a valid embedding vector. This is needed for client-managed chunking mode
+        # where empty conversation turns are valid units that must be embedded.
 
         batches: list[list[str]] = []
         current_batch: list[str] = []
