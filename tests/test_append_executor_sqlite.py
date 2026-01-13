@@ -119,15 +119,22 @@ async def test_append_preserves_existing_leaves_and_links_neighbors(
 
 @pytest.mark.asyncio
 async def test_append_truncates_large_units_with_warning(
-    sqlite_backend: SQLiteStorageBackend, caplog: pytest.LogCaptureFixture
+    sqlite_backend: SQLiteStorageBackend,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When target_chunk_tokens is None, units > 50k chars are truncated with warning."""
+    """When target_chunk_tokens is None, units > MAX_UNIT_CHARS are truncated."""
+    # Use smaller limit for faster tests (tokenizing 50k chars is slow)
+    import ragzoom.server.append_executor as append_module
+
+    monkeypatch.setattr(append_module, "MAX_UNIT_CHARS", 1000)
+
     config = IndexConfig.load(target_chunk_tokens=None)
     store = _create_document(sqlite_backend, "doc-truncate")
     executor = AppendExecutor(config, StubEmbedder())
 
-    # Create a unit larger than 50k characters
-    large_text = "A" * 60000
+    # Create a unit larger than the limit
+    large_text = "A" * 1500
 
     await executor.append(
         store=store,
@@ -137,7 +144,7 @@ async def test_append_truncates_large_units_with_warning(
 
     # Should log a warning
     assert any(
-        "truncating" in record.message.lower() and "50000" in record.message
+        "truncating" in record.message.lower() and "1000" in record.message
         for record in caplog.records
     )
 
@@ -145,10 +152,10 @@ async def test_append_truncates_large_units_with_warning(
     leaves = store.nodes.get_leaves()
     assert len(leaves) == 1
 
-    # Leaf should contain exactly 50k characters
+    # Leaf should contain exactly 1000 characters (the patched limit)
     leaf = leaves[0]
-    assert len(leaf.text) == 50000
-    assert leaf.text == "A" * 50000
+    assert len(leaf.text) == 1000
+    assert leaf.text == "A" * 1000
 
 
 @pytest.mark.asyncio
@@ -179,15 +186,22 @@ async def test_append_empty_string_creates_leaf_when_none(
 
 @pytest.mark.asyncio
 async def test_append_batch_truncates_large_units(
-    sqlite_backend: SQLiteStorageBackend, caplog: pytest.LogCaptureFixture
+    sqlite_backend: SQLiteStorageBackend,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When target_chunk_tokens is None, units > 50k chars are truncated with warning."""
+    """When target_chunk_tokens is None, units > MAX_UNIT_CHARS are truncated."""
+    # Use smaller limit for faster tests (tokenizing 50k chars is slow)
+    import ragzoom.server.append_executor as append_module
+
+    monkeypatch.setattr(append_module, "MAX_UNIT_CHARS", 1000)
+
     config = IndexConfig.load(target_chunk_tokens=None)
     store = _create_document(sqlite_backend, "doc-batch-truncate")
     executor = AppendExecutor(config, StubEmbedder())
 
     # Create batch with one large unit and one normal unit
-    large_unit = "B" * 55000
+    large_unit = "B" * 1500
     normal_unit = "C" * 100
 
     await executor.append_batch(
@@ -198,7 +212,7 @@ async def test_append_batch_truncates_large_units(
 
     # Should log a warning for the large unit
     assert any(
-        "truncating" in record.message.lower() and "50000" in record.message
+        "truncating" in record.message.lower() and "1000" in record.message
         for record in caplog.records
     )
 
@@ -206,9 +220,9 @@ async def test_append_batch_truncates_large_units(
     leaves = store.nodes.get_leaves()
     assert len(leaves) == 2
 
-    # First leaf should be truncated to 50k
-    assert len(leaves[0].text) == 50000
-    assert leaves[0].text == "B" * 50000
+    # First leaf should be truncated to 1000 (the patched limit)
+    assert len(leaves[0].text) == 1000
+    assert leaves[0].text == "B" * 1000
 
     # Second leaf should be unchanged
     assert len(leaves[1].text) == 100

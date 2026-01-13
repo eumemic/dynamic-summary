@@ -22,6 +22,11 @@ from ragzoom.utils.tokenization import tokenizer
 
 logger = logging.getLogger(__name__)
 
+# Maximum characters per unit in client-managed chunking mode.
+# Units exceeding this limit are truncated with a warning.
+# Exposed as module constant for test overriding.
+MAX_UNIT_CHARS = 50000
+
 
 @dataclass
 class LeafSpec:
@@ -82,15 +87,16 @@ class AppendExecutor:
         if not new_text and self._config.target_chunk_tokens is not None:
             raise ValueError("append requires non-empty text")
 
-        # Client-managed chunking: truncate units > 50k chars
-        if self._config.target_chunk_tokens is None and len(new_text) > 50000:
+        # Client-managed chunking: truncate units > MAX_UNIT_CHARS
+        if self._config.target_chunk_tokens is None and len(new_text) > MAX_UNIT_CHARS:
             logger.warning(
-                "append[%s]: truncating unit from %d to 50000 characters "
+                "append[%s]: truncating unit from %d to %d characters "
                 "(client-managed chunking mode)",
                 document_id,
                 len(new_text),
+                MAX_UNIT_CHARS,
             )
-            new_text = new_text[:50000]
+            new_text = new_text[:MAX_UNIT_CHARS]
 
         right_leaf = store.nodes.get_rightmost_leaf_for_document(document_id)
         logger.debug(
@@ -295,18 +301,19 @@ class AppendExecutor:
         Returns:
             AppendOutcome with all new leaf IDs and span info
         """
-        # Client-managed chunking: truncate units > 50k chars and preserve all units
+        # Client-managed chunking: truncate units > MAX_UNIT_CHARS and preserve all
         if self._config.target_chunk_tokens is None:
             processed_units: list[str] = []
             for unit in units:
-                if len(unit) > 50000:
+                if len(unit) > MAX_UNIT_CHARS:
                     logger.warning(
-                        "append_batch[%s]: truncating unit from %d to 50000 characters "
+                        "append_batch[%s]: truncating unit from %d to %d characters "
                         "(client-managed chunking mode)",
                         document_id,
                         len(unit),
+                        MAX_UNIT_CHARS,
                     )
-                    processed_units.append(unit[:50000])
+                    processed_units.append(unit[:MAX_UNIT_CHARS])
                 else:
                     processed_units.append(unit)
             non_empty_units = processed_units

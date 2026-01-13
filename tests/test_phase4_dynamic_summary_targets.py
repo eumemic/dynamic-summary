@@ -47,6 +47,7 @@ def _create_mock_async_openai_client() -> AsyncMock:
 
 
 @pytest.mark.asyncio
+@pytest.mark.slow_threshold(10.0)  # Complex indexing operation needs more time on CI
 async def test_summarize_pair_uses_dynamic_target_when_none(
     storage_backend: StorageBackend,
     indexer_runtime_harness: IndexerRuntimeHarness,
@@ -148,6 +149,7 @@ async def test_summarize_pair_uses_dynamic_target_when_none(
 
 
 @pytest.mark.asyncio
+@pytest.mark.slow_threshold(10.0)  # Complex indexing operation needs more time on CI
 async def test_summarize_pair_uses_fixed_target_when_set(
     storage_backend: StorageBackend,
     indexer_runtime_harness: IndexerRuntimeHarness,

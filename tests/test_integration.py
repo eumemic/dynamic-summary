@@ -566,18 +566,28 @@ class TestIntegration:
         storage_backend: StorageBackend,
         indexer_runtime_harness: IndexerRuntimeHarness,
         caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Test that units > 50k chars are truncated with warning in client-managed mode.
+        """Test that units > MAX_UNIT_CHARS are truncated with warning.
 
         Spec: specs/client-managed-chunking.md § Acceptance Criteria #6
 
         When target_chunk_tokens=None (client-managed chunking mode) and a unit
-        exceeds 50,000 characters:
-        1. The unit should be truncated to exactly 50,000 characters
+        exceeds MAX_UNIT_CHARS:
+        1. The unit should be truncated to exactly MAX_UNIT_CHARS
         2. A warning should be logged indicating truncation
         3. The leaf node should contain the truncated text
         4. The tree structure should remain valid
+
+        Note: We use a smaller limit (1000 chars) in tests because tokenizing
+        50k+ characters is slow and causes timeouts in CI.
         """
+        # Patch to smaller limit for faster tests
+        import ragzoom.server.append_executor as append_module
+
+        test_limit = 1000
+        monkeypatch.setattr(append_module, "MAX_UNIT_CHARS", test_limit)
+
         index_config = IndexConfig.load(
             target_chunk_tokens=None,
             target_embedding_context_tokens=200,
@@ -586,7 +596,7 @@ class TestIntegration:
         self._bind_vector_index(indexer_runtime_harness, vector_index)
         configure_runtime(indexer_runtime_harness, index_config)
 
-        large_text = "A" * 60_000
+        large_text = "A" * 1500
 
         with caplog.at_level(logging.WARNING):
             await self._index_document(
@@ -597,9 +607,9 @@ class TestIntegration:
             )
 
         assert any(
-            "truncating" in record.message.lower() and "50000" in record.message
+            "truncating" in record.message.lower() and "1000" in record.message
             for record in caplog.records
-        ), "Expected warning about truncation to 50,000 characters"
+        ), "Expected warning about truncation to 1,000 characters"
 
         doc_store = storage_backend.for_document("large-unit-test")
         leaf_nodes = doc_store.nodes.get_leaves()
@@ -608,17 +618,19 @@ class TestIntegration:
         ), "Client-managed mode should create exactly one leaf"
 
         leaf = leaf_nodes[0]
-        assert len(leaf.text) == 50_000, f"Expected 50k chars, got {len(leaf.text)}"
-        assert leaf.text == "A" * 50_000
+        assert (
+            len(leaf.text) == test_limit
+        ), f"Expected {test_limit} chars, got {len(leaf.text)}"
+        assert leaf.text == "A" * test_limit
 
         assert leaf.height == 0
         assert leaf.span_start == 0
-        assert leaf.span_end == 50_000
+        assert leaf.span_end == test_limit
 
         root = doc_store.tree.get_root()
         assert root is not None
         assert root.span_start == 0
-        assert root.span_end == 50_000
+        assert root.span_end == test_limit
 
     @pytest.mark.asyncio
     @pytest.mark.slow_threshold(10.0)
