@@ -422,3 +422,78 @@ class TestIntegration:
             # Verify the node was summarized (internal nodes have summaries as text)
             assert node.text is not None, "Height-2 node should have text content"
             assert len(node.text) > 0, "Height-2 node text should not be empty"
+
+    @pytest.mark.asyncio
+    async def test_passthrough_floor_integration(
+        self,
+        storage_backend: StorageBackend,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        """Test that summaries targeting < 50 tokens pass through unchanged.
+
+        Spec: specs/client-managed-chunking.md § Acceptance Criteria #4
+
+        When dynamic targets fall below the 50-token floor, text should pass
+        through unsummarized. This test creates small units that will trigger
+        passthrough behavior at higher tree heights.
+        """
+        index_config = IndexConfig.load(
+            target_chunk_tokens=None,
+            target_embedding_context_tokens=200,
+        )
+        vector_index = RecordingVectorIndex()
+        self._bind_vector_index(indexer_runtime_harness, vector_index)
+        configure_runtime(indexer_runtime_harness, index_config)
+
+        # Create 8 very small units (each ~20 chars = ~5 tokens at 4 chars/token)
+        # This ensures that at higher heights, the target will fall below 50 tokens
+        units = [f"Turn {i}: Small text" for i in range(8)]
+
+        session = indexer_runtime_harness.runtime.get_session(
+            "passthrough-test", file_path="test.txt"
+        )
+        await session.batch_append_text(units, collect_telemetry=False)
+        await indexer_runtime_harness.indexing_engine.wait_until_idle(
+            "passthrough-test"
+        )
+
+        doc_store = storage_backend.for_document("passthrough-test")
+
+        # Get chars_per_token ratio for this document
+        chars_per_token = indexer_runtime_harness.indexing_engine.get_chars_per_token(
+            "passthrough-test"
+        )
+
+        # Get all nodes to examine passthrough behavior
+        all_nodes = doc_store.nodes.get_all()
+
+        # Find nodes where the dynamic target would be below 50 tokens
+        passthrough_nodes = []
+        for node in all_nodes:
+            if node.height > 0:  # Only check internal nodes
+                span_chars = node.span_end - node.span_start
+                target = get_summary_target(span_chars, node.height, chars_per_token)
+                if target == 0:  # Signals passthrough
+                    passthrough_nodes.append(node)
+
+        # Should have at least one passthrough node due to small units
+        assert (
+            len(passthrough_nodes) > 0
+        ), "Should have nodes that triggered passthrough floor"
+
+        # Verify passthrough nodes: their text should be the concatenation of children
+        # Note: Summarization joins child texts with a space, and passthrough returns
+        # this prepared text unchanged (no LLM call, but space-separated)
+        for node in passthrough_nodes:
+            # Get child nodes
+            left_child, right_child = doc_store.tree.get_children(node.id)
+            assert left_child is not None, "Left child should exist"
+            assert right_child is not None, "Right child should exist"
+
+            # Expected text is space-separated concatenation (as per summary preparation)
+            expected_text = f"{left_child.text} {right_child.text}"
+
+            # Verify the node's text matches (passthrough = no summarization)
+            assert (
+                node.text == expected_text
+            ), f"Passthrough node text should be space-separated concatenation of children (height={node.height})"
