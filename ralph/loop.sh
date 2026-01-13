@@ -122,7 +122,7 @@ while true; do
     PLAN_HASH_BEFORE=$(get_plan_hash)
 
     echo ""
-    echo "━━━━━━━━━━━━━━━━ Iteration $ITERATION ━━━━━━━━━━━━━━━━"
+    echo "|||||||||||||| ITERATION $ITERATION ||||||||||||||"
     echo ""
 
     # Run Ralph iteration
