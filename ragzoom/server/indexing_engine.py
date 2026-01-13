@@ -1369,15 +1369,8 @@ class IndexingEngine:
             return
 
         leaf_text = leaf.text or ""
-        if not leaf_text:
-            logger.warning(
-                "embed: leaf has no text doc=%s leaf=%s",
-                job.document_id,
-                job.leaf_id,
-            )
-            # Still set preceding_context to empty string for consistency
-            store.nodes._repo.update_preceding_context(job.leaf_id, "")
-            return
+        # Allow empty text in client-managed mode (target_chunk_tokens=None)
+        # Empty conversation turns should still be embedded
 
         span_start = int(getattr(leaf, "span_start", 0))
         span_end = int(getattr(leaf, "span_end", 0))

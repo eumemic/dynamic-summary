@@ -295,7 +295,8 @@ class DocumentIndexSession:
         replace_existing: bool,
         collect_telemetry: bool = False,
     ) -> IndexingResult:
-        if not text:
+        # Allow empty text only when target_chunk_tokens=None (client-managed mode)
+        if not text and self._runtime._index_config.target_chunk_tokens is not None:
             raise ValueError("text must be non-empty")
 
         if replace_existing:

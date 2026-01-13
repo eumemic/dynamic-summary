@@ -619,3 +619,64 @@ class TestIntegration:
         assert root is not None
         assert root.span_start == 0
         assert root.span_end == 50_000
+
+    @pytest.mark.asyncio
+    @pytest.mark.slow_threshold(10.0)
+    async def test_empty_string_embedding(
+        self,
+        mock_openai: tuple[Mock, Mock, Mock],
+        storage_backend: StorageBackend,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        """Test that empty string units are embedded successfully in client-managed mode.
+
+        Spec: specs/client-managed-chunking.md § Append Operations
+
+        When target_chunk_tokens=None (client-managed chunking mode) and an empty
+        string is appended:
+        1. A leaf node should be created with empty text
+        2. The leaf should be embedded (appear in the vector index)
+        3. The embedding should be retrievable and valid
+        """
+        index_config = IndexConfig.load(
+            target_chunk_tokens=None,
+            target_embedding_context_tokens=200,
+        )
+        vector_index = RecordingVectorIndex()
+        self._bind_vector_index(indexer_runtime_harness, vector_index)
+        configure_runtime(indexer_runtime_harness, index_config)
+
+        await self._index_document(
+            indexer_runtime_harness,
+            storage_backend,
+            document_id="empty-string-test",
+            text="",
+        )
+
+        doc_store = storage_backend.for_document("empty-string-test")
+        leaf_nodes = doc_store.nodes.get_leaves()
+        assert len(leaf_nodes) == 1, "Should create exactly one leaf for empty string"
+
+        leaf = leaf_nodes[0]
+        assert leaf.text == "", "Leaf text should be empty"
+        assert leaf.height == 0, "Leaf should be at height 0"
+        assert leaf.span_start == 0
+        assert leaf.span_end == 0, "Empty string should have zero span"
+
+        # Verify the leaf was embedded (appears in vector index)
+        assert (
+            len(vector_index) >= 1
+        ), "Empty string leaf should be embedded in vector index"
+
+        # Verify we can retrieve the vector for this leaf
+        vectors = vector_index.get_vectors([leaf.id])
+        assert len(vectors) == 1, "Should be able to retrieve empty string embedding"
+
+        retrieved_vector = vectors[0]
+        assert (
+            retrieved_vector.id == leaf.id
+        ), "Retrieved vector should match leaf node ID"
+        assert retrieved_vector.meta.get("document_id") == "empty-string-test"
+        assert retrieved_vector.meta.get("is_leaf") == 1
+        assert retrieved_vector.vec is not None, "Vector embedding should exist"
+        assert len(retrieved_vector.vec) > 0, "Vector should have dimensions"
