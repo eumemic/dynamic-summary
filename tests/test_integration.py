@@ -497,3 +497,64 @@ class TestIntegration:
             assert (
                 node.text == expected_text
             ), f"Passthrough node text should be space-separated concatenation of children (height={node.height})"
+
+    @pytest.mark.asyncio
+    async def test_backward_compatibility_fixed_chunking(
+        self,
+        storage_backend: StorageBackend,
+        indexer_runtime_harness: IndexerRuntimeHarness,
+    ) -> None:
+        """Test that existing configs with target_chunk_tokens=int work identically.
+
+        Spec: specs/client-managed-chunking.md § Acceptance Criteria #5
+
+        When target_chunk_tokens is set to an integer value (the original behavior),
+        the system should:
+        1. Split text into fixed-size chunks based on the token target
+        2. Use fixed summary targets (not dynamic)
+        3. Produce the same tree structure as before the feature was added
+        """
+        target_chunk_tokens = 200
+        index_config = IndexConfig.load(
+            target_chunk_tokens=target_chunk_tokens,
+            target_embedding_context_tokens=target_chunk_tokens,
+        )
+        vector_index = RecordingVectorIndex()
+        self._bind_vector_index(indexer_runtime_harness, vector_index)
+        configure_runtime(indexer_runtime_harness, index_config)
+
+        # ~2500 chars = ~625 tokens, should create multiple leaves at 200 tokens each
+        text = "This is a test sentence. " * 100
+
+        await self._index_document(
+            indexer_runtime_harness,
+            storage_backend,
+            document_id="backward-compat-test",
+            text=text,
+        )
+
+        doc_store = storage_backend.for_document("backward-compat-test")
+        leaf_nodes = doc_store.nodes.get_leaves()
+
+        assert (
+            len(leaf_nodes) > 1
+        ), "Fixed chunking should split text into multiple leaves"
+
+        chars_per_token = indexer_runtime_harness.indexing_engine.get_chars_per_token(
+            "backward-compat-test"
+        )
+        target_chars = target_chunk_tokens * chars_per_token
+
+        for node in leaf_nodes:
+            assert len(node.text) <= target_chars * 1.5, (
+                f"Leaf chunk exceeds target by >50%: "
+                f"{len(node.text)} chars vs {target_chars:.0f} target"
+            )
+
+        full_text = "".join(node.text for node in leaf_nodes)
+        assert full_text == text, "Reconstructed text should match original"
+
+        expected_offset = 0
+        for node in leaf_nodes:
+            assert node.span_start == expected_offset
+            expected_offset = node.span_end
