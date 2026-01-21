@@ -131,6 +131,22 @@ async def _decode_text(data: bytes, context: ServicerContextProto) -> str:
         )
 
 
+def _extract_timestamp(
+    ts_proto: pb2.Timestamp,
+) -> str | tuple[str, str]:
+    """Extract timestamp from proto message.
+
+    Returns:
+        Either a single ISO 8601 string (if time_end == time_start or not set),
+        or a tuple of (time_start, time_end) strings.
+    """
+    time_start = ts_proto.time_start
+    # When time_end is not set (HasField returns False), use time_start
+    if not ts_proto.HasField("time_end") or ts_proto.time_end == "":
+        return time_start
+    return (time_start, ts_proto.time_end)
+
+
 T = TypeVar("T")
 
 
@@ -293,11 +309,17 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
 
         text = await _decode_text(request.content, context)
 
+        # Extract timestamp from proto if present
+        timestamp: str | tuple[str, str] | None = None
+        if request.HasField("timestamp"):
+            timestamp = _extract_timestamp(request.timestamp)
+
         session = self._runtime.get_session(request.document_id)
         result = await session.append_text(
             text,
             replace_existing=bool(getattr(request, "replace_existing", False)),
             collect_telemetry=request.collect_telemetry,
+            timestamp=timestamp,
         )
 
         response = pb2.AppendTextResponse(
@@ -332,10 +354,22 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
                     message=f"Invalid UTF-8 in unit {i}: {exc}",
                 )
 
+        # Extract timestamps from proto if present
+        timestamps: list[str | tuple[str, str]] | None = None
+        if request.timestamps:
+            # Validate length matches units
+            if len(request.timestamps) != len(units):
+                raise ValueError(
+                    f"timestamps length ({len(request.timestamps)}) must match "
+                    f"units length ({len(units)})"
+                )
+            timestamps = [_extract_timestamp(ts) for ts in request.timestamps]
+
         session = self._runtime.get_session(request.document_id)
         result = await session.batch_append_text(
             units,
             collect_telemetry=request.collect_telemetry,
+            timestamps=timestamps,
         )
 
         response = pb2.BatchAppendTextResponse(

@@ -194,11 +194,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
 
 ### gRPC Servicers
 
-- [ ] Extract timestamps from AppendTextRequest in servicer
+- [x] Extract timestamps from AppendTextRequest in servicer
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 2
   - Success: Servicer parses Timestamp message and passes to AppendExecutor
-  - Test: `test_servicer_append_extracts_timestamp`
-  - Location: `ragzoom/server/servicers.py` (AppendText method)
+  - Test: `tests/test_temporal_servicer.py::TestServicerAppendExtractsTimestamp` (3 tests)
+  - Location: `ragzoom/server/servicers.py:135-150` (_extract_timestamp helper), `ragzoom/server/servicers.py:305-322` (AppendText method)
 
 - [ ] Extract timestamps from BatchAppendTextRequest in servicer
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 2
