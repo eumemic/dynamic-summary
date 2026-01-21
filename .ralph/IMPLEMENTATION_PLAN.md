@@ -180,11 +180,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Location: `ragzoom/backends/sqlite_repositories.py:1700-1718`, `ragzoom/repositories/document_repository.py:86-105`
   - Note: Also added to `ragzoom/contracts/document_repository.py` protocol
 
-- [ ] Infer `is_temporal` from first append
+- [x] Infer `is_temporal` from first append
   - Spec: specs/temporal-metadata.md § Requirements > 1. Temporal Documents
   - Success: First append WITH timestamps sets `is_temporal=True`; WITHOUT sets `is_temporal=False`
-  - Test: `test_is_temporal_inferred_from_first_append`
-  - Location: `ragzoom/server/append_executor.py`
+  - Test: `tests/test_temporal_inference_sqlite.py::TestIsTemporalInference` (5 tests)
+  - Location: `ragzoom/server/append_executor.py:192-197` (append), `ragzoom/server/append_executor.py:461-466` (append_batch)
 
 - [ ] Validate timestamp presence on subsequent appends
   - Spec: specs/temporal-metadata.md § Requirements > 5. Validation Rules

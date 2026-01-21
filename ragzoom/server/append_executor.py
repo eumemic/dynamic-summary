@@ -190,6 +190,14 @@ class AppendExecutor:
             bool(right_leaf),
         )
 
+        # Infer is_temporal from first append:
+        # - First append WITH timestamps → document becomes temporal
+        # - First append WITHOUT timestamps → document stays non-temporal
+        is_first_append = right_leaf is None
+        has_timestamps = timestamp is not None
+        if is_first_append and has_timestamps:
+            store._doc_repo.set_document_is_temporal(document_id, is_temporal=True)
+
         # New leaves start where the existing content ends
         span_start = int(right_leaf.span_end) if right_leaf else 0
         start_level_index = (
@@ -443,6 +451,14 @@ class AppendExecutor:
             len(non_empty_units),
             bool(right_leaf),
         )
+
+        # Infer is_temporal from first append:
+        # - First append WITH timestamps → document becomes temporal
+        # - First append WITHOUT timestamps → document stays non-temporal
+        is_first_append = right_leaf is None
+        has_timestamps = timestamps is not None
+        if is_first_append and has_timestamps:
+            store._doc_repo.set_document_is_temporal(document_id, is_temporal=True)
 
         # Track position across all units
         span_start = int(right_leaf.span_end) if right_leaf else 0
