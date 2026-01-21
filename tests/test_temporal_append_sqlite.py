@@ -182,3 +182,180 @@ class TestAppendWithTimestamp:
         leaf = leaves[0]
         assert leaf.time_start == 1705847400.0
         assert leaf.time_end == 1705847400.0
+
+
+class TestAppendBatchWithTimestamps:
+    """Test append_batch() with optional timestamps parameter."""
+
+    @pytest.mark.asyncio
+    async def test_append_batch_with_single_timestamps(
+        self, sqlite_backend: SQLiteStorageBackend
+    ) -> None:
+        """Batch append with single timestamp strings (used for both start and end)."""
+        config = IndexConfig.load(target_chunk_tokens=None)
+        store = _create_document(sqlite_backend, "doc-batch-temporal-1")
+        executor = AppendExecutor(config, StubEmbedder())
+
+        await executor.append_batch(
+            store=store,
+            document_id="doc-batch-temporal-1",
+            units=["Turn A", "Turn B", "Turn C"],
+            timestamps=[
+                "2024-01-21T14:30:00Z",
+                "2024-01-21T14:30:05Z",
+                "2024-01-21T14:30:10Z",
+            ],
+        )
+
+        leaves = store.nodes.get_leaves()
+        assert len(leaves) == 3
+
+        # Each leaf should have its corresponding timestamp
+        assert leaves[0].time_start == 1705847400.0  # 14:30:00
+        assert leaves[0].time_end == 1705847400.0
+        assert leaves[1].time_start == 1705847405.0  # 14:30:05
+        assert leaves[1].time_end == 1705847405.0
+        assert leaves[2].time_start == 1705847410.0  # 14:30:10
+        assert leaves[2].time_end == 1705847410.0
+
+    @pytest.mark.asyncio
+    async def test_append_batch_with_timestamp_tuples(
+        self, sqlite_backend: SQLiteStorageBackend
+    ) -> None:
+        """Batch append with (start, end) timestamp tuples."""
+        config = IndexConfig.load(target_chunk_tokens=None)
+        store = _create_document(sqlite_backend, "doc-batch-temporal-2")
+        executor = AppendExecutor(config, StubEmbedder())
+
+        await executor.append_batch(
+            store=store,
+            document_id="doc-batch-temporal-2",
+            units=["Turn A", "Turn B"],
+            timestamps=[
+                ("2024-01-21T14:30:00Z", "2024-01-21T14:30:03Z"),
+                ("2024-01-21T14:30:05Z", "2024-01-21T14:30:08Z"),
+            ],
+        )
+
+        leaves = store.nodes.get_leaves()
+        assert len(leaves) == 2
+
+        assert leaves[0].time_start == 1705847400.0  # 14:30:00
+        assert leaves[0].time_end == 1705847403.0  # 14:30:03
+        assert leaves[1].time_start == 1705847405.0  # 14:30:05
+        assert leaves[1].time_end == 1705847408.0  # 14:30:08
+
+    @pytest.mark.asyncio
+    async def test_append_batch_with_mixed_timestamps(
+        self, sqlite_backend: SQLiteStorageBackend
+    ) -> None:
+        """Batch append with mix of single strings and tuples."""
+        config = IndexConfig.load(target_chunk_tokens=None)
+        store = _create_document(sqlite_backend, "doc-batch-temporal-3")
+        executor = AppendExecutor(config, StubEmbedder())
+
+        await executor.append_batch(
+            store=store,
+            document_id="doc-batch-temporal-3",
+            units=["Turn A", "Turn B"],
+            timestamps=[
+                "2024-01-21T14:30:00Z",  # Single timestamp
+                ("2024-01-21T14:30:05Z", "2024-01-21T14:30:08Z"),  # Tuple
+            ],
+        )
+
+        leaves = store.nodes.get_leaves()
+        assert len(leaves) == 2
+
+        # First leaf: single timestamp
+        assert leaves[0].time_start == 1705847400.0
+        assert leaves[0].time_end == 1705847400.0
+        # Second leaf: range
+        assert leaves[1].time_start == 1705847405.0
+        assert leaves[1].time_end == 1705847408.0
+
+    @pytest.mark.asyncio
+    async def test_append_batch_without_timestamps(
+        self, sqlite_backend: SQLiteStorageBackend
+    ) -> None:
+        """Batch append without timestamps leaves temporal fields as None."""
+        config = IndexConfig.load(target_chunk_tokens=None)
+        store = _create_document(sqlite_backend, "doc-batch-temporal-4")
+        executor = AppendExecutor(config, StubEmbedder())
+
+        await executor.append_batch(
+            store=store,
+            document_id="doc-batch-temporal-4",
+            units=["Turn A", "Turn B"],
+        )
+
+        leaves = store.nodes.get_leaves()
+        assert len(leaves) == 2
+
+        for leaf in leaves:
+            assert leaf.time_start is None
+            assert leaf.time_end is None
+
+    @pytest.mark.asyncio
+    async def test_append_batch_timestamps_length_mismatch_raises(
+        self, sqlite_backend: SQLiteStorageBackend
+    ) -> None:
+        """Batch append with timestamps length != units length raises ValueError."""
+        config = IndexConfig.load(target_chunk_tokens=None)
+        store = _create_document(sqlite_backend, "doc-batch-temporal-5")
+        executor = AppendExecutor(config, StubEmbedder())
+
+        with pytest.raises(ValueError) as exc_info:
+            await executor.append_batch(
+                store=store,
+                document_id="doc-batch-temporal-5",
+                units=["Turn A", "Turn B", "Turn C"],
+                timestamps=["2024-01-21T14:30:00Z", "2024-01-21T14:30:05Z"],  # Only 2
+            )
+
+        assert "timestamps" in str(exc_info.value).lower()
+        assert "units" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_append_batch_with_invalid_timestamp_raises(
+        self, sqlite_backend: SQLiteStorageBackend
+    ) -> None:
+        """Batch append with invalid timestamp format raises ValueError."""
+        config = IndexConfig.load(target_chunk_tokens=None)
+        store = _create_document(sqlite_backend, "doc-batch-temporal-6")
+        executor = AppendExecutor(config, StubEmbedder())
+
+        with pytest.raises(ValueError) as exc_info:
+            await executor.append_batch(
+                store=store,
+                document_id="doc-batch-temporal-6",
+                units=["Turn A", "Turn B"],
+                timestamps=[
+                    "2024-01-21T14:30:00Z",
+                    "2024-01-21T14:30:05",  # Missing timezone
+                ],
+            )
+
+        assert "timezone" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_append_batch_with_invalid_range_raises(
+        self, sqlite_backend: SQLiteStorageBackend
+    ) -> None:
+        """Batch append with time_end < time_start raises ValueError."""
+        config = IndexConfig.load(target_chunk_tokens=None)
+        store = _create_document(sqlite_backend, "doc-batch-temporal-7")
+        executor = AppendExecutor(config, StubEmbedder())
+
+        with pytest.raises(ValueError) as exc_info:
+            await executor.append_batch(
+                store=store,
+                document_id="doc-batch-temporal-7",
+                units=["Turn A", "Turn B"],
+                timestamps=[
+                    "2024-01-21T14:30:00Z",
+                    ("2024-01-21T14:30:10Z", "2024-01-21T14:30:05Z"),  # Invalid range
+                ],
+            )
+
+        assert "time_end" in str(exc_info.value)

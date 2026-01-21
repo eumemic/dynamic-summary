@@ -9,7 +9,7 @@ import logging
 import time
 import uuid
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -62,6 +62,40 @@ def validate_timestamp_range(*, time_start: float, time_end: float) -> None:
     """
     if time_end < time_start:
         raise ValueError(f"time_end ({time_end}) must be >= time_start ({time_start})")
+
+
+def parse_timestamp_param(
+    timestamp: str | tuple[str, str] | None,
+) -> tuple[float, float] | None:
+    """Parse a timestamp parameter into (time_start, time_end) tuple.
+
+    Args:
+        timestamp: One of:
+            - None: Returns None
+            - ISO 8601 string: Used for both start and end
+            - Tuple of (start, end) ISO 8601 strings
+
+    Returns:
+        Tuple of (time_start, time_end) as Unix float seconds, or None.
+
+    Raises:
+        ValueError: If timestamp format is invalid or time_end < time_start.
+    """
+    if timestamp is None:
+        return None
+
+    if isinstance(timestamp, str):
+        t = parse_timestamp(timestamp)
+        return (t, t)
+
+    if len(timestamp) != 2:
+        raise ValueError(
+            f"Timestamp tuple must have exactly 2 elements, got {len(timestamp)}"
+        )
+    time_start = parse_timestamp(timestamp[0])
+    time_end = parse_timestamp(timestamp[1])
+    validate_timestamp_range(time_start=time_start, time_end=time_end)
+    return (time_start, time_end)
 
 
 # Maximum characters per unit in client-managed chunking mode.
@@ -133,18 +167,9 @@ class AppendExecutor:
             raise ValueError("append requires non-empty text")
 
         # Parse timestamp parameter
-        time_start: float | None = None
-        time_end: float | None = None
-        if timestamp is not None:
-            if isinstance(timestamp, str):
-                # Single timestamp: use for both start and end
-                time_start = parse_timestamp(timestamp)
-                time_end = time_start
-            else:
-                # Tuple of (start, end) timestamps
-                time_start = parse_timestamp(timestamp[0])
-                time_end = parse_timestamp(timestamp[1])
-            validate_timestamp_range(time_start=time_start, time_end=time_end)
+        parsed = parse_timestamp_param(timestamp)
+        time_start = parsed[0] if parsed else None
+        time_end = parsed[1] if parsed else None
 
         # Client-managed chunking: truncate units > MAX_UNIT_CHARS
         if self._config.target_chunk_tokens is None and len(new_text) > MAX_UNIT_CHARS:
@@ -342,6 +367,7 @@ class AppendExecutor:
         store: DocumentStore,
         document_id: str,
         units: Sequence[str],
+        timestamps: Sequence[str | tuple[str, str]] | None = None,
         reporter: TelemetryCollector | None = None,
         run_context: IndexRunContext | None = None,
         telemetry_manager: TelemetryRunManager | None = None,
@@ -357,32 +383,40 @@ class AppendExecutor:
             store: Document store to append to
             document_id: ID of the document
             units: Sequence of text units, each creating a forced boundary
+            timestamps: Optional sequence parallel to units. Each entry can be:
+                - ISO 8601 string (used for both time_start and time_end)
+                - Tuple of (time_start, time_end) ISO 8601 strings
+                Must match length of units when provided.
             reporter: Optional telemetry collector
             run_context: Optional run context for telemetry
             telemetry_manager: Optional telemetry manager
 
         Returns:
             AppendOutcome with all new leaf IDs and span info
+
+        Raises:
+            ValueError: If timestamps length doesn't match units length
         """
-        # Client-managed chunking: truncate units > MAX_UNIT_CHARS and preserve all
-        if self._config.target_chunk_tokens is None:
-            processed_units: list[str] = []
-            for unit in units:
-                if len(unit) > MAX_UNIT_CHARS:
-                    logger.warning(
-                        "append_batch[%s]: truncating unit from %d to %d characters "
-                        "(client-managed chunking mode)",
-                        document_id,
-                        len(unit),
-                        MAX_UNIT_CHARS,
-                    )
-                    processed_units.append(unit[:MAX_UNIT_CHARS])
-                else:
-                    processed_units.append(unit)
-            non_empty_units = processed_units
-        else:
-            # Normal mode: filter out empty units
-            non_empty_units = [u for u in units if u and u.strip()]
+        # Validate timestamps length matches units
+        if timestamps is not None and len(timestamps) != len(units):
+            raise ValueError(
+                f"timestamps length ({len(timestamps)}) must match "
+                f"units length ({len(units)})"
+            )
+
+        # Parse all timestamps upfront (before filtering which changes indices)
+        parsed_timestamps = (
+            [parse_timestamp_param(ts) for ts in timestamps]
+            if timestamps is not None
+            else None
+        )
+
+        # Process units based on chunking mode
+        non_empty_units, unit_timestamps = self._process_units_for_batch(
+            units=units,
+            parsed_timestamps=parsed_timestamps,
+            document_id=document_id,
+        )
 
         if not non_empty_units:
             # No content to append - return empty outcome
@@ -446,7 +480,14 @@ class AppendExecutor:
         prev_unit_last_id: str | None = None  # Last node ID from previous unit
         prev_unit_last_preceding_id: str | None = None  # Its preceding neighbor
 
-        for unit_text in non_empty_units:
+        for unit_idx, unit_text in enumerate(non_empty_units):
+            # Get timestamp for this unit (if provided)
+            unit_timestamp = (
+                unit_timestamps[unit_idx] if unit_timestamps is not None else None
+            )
+            time_start = unit_timestamp[0] if unit_timestamp else None
+            time_end = unit_timestamp[1] if unit_timestamp else None
+
             # Split this unit (may produce 1+ chunks)
             chunks = self._splitter.split_text(unit_text)
             if not chunks:
@@ -458,6 +499,8 @@ class AppendExecutor:
                 span_start=span_start,
                 preceding_neighbor_id=preceding_id,
                 start_level_index=level_index,
+                time_start=time_start,
+                time_end=time_end,
             )
 
             if not unit_specs:
@@ -483,6 +526,8 @@ class AppendExecutor:
                         "preceding_neighbor_id": leaf.preceding_neighbor_id,
                         "following_neighbor_id": leaf.following_neighbor_id,
                         "level_index": leaf.level_index,
+                        "time_start": leaf.time_start,
+                        "time_end": leaf.time_end,
                     }
                 )
 
@@ -664,20 +709,58 @@ class AppendExecutor:
 
         # Set following_neighbor_id links
         for idx in range(len(specs) - 1):
-            specs[idx] = LeafSpec(
-                node_id=specs[idx].node_id,
-                text=specs[idx].text,
-                span_start=specs[idx].span_start,
-                span_end=specs[idx].span_end,
-                token_count=specs[idx].token_count,
-                preceding_neighbor_id=specs[idx].preceding_neighbor_id,
-                following_neighbor_id=specs[idx + 1].node_id,
-                level_index=specs[idx].level_index,
-                time_start=specs[idx].time_start,
-                time_end=specs[idx].time_end,
+            specs[idx] = replace(
+                specs[idx], following_neighbor_id=specs[idx + 1].node_id
             )
 
         return specs
+
+    def _process_units_for_batch(
+        self,
+        *,
+        units: Sequence[str],
+        parsed_timestamps: list[tuple[float, float] | None] | None,
+        document_id: str,
+    ) -> tuple[list[str], list[tuple[float, float] | None] | None]:
+        """Process units for batch append, handling truncation or filtering.
+
+        In client-managed chunking mode (target_chunk_tokens is None), truncates
+        oversized units but preserves all units including empty ones.
+
+        In normal mode, filters out empty/whitespace-only units.
+
+        Returns:
+            Tuple of (processed_units, corresponding_timestamps).
+        """
+        result_units: list[str] = []
+        result_timestamps: list[tuple[float, float] | None] = []
+
+        if self._config.target_chunk_tokens is None:
+            # Client-managed chunking: truncate oversized units, preserve all
+            for i, unit in enumerate(units):
+                if len(unit) > MAX_UNIT_CHARS:
+                    logger.warning(
+                        "append_batch[%s]: truncating unit from %d to %d characters "
+                        "(client-managed chunking mode)",
+                        document_id,
+                        len(unit),
+                        MAX_UNIT_CHARS,
+                    )
+                    result_units.append(unit[:MAX_UNIT_CHARS])
+                else:
+                    result_units.append(unit)
+                if parsed_timestamps is not None:
+                    result_timestamps.append(parsed_timestamps[i])
+        else:
+            # Normal mode: filter out empty units
+            for i, unit in enumerate(units):
+                if unit and unit.strip():
+                    result_units.append(unit)
+                    if parsed_timestamps is not None:
+                        result_timestamps.append(parsed_timestamps[i])
+
+        final_timestamps = result_timestamps if parsed_timestamps is not None else None
+        return (result_units, final_timestamps)
 
 
 if TYPE_CHECKING:

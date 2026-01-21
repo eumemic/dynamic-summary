@@ -146,11 +146,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `tests/test_temporal_append_sqlite.py::TestAppendWithTimestamp` (7 tests)
   - Location: `ragzoom/server/append_executor.py:114-147` (parameter + parsing), `ragzoom/server/append_executor.py:247-267` (payload)
 
-- [ ] Add `timestamps` parameter to `append_batch()` method
+- [x] Add `timestamps` parameter to `append_batch()` method
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 2
   - Success: `append_batch(units, timestamps=[...])` accepts parallel list of timestamps
-  - Test: `test_append_batch_with_timestamps`
-  - Location: `ragzoom/server/append_executor.py:280-350`
+  - Test: `tests/test_temporal_append_sqlite.py::TestAppendBatchWithTimestamps` (7 tests)
+  - Location: `ragzoom/server/append_executor.py:339-425`
 
 - [ ] Update `_build_leaf_specs()` to accept timestamps
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 1
