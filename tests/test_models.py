@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import Float, create_engine
 from sqlalchemy.engine import Engine
 
 from ragzoom.models import Base, Document
@@ -16,6 +16,43 @@ class TestTreeNodeModel:
     def test_table_name(self) -> None:
         """Test that TreeNode uses correct table name."""
         assert TreeNode.__tablename__ == "tree_nodes"
+
+    def test_postgres_tree_node_has_temporal_columns(self) -> None:
+        """Test that PostgresTreeNode has nullable Float columns for temporal metadata.
+
+        Per specs/temporal-metadata.md § Data Model Changes > Database Schema.
+        """
+        time_start_col = TreeNode.__table__.columns["time_start"]
+        time_end_col = TreeNode.__table__.columns["time_end"]
+
+        assert time_start_col.nullable is True
+        assert time_end_col.nullable is True
+        assert isinstance(time_start_col.type, Float)
+        assert isinstance(time_end_col.type, Float)
+
+    def test_temporal_column_instantiation(self) -> None:
+        """Test that temporal columns can be set on TreeNode instances."""
+        node = TreeNode(
+            id="temporal_node",
+            span_start=0,
+            span_end=100,
+            text="Test content",
+            time_start=1705845000.123,  # Unix timestamp
+            time_end=1705845060.456,
+        )
+        assert node.time_start == 1705845000.123
+        assert node.time_end == 1705845060.456
+
+    def test_temporal_columns_default_to_none(self) -> None:
+        """Test that temporal columns default to None for non-temporal nodes."""
+        node = TreeNode(
+            id="non_temporal_node",
+            span_start=0,
+            span_end=100,
+            text="Test content",
+        )
+        assert node.time_start is None
+        assert node.time_end is None
 
     def test_get_depth_not_persisted(self) -> None:
         """TreeNode depth should be derived structurally, not stored."""

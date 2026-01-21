@@ -46,6 +46,11 @@ class TreeNodeColumnsMixin:
     # Cost in USD for creating this node (embedding + summarization)
     cost: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # Temporal metadata for time-windowed queries (Unix timestamp in seconds)
+    # See specs/temporal-metadata.md § Data Model Changes > Database Schema
+    time_start: Mapped[float | None] = mapped_column(Float, nullable=True)
+    time_end: Mapped[float | None] = mapped_column(Float, nullable=True)
+
 
 class PostgresTreeNode(TreeNodeColumnsMixin, Base):
     """Database model for tree nodes (no embeddings in storage)."""
