@@ -697,6 +697,10 @@ class Retriever:
         budget_tokens: int | None = None,
         document_id: str | None = None,
         recent_verbatim_budget: int | None = None,
+        span_start: int = 0,
+        span_end: int | None = None,
+        time_start: str | None = None,
+        time_end: str | None = None,
     ) -> tuple[RetrievalResult, QueryTelemetry]:
         """Async retrieval with detailed telemetry collection.
 
@@ -706,6 +710,10 @@ class Retriever:
             budget_tokens: Token budget for the final summary
             document_id: Optional document ID to filter by
             recent_verbatim_budget: Token budget for recent leaves to include verbatim
+            span_start: Start of document window (character position, default 0)
+            span_end: End of document window (default: document end)
+            time_start: Start of time window (ISO 8601 with timezone)
+            time_end: End of time window (ISO 8601 with timezone)
 
         Returns:
             Tuple of (RetrievalResult, QueryTelemetry) with detailed timing info
@@ -720,6 +728,10 @@ class Retriever:
             document_id,
             recent_verbatim_budget,
             telemetry_collector=collector,
+            span_start=span_start,
+            span_end=span_end,
+            time_start=time_start,
+            time_end=time_end,
         )
         telemetry = collector.finalize()
         if telemetry is None:

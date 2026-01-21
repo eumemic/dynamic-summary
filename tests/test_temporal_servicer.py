@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, NoReturn
 import pytest
 
 from ragzoom.rpc import dynamic_summary_pb2 as pb2
-from ragzoom.server.servicers import IndexerServicer
+from ragzoom.server.servicers import IndexerServicer, RetrievalServicer
 
 if TYPE_CHECKING:
     from unittest.mock import MagicMock
@@ -226,3 +226,134 @@ class TestServicerBatchAppendExtractsTimestamps:
 
         # batch_append_text should not be called
         mock_session.batch_append_text.assert_not_called()
+
+
+class TestServicerQueryExtractsTimeWindow:
+    """Test that ExecuteQuery servicer extracts time window from proto."""
+
+    @pytest.fixture
+    def mock_retriever(self) -> MagicMock:
+        """Create a mock Retriever."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        retriever = MagicMock()
+        retriever.retrieve_async = AsyncMock(
+            return_value=MagicMock(
+                node_ids=["node1"],
+                tiling=["node1"],
+                scores={"node1": 0.5},
+                coverage_map={"node1": True},
+                nodes={
+                    "node1": MagicMock(
+                        id="node1",
+                        text="test content",
+                        token_count=10,
+                        span_start=0,
+                        span_end=100,
+                        parent_id=None,
+                        left_child_id=None,
+                        right_child_id=None,
+                        height=0,
+                    )
+                },
+                seed_count=1,
+                verbatim_count=0,
+                actual_start=0,
+                actual_end=100,
+            )
+        )
+        return retriever
+
+    @pytest.fixture
+    def mock_state(self) -> MagicMock:
+        """Create a mock ServerState."""
+        from unittest.mock import MagicMock
+
+        state = MagicMock()
+        state.query_config.budget_tokens = 1000
+        state.query_config.embedding_model = "text-embedding-3-small"
+        state.query_log.record_query = MagicMock(return_value="query123")
+        return state
+
+    @pytest.fixture
+    def servicer(
+        self,
+        mock_state: MagicMock,
+        mock_retriever: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> RetrievalServicer:
+        """Create a RetrievalServicer with mocked _build_retriever."""
+        from unittest.mock import MagicMock as Mock
+
+        from ragzoom.server import servicers
+
+        def patched_build_retriever(
+            state: object, *, document_id: str, embedding_model: str | None = None
+        ) -> tuple[MagicMock, Mock]:
+            return mock_retriever, Mock()
+
+        monkeypatch.setattr(servicers, "_build_retriever", patched_build_retriever)
+        return servicers.RetrievalServicer(mock_state)
+
+    @pytest.mark.asyncio
+    async def test_query_without_time_window(
+        self,
+        servicer: RetrievalServicer,
+        mock_retriever: MagicMock,
+    ) -> None:
+        """ExecuteQuery without time window passes None for time params."""
+        request = pb2.ExecuteQueryRequest(
+            document_id="test_doc",
+            query="test query",
+            budget_tokens=1000,
+        )
+
+        await servicer.ExecuteQuery(request, MockServicerContext())
+
+        mock_retriever.retrieve_async.assert_called_once()
+        call_kwargs = mock_retriever.retrieve_async.call_args.kwargs
+        assert call_kwargs.get("time_start") is None
+        assert call_kwargs.get("time_end") is None
+
+    @pytest.mark.asyncio
+    async def test_query_with_time_window(
+        self,
+        servicer: RetrievalServicer,
+        mock_retriever: MagicMock,
+    ) -> None:
+        """ExecuteQuery with time window passes time_start and time_end to retriever."""
+        request = pb2.ExecuteQueryRequest(
+            document_id="test_doc",
+            query="test query",
+            budget_tokens=1000,
+            time_start="2024-01-21T14:00:00Z",
+            time_end="2024-01-21T15:00:00Z",
+        )
+
+        await servicer.ExecuteQuery(request, MockServicerContext())
+
+        mock_retriever.retrieve_async.assert_called_once()
+        call_kwargs = mock_retriever.retrieve_async.call_args.kwargs
+        assert call_kwargs.get("time_start") == "2024-01-21T14:00:00Z"
+        assert call_kwargs.get("time_end") == "2024-01-21T15:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_query_with_time_start_only(
+        self,
+        servicer: RetrievalServicer,
+        mock_retriever: MagicMock,
+    ) -> None:
+        """ExecuteQuery with only time_start passes it to retriever."""
+        request = pb2.ExecuteQueryRequest(
+            document_id="test_doc",
+            query="test query",
+            budget_tokens=1000,
+            time_start="2024-01-21T14:00:00Z",
+        )
+
+        await servicer.ExecuteQuery(request, MockServicerContext())
+
+        mock_retriever.retrieve_async.assert_called_once()
+        call_kwargs = mock_retriever.retrieve_async.call_args.kwargs
+        assert call_kwargs.get("time_start") == "2024-01-21T14:00:00Z"
+        assert call_kwargs.get("time_end") is None

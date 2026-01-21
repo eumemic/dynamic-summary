@@ -482,6 +482,10 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
         span_start = request.span_start
         span_end = request.span_end if request.span_end > 0 else None
 
+        # Extract temporal window from request (empty string treated as unset)
+        time_start = request.time_start if request.HasField("time_start") else None
+        time_end = request.time_end if request.HasField("time_end") else None
+
         # Use telemetry-enabled retrieval if profiling requested
         query_telemetry = None
         if request.profile:
@@ -491,6 +495,10 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
                 budget_tokens=budget,
                 document_id=request.document_id,
                 recent_verbatim_budget=recent_verbatim_budget,
+                span_start=span_start,
+                span_end=span_end,
+                time_start=time_start,
+                time_end=time_end,
             )
         else:
             retrieval_result = await retriever.retrieve_async(
@@ -501,6 +509,8 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
                 recent_verbatim_budget=recent_verbatim_budget,
                 span_start=span_start,
                 span_end=span_end,
+                time_start=time_start,
+                time_end=time_end,
             )
 
         assembler = Assembler(document_store)

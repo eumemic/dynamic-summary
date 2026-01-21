@@ -250,11 +250,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `tests/test_time_to_span_mapping.py::TestTimeQueryValidation::test_time_query_on_non_temporal_raises_error`
   - Location: `ragzoom/retrieve.py:231-238` (is_temporal validation)
 
-- [ ] Extract time window from ExecuteQueryRequest in servicer
+- [x] Extract time window from ExecuteQueryRequest in servicer
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 3
   - Success: Servicer passes time_start/time_end to retrieval logic
-  - Test: `test_servicer_query_extracts_time_window`
-  - Location: `ragzoom/server/servicers.py:409-577`
+  - Test: `tests/test_temporal_servicer.py::TestServicerQueryExtractsTimeWindow` (3 tests)
+  - Location: `ragzoom/server/servicers.py:484-490` (extraction), `ragzoom/server/servicers.py:507-509` (passing to retrieve_async)
 
 - [ ] Populate is_temporal in DocumentStatus response
   - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
