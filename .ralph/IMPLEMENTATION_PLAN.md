@@ -158,11 +158,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `tests/test_build_leaf_specs_sqlite.py::TestBuildLeafSpecsWithTimestamps` (5 tests)
   - Location: `ragzoom/server/append_executor.py:676-735`
 
-- [ ] Store timestamps in leaf NodeDataDict payload
+- [x] Store timestamps in leaf NodeDataDict payload
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 1
   - Success: Database leaf nodes have `time_start` and `time_end` values from input
   - Test: `test_leaf_stores_timestamps_in_database`
-  - Location: `ragzoom/server/append_executor.py:187-205`
+  - Location: `ragzoom/server/append_executor.py:277-297` (payload build), `ragzoom/backends/sqlite_repositories.py:94-95` (persistence)
 
 ### Document Temporality
 

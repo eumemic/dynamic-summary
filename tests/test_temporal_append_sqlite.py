@@ -24,6 +24,44 @@ def _create_document(backend: SQLiteStorageBackend, document_id: str) -> Documen
     return backend.for_document(document_id)
 
 
+@pytest.mark.asyncio
+async def test_leaf_stores_timestamps_in_database(
+    sqlite_backend: SQLiteStorageBackend,
+) -> None:
+    """Verify leaf nodes store timestamps in database via NodeDataDict payload.
+
+    This test validates the complete flow:
+    1. AppendExecutor receives timestamps via append()
+    2. Timestamps are included in the NodeDataDict payload
+    3. Leaf nodes are stored in SQLite with time_start and time_end values
+    4. Retrieved leaves have the correct timestamp values
+    """
+    config = IndexConfig.load(target_chunk_tokens=None)
+    store = _create_document(sqlite_backend, "doc-store-ts")
+    executor = AppendExecutor(config, StubEmbedder())
+
+    # Append with a timestamp range
+    await executor.append(
+        store=store,
+        document_id="doc-store-ts",
+        new_text="Timestamped content",
+        timestamp=("2024-06-15T10:00:00Z", "2024-06-15T10:05:00Z"),
+    )
+
+    # Retrieve leaves directly from database to confirm storage
+    leaves = store.nodes.get_leaves()
+    assert len(leaves) == 1
+
+    leaf = leaves[0]
+    # Unix timestamp for 2024-06-15T10:00:00Z
+    expected_start = 1718445600.0
+    # Unix timestamp for 2024-06-15T10:05:00Z (5 minutes = 300 seconds later)
+    expected_end = 1718445900.0
+
+    assert leaf.time_start == expected_start
+    assert leaf.time_end == expected_end
+
+
 class TestAppendWithTimestamp:
     """Test append() with optional timestamp parameter."""
 
