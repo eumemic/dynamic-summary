@@ -126,11 +126,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
 
 ### Timestamp Parsing
 
-- [ ] Implement ISO 8601 timestamp parser
+- [x] Implement ISO 8601 timestamp parser
   - Spec: specs/temporal-metadata.md § Requirements > 2. Timestamp Format
   - Success: `parse_timestamp("2024-01-21T14:30:00Z")` returns Unix float; no-TZ rejected
-  - Test: `test_parse_timestamp_iso8601_formats`
-  - Location: `ragzoom/server/append_executor.py` (new helper function)
+  - Test: `tests/test_temporal_parsing.py` (14 tests covering formats, edge cases, rejections)
+  - Location: `ragzoom/server/append_executor.py:27-51`
 
 - [ ] Validate `time_end >= time_start`
   - Spec: specs/temporal-metadata.md § Requirements > 5. Validation Rules

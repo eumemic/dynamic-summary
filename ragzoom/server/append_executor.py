@@ -10,6 +10,7 @@ import time
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from ragzoom.config import IndexConfig
@@ -21,6 +22,33 @@ from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
 
 logger = logging.getLogger(__name__)
+
+
+def parse_timestamp(iso_string: str) -> float:
+    """Parse an ISO 8601 timestamp string to Unix timestamp (float seconds).
+
+    Args:
+        iso_string: ISO 8601 formatted string with timezone info.
+            Examples: "2024-01-21T14:30:00Z", "2024-01-21T14:30:00+00:00"
+
+    Returns:
+        Unix timestamp as float seconds since epoch.
+
+    Raises:
+        ValueError: If the string is not valid ISO 8601 or lacks timezone info.
+    """
+    try:
+        dt = datetime.fromisoformat(iso_string.replace("Z", "+00:00"))
+    except ValueError as e:
+        raise ValueError(f"Invalid ISO 8601 timestamp format: {iso_string}") from e
+
+    if dt.tzinfo is None:
+        raise ValueError(
+            f"Timestamp must include timezone info (e.g., 'Z' or '+00:00'): {iso_string}"
+        )
+
+    return dt.timestamp()
+
 
 # Maximum characters per unit in client-managed chunking mode.
 # Units exceeding this limit are truncated with a warning.
