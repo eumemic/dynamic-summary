@@ -238,17 +238,17 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `tests/test_retriever_time_window_sqlite.py::TestRetrieverAcceptsTimeWindow` (4 tests)
   - Location: `ragzoom/retrieve.py:141-154` (retrieve_async), `ragzoom/retrieve.py:511-522` (retrieve)
 
-- [ ] Implement time→span mapping logic
+- [x] Implement time→span mapping logic
   - Spec: specs/temporal-metadata.md § Requirements > 4. Time-Windowed Queries
   - Success: Time window converted to span window via leaf lookup
-  - Test: `test_time_to_span_mapping`
-  - Location: `ragzoom/retrieve.py`
+  - Test: `tests/test_time_to_span_mapping.py::TestTimeToSpanMapping` (4 tests)
+  - Location: `ragzoom/retrieve.py:224-269` (time→span mapping block in retrieve_async)
 
-- [ ] Validate time query on temporal document only
+- [x] Validate time query on temporal document only
   - Spec: specs/temporal-metadata.md § Requirements > 5. Validation Rules
   - Success: Time query on non-temporal document raises clear error
-  - Test: `test_time_query_on_non_temporal_raises_error`
-  - Location: `ragzoom/retrieve.py`
+  - Test: `tests/test_time_to_span_mapping.py::TestTimeQueryValidation::test_time_query_on_non_temporal_raises_error`
+  - Location: `ragzoom/retrieve.py:231-238` (is_temporal validation)
 
 - [ ] Extract time window from ExecuteQueryRequest in servicer
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 3

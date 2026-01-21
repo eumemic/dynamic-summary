@@ -98,8 +98,12 @@ class TestRetrieverAcceptsTimeWindow:
             ]
         )
 
-        # Note: We don't set is_temporal here since the test is only verifying
-        # that the parameters are accepted, not testing the time->span mapping
+        # Mark document as temporal since time-windowed queries require it
+        doc_store.set_metadata(
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        doc_store._doc_repo.set_document_is_temporal("test-doc", is_temporal=True)
 
         from ragzoom.vector_factory import create_vector_index
         from tests.utils import create_retriever
@@ -151,14 +155,15 @@ class TestRetrieverAcceptsTimeWindow:
         """Test that retrieve_async() accepts time_start parameter."""
         self._mock_retriever_for_test(retriever_with_temporal_tree)
 
-        # Should not raise TypeError for unknown parameter
+        # Use timestamp within test data range (1000-3000)
+        # Unix 1500 = 1970-01-01T00:25:00Z
         result = asyncio.run(
             retriever_with_temporal_tree.retrieve_async(
                 query="test query",
                 num_seeds=1,
                 budget_tokens=1000,
                 document_id="test-doc",
-                time_start="2024-01-21T14:00:00Z",
+                time_start="1970-01-01T00:25:00Z",
             )
         )
 
@@ -172,14 +177,15 @@ class TestRetrieverAcceptsTimeWindow:
         """Test that retrieve_async() accepts time_end parameter."""
         self._mock_retriever_for_test(retriever_with_temporal_tree)
 
-        # Should not raise TypeError for unknown parameter
+        # Use timestamp within test data range (1000-3000)
+        # Unix 2500 = 1970-01-01T00:41:40Z
         result = asyncio.run(
             retriever_with_temporal_tree.retrieve_async(
                 query="test query",
                 num_seeds=1,
                 budget_tokens=1000,
                 document_id="test-doc",
-                time_end="2024-01-21T15:00:00Z",
+                time_end="1970-01-01T00:41:40Z",
             )
         )
 
@@ -193,15 +199,15 @@ class TestRetrieverAcceptsTimeWindow:
         """Test that retrieve_async() accepts both time_start and time_end."""
         self._mock_retriever_for_test(retriever_with_temporal_tree)
 
-        # Should not raise TypeError for unknown parameters
+        # Use timestamps within test data range (1000-3000)
         result = asyncio.run(
             retriever_with_temporal_tree.retrieve_async(
                 query="test query",
                 num_seeds=1,
                 budget_tokens=1000,
                 document_id="test-doc",
-                time_start="2024-01-21T14:00:00Z",
-                time_end="2024-01-21T15:00:00Z",
+                time_start="1970-01-01T00:20:00Z",  # Unix 1200
+                time_end="1970-01-01T00:41:40Z",  # Unix 2500
             )
         )
 
@@ -215,14 +221,14 @@ class TestRetrieverAcceptsTimeWindow:
         """Test that synchronous retrieve() also accepts time parameters."""
         self._mock_retriever_for_test(retriever_with_temporal_tree)
 
-        # Should not raise TypeError for unknown parameters
+        # Use timestamps within test data range (1000-3000)
         result = retriever_with_temporal_tree.retrieve(
             query="test query",
             num_seeds=1,
             budget_tokens=1000,
             document_id="test-doc",
-            time_start="2024-01-21T14:00:00Z",
-            time_end="2024-01-21T15:00:00Z",
+            time_start="1970-01-01T00:20:00Z",  # Unix 1200
+            time_end="1970-01-01T00:41:40Z",  # Unix 2500
         )
 
         # Basic sanity check - retrieval completed

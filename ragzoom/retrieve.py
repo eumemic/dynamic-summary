@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from ragzoom.config import QueryConfig
@@ -31,6 +32,31 @@ if TYPE_CHECKING:
     from ragzoom.vector_api import Vector
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_query_timestamp(iso_string: str) -> float:
+    """Parse an ISO 8601 timestamp string to Unix timestamp for queries.
+
+    Args:
+        iso_string: ISO 8601 formatted string with timezone info.
+
+    Returns:
+        Unix timestamp as float seconds since epoch.
+
+    Raises:
+        ValueError: If the string is invalid or lacks timezone info.
+    """
+    try:
+        dt = datetime.fromisoformat(iso_string.replace("Z", "+00:00"))
+    except ValueError as e:
+        raise ValueError(f"Invalid ISO 8601 timestamp format: {iso_string}") from e
+
+    if dt.tzinfo is None:
+        raise ValueError(
+            f"Timestamp must include timezone info (e.g., 'Z' or '+00:00'): {iso_string}"
+        )
+
+    return dt.timestamp()
 
 
 @dataclass
@@ -190,6 +216,64 @@ class Retriever:
             getattr(self.document_store, "document_id", None) or document_id
         )
 
+        # Get repository reference for queries
+        nodes_wrapper = getattr(self.document_store, "nodes", None)
+        repo = getattr(nodes_wrapper, "_repo", None) if nodes_wrapper else None
+        doc_repo = getattr(self.document_store, "_doc_repo", None)
+
+        # Time→span mapping: convert time window to span window
+        if time_start is not None or time_end is not None:
+            if not effective_doc_id:
+                raise ValueError("document_id is required for time-windowed queries")
+            if repo is None or doc_repo is None:
+                raise ValueError("Repository not available for time-windowed queries")
+
+            # Validate document is temporal
+            is_temporal = doc_repo.get_document_is_temporal(effective_doc_id)
+            if not is_temporal:
+                raise ValueError(
+                    f"Time-windowed queries require a temporal document. "
+                    f"Document '{effective_doc_id}' is non-temporal. "
+                    f"Index with timestamps to enable time queries."
+                )
+
+            # Parse timestamps
+            time_start_unix = _parse_query_timestamp(time_start) if time_start else None
+            time_end_unix = _parse_query_timestamp(time_end) if time_end else None
+
+            # Validate time_end >= time_start if both provided
+            if (
+                time_start_unix is not None
+                and time_end_unix is not None
+                and time_end_unix < time_start_unix
+            ):
+                raise ValueError(
+                    f"time_end ({time_end}) must be >= time_start ({time_start})"
+                )
+
+            # Map time to span via leaf lookup
+            if time_start_unix is not None:
+                leaf_start = repo.get_leaf_at_time_position(
+                    effective_doc_id, time_start_unix, "start"
+                )
+                if leaf_start is None:
+                    raise ValueError(
+                        f"No leaf found at time_start={time_start}. "
+                        f"The requested time may be outside the document's time range."
+                    )
+                span_start = leaf_start.span_start
+
+            if time_end_unix is not None:
+                leaf_end = repo.get_leaf_at_time_position(
+                    effective_doc_id, time_end_unix, "end"
+                )
+                if leaf_end is None:
+                    raise ValueError(
+                        f"No leaf found at time_end={time_end}. "
+                        f"The requested time may be outside the document's time range."
+                    )
+                span_end = leaf_end.span_end
+
         # Compute window bounds if windowed query
         from ragzoom.retrieval.coverage_builder import WindowBounds
 
@@ -198,8 +282,6 @@ class Retriever:
         actual_end: int | None = None
 
         # Get document span end for defaults and validation
-        nodes_wrapper = getattr(self.document_store, "nodes", None)
-        repo = getattr(nodes_wrapper, "_repo", None) if nodes_wrapper else None
         doc_span_end: int | None = None
         if repo is not None and effective_doc_id:
             doc_span_end = repo.get_document_span_end(effective_doc_id)
