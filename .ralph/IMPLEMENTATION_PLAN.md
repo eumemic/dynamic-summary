@@ -88,11 +88,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
 
 ### gRPC Protocol
 
-- [ ] Add `Timestamp` message to proto
+- [x] Add `Timestamp` message to proto
   - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
   - Success: Proto defines `message Timestamp { string time_start = 1; optional string time_end = 2; }`
-  - Test: Generated proto code compiles and Timestamp type exists
-  - Location: `proto/dynamic_summary.proto`
+  - Test: `tests/test_temporal_proto.py::TestTimestampMessage` (5 tests)
+  - Location: `proto/dynamic_summary.proto:7-12`
 
 - [ ] Add `optional Timestamp timestamp` to AppendTextRequest
   - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol

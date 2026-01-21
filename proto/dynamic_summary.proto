@@ -4,6 +4,13 @@ package ragzoom.rpc;
 
 option go_package = "ragzoom/rpc";
 
+// Timestamp for temporal metadata in client-controlled chunking.
+// Used to associate time ranges with appended chunks.
+message Timestamp {
+  string time_start = 1;  // ISO 8601 with timezone (e.g., "2024-01-21T14:30:00Z")
+  optional string time_end = 2;  // If omitted, time_end = time_start
+}
+
 message DocumentStats {
   string document_id = 1;
   int32 chunks_created = 2;

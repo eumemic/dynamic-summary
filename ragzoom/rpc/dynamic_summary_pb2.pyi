@@ -4,6 +4,20 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 
+class Timestamp:
+    """Timestamp for temporal metadata in client-controlled chunking."""
+
+    time_start: str
+    time_end: str
+
+    def __init__(
+        self,
+        *,
+        time_start: str = ...,
+        time_end: str = ...,
+    ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
+
 class DocumentStats:
     document_id: str
     chunks_created: int
