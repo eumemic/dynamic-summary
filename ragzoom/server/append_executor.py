@@ -117,6 +117,7 @@ class AppendExecutor:
         store: DocumentStore,
         document_id: str,
         new_text: str,
+        timestamp: str | tuple[str, str] | None = None,
         reporter: TelemetryCollector | None = None,
         run_context: IndexRunContext | None = None,
         telemetry_manager: TelemetryRunManager | None = None,
@@ -130,6 +131,20 @@ class AppendExecutor:
         # Only reject empty text when not in client-managed chunking mode
         if not new_text and self._config.target_chunk_tokens is not None:
             raise ValueError("append requires non-empty text")
+
+        # Parse timestamp parameter
+        time_start: float | None = None
+        time_end: float | None = None
+        if timestamp is not None:
+            if isinstance(timestamp, str):
+                # Single timestamp: use for both start and end
+                time_start = parse_timestamp(timestamp)
+                time_end = time_start
+            else:
+                # Tuple of (start, end) timestamps
+                time_start = parse_timestamp(timestamp[0])
+                time_end = parse_timestamp(timestamp[1])
+            validate_timestamp_range(time_start=time_start, time_end=time_end)
 
         # Client-managed chunking: truncate units > MAX_UNIT_CHARS
         if self._config.target_chunk_tokens is None and len(new_text) > MAX_UNIT_CHARS:
@@ -189,6 +204,8 @@ class AppendExecutor:
             span_start=span_start,
             preceding_neighbor_id=right_leaf.id if right_leaf else None,
             start_level_index=start_level_index,
+            time_start=time_start,
+            time_end=time_end,
         )
         logger.debug(
             "append[%s]: prepared %d leaf specs (span_start=%d)",
@@ -245,6 +262,8 @@ class AppendExecutor:
                     "preceding_neighbor_id": leaf.preceding_neighbor_id,
                     "following_neighbor_id": leaf.following_neighbor_id,
                     "level_index": leaf.level_index,
+                    "time_start": leaf.time_start,
+                    "time_end": leaf.time_end,
                 }
             )
 
@@ -612,6 +631,8 @@ class AppendExecutor:
         span_start: int,
         preceding_neighbor_id: str | None,
         start_level_index: int,
+        time_start: float | None = None,
+        time_end: float | None = None,
     ) -> list[LeafSpec]:
         """Build leaf specs for new chunks starting at span_start."""
         specs: list[LeafSpec] = []
@@ -635,6 +656,8 @@ class AppendExecutor:
                     preceding_neighbor_id=prev_id,
                     following_neighbor_id=None,  # Set in second pass
                     level_index=start_level_index + index,
+                    time_start=time_start,
+                    time_end=time_end,
                 )
             )
             span_cursor = span_end
@@ -650,6 +673,8 @@ class AppendExecutor:
                 preceding_neighbor_id=specs[idx].preceding_neighbor_id,
                 following_neighbor_id=specs[idx + 1].node_id,
                 level_index=specs[idx].level_index,
+                time_start=specs[idx].time_start,
+                time_end=specs[idx].time_end,
             )
 
         return specs
