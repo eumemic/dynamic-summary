@@ -51,6 +51,7 @@ class _SessionProtocol(Protocol):
         *,
         replace_existing: bool,
         collect_telemetry: bool,
+        timestamp: str | tuple[str, str] | None = None,
     ) -> IndexingResult: ...
 
     async def batch_append_text(
@@ -58,6 +59,7 @@ class _SessionProtocol(Protocol):
         units: list[str],
         *,
         collect_telemetry: bool,
+        timestamps: list[str | tuple[str, str]] | None = None,
     ) -> IndexingResult: ...
 
     async def clear(self) -> ClearedDocumentResult: ...
@@ -132,14 +134,24 @@ class RagZoom:
         text: str,
         *,
         collect_telemetry: bool = False,
+        timestamp: str | tuple[str, str] | None = None,
     ) -> IndexingResult:
-        """Append text to an existing document without clearing it."""
+        """Append text to an existing document without clearing it.
+
+        Args:
+            document_id: The document to append to
+            text: Text content to append
+            collect_telemetry: Whether to collect telemetry data
+            timestamp: Optional ISO 8601 timestamp. Can be a single string
+                (used for both start and end) or a tuple of (start, end) strings.
+        """
 
         return self._append(
             document_id=document_id,
             text=text,
             collect_telemetry=collect_telemetry,
             replace_existing=False,
+            timestamp=timestamp,
         )
 
     def batch_append(
@@ -183,6 +195,7 @@ class RagZoom:
         text: str,
         collect_telemetry: bool,
         replace_existing: bool,
+        timestamp: str | tuple[str, str] | None = None,
     ) -> IndexingResult:
         if not document_id:
             raise ValueError("document_id is required")
@@ -196,6 +209,7 @@ class RagZoom:
                     text,
                     replace_existing=replace_existing,
                     collect_telemetry=collect_telemetry,
+                    timestamp=timestamp,
                 )
             )
 
@@ -205,6 +219,7 @@ class RagZoom:
                 content=text.encode("utf-8"),
                 collect_telemetry=collect_telemetry,
                 replace_existing=replace_existing,
+                timestamp=timestamp,
             )
 
     def clear(self, document_id: str) -> None:

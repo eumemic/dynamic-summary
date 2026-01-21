@@ -29,6 +29,22 @@ def _decode_telemetry(payload: str) -> TelemetryDataDict | None:
     return cast(TelemetryDataDict, data)
 
 
+def _build_timestamp_proto(timestamp: str | tuple[str, str]) -> pb2.Timestamp:
+    """Build a Timestamp proto from a string or (start, end) tuple.
+
+    Args:
+        timestamp: ISO 8601 string (used for both start and end) or tuple of (start, end).
+
+    Returns:
+        Timestamp proto message.
+    """
+    if isinstance(timestamp, tuple):
+        time_start, time_end = timestamp
+        return pb2.Timestamp(time_start=time_start, time_end=time_end)
+    # Single string: time_start only, server will use it for both
+    return pb2.Timestamp(time_start=timestamp)
+
+
 def _extract_telemetry_and_error(
     response: object,
 ) -> tuple[TelemetryDataDict | None, str | None]:
@@ -276,13 +292,19 @@ class GrpcRagzoomClient:
         content: bytes,
         collect_telemetry: bool,
         replace_existing: bool,
+        timestamp: str | tuple[str, str] | None = None,
     ) -> IndexingResult:
         request = pb2.AppendTextRequest(
             document_id=document_id,
             content=content,
             collect_telemetry=collect_telemetry,
+            replace_existing=replace_existing,
         )
-        setattr(request, "replace_existing", replace_existing)
+        if timestamp is not None:
+            ts_proto = _build_timestamp_proto(timestamp)
+            request.timestamp.time_start = ts_proto.time_start
+            if ts_proto.HasField("time_end"):
+                request.timestamp.time_end = ts_proto.time_end
         try:
             response = self._indexer.AppendText(request, timeout=self._timeout)
         except grpc.RpcError as error:  # pragma: no cover

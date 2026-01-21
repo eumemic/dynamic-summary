@@ -264,11 +264,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
 
 ### Python Client API
 
-- [ ] Add `timestamp` parameter to `RagZoom.append()`
+- [x] Add `timestamp` parameter to `RagZoom.append()`
   - Spec: specs/temporal-metadata.md § API Changes > Python Client API
   - Success: `append(text, timestamp="2024-01-21T14:30:00Z")` or `timestamp=("start", "end")`
-  - Test: `test_client_append_with_timestamp`
-  - Location: Python client wrapper
+  - Test: `test_ragzoom_append_passes_timestamp_to_runtime`, `test_ragzoom_append_passes_timestamp_tuple_to_runtime`
+  - Location: `ragzoom/wrapper.py:131-155`
 
 - [ ] Add `timestamps` parameter to `RagZoom.batch_append()`
   - Spec: specs/temporal-metadata.md § API Changes > Python Client API

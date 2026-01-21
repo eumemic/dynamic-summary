@@ -25,12 +25,14 @@ class _StubSession:
         *,
         replace_existing: bool,
         collect_telemetry: bool,
+        timestamp: str | tuple[str, str] | None = None,
     ) -> IndexingResult:
         self.append_calls.append(
             {
                 "text": text,
                 "replace_existing": replace_existing,
                 "collect_telemetry": collect_telemetry,
+                "timestamp": timestamp,
             }
         )
         return self._result
@@ -40,11 +42,13 @@ class _StubSession:
         units: list[str],
         *,
         collect_telemetry: bool,
+        timestamps: list[str | tuple[str, str]] | None = None,
     ) -> IndexingResult:
         self.append_calls.append(
             {
                 "units": units,
                 "collect_telemetry": collect_telemetry,
+                "timestamps": timestamps,
             }
         )
         return self._result
@@ -129,6 +133,47 @@ def test_ragzoom_query_requires_address_without_client() -> None:
         wrapper.query("doc", "query")
 
 
+def test_ragzoom_append_passes_timestamp_to_runtime() -> None:
+    """RagZoom.append() must pass timestamp parameter to the runtime session."""
+    expected = IndexingResult(
+        document_id="doc",
+        chunks_created=1,
+        tree_depth=0,
+    )
+    session = _StubSession(expected)
+    runtime = _StubRuntime(session)
+
+    with patch("ragzoom.wrapper.GrpcRagzoomClient") as client_mock:
+        wrapper = RagZoom(runtime=runtime)
+        # Test single timestamp string
+        wrapper.append("doc", "hello", timestamp="2024-01-21T14:30:00Z")
+
+    assert not client_mock.called
+    assert len(session.append_calls) == 1
+    assert session.append_calls[0]["timestamp"] == "2024-01-21T14:30:00Z"
+
+
+def test_ragzoom_append_passes_timestamp_tuple_to_runtime() -> None:
+    """RagZoom.append() must pass timestamp tuple (start, end) to runtime."""
+    expected = IndexingResult(
+        document_id="doc",
+        chunks_created=1,
+        tree_depth=0,
+    )
+    session = _StubSession(expected)
+    runtime = _StubRuntime(session)
+
+    with patch("ragzoom.wrapper.GrpcRagzoomClient") as client_mock:
+        wrapper = RagZoom(runtime=runtime)
+        # Test (start, end) tuple
+        ts_tuple = ("2024-01-21T14:30:00Z", "2024-01-21T14:35:00Z")
+        wrapper.append("doc", "hello", timestamp=ts_tuple)
+
+    assert not client_mock.called
+    assert len(session.append_calls) == 1
+    assert session.append_calls[0]["timestamp"] == ts_tuple
+
+
 @pytest.mark.asyncio
 async def test_async_ragzoom_uses_runtime() -> None:
     expected = IndexingResult(
@@ -182,6 +227,7 @@ async def test_async_ragzoom_preserves_background_tasks() -> None:
             *,
             replace_existing: bool,
             collect_telemetry: bool,
+            timestamp: str | tuple[str, str] | None = None,
         ) -> IndexingResult:
             return IndexingResult(
                 document_id="doc",
@@ -194,6 +240,7 @@ async def test_async_ragzoom_preserves_background_tasks() -> None:
             units: list[str],
             *,
             collect_telemetry: bool,
+            timestamps: list[str | tuple[str, str]] | None = None,
         ) -> IndexingResult:
             nonlocal task_cancelled, task_completed
 
