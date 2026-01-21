@@ -133,3 +133,53 @@ class TestBatchAppendTextRequestTimestamps:
         )
         assert field is not None
         assert field.number == 4
+
+
+class TestExecuteQueryRequestTimeFields:
+    """Test that ExecuteQueryRequest has optional time_start and time_end fields."""
+
+    def test_query_request_has_time_start_field(self) -> None:
+        """ExecuteQueryRequest should have an optional time_start field."""
+        req = dynamic_summary_pb2.ExecuteQueryRequest(
+            document_id="test_doc",
+            query="test query",
+        )
+        # time_start field should exist and be unset by default
+        assert hasattr(req, "time_start")
+        assert req.HasField("time_start") is False
+
+    def test_query_request_has_time_end_field(self) -> None:
+        """ExecuteQueryRequest should have an optional time_end field."""
+        req = dynamic_summary_pb2.ExecuteQueryRequest(
+            document_id="test_doc",
+            query="test query",
+        )
+        # time_end field should exist and be unset by default
+        assert hasattr(req, "time_end")
+        assert req.HasField("time_end") is False
+
+    def test_query_request_accepts_time_fields(self) -> None:
+        """ExecuteQueryRequest can accept time_start and time_end values."""
+        req = dynamic_summary_pb2.ExecuteQueryRequest(
+            document_id="test_doc",
+            query="test query",
+            time_start="2024-01-21T14:00:00Z",
+            time_end="2024-01-21T15:00:00Z",
+        )
+        assert req.HasField("time_start") is True
+        assert req.HasField("time_end") is True
+        assert req.time_start == "2024-01-21T14:00:00Z"
+        assert req.time_end == "2024-01-21T15:00:00Z"
+
+    def test_query_request_time_fields_are_strings(self) -> None:
+        """Time fields should be string type for ISO 8601 format."""
+        req = dynamic_summary_pb2.ExecuteQueryRequest(
+            document_id="test_doc",
+            query="test query",
+            time_start="2024-01-21T14:30:00.123456+00:00",
+            time_end="2024-01-21T14:30:00-05:00",
+        )
+        assert isinstance(req.time_start, str)
+        assert isinstance(req.time_end, str)
+        assert req.time_start == "2024-01-21T14:30:00.123456+00:00"
+        assert req.time_end == "2024-01-21T14:30:00-05:00"

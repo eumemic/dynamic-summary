@@ -106,11 +106,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `test_batch_append_request_has_timestamps_field`
   - Location: `proto/dynamic_summary.proto:53-58`
 
-- [ ] Add `time_start` and `time_end` to ExecuteQueryRequest
+- [x] Add `time_start` and `time_end` to ExecuteQueryRequest
   - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
   - Success: ExecuteQueryRequest has `optional string time_start` and `optional string time_end`
   - Test: `test_query_request_has_time_fields`
-  - Location: `proto/dynamic_summary.proto:85-99`
+  - Location: `proto/dynamic_summary.proto:94-111`
 
 - [ ] Add `is_temporal` to DocumentStatus
   - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol

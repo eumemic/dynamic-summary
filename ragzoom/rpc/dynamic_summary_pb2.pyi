@@ -201,24 +201,29 @@ class ExecuteQueryRequest:
     profile: bool
     span_start: int
     span_end: int
+    time_start: str
+    time_end: str
 
     def __init__(
         self,
         *,
-        query: str,
-        document_id: str,
-        budget_tokens: int,
-        num_seeds: int,
-        embedding_model: str,
-        debug: bool,
-        viz_width: int,
-        use_token_coords: bool,
+        query: str = ...,
+        document_id: str = ...,
+        budget_tokens: int = ...,
+        num_seeds: int = ...,
+        embedding_model: str = ...,
+        debug: bool = ...,
+        viz_width: int = ...,
+        use_token_coords: bool = ...,
         tiling_strategy: str = ...,
         recent_verbatim_token_budget: int = ...,
         profile: bool = ...,
         span_start: int = ...,
         span_end: int = ...,
+        time_start: str = ...,
+        time_end: str = ...,
     ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
 
 class QueryTelemetry:
     embedding_ms: float

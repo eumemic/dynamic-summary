@@ -105,6 +105,9 @@ message ExecuteQueryRequest {
   bool profile = 11;
   int32 span_start = 12;
   optional int32 span_end = 13;
+  // Temporal metadata: ISO 8601 timestamps with timezone for time-windowed queries
+  optional string time_start = 20;  // ISO 8601 with timezone (e.g., "2024-01-21T14:00:00Z")
+  optional string time_end = 21;    // ISO 8601 with timezone (e.g., "2024-01-21T15:00:00Z")
 }
 
 message QueryTelemetry {
