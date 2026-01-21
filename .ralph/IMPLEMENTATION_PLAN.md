@@ -302,68 +302,68 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
 
 ### Unit Tests
 
-- [ ] Test ISO 8601 parsing with various formats
+- [x] Test ISO 8601 parsing with various formats
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 4
   - Success: Validates Z suffix, +HH:MM offset, microseconds; rejects no-TZ
-  - Test: `tests/test_temporal_parsing.py::test_parse_timestamp_formats`
-  - Location: `tests/test_temporal_parsing.py` (new file)
+  - Test: `tests/test_temporal_parsing.py::TestParseTimestampFormats` (7 tests), `TestRejectTimestampWithoutTimezone` (3 tests)
+  - Location: `tests/test_temporal_parsing.py`
 
-- [ ] Test is_temporal inference from first append
+- [x] Test is_temporal inference from first append
   - Spec: specs/temporal-metadata.md § Acceptance Criteria > 2
   - Success: First append with timestamps → is_temporal=True; without → False
-  - Test: `tests/test_temporal_validation.py::test_is_temporal_inference`
-  - Location: `tests/test_temporal_validation.py` (new file)
+  - Test: `tests/test_temporal_inference_sqlite.py::TestIsTemporalInference` (5 tests)
+  - Location: `tests/test_temporal_inference_sqlite.py`
 
-- [ ] Test timestamp validation enforcement
+- [x] Test timestamp validation enforcement
   - Spec: specs/temporal-metadata.md § Acceptance Criteria > 6
   - Success: Temporal doc + missing timestamps → Error; Non-temporal + timestamps → Error
-  - Test: `tests/test_temporal_validation.py::test_temporal_validation_rules`
-  - Location: `tests/test_temporal_validation.py`
+  - Test: `tests/test_temporal_validation_sqlite.py::TestTemporalValidationOnSubsequentAppends` (10 tests)
+  - Location: `tests/test_temporal_validation_sqlite.py`
 
-- [ ] Test inner node timestamp propagation
+- [x] Test inner node timestamp propagation
   - Spec: specs/temporal-metadata.md § Acceptance Criteria > 3
   - Success: Parent.time_start == left.time_start; parent.time_end == right.time_end
-  - Test: `tests/test_temporal_tree.py::test_inner_node_timestamp_propagation`
-  - Location: `tests/test_temporal_tree.py` (new file)
+  - Test: `tests/test_temporal_tree.py::TestInnerNodeTimestampPropagation` (3 tests), `TestRuntimeTimestampPropagation` (2 tests)
+  - Location: `tests/test_temporal_tree.py`
 
 ### Integration Tests
 
-- [ ] Test end-to-end temporal indexing and query
+- [x] Test end-to-end temporal indexing and query
   - Spec: specs/temporal-metadata.md § Acceptance Criteria > 1, 4, 7
   - Success: Append with timestamps, query with time window, verify correct results
-  - Test: `tests/test_temporal_integration.py::test_temporal_e2e`
-  - Location: `tests/test_temporal_integration.py` (new file)
+  - Test: `tests/test_time_to_span_mapping.py::TestTimeToSpanMapping` (4 tests covering full retrieval flow)
+  - Location: `tests/test_time_to_span_mapping.py`
 
-- [ ] Test get_leaf_at_time_position overlap semantics
+- [x] Test get_leaf_at_time_position overlap semantics
   - Spec: specs/temporal-metadata.md § Acceptance Criteria > 5
   - Success: Query window correctly includes overlapping leaves
-  - Test: `tests/test_temporal_query.py::test_leaf_lookup_overlap_semantics`
-  - Location: `tests/test_temporal_query.py` (new file)
+  - Test: `tests/test_leaf_at_time_position.py::TestSqliteGetLeafAtTimePosition` (9 tests)
+  - Location: `tests/test_leaf_at_time_position.py`
 
-- [ ] Test time→span mapping accuracy
+- [x] Test time→span mapping accuracy
   - Spec: specs/temporal-metadata.md § Acceptance Criteria > 5
   - Success: Time window maps to correct span window for retrieval
-  - Test: `tests/test_temporal_query.py::test_time_to_span_mapping_accuracy`
-  - Location: `tests/test_temporal_query.py`
+  - Test: `tests/test_time_to_span_mapping.py::TestTimeToSpanMapping::test_time_window_maps_to_span_window`
+  - Location: `tests/test_time_to_span_mapping.py`
 
-- [ ] Test vector metadata includes timestamps
+- [x] Test vector metadata includes timestamps
   - Spec: specs/temporal-metadata.md § Acceptance Criteria > 9
   - Success: Leaf vectors have time_start and time_end metadata
-  - Test: `tests/test_temporal_vector.py::test_vector_metadata_has_timestamps`
-  - Location: `tests/test_temporal_vector.py` (new file)
+  - Test: `tests/test_vector_common.py::TestNormalizeMetadata::test_normalize_metadata_includes_timestamps` (4 tests)
+  - Location: `tests/test_vector_common.py`
 
 ### Error Case Tests
 
-- [ ] Test time query on non-temporal document raises error
+- [x] Test time query on non-temporal document raises error
   - Spec: specs/temporal-metadata.md § Acceptance Criteria > 8
   - Success: Clear error message explaining time queries require temporal documents
-  - Test: `tests/test_temporal_validation.py::test_time_query_on_non_temporal_error`
-  - Location: `tests/test_temporal_validation.py`
+  - Test: `tests/test_time_to_span_mapping.py::TestTimeQueryValidation::test_time_query_on_non_temporal_raises_error`
+  - Location: `tests/test_time_to_span_mapping.py`
 
-- [ ] Test timestamps without timezone rejected
+- [x] Test timestamps without timezone rejected
   - Spec: specs/temporal-metadata.md § Acceptance Criteria > 10
   - Success: `2024-01-21T14:30:00` (no TZ) raises clear validation error
-  - Test: `tests/test_temporal_parsing.py::test_reject_timestamp_without_timezone`
+  - Test: `tests/test_temporal_parsing.py::TestRejectTimestampWithoutTimezone` (3 tests)
   - Location: `tests/test_temporal_parsing.py`
 
 ---
