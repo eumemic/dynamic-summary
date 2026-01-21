@@ -94,11 +94,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `tests/test_temporal_proto.py::TestTimestampMessage` (5 tests)
   - Location: `proto/dynamic_summary.proto:7-12`
 
-- [ ] Add `optional Timestamp timestamp` to AppendTextRequest
+- [x] Add `optional Timestamp timestamp` to AppendTextRequest
   - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
   - Success: AppendTextRequest has timestamp field (field number 5)
   - Test: `test_append_request_has_timestamp_field`
-  - Location: `proto/dynamic_summary.proto:31-36`
+  - Location: `proto/dynamic_summary.proto:38-44`
 
 - [ ] Add `repeated Timestamp timestamps` to BatchAppendTextRequest
   - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol

@@ -3,6 +3,9 @@ from __future__ import annotations
 # ruff: noqa
 
 from collections.abc import Iterable, Mapping, Sequence
+from typing import ClassVar
+
+from google.protobuf.descriptor import Descriptor
 
 class Timestamp:
     """Timestamp for temporal metadata in client-controlled chunking."""
@@ -63,13 +66,23 @@ class IndexDocumentResponse:
     def __init__(self, *, stats: DocumentStats) -> None: ...
 
 class AppendTextRequest:
+    DESCRIPTOR: ClassVar[Descriptor]
     document_id: str
     content: bytes
     collect_telemetry: bool
+    replace_existing: bool
+    timestamp: Timestamp
 
     def __init__(
-        self, *, document_id: str, content: bytes, collect_telemetry: bool
+        self,
+        *,
+        document_id: str,
+        content: bytes,
+        collect_telemetry: bool = ...,
+        replace_existing: bool = ...,
+        timestamp: Timestamp = ...,
     ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
 
 class AppendTextResponse:
     stats: DocumentStats

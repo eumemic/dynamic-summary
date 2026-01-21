@@ -54,3 +54,41 @@ class TestTimestampMessage:
 
         ts.time_end = "2024-01-21T14:30:12Z"
         assert ts.HasField("time_end") is True
+
+
+class TestAppendTextRequestTimestamp:
+    """Test that AppendTextRequest has optional Timestamp field."""
+
+    def test_append_request_has_timestamp_field(self) -> None:
+        """AppendTextRequest should have an optional timestamp field."""
+        req = dynamic_summary_pb2.AppendTextRequest(
+            document_id="test_doc",
+            content=b"test content",
+        )
+        # Timestamp field should exist and be unset by default
+        assert hasattr(req, "timestamp")
+        assert req.HasField("timestamp") is False
+
+    def test_append_request_accepts_timestamp(self) -> None:
+        """AppendTextRequest can accept a Timestamp value."""
+        ts = dynamic_summary_pb2.Timestamp(
+            time_start="2024-01-21T14:30:00Z",
+            time_end="2024-01-21T14:30:12Z",
+        )
+        req = dynamic_summary_pb2.AppendTextRequest(
+            document_id="test_doc",
+            content=b"test content",
+            timestamp=ts,
+        )
+        assert req.HasField("timestamp") is True
+        assert req.timestamp.time_start == "2024-01-21T14:30:00Z"
+        assert req.timestamp.time_end == "2024-01-21T14:30:12Z"
+
+    def test_append_request_timestamp_is_field_number_5(self) -> None:
+        """Timestamp field should be field number 5 per the spec."""
+        # DESCRIPTOR gives us access to the proto field descriptors
+        field = dynamic_summary_pb2.AppendTextRequest.DESCRIPTOR.fields_by_name.get(
+            "timestamp"
+        )
+        assert field is not None
+        assert field.number == 5

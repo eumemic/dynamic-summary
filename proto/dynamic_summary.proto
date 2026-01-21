@@ -40,6 +40,7 @@ message AppendTextRequest {
   bytes content = 2;
   bool collect_telemetry = 3;
   bool replace_existing = 4;
+  optional Timestamp timestamp = 5;  // Optional timestamp for this chunk
 }
 
 message AppendTextResponse {
