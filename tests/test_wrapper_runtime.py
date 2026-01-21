@@ -174,6 +174,48 @@ def test_ragzoom_append_passes_timestamp_tuple_to_runtime() -> None:
     assert session.append_calls[0]["timestamp"] == ts_tuple
 
 
+def test_ragzoom_batch_append_passes_timestamps_to_runtime() -> None:
+    """RagZoom.batch_append() must pass timestamps parameter to the runtime session."""
+    expected = IndexingResult(
+        document_id="doc",
+        chunks_created=2,
+        tree_depth=1,
+    )
+    session = _StubSession(expected)
+    runtime = _StubRuntime(session)
+
+    with patch("ragzoom.wrapper.GrpcRagzoomClient") as client_mock:
+        wrapper = RagZoom(runtime=runtime)
+        timestamps: list[str | tuple[str, str]] = [
+            "2024-01-21T14:30:00Z",
+            ("2024-01-21T14:30:05Z", "2024-01-21T14:30:10Z"),
+        ]
+        wrapper.batch_append("doc", ["unit1", "unit2"], timestamps=timestamps)
+
+    assert not client_mock.called
+    assert len(session.append_calls) == 1
+    assert session.append_calls[0]["timestamps"] == timestamps
+
+
+def test_ragzoom_batch_append_without_timestamps() -> None:
+    """RagZoom.batch_append() passes None for timestamps when not provided."""
+    expected = IndexingResult(
+        document_id="doc",
+        chunks_created=2,
+        tree_depth=1,
+    )
+    session = _StubSession(expected)
+    runtime = _StubRuntime(session)
+
+    with patch("ragzoom.wrapper.GrpcRagzoomClient") as client_mock:
+        wrapper = RagZoom(runtime=runtime)
+        wrapper.batch_append("doc", ["unit1", "unit2"])
+
+    assert not client_mock.called
+    assert len(session.append_calls) == 1
+    assert session.append_calls[0]["timestamps"] is None
+
+
 @pytest.mark.asyncio
 async def test_async_ragzoom_uses_runtime() -> None:
     expected = IndexingResult(

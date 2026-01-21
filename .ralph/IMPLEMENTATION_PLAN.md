@@ -270,11 +270,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `test_ragzoom_append_passes_timestamp_to_runtime`, `test_ragzoom_append_passes_timestamp_tuple_to_runtime`
   - Location: `ragzoom/wrapper.py:131-155`
 
-- [ ] Add `timestamps` parameter to `RagZoom.batch_append()`
+- [x] Add `timestamps` parameter to `RagZoom.batch_append()`
   - Spec: specs/temporal-metadata.md § API Changes > Python Client API
   - Success: `batch_append(units, timestamps=[...])` with parallel list
-  - Test: `test_client_batch_append_with_timestamps`
-  - Location: Python client wrapper
+  - Test: `test_ragzoom_batch_append_passes_timestamps_to_runtime`, `test_ragzoom_batch_append_without_timestamps`
+  - Location: `ragzoom/wrapper.py:157-197` (sync), `ragzoom/wrapper.py:437-468` (async)
 
 - [ ] Add `time_start`/`time_end` to `RagZoom.query()`
   - Spec: specs/temporal-metadata.md § API Changes > Python Client API
@@ -284,11 +284,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
 
 ### gRPC Client
 
-- [ ] Serialize timestamps to proto in GrpcRagzoomClient
+- [x] Serialize timestamps to proto in GrpcRagzoomClient
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 2
   - Success: Client builds Timestamp proto from ISO 8601 strings
-  - Test: `test_grpc_client_serializes_timestamps`
-  - Location: `ragzoom/client/grpc_client.py`
+  - Test: `_build_timestamp_proto` helper used in `append_text` and `batch_append_text`
+  - Location: `ragzoom/client/grpc_client.py:32-45` (helper), `ragzoom/client/grpc_client.py:303-307` (append), `ragzoom/client/grpc_client.py:349-352` (batch)
 
 - [ ] Pass time window to ExecuteQueryRequest in GrpcRagzoomClient
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 3

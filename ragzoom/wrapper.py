@@ -160,12 +160,21 @@ class RagZoom:
         units: list[str],
         *,
         collect_telemetry: bool = False,
+        timestamps: list[str | tuple[str, str]] | None = None,
     ) -> IndexingResult:
         """Append multiple text units with forced split boundaries between them.
 
         Each unit creates a forced boundary, meaning text is never merged across
         unit boundaries. Semantically equivalent to calling append() for each unit
         sequentially, but executed in a single transaction for efficiency.
+
+        Args:
+            document_id: The document to append to
+            units: List of text units, each creating a forced boundary
+            collect_telemetry: Whether to collect telemetry data
+            timestamps: Optional list of ISO 8601 timestamps parallel to units.
+                Each entry can be a single string (used for both start and end)
+                or a tuple of (start, end) strings.
         """
         if not document_id:
             raise ValueError("document_id is required")
@@ -178,6 +187,7 @@ class RagZoom:
                 session.batch_append_text(
                     units,
                     collect_telemetry=collect_telemetry,
+                    timestamps=timestamps,
                 )
             )
 
@@ -186,6 +196,7 @@ class RagZoom:
                 document_id=document_id,
                 units=units,
                 collect_telemetry=collect_telemetry,
+                timestamps=timestamps,
             )
 
     def _append(
@@ -429,6 +440,7 @@ class AsyncRagZoom:
         units: list[str],
         *,
         collect_telemetry: bool = False,
+        timestamps: list[str | tuple[str, str]] | None = None,
     ) -> IndexingResult:
         if not document_id:
             raise ValueError("document_id is required")
@@ -441,6 +453,7 @@ class AsyncRagZoom:
             return await session.batch_append_text(
                 units,
                 collect_telemetry=collect_telemetry,
+                timestamps=timestamps,
             )
 
         # gRPC client is sync - run in thread to avoid blocking event loop
@@ -450,6 +463,7 @@ class AsyncRagZoom:
                     document_id=document_id,
                     units=units,
                     collect_telemetry=collect_telemetry,
+                    timestamps=timestamps,
                 )
 
         return await asyncio.to_thread(_do_batch_append)
