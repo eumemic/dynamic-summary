@@ -132,11 +132,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `tests/test_temporal_parsing.py` (14 tests covering formats, edge cases, rejections)
   - Location: `ragzoom/server/append_executor.py:27-51`
 
-- [ ] Validate `time_end >= time_start`
+- [x] Validate `time_end >= time_start`
   - Spec: specs/temporal-metadata.md § Requirements > 5. Validation Rules
   - Success: `time_end < time_start` raises ValueError with clear message
-  - Test: `test_timestamp_range_validation`
-  - Location: `ragzoom/server/append_executor.py`
+  - Test: `tests/test_temporal_parsing.py::TestTimestampRangeValidation` (5 tests)
+  - Location: `ragzoom/server/append_executor.py:53-65` (validate_timestamp_range function)
 
 ### AppendExecutor Updates
 

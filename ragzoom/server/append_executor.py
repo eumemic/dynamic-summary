@@ -50,6 +50,20 @@ def parse_timestamp(iso_string: str) -> float:
     return dt.timestamp()
 
 
+def validate_timestamp_range(*, time_start: float, time_end: float) -> None:
+    """Validate that time_end >= time_start.
+
+    Args:
+        time_start: Start timestamp as Unix float seconds.
+        time_end: End timestamp as Unix float seconds.
+
+    Raises:
+        ValueError: If time_end < time_start.
+    """
+    if time_end < time_start:
+        raise ValueError(f"time_end ({time_end}) must be >= time_start ({time_start})")
+
+
 # Maximum characters per unit in client-managed chunking mode.
 # Units exceeding this limit are truncated with a warning.
 # Exposed as module constant for test overriding.

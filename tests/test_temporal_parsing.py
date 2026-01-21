@@ -99,3 +99,48 @@ class TestParseTimestampInvalidInput:
         """Reject None input."""
         with pytest.raises(AttributeError):
             parse_timestamp(None)  # type: ignore[arg-type]
+
+
+class TestTimestampRangeValidation:
+    """Test validate_timestamp_range for time_end >= time_start enforcement."""
+
+    def test_valid_range_different_times(self) -> None:
+        """Accept range where time_end > time_start."""
+        from ragzoom.server.append_executor import validate_timestamp_range
+
+        # Should not raise - time_end > time_start
+        validate_timestamp_range(time_start=100.0, time_end=200.0)
+
+    def test_valid_range_equal_times(self) -> None:
+        """Accept range where time_end == time_start (point-in-time)."""
+        from ragzoom.server.append_executor import validate_timestamp_range
+
+        # Should not raise - equal timestamps are valid (point-in-time event)
+        validate_timestamp_range(time_start=100.0, time_end=100.0)
+
+    def test_reject_invalid_range(self) -> None:
+        """Reject range where time_end < time_start."""
+        from ragzoom.server.append_executor import validate_timestamp_range
+
+        with pytest.raises(ValueError) as exc_info:
+            validate_timestamp_range(time_start=200.0, time_end=100.0)
+
+        error_msg = str(exc_info.value)
+        assert "time_end" in error_msg
+        assert "time_start" in error_msg
+        # Should include the actual values for debugging
+        assert "200" in error_msg or "100" in error_msg
+
+    def test_reject_invalid_range_small_difference(self) -> None:
+        """Reject range where time_end is slightly less than time_start."""
+        from ragzoom.server.append_executor import validate_timestamp_range
+
+        with pytest.raises(ValueError):
+            validate_timestamp_range(time_start=100.001, time_end=100.0)
+
+    def test_valid_range_with_microsecond_precision(self) -> None:
+        """Accept valid range with microsecond precision."""
+        from ragzoom.server.append_executor import validate_timestamp_range
+
+        # time_end is 1 microsecond after time_start
+        validate_timestamp_range(time_start=100.000001, time_end=100.000002)
