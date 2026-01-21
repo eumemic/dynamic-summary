@@ -243,7 +243,9 @@ class PostgresNodeRepository(BaseRepository):
                 level_index,
                 preceding_context,
                 preceding_context_summary,
-                cost
+                cost,
+                time_start,
+                time_end
             ) VALUES (
                 :id,
                 :text,
@@ -260,7 +262,9 @@ class PostgresNodeRepository(BaseRepository):
                 :level_index,
                 :preceding_context,
                 :preceding_context_summary,
-                :cost
+                :cost,
+                :time_start,
+                :time_end
             )
             ON CONFLICT (id) DO UPDATE SET
                 text = EXCLUDED.text,
@@ -276,7 +280,9 @@ class PostgresNodeRepository(BaseRepository):
                 level_index = EXCLUDED.level_index,
                 preceding_context = EXCLUDED.preceding_context,
                 preceding_context_summary = EXCLUDED.preceding_context_summary,
-                cost = EXCLUDED.cost
+                cost = EXCLUDED.cost,
+                time_start = EXCLUDED.time_start,
+                time_end = EXCLUDED.time_end
             """
         )
 
@@ -302,6 +308,8 @@ class PostgresNodeRepository(BaseRepository):
                     "preceding_context": data.get("preceding_context"),
                     "preceding_context_summary": data.get("preceding_context_summary"),
                     "cost": data.get("cost"),
+                    "time_start": data.get("time_start"),
+                    "time_end": data.get("time_end"),
                 }
                 db_session.execute(insert_sql, params)
                 self.cache_manager.invalidate(node_id)

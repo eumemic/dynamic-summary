@@ -91,6 +91,8 @@ class SqliteNodeRepository:
                     "preceding_context": data.get("preceding_context"),
                     "preceding_context_summary": data.get("preceding_context_summary"),
                     "cost": data.get("cost"),
+                    "time_start": data.get("time_start"),
+                    "time_end": data.get("time_end"),
                 }
                 for data in nodes_data
             ]
@@ -149,6 +151,8 @@ class SqliteNodeRepository:
                     preceding_context=data.get("preceding_context"),
                     preceding_context_summary=data.get("preceding_context_summary"),
                     cost=data.get("cost"),
+                    time_start=data.get("time_start"),
+                    time_end=data.get("time_end"),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=[SQLiteTreeNode.id],
@@ -167,6 +171,8 @@ class SqliteNodeRepository:
                         "preceding_context": stmt.excluded.preceding_context,
                         "preceding_context_summary": stmt.excluded.preceding_context_summary,
                         "cost": stmt.excluded.cost,
+                        "time_start": stmt.excluded.time_start,
+                        "time_end": stmt.excluded.time_end,
                     },
                 )
                 session.execute(stmt)

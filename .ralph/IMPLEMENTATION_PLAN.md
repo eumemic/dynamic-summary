@@ -75,11 +75,12 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
 
 ### Tree Building
 
-- [ ] Propagate timestamps for inner nodes during summarization
+- [x] Propagate timestamps for inner nodes during summarization
   - Spec: specs/temporal-metadata.md § Requirements > 3. Tree Propagation
   - Success: Parent node has `time_start = left_child.time_start` and `time_end = right_child.time_end`
-  - Test: `test_inner_node_timestamp_propagation`
-  - Location: `ragzoom/server/indexing_engine.py` (node_payload construction)
+  - Test: `test_inner_node_timestamp_propagation` in `tests/test_temporal_tree.py`
+  - Location: `ragzoom/server/indexing_engine.py:1694-1700` (extraction), `ragzoom/server/indexing_engine.py:1858-1859` (node_payload)
+  - Note: Also fixed SQLite and Postgres repositories to persist temporal fields in `add_nodes_batch` and `upsert_nodes_batch`
 
 ---
 
