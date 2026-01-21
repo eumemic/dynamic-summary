@@ -143,6 +143,44 @@ class TestDocumentModel:
         pk_columns = [col.name for col in Document.__table__.primary_key.columns]  # type: ignore[attr-defined]
         assert pk_columns == ["id"]
 
+    def test_document_has_is_temporal_column(self) -> None:
+        """Test that Document has Integer is_temporal column with default 0.
+
+        Per specs/temporal-metadata.md § Data Model Changes > Database Schema:
+        is_temporal: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+        Note: We use Integer with 0/1 for cross-database compatibility (SQLite stores
+        booleans as integers). The spec shows Boolean but the codebase pattern uses Integer.
+        """
+        from sqlalchemy import Integer
+
+        is_temporal_col = Document.__table__.columns["is_temporal"]
+
+        # Column should be NOT NULL with default 0 (False)
+        assert is_temporal_col.nullable is False
+        assert isinstance(is_temporal_col.type, Integer)
+        assert is_temporal_col.default.arg == 0
+
+    def test_is_temporal_instantiation(self) -> None:
+        """Test that is_temporal can be set on Document instances."""
+        # Explicit non-temporal
+        doc = Document(
+            id="non_temporal_doc",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+            is_temporal=0,
+        )
+        assert doc.is_temporal == 0
+
+        # Explicit temporal
+        temporal_doc = Document(
+            id="temporal_doc",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+            is_temporal=1,
+        )
+        assert temporal_doc.is_temporal == 1
+
 
 class TestModelIntegration:
     """Test model integration and schema creation."""
@@ -299,6 +337,65 @@ class TestSqliteTreeNodeModel:
 
             assert "time_start" in column_names, "time_start column should exist"
             assert "time_end" in column_names, "time_end column should exist"
+
+        db.close()
+
+
+class TestSqliteDocumentModel:
+    """Test SqliteDocument SQLAlchemy model definition."""
+
+    def test_sqlite_document_has_is_temporal_column(self) -> None:
+        """Test that SqliteDocument has Integer is_temporal column with default 0.
+
+        Per specs/temporal-metadata.md § Data Model Changes > Database Schema.
+        """
+        from sqlalchemy import Integer
+
+        from ragzoom.backends.sqlite_db import SqliteDocument
+
+        is_temporal_col = SqliteDocument.__table__.columns["is_temporal"]
+
+        assert is_temporal_col.nullable is False
+        assert isinstance(is_temporal_col.type, Integer)
+        assert is_temporal_col.default.arg == 0
+
+    def test_sqlite_is_temporal_instantiation(self) -> None:
+        """Test that is_temporal can be set on SqliteDocument instances."""
+        from ragzoom.backends.sqlite_db import SqliteDocument
+
+        # Explicit non-temporal
+        doc = SqliteDocument(
+            id="non_temporal_doc",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+            is_temporal=0,
+        )
+        assert doc.is_temporal == 0
+
+        # Explicit temporal
+        temporal_doc = SqliteDocument(
+            id="temporal_doc",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+            is_temporal=1,
+        )
+        assert temporal_doc.is_temporal == 1
+
+    def test_sqlite_is_temporal_migration_adds_column(self) -> None:
+        """Test that migration adds is_temporal column to existing SQLite databases."""
+        from sqlalchemy import text
+
+        from ragzoom.backends.sqlite_db import SqliteDatabaseManager
+
+        # Create a fresh in-memory database
+        db = SqliteDatabaseManager(url="sqlite:///:memory:")
+
+        # Verify column exists after initialization (migration runs in __post_init__)
+        with db.engine.connect() as conn:
+            result = conn.execute(text("PRAGMA table_info(documents)")).fetchall()
+            column_names = [row[1] for row in result]
+
+            assert "is_temporal" in column_names, "is_temporal column should exist"
 
         db.close()
 

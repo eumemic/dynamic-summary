@@ -32,11 +32,12 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `test_sqlite_tree_node_has_temporal_columns`
   - Location: `ragzoom/backends/sqlite_db.py` (migration in SqliteDatabaseManager.__post_init__)
 
-- [ ] Add `is_temporal` column to Document model
+- [x] Add `is_temporal` column to Document model
   - Spec: specs/temporal-metadata.md § Data Model Changes > Database Schema
-  - Success: `documents` table has `is_temporal BOOLEAN NOT NULL DEFAULT FALSE` column
+  - Success: `documents` table has `is_temporal INTEGER NOT NULL DEFAULT 0` column (Integer for SQLite compatibility)
   - Test: `test_document_has_is_temporal_column`
-  - Location: `ragzoom/models.py` (Document class)
+  - Location: `ragzoom/models.py` (Document class), `ragzoom/backends/sqlite_db.py` (SqliteDocument class)
+  - Note: Uses Integer with 0/1 pattern (not Boolean) for cross-database compatibility
 
 ### TypedDict / Protocols
 

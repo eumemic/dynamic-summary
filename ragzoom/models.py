@@ -156,6 +156,13 @@ class Document(Base):
     embedding_model: Mapped[str] = mapped_column(String, nullable=False)
     summary_model: Mapped[str] = mapped_column(String, nullable=False)
 
+    # Temporal document flag: determines if document requires timestamps on all chunks
+    # See specs/temporal-metadata.md § Requirements > 1. Temporal Documents
+    # - 0 (False): Non-temporal document, chunks must NOT have timestamps
+    # - 1 (True): Temporal document, chunks MUST have timestamps
+    # Inferred from first append (with timestamps → 1, without → 0)
+    is_temporal: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
 
 class User(Base):
     """Database model for authenticated users."""

@@ -76,6 +76,10 @@ class SqliteDocument(SqliteBase):
     embedding_model: Mapped[str] = mapped_column(String, nullable=False)
     summary_model: Mapped[str] = mapped_column(String, nullable=False)
 
+    # Temporal document flag: determines if document requires timestamps on all chunks
+    # See specs/temporal-metadata.md § Requirements > 1. Temporal Documents
+    is_temporal: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
 
 @dataclass
 class SqliteDatabaseManager:
@@ -228,6 +232,14 @@ class SqliteDatabaseManager:
                 try:
                     conn.exec_driver_sql(
                         "CREATE INDEX IF NOT EXISTS idx_users_github_id ON users (github_id)"
+                    )
+                except Exception:
+                    pass
+                # Add is_temporal column for temporal document tracking
+                # See specs/temporal-metadata.md § Data Model Changes > Database Schema
+                try:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE documents ADD COLUMN is_temporal INTEGER NOT NULL DEFAULT 0"
                     )
                 except Exception:
                     pass
