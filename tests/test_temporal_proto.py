@@ -183,3 +183,36 @@ class TestExecuteQueryRequestTimeFields:
         assert isinstance(req.time_end, str)
         assert req.time_start == "2024-01-21T14:30:00.123456+00:00"
         assert req.time_end == "2024-01-21T14:30:00-05:00"
+
+
+class TestDocumentStatusIsTemporalField:
+    """Test that DocumentStatus has is_temporal field for temporal documents."""
+
+    def test_document_status_has_is_temporal_field(self) -> None:
+        """DocumentStatus should have an is_temporal boolean field."""
+        status = dynamic_summary_pb2.DocumentStatus(
+            document_id="test_doc",
+            leaf_count=10,
+            has_pending_work=False,
+            tree_depth=3,
+        )
+        assert hasattr(status, "is_temporal")
+        # Default value for bool in proto3 is False
+        assert status.is_temporal is False
+
+    def test_document_status_is_temporal_can_be_set_true(self) -> None:
+        """DocumentStatus.is_temporal can be set to True."""
+        status = dynamic_summary_pb2.DocumentStatus(
+            document_id="test_doc",
+            leaf_count=10,
+            is_temporal=True,
+        )
+        assert status.is_temporal is True
+
+    def test_document_status_is_temporal_is_field_number_5(self) -> None:
+        """is_temporal field should be field number 5 per the spec."""
+        field = dynamic_summary_pb2.DocumentStatus.DESCRIPTOR.fields_by_name.get(
+            "is_temporal"
+        )
+        assert field is not None
+        assert field.number == 5

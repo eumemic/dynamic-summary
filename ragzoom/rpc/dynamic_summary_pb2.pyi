@@ -342,18 +342,21 @@ class GetDocumentRequest:
     def __init__(self, *, document_id: str) -> None: ...
 
 class DocumentStatus:
+    DESCRIPTOR: ClassVar[Descriptor]
     document_id: str
     leaf_count: int
     has_pending_work: bool
     tree_depth: int
+    is_temporal: bool
 
     def __init__(
         self,
         *,
-        document_id: str,
-        leaf_count: int,
-        has_pending_work: bool,
-        tree_depth: int,
+        document_id: str = ...,
+        leaf_count: int = ...,
+        has_pending_work: bool = ...,
+        tree_depth: int = ...,
+        is_temporal: bool = ...,
     ) -> None: ...
 
 class GetDocumentResponse:

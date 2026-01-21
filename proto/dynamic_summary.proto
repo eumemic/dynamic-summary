@@ -185,6 +185,7 @@ message DocumentStatus {
   int32 leaf_count = 2;
   bool has_pending_work = 3;
   int32 tree_depth = 4;
+  bool is_temporal = 5;  // True if document has temporal metadata (timestamps)
 }
 
 message GetDocumentResponse {

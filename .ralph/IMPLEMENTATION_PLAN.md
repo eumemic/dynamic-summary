@@ -112,17 +112,17 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `test_query_request_has_time_fields`
   - Location: `proto/dynamic_summary.proto:94-111`
 
-- [ ] Add `is_temporal` to DocumentStatus
+- [x] Add `is_temporal` to DocumentStatus
   - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
   - Success: DocumentStatus has `bool is_temporal = 5;`
   - Test: `test_document_status_has_is_temporal`
-  - Location: `proto/dynamic_summary.proto:171-176`
+  - Location: `proto/dynamic_summary.proto:183-189`
 
-- [ ] Regenerate gRPC stubs
+- [x] Regenerate gRPC stubs
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 2
-  - Success: `ragzoom/proto/` contains updated Python stubs with new messages/fields
-  - Test: Import succeeds and new types available
-  - Location: `ragzoom/proto/`
+  - Success: `ragzoom/rpc/` contains updated Python stubs with new messages/fields
+  - Test: Import succeeds and new types available (verified via test_temporal_proto.py)
+  - Location: `ragzoom/rpc/` (run `scripts/compile-proto.sh` to regenerate)
 
 ### Timestamp Parsing
 
