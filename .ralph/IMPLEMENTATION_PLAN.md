@@ -47,7 +47,7 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: Type-check code using NodeDataDict with temporal fields
   - Location: `ragzoom/contracts/node_repository.py:26-56`
 
-- [ ] Extend TreeNode protocol with temporal fields
+- [x] Extend TreeNode protocol with temporal fields
   - Spec: specs/temporal-metadata.md § Data Model Changes > TypedDict / Protocols
   - Success: TreeNode protocol includes `time_start: float | None` and `time_end: float | None`
   - Test: Type-check implementations conforming to TreeNode protocol

@@ -46,6 +46,11 @@ class TreeNode(Protocol):
     # Embedding vector (stored as packed float32 bytes, or None if not yet embedded)
     embedding: bytes | None
 
+    # Temporal metadata (Unix timestamp in float seconds)
+    # See specs/temporal-metadata.md § Data Model Changes > TypedDict / Protocols
+    time_start: float | None
+    time_end: float | None
+
     # Optional helpers many implementations already provide
     def is_leaf(self) -> bool: ...  # pragma: no cover - protocol signature
     def is_root(self) -> bool: ...  # pragma: no cover - protocol signature
