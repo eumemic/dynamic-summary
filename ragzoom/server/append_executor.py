@@ -38,6 +38,8 @@ class LeafSpec:
     preceding_neighbor_id: str | None
     following_neighbor_id: str | None
     level_index: int
+    time_start: float | None = None
+    time_end: float | None = None
 
 
 @dataclass

@@ -53,11 +53,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: Type-check implementations conforming to TreeNode protocol
   - Location: `ragzoom/contracts/tree_node.py:16-53`
 
-- [ ] Add timestamp fields to LeafSpec dataclass
+- [x] Add timestamp fields to LeafSpec dataclass
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 1
   - Success: LeafSpec includes `time_start: float | None` and `time_end: float | None`
   - Test: `test_leaf_spec_accepts_timestamps`
-  - Location: `ragzoom/server/append_executor.py:31-41`
+  - Location: `ragzoom/server/append_executor.py:31-43`
 
 ### Vector Metadata
 
