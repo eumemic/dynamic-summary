@@ -54,6 +54,10 @@ class NodeDataDict(TypedDict, total=False):
     # Cost in USD for creating this node
     cost: float | None
 
+    # Temporal metadata (Unix float seconds)
+    time_start: float | None
+    time_end: float | None
+
 
 try:  # Optional typing import; not required at runtime
     from typing import TYPE_CHECKING

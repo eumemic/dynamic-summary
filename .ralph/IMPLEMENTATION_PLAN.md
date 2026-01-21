@@ -41,7 +41,7 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
 
 ### TypedDict / Protocols
 
-- [ ] Extend NodeDataDict with temporal fields
+- [x] Extend NodeDataDict with temporal fields
   - Spec: specs/temporal-metadata.md § Data Model Changes > TypedDict / Protocols
   - Success: NodeDataDict includes `time_start: float | None` and `time_end: float | None`
   - Test: Type-check code using NodeDataDict with temporal fields
