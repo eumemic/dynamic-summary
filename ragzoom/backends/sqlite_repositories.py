@@ -1677,6 +1677,46 @@ class SqliteDocumentRepository:
     def get_document_embedding_model(self, document_id: str) -> str | None:
         return self.db.get_document_embedding_model(document_id)
 
+    def get_document_is_temporal(self, document_id: str) -> bool | None:
+        """Get the is_temporal flag for a document.
+
+        Args:
+            document_id: Document identifier
+
+        Returns:
+            True if document is temporal, False if not, None if document not found
+        """
+        with self.SessionLocal() as session:
+            row = session.execute(
+                select(SqliteDocument.is_temporal).where(
+                    SqliteDocument.id == document_id
+                )
+            ).first()
+            if row is None:
+                return None
+            # Convert int (0/1) to bool
+            return bool(row[0])
+
+    def set_document_is_temporal(self, document_id: str, *, is_temporal: bool) -> None:
+        """Set the is_temporal flag for a document.
+
+        Args:
+            document_id: Document identifier
+            is_temporal: Whether the document is temporal
+
+        Raises:
+            ValueError: If document does not exist
+        """
+        with self.SessionLocal() as session:
+            result = session.execute(
+                update(SqliteDocument)
+                .where(SqliteDocument.id == document_id)
+                .values(is_temporal=1 if is_temporal else 0)
+            )
+            if result.rowcount == 0:
+                raise ValueError(f"Document not found: {document_id}")
+            session.commit()
+
     def list_documents(self) -> list[SqliteDocument]:
         with self.SessionLocal() as session:
             rows = session.query(SqliteDocument).all()

@@ -166,17 +166,19 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
 
 ### Document Temporality
 
-- [ ] Add `get_document_is_temporal()` to repository
+- [x] Add `get_document_is_temporal()` to repository
   - Spec: specs/temporal-metadata.md § Requirements > 1. Temporal Documents
   - Success: Query returns `is_temporal` flag for document
-  - Test: `test_get_document_is_temporal`
-  - Location: `ragzoom/backends/sqlite_repositories.py`, `ragzoom/repositories/postgres_node_repository.py`
+  - Test: `tests/test_document_is_temporal_sqlite.py::test_get_document_is_temporal_*`
+  - Location: `ragzoom/backends/sqlite_repositories.py:1684-1698`, `ragzoom/repositories/document_repository.py:71-84`
+  - Note: Also added to `ragzoom/contracts/document_repository.py` protocol
 
-- [ ] Add `set_document_is_temporal()` to repository
+- [x] Add `set_document_is_temporal()` to repository
   - Spec: specs/temporal-metadata.md § Requirements > 1. Temporal Documents
   - Success: Can set `is_temporal=True` on first temporal append
-  - Test: `test_set_document_is_temporal`
-  - Location: `ragzoom/backends/sqlite_repositories.py`, `ragzoom/repositories/postgres_node_repository.py`
+  - Test: `tests/test_document_is_temporal_sqlite.py::test_get_document_is_temporal_returns_true_for_temporal_document`
+  - Location: `ragzoom/backends/sqlite_repositories.py:1700-1718`, `ragzoom/repositories/document_repository.py:86-105`
+  - Note: Also added to `ragzoom/contracts/document_repository.py` protocol
 
 - [ ] Infer `is_temporal` from first append
   - Spec: specs/temporal-metadata.md § Requirements > 1. Temporal Documents
