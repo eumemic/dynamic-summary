@@ -67,11 +67,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `tests/test_vector_common.py::TestCoerceFloat` (13 tests)
   - Location: `ragzoom/backends/vector_common.py:29-50`
 
-- [ ] Extend `normalize_metadata_from_dict()` with temporal fields
+- [x] Extend `normalize_metadata_from_dict()` with temporal fields
   - Spec: specs/temporal-metadata.md § Data Model Changes > Vector Metadata
   - Success: MetaDict includes `time_start` and `time_end` coerced to float
   - Test: `test_normalize_metadata_includes_timestamps`
-  - Location: `ragzoom/backends/vector_common.py:47-63`
+  - Location: `ragzoom/backends/vector_common.py:70-91`
 
 ### Tree Building
 
