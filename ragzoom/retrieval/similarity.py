@@ -44,7 +44,6 @@ def pairwise_similarities(vectors: list[Vector]) -> NDArray[np.float32]:
         return cast(NDArray[np.float32], np.zeros((0, 0), dtype=np.float32))
     mat = vectors_matrix(vectors)
     sims = (mat @ mat.T).astype(np.float32, copy=False)
-    sims = cast(NDArray[np.float32], sims)
     # Clamp tiny numerical drift
     np.clip(sims, 0.0, 1.0, out=sims)
     return sims
