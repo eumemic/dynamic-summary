@@ -224,13 +224,17 @@ class AppendExecutor:
         if not chunks:
             raise ValueError("splitter returned no chunks for append")
 
+        # Build timestamps sequence: all chunks share the same timestamp
+        chunk_timestamps: list[tuple[float, float] | None] | None = None
+        if time_start is not None and time_end is not None:
+            chunk_timestamps = [(time_start, time_end)] * len(chunks)
+
         leaf_specs = self._build_leaf_specs(
             chunks,
             span_start=span_start,
             preceding_neighbor_id=right_leaf.id if right_leaf else None,
             start_level_index=start_level_index,
-            time_start=time_start,
-            time_end=time_end,
+            timestamps=chunk_timestamps,
         )
         logger.debug(
             "append[%s]: prepared %d leaf specs (span_start=%d)",
@@ -493,14 +497,18 @@ class AppendExecutor:
             if not chunks:
                 raise ValueError("splitter returned no chunks for unit in append_batch")
 
+            # Build timestamps sequence: all chunks from this unit share the same timestamp
+            chunk_timestamps: list[tuple[float, float] | None] | None = None
+            if time_start is not None and time_end is not None:
+                chunk_timestamps = [(time_start, time_end)] * len(chunks)
+
             # Build leaf specs for this unit's chunks
             unit_specs = self._build_leaf_specs(
                 chunks,
                 span_start=span_start,
                 preceding_neighbor_id=preceding_id,
                 start_level_index=level_index,
-                time_start=time_start,
-                time_end=time_end,
+                timestamps=chunk_timestamps,
             )
 
             if not unit_specs:
@@ -676,10 +684,25 @@ class AppendExecutor:
         span_start: int,
         preceding_neighbor_id: str | None,
         start_level_index: int,
-        time_start: float | None = None,
-        time_end: float | None = None,
+        timestamps: Sequence[tuple[float, float] | None] | None = None,
     ) -> list[LeafSpec]:
-        """Build leaf specs for new chunks starting at span_start."""
+        """Build leaf specs for new chunks starting at span_start.
+
+        Args:
+            chunks: Text chunks to create leaf specs for.
+            span_start: Starting character position in document.
+            preceding_neighbor_id: ID of leaf node that precedes these new leaves.
+            start_level_index: Starting level index for the new leaves.
+            timestamps: Per-chunk timestamps as (time_start, time_end) tuples.
+                If None, all chunks get None timestamps.
+                If provided, length must match chunks length.
+        """
+        if timestamps is not None and len(timestamps) != len(chunks):
+            raise ValueError(
+                f"timestamps length ({len(timestamps)}) must match chunks length "
+                f"({len(chunks)})"
+            )
+
         specs: list[LeafSpec] = []
         span_cursor = span_start
 
@@ -690,6 +713,11 @@ class AppendExecutor:
 
             # Neighbor links: chain leaves together, first links to preceding_neighbor_id
             prev_id = specs[index - 1].node_id if index > 0 else preceding_neighbor_id
+
+            # Get timestamp for this chunk (or None if no timestamps provided)
+            chunk_timestamp = timestamps[index] if timestamps is not None else None
+            time_start = chunk_timestamp[0] if chunk_timestamp else None
+            time_end = chunk_timestamp[1] if chunk_timestamp else None
 
             specs.append(
                 LeafSpec(

@@ -152,11 +152,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `tests/test_temporal_append_sqlite.py::TestAppendBatchWithTimestamps` (7 tests)
   - Location: `ragzoom/server/append_executor.py:339-425`
 
-- [ ] Update `_build_leaf_specs()` to accept timestamps
+- [x] Update `_build_leaf_specs()` to accept timestamps
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 1
   - Success: `_build_leaf_specs()` accepts `timestamps: Sequence[tuple[float, float] | None]`
-  - Test: `test_build_leaf_specs_with_timestamps`
-  - Location: `ragzoom/server/append_executor.py:564-611`
+  - Test: `tests/test_build_leaf_specs_sqlite.py::TestBuildLeafSpecsWithTimestamps` (5 tests)
+  - Location: `ragzoom/server/append_executor.py:676-735`
 
 - [ ] Store timestamps in leaf NodeDataDict payload
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 1
