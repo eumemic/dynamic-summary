@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, NoReturn
 import pytest
 
 from ragzoom.rpc import dynamic_summary_pb2 as pb2
-from ragzoom.server.servicers import IndexerServicer, RetrievalServicer
+from ragzoom.server.servicers import IndexerServicer, RetrievalServicer, WorkerServicer
 
 if TYPE_CHECKING:
     from unittest.mock import MagicMock
@@ -357,3 +357,89 @@ class TestServicerQueryExtractsTimeWindow:
         call_kwargs = mock_retriever.retrieve_async.call_args.kwargs
         assert call_kwargs.get("time_start") == "2024-01-21T14:00:00Z"
         assert call_kwargs.get("time_end") is None
+
+
+class TestDocumentStatusIncludesIsTemporal:
+    """Test that GetDocument response includes is_temporal field."""
+
+    @pytest.fixture
+    def mock_doc_repo(self) -> MagicMock:
+        """Create a mock document repository."""
+        from unittest.mock import MagicMock
+
+        doc_repo = MagicMock()
+        doc_repo.get_document_is_temporal = MagicMock(return_value=True)
+        return doc_repo
+
+    @pytest.fixture
+    def mock_document_store(self, mock_doc_repo: MagicMock) -> MagicMock:
+        """Create a mock DocumentStore."""
+        from unittest.mock import MagicMock
+
+        store = MagicMock()
+        store._doc_repo = mock_doc_repo
+        store.nodes.leaf_count.return_value = 5
+        store.tree.get_root.return_value = MagicMock(height=2)
+        return store
+
+    @pytest.fixture
+    def mock_state_for_get_document(self, mock_document_store: MagicMock) -> MagicMock:
+        """Create a mock ServerState for GetDocument."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        state = MagicMock()
+        state.store.for_document.return_value = mock_document_store
+        state.indexing_engine.status = AsyncMock(
+            return_value=MagicMock(in_flight_by_document={})
+        )
+        return state
+
+    @pytest.mark.asyncio
+    async def test_document_status_includes_is_temporal_true(
+        self,
+        mock_state_for_get_document: MagicMock,
+        mock_doc_repo: MagicMock,
+    ) -> None:
+        """GetDocument returns is_temporal=True for temporal documents."""
+        mock_doc_repo.get_document_is_temporal.return_value = True
+        servicer = WorkerServicer(mock_state_for_get_document)
+        request = pb2.GetDocumentRequest(document_id="test_doc")
+        context = MockServicerContext()
+
+        response = await servicer.GetDocument(request, context)
+
+        assert response.status.is_temporal is True
+        mock_doc_repo.get_document_is_temporal.assert_called_once_with("test_doc")
+
+    @pytest.mark.asyncio
+    async def test_document_status_includes_is_temporal_false(
+        self,
+        mock_state_for_get_document: MagicMock,
+        mock_doc_repo: MagicMock,
+    ) -> None:
+        """GetDocument returns is_temporal=False for non-temporal documents."""
+        mock_doc_repo.get_document_is_temporal.return_value = False
+        servicer = WorkerServicer(mock_state_for_get_document)
+        request = pb2.GetDocumentRequest(document_id="test_doc")
+        context = MockServicerContext()
+
+        response = await servicer.GetDocument(request, context)
+
+        assert response.status.is_temporal is False
+
+    @pytest.mark.asyncio
+    async def test_document_status_defaults_is_temporal_false_when_not_found(
+        self,
+        mock_state_for_get_document: MagicMock,
+        mock_doc_repo: MagicMock,
+    ) -> None:
+        """GetDocument returns is_temporal=False when document not found."""
+        mock_doc_repo.get_document_is_temporal.return_value = None
+        servicer = WorkerServicer(mock_state_for_get_document)
+        request = pb2.GetDocumentRequest(document_id="nonexistent_doc")
+        context = MockServicerContext()
+
+        response = await servicer.GetDocument(request, context)
+
+        # None from repository should be treated as False
+        assert response.status.is_temporal is False

@@ -738,6 +738,14 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         root = document_store.tree.get_root()
         tree_depth = int(getattr(root, "height", 0) or 0) if root else 0
 
+        # Get temporal status from document repository
+        is_temporal_result = document_store._doc_repo.get_document_is_temporal(
+            request.document_id
+        )
+        is_temporal = (
+            bool(is_temporal_result) if is_temporal_result is not None else False
+        )
+
         indexing_status = await self._state.indexing_engine.status()
         inflight = indexing_status.in_flight_by_document.get(request.document_id, 0)
         has_pending_work = inflight > 0
@@ -747,6 +755,7 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
             leaf_count=leaf_count,
             has_pending_work=has_pending_work,
             tree_depth=tree_depth,
+            is_temporal=is_temporal,
         )
         return pb2.GetDocumentResponse(status=doc_status)
 

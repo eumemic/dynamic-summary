@@ -256,11 +256,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `tests/test_temporal_servicer.py::TestServicerQueryExtractsTimeWindow` (3 tests)
   - Location: `ragzoom/server/servicers.py:484-490` (extraction), `ragzoom/server/servicers.py:507-509` (passing to retrieve_async)
 
-- [ ] Populate is_temporal in DocumentStatus response
+- [x] Populate is_temporal in DocumentStatus response
   - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
   - Success: GetDocument response includes document.is_temporal value
-  - Test: `test_document_status_includes_is_temporal`
-  - Location: `ragzoom/server/servicers.py` (GetDocument method)
+  - Test: `tests/test_temporal_servicer.py::TestDocumentStatusIncludesIsTemporal` (3 tests)
+  - Location: `ragzoom/server/servicers.py:741-747` (GetDocument method)
 
 ### Python Client API
 
