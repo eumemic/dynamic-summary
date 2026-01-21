@@ -149,6 +149,8 @@ class Retriever:
         span_start: int = 0,
         span_end: int | None = None,
         query_embedding: list[float] | None = None,
+        time_start: str | None = None,
+        time_end: str | None = None,
     ) -> RetrievalResult:
         """Async retrieval method with MMR diversity.
 
@@ -163,6 +165,10 @@ class Retriever:
             query_embedding: Pre-computed query embedding. If provided, skips the
                 embedding API call. Used during indexing for inner nodes where the
                 parent embedding (avg of children) is already available.
+            time_start: Start of time window (ISO 8601 with timezone). For temporal
+                documents only. Will be mapped to span_start via leaf lookup.
+            time_end: End of time window (ISO 8601 with timezone). For temporal
+                documents only. Will be mapped to span_end via leaf lookup.
 
         Supports three modes:
         1. Budget only: Calculate conservative num_seeds to guarantee no overflow
@@ -171,6 +177,9 @@ class Retriever:
 
         When span_start/span_end are specified, the tiling covers exactly the
         minimal span [actual_start, actual_end) that contains the requested window.
+
+        When time_start/time_end are specified on a temporal document, these are
+        converted to span bounds via leaf lookup before retrieval.
         """
         # Start telemetry if collector is provided
         if telemetry_collector:
@@ -513,6 +522,8 @@ class Retriever:
         recent_verbatim_budget: int | None = None,
         span_start: int = 0,
         span_end: int | None = None,
+        time_start: str | None = None,
+        time_end: str | None = None,
     ) -> RetrievalResult:
         """Synchronous wrapper for retrieve_async.
 
@@ -524,6 +535,8 @@ class Retriever:
             recent_verbatim_budget: Token budget for recent leaves to include verbatim
             span_start: Start of document window (character position, default 0)
             span_end: End of document window (default: document end)
+            time_start: Start of time window (ISO 8601 with timezone)
+            time_end: End of time window (ISO 8601 with timezone)
 
         Creates a new event loop if needed to run the async version.
         For async contexts, use retrieve_async directly.
@@ -538,6 +551,8 @@ class Retriever:
                 recent_verbatim_budget,
                 span_start=span_start,
                 span_end=span_end,
+                time_start=time_start,
+                time_end=time_end,
             )
         )
 

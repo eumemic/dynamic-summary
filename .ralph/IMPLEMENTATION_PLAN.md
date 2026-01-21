@@ -232,11 +232,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
 
 ### Query API Updates
 
-- [ ] Add `time_start`/`time_end` parameters to Retriever
+- [x] Add `time_start`/`time_end` parameters to Retriever
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 3
   - Success: `retrieve_async()` accepts `time_start` and `time_end` parameters
-  - Test: `test_retriever_accepts_time_window`
-  - Location: `ragzoom/retrieve.py`
+  - Test: `tests/test_retriever_time_window_sqlite.py::TestRetrieverAcceptsTimeWindow` (4 tests)
+  - Location: `ragzoom/retrieve.py:141-154` (retrieve_async), `ragzoom/retrieve.py:511-522` (retrieve)
 
 - [ ] Implement time→span mapping logic
   - Spec: specs/temporal-metadata.md § Requirements > 4. Time-Windowed Queries
