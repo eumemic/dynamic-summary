@@ -186,11 +186,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `tests/test_temporal_inference_sqlite.py::TestIsTemporalInference` (5 tests)
   - Location: `ragzoom/server/append_executor.py:192-197` (append), `ragzoom/server/append_executor.py:461-466` (append_batch)
 
-- [ ] Validate timestamp presence on subsequent appends
+- [x] Validate timestamp presence on subsequent appends
   - Spec: specs/temporal-metadata.md § Requirements > 5. Validation Rules
   - Success: Temporal doc + missing timestamps → Error; Non-temporal + timestamps → Error
-  - Test: `test_temporal_validation_on_subsequent_appends`
-  - Location: `ragzoom/server/append_executor.py`
+  - Test: `tests/test_temporal_validation_sqlite.py::TestTemporalValidationOnSubsequentAppends` (10 tests)
+  - Location: `ragzoom/server/append_executor.py:193-209` (append), `ragzoom/server/append_executor.py:471-487` (append_batch)
 
 ### gRPC Servicers
 

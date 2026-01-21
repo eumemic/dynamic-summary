@@ -190,13 +190,25 @@ class AppendExecutor:
             bool(right_leaf),
         )
 
-        # Infer is_temporal from first append:
-        # - First append WITH timestamps → document becomes temporal
-        # - First append WITHOUT timestamps → document stays non-temporal
+        # Handle temporal document validation and inference
         is_first_append = right_leaf is None
         has_timestamps = timestamp is not None
-        if is_first_append and has_timestamps:
-            store._doc_repo.set_document_is_temporal(document_id, is_temporal=True)
+
+        if is_first_append:
+            # First append: infer is_temporal from presence of timestamps
+            if has_timestamps:
+                store._doc_repo.set_document_is_temporal(document_id, is_temporal=True)
+        else:
+            # Subsequent append: validate timestamp presence matches document temporality
+            is_temporal = store._doc_repo.get_document_is_temporal(document_id)
+            if is_temporal and not has_timestamps:
+                raise ValueError(
+                    f"Document '{document_id}' is temporal and requires timestamps on all appends"
+                )
+            if not is_temporal and has_timestamps:
+                raise ValueError(
+                    f"Document '{document_id}' is non-temporal and does not accept timestamps"
+                )
 
         # New leaves start where the existing content ends
         span_start = int(right_leaf.span_end) if right_leaf else 0
@@ -452,13 +464,25 @@ class AppendExecutor:
             bool(right_leaf),
         )
 
-        # Infer is_temporal from first append:
-        # - First append WITH timestamps → document becomes temporal
-        # - First append WITHOUT timestamps → document stays non-temporal
+        # Handle temporal document validation and inference
         is_first_append = right_leaf is None
         has_timestamps = timestamps is not None
-        if is_first_append and has_timestamps:
-            store._doc_repo.set_document_is_temporal(document_id, is_temporal=True)
+
+        if is_first_append:
+            # First append: infer is_temporal from presence of timestamps
+            if has_timestamps:
+                store._doc_repo.set_document_is_temporal(document_id, is_temporal=True)
+        else:
+            # Subsequent append: validate timestamp presence matches document temporality
+            is_temporal = store._doc_repo.get_document_is_temporal(document_id)
+            if is_temporal and not has_timestamps:
+                raise ValueError(
+                    f"Document '{document_id}' is temporal and requires timestamps on all appends"
+                )
+            if not is_temporal and has_timestamps:
+                raise ValueError(
+                    f"Document '{document_id}' is non-temporal and does not accept timestamps"
+                )
 
         # Track position across all units
         span_start = int(right_leaf.span_end) if right_leaf else 0
