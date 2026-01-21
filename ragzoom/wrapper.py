@@ -283,7 +283,23 @@ class RagZoom:
         debug: bool = False,
         viz_width: int = 120,
         use_token_coords: bool = False,
+        time_start: str | None = None,
+        time_end: str | None = None,
     ) -> QueryResponse:
+        """Execute a query against a document.
+
+        Args:
+            document_id: The document to query
+            query_text: The query text
+            budget_tokens: Maximum tokens in response
+            num_seeds: Number of seed nodes for retrieval
+            embedding_model: Override embedding model
+            debug: Enable debug output
+            viz_width: Width for visualization
+            use_token_coords: Use token coordinates
+            time_start: Optional ISO 8601 timestamp for time window start
+            time_end: Optional ISO 8601 timestamp for time window end
+        """
         if not document_id:
             raise ValueError("document_id is required")
         if not query_text:
@@ -299,6 +315,8 @@ class RagZoom:
                 debug=debug,
                 viz_width=viz_width,
                 use_token_coords=use_token_coords,
+                time_start=time_start,
+                time_end=time_end,
             )
 
         result = output.query_result
@@ -520,6 +538,8 @@ class AsyncRagZoom:
         debug: bool = False,
         viz_width: int = 120,
         use_token_coords: bool = False,
+        time_start: str | None = None,
+        time_end: str | None = None,
     ) -> QueryResponse:
         # Query always goes through gRPC client (no runtime path)
         return await self._call_sync(
@@ -532,6 +552,8 @@ class AsyncRagZoom:
             debug=debug,
             viz_width=viz_width,
             use_token_coords=use_token_coords,
+            time_start=time_start,
+            time_end=time_end,
         )
 
     # jscpd:ignore-end

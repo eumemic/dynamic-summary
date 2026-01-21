@@ -384,6 +384,8 @@ class GrpcRagzoomClient:
         profile: bool = False,
         span_start: int = 0,
         span_end: int | None = None,
+        time_start: str | None = None,
+        time_end: str | None = None,
     ) -> ExecuteQueryOutput:
         request = pb2.ExecuteQueryRequest(
             query=query,
@@ -400,6 +402,10 @@ class GrpcRagzoomClient:
         )
         if span_end is not None:
             request.span_end = span_end
+        if time_start is not None:
+            request.time_start = time_start
+        if time_end is not None:
+            request.time_end = time_end
         try:
             response = self._retrieval.ExecuteQuery(request, timeout=self._timeout)
         except grpc.RpcError as error:  # pragma: no cover

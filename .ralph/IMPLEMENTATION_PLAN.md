@@ -276,11 +276,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `test_ragzoom_batch_append_passes_timestamps_to_runtime`, `test_ragzoom_batch_append_without_timestamps`
   - Location: `ragzoom/wrapper.py:157-197` (sync), `ragzoom/wrapper.py:437-468` (async)
 
-- [ ] Add `time_start`/`time_end` to `RagZoom.query()`
+- [x] Add `time_start`/`time_end` to `RagZoom.query()`
   - Spec: specs/temporal-metadata.md § API Changes > Python Client API
   - Success: `query(text, time_start="...", time_end="...")` accepts ISO 8601 strings
-  - Test: `test_client_query_with_time_window`
-  - Location: Python client wrapper
+  - Test: `test_ragzoom_query_passes_time_window_to_grpc_client`
+  - Location: `ragzoom/wrapper.py:275-320` (sync), `ragzoom/wrapper.py:530-557` (async)
 
 ### gRPC Client
 
@@ -290,11 +290,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `_build_timestamp_proto` helper used in `append_text` and `batch_append_text`
   - Location: `ragzoom/client/grpc_client.py:32-45` (helper), `ragzoom/client/grpc_client.py:303-307` (append), `ragzoom/client/grpc_client.py:349-352` (batch)
 
-- [ ] Pass time window to ExecuteQueryRequest in GrpcRagzoomClient
+- [x] Pass time window to ExecuteQueryRequest in GrpcRagzoomClient
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 3
   - Success: Client sets time_start and time_end on query request
-  - Test: `test_grpc_client_query_sends_time_window`
-  - Location: `ragzoom/client/grpc_client.py`
+  - Test: `test_ragzoom_query_passes_time_window_to_grpc_client` (tests full path through wrapper)
+  - Location: `ragzoom/client/grpc_client.py:372-410`
 
 ---
 

@@ -358,3 +358,51 @@ async def test_async_ragzoom_preserves_background_tasks() -> None:
             await background_task
         except asyncio.CancelledError:
             pass  # Expected
+
+
+def test_ragzoom_query_passes_time_window_to_grpc_client() -> None:
+    """RagZoom.query() must pass time_start and time_end to gRPC client."""
+    from unittest.mock import MagicMock
+
+    from ragzoom.client.grpc_client import ExecuteQueryOutput, RetrievalView
+    from ragzoom.services.query_service import QueryResult
+
+    mock_output = ExecuteQueryOutput(
+        query_result=QueryResult(
+            summary="test",
+            token_count=10,
+            nodes_retrieved=1,
+            tiling_size=1,
+            query_id="q1",
+            seed_count=1,
+            verbatim_count=0,
+        ),
+        retrieval=RetrievalView(
+            selected_ids=[],
+            tiling_ids=[],
+            scores={},
+            coverage_map={},
+            nodes={},
+        ),
+        visualization="",
+        validation_warning="",
+    )
+
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    mock_client.execute_query.return_value = mock_output
+
+    with patch("ragzoom.wrapper.GrpcRagzoomClient", return_value=mock_client):
+        wrapper = RagZoom(server_address="localhost:50051")
+        wrapper.query(
+            "doc",
+            "test query",
+            time_start="2024-01-21T14:00:00Z",
+            time_end="2024-01-21T15:00:00Z",
+        )
+
+    mock_client.execute_query.assert_called_once()
+    call_kwargs = mock_client.execute_query.call_args.kwargs
+    assert call_kwargs.get("time_start") == "2024-01-21T14:00:00Z"
+    assert call_kwargs.get("time_end") == "2024-01-21T15:00:00Z"
