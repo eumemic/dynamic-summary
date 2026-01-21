@@ -7,7 +7,7 @@ Implementations include Postgres and SQLite repositories.
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Protocol, TypedDict, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, TypedDict, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -313,5 +313,35 @@ class NodeRepository(Protocol):
 
         Returns:
             SQLValidationResult with metrics and any violations found
+        """
+        ...
+
+    # Temporal queries
+    def get_leaf_at_time_position(
+        self,
+        document_id: str,
+        time_position: float,
+        position: Literal["start", "end"],
+    ) -> TreeNode | None:
+        """Find a leaf node at a time boundary for time→span mapping.
+
+        This enables time-windowed queries by mapping time positions to span
+        positions. The existing span-based query infrastructure can then be
+        reused.
+
+        Args:
+            document_id: Document to search
+            time_position: Unix timestamp (float seconds) to search for
+            position: Which boundary to find:
+                - "start": Earliest leaf where time_position <= leaf.time_end
+                  (used as span_start for query window)
+                - "end": Latest leaf where leaf.time_start <= time_position
+                  (used as span_end for query window)
+
+        Returns:
+            The boundary leaf node, or None if no matching leaf exists.
+            For a query window [T1, T2], call twice:
+            - get_leaf_at_time_position(doc, T1, "start") → use leaf.span_start
+            - get_leaf_at_time_position(doc, T2, "end") → use leaf.span_end
         """
         ...

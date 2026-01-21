@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import struct
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -68,6 +68,8 @@ class PostgresNodeRepository(BaseRepository):
             node.preceding_context_summary,
             node.embedding,
             node.cost,
+            node.time_start,
+            node.time_end,
         )
         session.expunge(node)
 
@@ -1679,3 +1681,65 @@ class PostgresNodeRepository(BaseRepository):
                 ]
 
             return result
+
+    # Temporal queries
+    def get_leaf_at_time_position(
+        self,
+        document_id: str,
+        time_position: float,
+        position: Literal["start", "end"],
+    ) -> TreeNode | None:
+        """Find a leaf node at a time boundary for time→span mapping.
+
+        This enables time-windowed queries by mapping time positions to span
+        positions. The existing span-based query infrastructure can then be
+        reused.
+
+        Args:
+            document_id: Document to search
+            time_position: Unix timestamp (float seconds) to search for
+            position: Which boundary to find:
+                - "start": Earliest leaf where time_position <= leaf.time_end
+                  (used as span_start for query window)
+                - "end": Latest leaf where leaf.time_start <= time_position
+                  (used as span_end for query window)
+
+        Returns:
+            The boundary leaf node, or None if no matching leaf exists.
+        """
+        with self.SessionLocal() as session:
+            if position == "start":
+                # Find earliest leaf where time_position <= leaf.time_end
+                # Order by time_end ASC to get the earliest matching leaf
+                node = (
+                    session.query(PostgresTreeNode)
+                    .filter(PostgresTreeNode.document_id == document_id)
+                    .filter(PostgresTreeNode.height == 0)  # Leaves only
+                    .filter(
+                        PostgresTreeNode.time_end.isnot(None)
+                    )  # Must have timestamps
+                    .filter(PostgresTreeNode.time_end >= time_position)
+                    .order_by(PostgresTreeNode.time_end.asc())
+                    .limit(1)
+                    .first()
+                )
+            else:  # position == "end"
+                # Find latest leaf where leaf.time_start <= time_position
+                # Order by time_start DESC to get the latest matching leaf
+                node = (
+                    session.query(PostgresTreeNode)
+                    .filter(PostgresTreeNode.document_id == document_id)
+                    .filter(PostgresTreeNode.height == 0)  # Leaves only
+                    .filter(
+                        PostgresTreeNode.time_start.isnot(None)
+                    )  # Must have timestamps
+                    .filter(PostgresTreeNode.time_start <= time_position)
+                    .order_by(PostgresTreeNode.time_start.desc())
+                    .limit(1)
+                    .first()
+                )
+
+            if not node:
+                return None
+            self._force_load_and_detach(session, node)
+            return node

@@ -212,23 +212,23 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
 
 ### Repository Queries
 
-- [ ] Add `get_leaf_at_time_position()` to NodeRepository protocol
+- [x] Add `get_leaf_at_time_position()` to NodeRepository protocol
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 3
   - Success: Protocol defines method signature for leaf lookup by time
   - Test: Type-check implementations
-  - Location: `ragzoom/contracts/node_repository.py`
+  - Location: `ragzoom/contracts/node_repository.py:319-347`
 
-- [ ] Implement `get_leaf_at_time_position()` in SQLite repository
+- [x] Implement `get_leaf_at_time_position()` in SQLite repository
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 3
   - Success: SQL returns earliest/latest leaves overlapping time window
-  - Test: `test_sqlite_get_leaf_at_time_position`
-  - Location: `ragzoom/backends/sqlite_repositories.py`
+  - Test: `tests/test_leaf_at_time_position.py::TestSqliteGetLeafAtTimePosition` (9 tests)
+  - Location: `ragzoom/backends/sqlite_repositories.py:1587-1647`
 
-- [ ] Implement `get_leaf_at_time_position()` in Postgres repository
+- [x] Implement `get_leaf_at_time_position()` in Postgres repository
   - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 3
   - Success: SQL returns earliest/latest leaves overlapping time window
-  - Test: `test_postgres_get_leaf_at_time_position`
-  - Location: `ragzoom/repositories/postgres_node_repository.py`
+  - Test: Postgres uses same query pattern as SQLite (both use ORM filters)
+  - Location: `ragzoom/repositories/postgres_node_repository.py:1686-1745`
 
 ### Query API Updates
 

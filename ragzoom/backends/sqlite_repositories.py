@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import struct
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
     from ragzoom.validation.types import SQLValidationResult
@@ -1583,6 +1583,68 @@ class SqliteNodeRepository:
             return result
 
     # jscpd:ignore-end
+
+    # Temporal queries
+    def get_leaf_at_time_position(
+        self,
+        document_id: str,
+        time_position: float,
+        position: Literal["start", "end"],
+    ) -> TreeNode | None:
+        """Find a leaf node at a time boundary for time→span mapping.
+
+        This enables time-windowed queries by mapping time positions to span
+        positions. The existing span-based query infrastructure can then be
+        reused.
+
+        Args:
+            document_id: Document to search
+            time_position: Unix timestamp (float seconds) to search for
+            position: Which boundary to find:
+                - "start": Earliest leaf where time_position <= leaf.time_end
+                  (used as span_start for query window)
+                - "end": Latest leaf where leaf.time_start <= time_position
+                  (used as span_end for query window)
+
+        Returns:
+            The boundary leaf node, or None if no matching leaf exists.
+        """
+        with self.SessionLocal() as session:
+            if position == "start":
+                # Find earliest leaf where time_position <= leaf.time_end
+                # Order by time_end ASC to get the earliest matching leaf
+                stmt = (
+                    select(SQLiteTreeNode)
+                    .where(SQLiteTreeNode.document_id == document_id)
+                    .where(SQLiteTreeNode.height == 0)  # Leaves only
+                    .where(SQLiteTreeNode.time_end.isnot(None))  # Must have timestamps
+                    .where(SQLiteTreeNode.time_end >= time_position)
+                    .order_by(SQLiteTreeNode.time_end.asc())
+                    .limit(1)
+                )
+            else:  # position == "end"
+                # Find latest leaf where leaf.time_start <= time_position
+                # Order by time_start DESC to get the latest matching leaf
+                stmt = (
+                    select(SQLiteTreeNode)
+                    .where(SQLiteTreeNode.document_id == document_id)
+                    .where(SQLiteTreeNode.height == 0)  # Leaves only
+                    .where(
+                        SQLiteTreeNode.time_start.isnot(None)
+                    )  # Must have timestamps
+                    .where(SQLiteTreeNode.time_start <= time_position)
+                    .order_by(SQLiteTreeNode.time_start.desc())
+                    .limit(1)
+                )
+
+            row = session.execute(stmt).scalars().first()
+            if not row:
+                return None
+            try:
+                session.expunge(row)
+            except Exception:
+                pass
+            return cast(TreeNode, row)
 
 
 class SqliteDocumentRepository:
