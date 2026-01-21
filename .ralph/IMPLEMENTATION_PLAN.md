@@ -61,11 +61,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
 
 ### Vector Metadata
 
-- [ ] Add `coerce_float` helper function
+- [x] Add `coerce_float` helper function
   - Spec: specs/temporal-metadata.md § Data Model Changes > Vector Metadata
   - Success: `coerce_float(value)` returns `float | None` handling various input types
-  - Test: `test_coerce_float_handles_none_and_numbers`
-  - Location: `ragzoom/backends/vector_common.py`
+  - Test: `tests/test_vector_common.py::TestCoerceFloat` (13 tests)
+  - Location: `ragzoom/backends/vector_common.py:29-50`
 
 - [ ] Extend `normalize_metadata_from_dict()` with temporal fields
   - Spec: specs/temporal-metadata.md § Data Model Changes > Vector Metadata

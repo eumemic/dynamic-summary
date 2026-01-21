@@ -3,11 +3,55 @@
 from __future__ import annotations
 
 from ragzoom.backends.vector_common import (
+    coerce_float,
     coerce_int,
     coerce_str,
     normalize_metadata_from_dict,
     normalize_metadata_from_object,
 )
+
+
+class TestCoerceFloat:
+    """Tests for coerce_float helper."""
+
+    def test_none_returns_none(self) -> None:
+        assert coerce_float(None) is None
+
+    def test_bool_true_returns_one_point_zero(self) -> None:
+        assert coerce_float(True) == 1.0
+
+    def test_bool_false_returns_zero_point_zero(self) -> None:
+        assert coerce_float(False) == 0.0
+
+    def test_int_converts_to_float(self) -> None:
+        assert coerce_float(42) == 42.0
+
+    def test_float_passthrough(self) -> None:
+        assert coerce_float(3.14159) == 3.14159
+
+    def test_numeric_string_parses(self) -> None:
+        assert coerce_float("123.456") == 123.456
+
+    def test_integer_string_parses(self) -> None:
+        assert coerce_float("789") == 789.0
+
+    def test_string_with_whitespace(self) -> None:
+        assert coerce_float("  42.5  ") == 42.5
+
+    def test_empty_string_returns_none(self) -> None:
+        assert coerce_float("") is None
+
+    def test_whitespace_only_returns_none(self) -> None:
+        assert coerce_float("   ") is None
+
+    def test_non_numeric_string_returns_none(self) -> None:
+        assert coerce_float("hello") is None
+
+    def test_scientific_notation_parses(self) -> None:
+        assert coerce_float("1.5e10") == 1.5e10
+
+    def test_negative_float_parses(self) -> None:
+        assert coerce_float("-99.9") == -99.9
 
 
 class TestCoerceInt:

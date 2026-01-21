@@ -26,6 +26,29 @@ NormalizedUpsertItem: TypeAlias = tuple[
 ]
 
 
+def coerce_float(value: object) -> float | None:
+    """Coerce a value to float, returning None for invalid/missing values.
+
+    Handles bools (True→1.0, False→0.0), ints, floats, and numeric strings.
+    Returns None for None, empty strings, or non-convertible values.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            return float(stripped)
+        except ValueError:
+            return None
+    return None
+
+
 def coerce_int(value: object) -> int:
     """Coerce a value to an integer, handling bools, numbers, and digit strings."""
     if isinstance(value, bool):
