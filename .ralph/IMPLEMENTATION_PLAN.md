@@ -26,11 +26,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `test_postgres_tree_node_has_temporal_columns`
   - Location: `ragzoom/models.py` (TreeNodeColumnsMixin)
 
-- [ ] Add `time_start` and `time_end` columns to SQLite tree_nodes table
+- [x] Add `time_start` and `time_end` columns to SQLite tree_nodes table
   - Spec: specs/temporal-metadata.md § Data Model Changes > Database Schema
   - Success: SQLite `tree_nodes` table has temporal columns
   - Test: `test_sqlite_tree_node_has_temporal_columns`
-  - Location: `ragzoom/backends/sqlite_repositories.py` (schema creation)
+  - Location: `ragzoom/backends/sqlite_db.py` (migration in SqliteDatabaseManager.__post_init__)
 
 - [ ] Add `is_temporal` column to Document model
   - Spec: specs/temporal-metadata.md § Data Model Changes > Database Schema
