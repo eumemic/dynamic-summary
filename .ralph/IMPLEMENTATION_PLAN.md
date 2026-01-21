@@ -100,11 +100,11 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Test: `test_append_request_has_timestamp_field`
   - Location: `proto/dynamic_summary.proto:38-44`
 
-- [ ] Add `repeated Timestamp timestamps` to BatchAppendTextRequest
+- [x] Add `repeated Timestamp timestamps` to BatchAppendTextRequest
   - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
   - Success: BatchAppendTextRequest has timestamps repeated field (field number 4)
   - Test: `test_batch_append_request_has_timestamps_field`
-  - Location: `proto/dynamic_summary.proto:45-49`
+  - Location: `proto/dynamic_summary.proto:53-58`
 
 - [ ] Add `time_start` and `time_end` to ExecuteQueryRequest
   - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol

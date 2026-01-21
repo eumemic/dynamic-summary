@@ -100,9 +100,11 @@ class AppendTextResponse:
     ) -> None: ...
 
 class BatchAppendTextRequest:
+    DESCRIPTOR: ClassVar[Descriptor]
     document_id: str
     units: Sequence[bytes]
     collect_telemetry: bool
+    timestamps: Sequence[Timestamp]
 
     def __init__(
         self,
@@ -110,6 +112,7 @@ class BatchAppendTextRequest:
         document_id: str,
         units: Iterable[bytes] = ...,
         collect_telemetry: bool = ...,
+        timestamps: Iterable[Timestamp] = ...,
     ) -> None: ...
 
 class BatchAppendTextResponse:
