@@ -49,6 +49,7 @@ dev = [
     "pandas-stubs",
     "types-psutil",
     "types-seaborn",
+    "types-protobuf",
     "tomli>=1.0.0; python_version < '3.11'",
     "grpcio-tools>=1.75.0",
 ]
