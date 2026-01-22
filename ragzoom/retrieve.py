@@ -230,6 +230,11 @@ class Retriever:
 
             # Validate document is temporal
             is_temporal = doc_repo.get_document_is_temporal(effective_doc_id)
+            if is_temporal is None:
+                raise ValueError(
+                    f"Document '{effective_doc_id}' not found. "
+                    f"Cannot perform time-windowed query on non-existent document."
+                )
             if not is_temporal:
                 raise ValueError(
                     f"Time-windowed queries require a temporal document. "

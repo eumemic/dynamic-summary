@@ -359,9 +359,11 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
         if request.timestamps:
             # Validate length matches units
             if len(request.timestamps) != len(units):
-                raise ValueError(
-                    f"timestamps length ({len(request.timestamps)}) must match "
-                    f"units length ({len(units)})"
+                await _abort(
+                    context,
+                    code=grpc.StatusCode.INVALID_ARGUMENT,
+                    message=f"timestamps length ({len(request.timestamps)}) must match "
+                    f"units length ({len(units)})",
                 )
             timestamps = [_extract_timestamp(ts) for ts in request.timestamps]
 

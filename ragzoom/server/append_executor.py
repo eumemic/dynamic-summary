@@ -201,6 +201,10 @@ class AppendExecutor:
         else:
             # Subsequent append: validate timestamp presence matches document temporality
             is_temporal = store._doc_repo.get_document_is_temporal(document_id)
+            if is_temporal is None:
+                raise ValueError(
+                    f"Document '{document_id}' not found. Cannot validate temporality."
+                )
             if is_temporal and not has_timestamps:
                 raise ValueError(
                     f"Document '{document_id}' is temporal and requires timestamps on all appends"
@@ -475,6 +479,10 @@ class AppendExecutor:
         else:
             # Subsequent append: validate timestamp presence matches document temporality
             is_temporal = store._doc_repo.get_document_is_temporal(document_id)
+            if is_temporal is None:
+                raise ValueError(
+                    f"Document '{document_id}' not found. Cannot validate temporality."
+                )
             if is_temporal and not has_timestamps:
                 raise ValueError(
                     f"Document '{document_id}' is temporal and requires timestamps on all appends"
