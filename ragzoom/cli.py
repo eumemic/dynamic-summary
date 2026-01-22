@@ -31,7 +31,6 @@ from ragzoom.constants import (
     DEFAULT_GRPC_ADDRESS,
     DEFAULT_GRPC_HOST,
     DEFAULT_GRPC_PORT,
-    DEFAULT_SESSION_INGEST_TIMEOUT,
 )
 from ragzoom.error_handling import handle_graceful_error
 from ragzoom.exceptions import (
@@ -2181,23 +2180,16 @@ def report(
     show_default=True,
     help=GRPC_ADDRESS_HELP,
 )
-@click.option(
-    "--user-id",
-    "-u",
-    envvar="RAGZOOM_USER_ID",
-    default=None,
-    help="User ID for multi-tenant isolation. Defaults to $USER.",
-)
 def sync_claude_code_transcript(
     jsonl_path: Path,
     server_address: str,
-    user_id: str | None,
 ) -> None:
-    """Sync a Claude Code JSONL log to the RagZoom server.
+    """Sync a Claude Code JSONL log to a RagZoom document.
 
-    Incrementally sends new transcript content to the server for indexing.
-    The server tracks the cursor position and handles revert detection.
+    Incrementally transcribes new conversation records and indexes them.
+    Uses UUID-based ancestry tracking to detect and handle reverts.
     Uses the session ID (JSONL filename without extension) as the document ID.
+    Tracks progress via state files (configurable via RAGZOOM_STATE_DIR env var).
 
     The JSONL files are typically found in:
     ~/.claude/projects/<project-path>/<session-id>.jsonl
@@ -2205,55 +2197,26 @@ def sync_claude_code_transcript(
     Example:
       ragzoom sync-claude-code-transcript ~/.claude/projects/.../session.jsonl
     """
-    import os
+    from ragzoom.claude_memory.transcript_sync import execute_sync, get_state_path
+    from ragzoom.wrapper import RagZoom
 
-    from ragzoom.client.grpc_client import GrpcRagzoomClient
+    # State file uses same naming convention but with .jsonl extension
+    state_path = get_state_path(jsonl_path.stem)
 
-    session_id = jsonl_path.stem
-    resolved_user_id = user_id or os.environ.get("USER") or "anonymous"
+    client = RagZoom(server_address=server_address)
 
     try:
-        # Use longer timeout for session ingestion (may trigger full re-index)
-        with GrpcRagzoomClient(
-            server_address, timeout=DEFAULT_SESSION_INGEST_TIMEOUT
-        ) as client:
-            # Get current cursor from server
-            cursor = client.get_session_cursor(
-                session_id=session_id, user_id=resolved_user_id
+        result = execute_sync(jsonl_path, state_path, client)
+        if result.truncated:
+            click.echo(
+                f"🔄 Reverted document '{result.document_id}' to span {result.truncate_span}"
             )
-            byte_offset = cursor.byte_offset
-
-            # Read transcript from cursor position
-            file_size = jsonl_path.stat().st_size
-            if byte_offset >= file_size:
-                click.echo(f"✅ No new content to sync for '{session_id}'")
-                return
-
-            with open(jsonl_path, "rb") as f:
-                f.seek(byte_offset)
-                delta = f.read()
-
-            if not delta:
-                click.echo(f"✅ No new content to sync for '{session_id}'")
-                return
-
-            # Send delta to server
-            result = client.ingest_session(
-                session_id=session_id,
-                user_id=resolved_user_id,
-                jsonl_delta=delta,
+        if result.appended_uuids:
+            click.echo(
+                f"✅ Synced {len(result.appended_uuids)} messages to '{result.document_id}'"
             )
-
-            if result.truncated:
-                click.echo(
-                    f"🔄 Reverted document '{session_id}' to span {result.truncate_span}"
-                )
-            if result.messages_processed > 0:
-                click.echo(
-                    f"✅ Synced {result.messages_processed} messages to '{session_id}'"
-                )
-            else:
-                click.echo(f"✅ No new content to sync for '{session_id}'")
+        else:
+            click.echo(f"✅ No new content to sync for '{result.document_id}'")
     except Exception as e:
         handle_cli_error(e, "syncing Claude Code transcript")
 
