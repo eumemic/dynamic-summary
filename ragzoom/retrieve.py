@@ -223,6 +223,13 @@ class Retriever:
 
         # Time→span mapping: convert time window to span window
         if time_start is not None or time_end is not None:
+            # Reject conflicting time and span parameters
+            if span_start != 0 or span_end is not None:
+                raise ValueError(
+                    "Cannot specify both time window (time_start/time_end) and span "
+                    "window (span_start/span_end) parameters. Use one or the other."
+                )
+
             if not effective_doc_id:
                 raise ValueError("document_id is required for time-windowed queries")
             if repo is None or doc_repo is None:
