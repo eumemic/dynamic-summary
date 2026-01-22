@@ -26,6 +26,29 @@ NormalizedUpsertItem: TypeAlias = tuple[
 ]
 
 
+def coerce_float(value: object) -> float | None:
+    """Coerce a value to float, returning None for invalid/missing values.
+
+    Handles bools (True→1.0, False→0.0), ints, floats, and numeric strings.
+    Returns None for None, empty strings, or non-convertible values.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            return float(stripped)
+        except ValueError:
+            return None
+    return None
+
+
 def coerce_int(value: object) -> int:
     """Coerce a value to an integer, handling bools, numbers, and digit strings."""
     if isinstance(value, bool):
@@ -47,9 +70,10 @@ def coerce_str(value: object) -> str:
 def normalize_metadata_from_dict(meta: dict[str, object]) -> MetaDict:
     """Normalize dict-based metadata to canonical MetaDict.
 
-    Ensures all 8 standard metadata fields are present with correct types:
+    Ensures all 10 standard metadata fields are present with correct types:
     - span_start, span_end, is_leaf, height, level_index, coord_version -> int
     - parent_id, document_id -> str
+    - time_start, time_end -> float | None (temporal metadata)
     """
     return {
         "span_start": coerce_int(meta.get("span_start", 0)),
@@ -60,6 +84,8 @@ def normalize_metadata_from_dict(meta: dict[str, object]) -> MetaDict:
         "height": coerce_int(meta.get("height", 0)),
         "level_index": coerce_int(meta.get("level_index", 0)),
         "coord_version": coerce_int(meta.get("coord_version", 0)),
+        "time_start": coerce_float(meta.get("time_start")),
+        "time_end": coerce_float(meta.get("time_end")),
     }
 
 
@@ -77,6 +103,8 @@ def normalize_metadata_from_object(meta: object) -> MetaDict:
         "height": coerce_int(getattr(meta, "height", 0)),
         "level_index": coerce_int(getattr(meta, "level_index", 0)),
         "coord_version": coerce_int(getattr(meta, "coord_version", 0)),
+        "time_start": coerce_float(getattr(meta, "time_start", None)),
+        "time_end": coerce_float(getattr(meta, "time_end", None)),
     }
 
 

@@ -46,6 +46,11 @@ class TreeNodeColumnsMixin:
     # Cost in USD for creating this node (embedding + summarization)
     cost: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # Temporal metadata for time-windowed queries (Unix timestamp in seconds)
+    # See specs/temporal-metadata.md § Data Model Changes > Database Schema
+    time_start: Mapped[float | None] = mapped_column(Float, nullable=True)
+    time_end: Mapped[float | None] = mapped_column(Float, nullable=True)
+
 
 class PostgresTreeNode(TreeNodeColumnsMixin, Base):
     """Database model for tree nodes (no embeddings in storage)."""
@@ -150,6 +155,13 @@ class Document(Base):
     )
     embedding_model: Mapped[str] = mapped_column(String, nullable=False)
     summary_model: Mapped[str] = mapped_column(String, nullable=False)
+
+    # Temporal document flag: determines if document requires timestamps on all chunks
+    # See specs/temporal-metadata.md § Requirements > 1. Temporal Documents
+    # - 0 (False): Non-temporal document, chunks must NOT have timestamps
+    # - 1 (True): Temporal document, chunks MUST have timestamps
+    # Inferred from first append (with timestamps → 1, without → 0)
+    is_temporal: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
 class User(Base):

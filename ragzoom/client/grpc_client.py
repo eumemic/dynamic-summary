@@ -29,6 +29,22 @@ def _decode_telemetry(payload: str) -> TelemetryDataDict | None:
     return cast(TelemetryDataDict, data)
 
 
+def _build_timestamp_proto(timestamp: str | tuple[str, str]) -> pb2.Timestamp:
+    """Build a Timestamp proto from a string or (start, end) tuple.
+
+    Args:
+        timestamp: ISO 8601 string (used for both start and end) or tuple of (start, end).
+
+    Returns:
+        Timestamp proto message.
+    """
+    if isinstance(timestamp, tuple):
+        time_start, time_end = timestamp
+        return pb2.Timestamp(time_start=time_start, time_end=time_end)
+    # Single string: time_start only, server will use it for both
+    return pb2.Timestamp(time_start=timestamp)
+
+
 def _extract_telemetry_and_error(
     response: object,
 ) -> tuple[TelemetryDataDict | None, str | None]:
@@ -276,13 +292,19 @@ class GrpcRagzoomClient:
         content: bytes,
         collect_telemetry: bool,
         replace_existing: bool,
+        timestamp: str | tuple[str, str] | None = None,
     ) -> IndexingResult:
         request = pb2.AppendTextRequest(
             document_id=document_id,
             content=content,
             collect_telemetry=collect_telemetry,
+            replace_existing=replace_existing,
         )
-        setattr(request, "replace_existing", replace_existing)
+        if timestamp is not None:
+            ts_proto = _build_timestamp_proto(timestamp)
+            request.timestamp.time_start = ts_proto.time_start
+            if ts_proto.HasField("time_end"):
+                request.timestamp.time_end = ts_proto.time_end
         try:
             response = self._indexer.AppendText(request, timeout=self._timeout)
         except grpc.RpcError as error:  # pragma: no cover
@@ -302,6 +324,7 @@ class GrpcRagzoomClient:
         document_id: str,
         units: list[str],
         collect_telemetry: bool = False,
+        timestamps: list[str | tuple[str, str]] | None = None,
     ) -> IndexingResult:
         """Append multiple text units with forced split boundaries between them.
 
@@ -314,16 +337,23 @@ class GrpcRagzoomClient:
             document_id: The document to append to
             units: List of text units, each creating a forced boundary
             collect_telemetry: Whether to collect telemetry data
+            timestamps: Optional list of timestamps parallel to units.
+                Each entry can be a single ISO 8601 string or a (start, end) tuple.
 
         Returns:
             IndexingResult with combined stats for all appended units
         """
         # Encode each unit as bytes
         encoded_units = [u.encode("utf-8") for u in units]
+        # Build timestamp protos if provided
+        ts_protos: list[pb2.Timestamp] = []
+        if timestamps is not None:
+            ts_protos = [_build_timestamp_proto(ts) for ts in timestamps]
         request = pb2.BatchAppendTextRequest(
             document_id=document_id,
             units=encoded_units,
             collect_telemetry=collect_telemetry,
+            timestamps=ts_protos,
         )
         try:
             response = self._indexer.BatchAppendText(request, timeout=self._timeout)
@@ -354,6 +384,8 @@ class GrpcRagzoomClient:
         profile: bool = False,
         span_start: int = 0,
         span_end: int | None = None,
+        time_start: str | None = None,
+        time_end: str | None = None,
     ) -> ExecuteQueryOutput:
         request = pb2.ExecuteQueryRequest(
             query=query,
@@ -370,6 +402,10 @@ class GrpcRagzoomClient:
         )
         if span_end is not None:
             request.span_end = span_end
+        if time_start is not None:
+            request.time_start = time_start
+        if time_end is not None:
+            request.time_end = time_end
         try:
             response = self._retrieval.ExecuteQuery(request, timeout=self._timeout)
         except grpc.RpcError as error:  # pragma: no cover

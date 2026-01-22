@@ -38,6 +38,7 @@ class StubAppendExecutor:
         store: DocumentStore,
         document_id: str,
         new_text: str,
+        timestamp: str | tuple[str, str] | None = None,
         reporter: object | None = None,
         run_context: object | None = None,
         telemetry_manager: object | None = None,

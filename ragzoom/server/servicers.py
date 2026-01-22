@@ -131,6 +131,22 @@ async def _decode_text(data: bytes, context: ServicerContextProto) -> str:
         )
 
 
+def _extract_timestamp(
+    ts_proto: pb2.Timestamp,
+) -> str | tuple[str, str]:
+    """Extract timestamp from proto message.
+
+    Returns:
+        Either a single ISO 8601 string (if time_end == time_start or not set),
+        or a tuple of (time_start, time_end) strings.
+    """
+    time_start = ts_proto.time_start
+    # When time_end is not set (HasField returns False), use time_start
+    if not ts_proto.HasField("time_end") or ts_proto.time_end == "":
+        return time_start
+    return (time_start, ts_proto.time_end)
+
+
 T = TypeVar("T")
 
 
@@ -293,11 +309,17 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
 
         text = await _decode_text(request.content, context)
 
+        # Extract timestamp from proto if present
+        timestamp: str | tuple[str, str] | None = None
+        if request.HasField("timestamp"):
+            timestamp = _extract_timestamp(request.timestamp)
+
         session = self._runtime.get_session(request.document_id)
         result = await session.append_text(
             text,
             replace_existing=bool(getattr(request, "replace_existing", False)),
             collect_telemetry=request.collect_telemetry,
+            timestamp=timestamp,
         )
 
         response = pb2.AppendTextResponse(
@@ -332,10 +354,24 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
                     message=f"Invalid UTF-8 in unit {i}: {exc}",
                 )
 
+        # Extract timestamps from proto if present
+        timestamps: list[str | tuple[str, str]] | None = None
+        if request.timestamps:
+            # Validate length matches units
+            if len(request.timestamps) != len(units):
+                await _abort(
+                    context,
+                    code=grpc.StatusCode.INVALID_ARGUMENT,
+                    message=f"timestamps length ({len(request.timestamps)}) must match "
+                    f"units length ({len(units)})",
+                )
+            timestamps = [_extract_timestamp(ts) for ts in request.timestamps]
+
         session = self._runtime.get_session(request.document_id)
         result = await session.batch_append_text(
             units,
             collect_telemetry=request.collect_telemetry,
+            timestamps=timestamps,
         )
 
         response = pb2.BatchAppendTextResponse(
@@ -448,6 +484,10 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
         span_start = request.span_start
         span_end = request.span_end if request.span_end > 0 else None
 
+        # Extract temporal window from request (empty string treated as unset)
+        time_start = request.time_start if request.HasField("time_start") else None
+        time_end = request.time_end if request.HasField("time_end") else None
+
         # Use telemetry-enabled retrieval if profiling requested
         query_telemetry = None
         if request.profile:
@@ -457,6 +497,10 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
                 budget_tokens=budget,
                 document_id=request.document_id,
                 recent_verbatim_budget=recent_verbatim_budget,
+                span_start=span_start,
+                span_end=span_end,
+                time_start=time_start,
+                time_end=time_end,
             )
         else:
             retrieval_result = await retriever.retrieve_async(
@@ -467,6 +511,8 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
                 recent_verbatim_budget=recent_verbatim_budget,
                 span_start=span_start,
                 span_end=span_end,
+                time_start=time_start,
+                time_end=time_end,
             )
 
         assembler = Assembler(document_store)
@@ -694,6 +740,14 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         root = document_store.tree.get_root()
         tree_depth = int(getattr(root, "height", 0) or 0) if root else 0
 
+        # Get temporal status from document repository
+        is_temporal_result = document_store._doc_repo.get_document_is_temporal(
+            request.document_id
+        )
+        is_temporal = (
+            bool(is_temporal_result) if is_temporal_result is not None else False
+        )
+
         indexing_status = await self._state.indexing_engine.status()
         inflight = indexing_status.in_flight_by_document.get(request.document_id, 0)
         has_pending_work = inflight > 0
@@ -703,6 +757,7 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
             leaf_count=leaf_count,
             has_pending_work=has_pending_work,
             tree_depth=tree_depth,
+            is_temporal=is_temporal,
         )
         return pb2.GetDocumentResponse(status=doc_status)
 
