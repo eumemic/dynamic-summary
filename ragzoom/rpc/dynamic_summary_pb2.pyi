@@ -3,6 +3,23 @@ from __future__ import annotations
 # ruff: noqa
 
 from collections.abc import Iterable, Mapping, Sequence
+from typing import ClassVar
+
+from google.protobuf.descriptor import Descriptor
+
+class Timestamp:
+    """Timestamp for temporal metadata in client-controlled chunking."""
+
+    time_start: str
+    time_end: str
+
+    def __init__(
+        self,
+        *,
+        time_start: str = ...,
+        time_end: str = ...,
+    ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
 
 class DocumentStats:
     document_id: str
@@ -49,13 +66,23 @@ class IndexDocumentResponse:
     def __init__(self, *, stats: DocumentStats) -> None: ...
 
 class AppendTextRequest:
+    DESCRIPTOR: ClassVar[Descriptor]
     document_id: str
     content: bytes
     collect_telemetry: bool
+    replace_existing: bool
+    timestamp: Timestamp
 
     def __init__(
-        self, *, document_id: str, content: bytes, collect_telemetry: bool
+        self,
+        *,
+        document_id: str,
+        content: bytes,
+        collect_telemetry: bool = ...,
+        replace_existing: bool = ...,
+        timestamp: Timestamp = ...,
     ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
 
 class AppendTextResponse:
     stats: DocumentStats
@@ -73,9 +100,11 @@ class AppendTextResponse:
     ) -> None: ...
 
 class BatchAppendTextRequest:
+    DESCRIPTOR: ClassVar[Descriptor]
     document_id: str
     units: Sequence[bytes]
     collect_telemetry: bool
+    timestamps: Sequence[Timestamp]
 
     def __init__(
         self,
@@ -83,6 +112,7 @@ class BatchAppendTextRequest:
         document_id: str,
         units: Iterable[bytes] = ...,
         collect_telemetry: bool = ...,
+        timestamps: Iterable[Timestamp] = ...,
     ) -> None: ...
 
 class BatchAppendTextResponse:
@@ -171,24 +201,29 @@ class ExecuteQueryRequest:
     profile: bool
     span_start: int
     span_end: int
+    time_start: str
+    time_end: str
 
     def __init__(
         self,
         *,
-        query: str,
-        document_id: str,
-        budget_tokens: int,
-        num_seeds: int,
-        embedding_model: str,
-        debug: bool,
-        viz_width: int,
-        use_token_coords: bool,
+        query: str = ...,
+        document_id: str = ...,
+        budget_tokens: int = ...,
+        num_seeds: int = ...,
+        embedding_model: str = ...,
+        debug: bool = ...,
+        viz_width: int = ...,
+        use_token_coords: bool = ...,
         tiling_strategy: str = ...,
         recent_verbatim_token_budget: int = ...,
         profile: bool = ...,
         span_start: int = ...,
         span_end: int = ...,
+        time_start: str = ...,
+        time_end: str = ...,
     ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
 
 class QueryTelemetry:
     embedding_ms: float
@@ -307,18 +342,21 @@ class GetDocumentRequest:
     def __init__(self, *, document_id: str) -> None: ...
 
 class DocumentStatus:
+    DESCRIPTOR: ClassVar[Descriptor]
     document_id: str
     leaf_count: int
     has_pending_work: bool
     tree_depth: int
+    is_temporal: bool
 
     def __init__(
         self,
         *,
-        document_id: str,
-        leaf_count: int,
-        has_pending_work: bool,
-        tree_depth: int,
+        document_id: str = ...,
+        leaf_count: int = ...,
+        has_pending_work: bool = ...,
+        tree_depth: int = ...,
+        is_temporal: bool = ...,
     ) -> None: ...
 
 class GetDocumentResponse:

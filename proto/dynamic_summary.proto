@@ -4,6 +4,13 @@ package ragzoom.rpc;
 
 option go_package = "ragzoom/rpc";
 
+// Timestamp for temporal metadata in client-controlled chunking.
+// Used to associate time ranges with appended chunks.
+message Timestamp {
+  string time_start = 1;  // ISO 8601 with timezone (e.g., "2024-01-21T14:30:00Z")
+  optional string time_end = 2;  // If omitted, time_end = time_start
+}
+
 message DocumentStats {
   string document_id = 1;
   int32 chunks_created = 2;
@@ -33,6 +40,7 @@ message AppendTextRequest {
   bytes content = 2;
   bool collect_telemetry = 3;
   bool replace_existing = 4;
+  optional Timestamp timestamp = 5;  // Optional timestamp for this chunk
 }
 
 message AppendTextResponse {
@@ -46,6 +54,7 @@ message BatchAppendTextRequest {
   string document_id = 1;
   repeated bytes units = 2;
   bool collect_telemetry = 3;
+  repeated Timestamp timestamps = 4;  // Optional, parallel to units (must match length if provided)
 }
 
 message BatchAppendTextResponse {
@@ -96,6 +105,9 @@ message ExecuteQueryRequest {
   bool profile = 11;
   int32 span_start = 12;
   optional int32 span_end = 13;
+  // Temporal metadata: ISO 8601 timestamps with timezone for time-windowed queries
+  optional string time_start = 20;  // ISO 8601 with timezone (e.g., "2024-01-21T14:00:00Z")
+  optional string time_end = 21;    // ISO 8601 with timezone (e.g., "2024-01-21T15:00:00Z")
 }
 
 message QueryTelemetry {
@@ -173,6 +185,7 @@ message DocumentStatus {
   int32 leaf_count = 2;
   bool has_pending_work = 3;
   int32 tree_depth = 4;
+  bool is_temporal = 5;  // True if document has temporal metadata (timestamps)
 }
 
 message GetDocumentResponse {

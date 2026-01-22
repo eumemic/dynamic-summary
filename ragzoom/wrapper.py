@@ -51,6 +51,7 @@ class _SessionProtocol(Protocol):
         *,
         replace_existing: bool,
         collect_telemetry: bool,
+        timestamp: str | tuple[str, str] | None = None,
     ) -> IndexingResult: ...
 
     async def batch_append_text(
@@ -58,6 +59,7 @@ class _SessionProtocol(Protocol):
         units: list[str],
         *,
         collect_telemetry: bool,
+        timestamps: list[str | tuple[str, str]] | None = None,
     ) -> IndexingResult: ...
 
     async def clear(self) -> ClearedDocumentResult: ...
@@ -132,14 +134,24 @@ class RagZoom:
         text: str,
         *,
         collect_telemetry: bool = False,
+        timestamp: str | tuple[str, str] | None = None,
     ) -> IndexingResult:
-        """Append text to an existing document without clearing it."""
+        """Append text to an existing document without clearing it.
+
+        Args:
+            document_id: The document to append to
+            text: Text content to append
+            collect_telemetry: Whether to collect telemetry data
+            timestamp: Optional ISO 8601 timestamp. Can be a single string
+                (used for both start and end) or a tuple of (start, end) strings.
+        """
 
         return self._append(
             document_id=document_id,
             text=text,
             collect_telemetry=collect_telemetry,
             replace_existing=False,
+            timestamp=timestamp,
         )
 
     def batch_append(
@@ -148,12 +160,21 @@ class RagZoom:
         units: list[str],
         *,
         collect_telemetry: bool = False,
+        timestamps: list[str | tuple[str, str]] | None = None,
     ) -> IndexingResult:
         """Append multiple text units with forced split boundaries between them.
 
         Each unit creates a forced boundary, meaning text is never merged across
         unit boundaries. Semantically equivalent to calling append() for each unit
         sequentially, but executed in a single transaction for efficiency.
+
+        Args:
+            document_id: The document to append to
+            units: List of text units, each creating a forced boundary
+            collect_telemetry: Whether to collect telemetry data
+            timestamps: Optional list of ISO 8601 timestamps parallel to units.
+                Each entry can be a single string (used for both start and end)
+                or a tuple of (start, end) strings.
         """
         if not document_id:
             raise ValueError("document_id is required")
@@ -166,6 +187,7 @@ class RagZoom:
                 session.batch_append_text(
                     units,
                     collect_telemetry=collect_telemetry,
+                    timestamps=timestamps,
                 )
             )
 
@@ -174,6 +196,7 @@ class RagZoom:
                 document_id=document_id,
                 units=units,
                 collect_telemetry=collect_telemetry,
+                timestamps=timestamps,
             )
 
     def _append(
@@ -183,6 +206,7 @@ class RagZoom:
         text: str,
         collect_telemetry: bool,
         replace_existing: bool,
+        timestamp: str | tuple[str, str] | None = None,
     ) -> IndexingResult:
         if not document_id:
             raise ValueError("document_id is required")
@@ -196,6 +220,7 @@ class RagZoom:
                     text,
                     replace_existing=replace_existing,
                     collect_telemetry=collect_telemetry,
+                    timestamp=timestamp,
                 )
             )
 
@@ -205,6 +230,7 @@ class RagZoom:
                 content=text.encode("utf-8"),
                 collect_telemetry=collect_telemetry,
                 replace_existing=replace_existing,
+                timestamp=timestamp,
             )
 
     def clear(self, document_id: str) -> None:
@@ -257,7 +283,23 @@ class RagZoom:
         debug: bool = False,
         viz_width: int = 120,
         use_token_coords: bool = False,
+        time_start: str | None = None,
+        time_end: str | None = None,
     ) -> QueryResponse:
+        """Execute a query against a document.
+
+        Args:
+            document_id: The document to query
+            query_text: The query text
+            budget_tokens: Maximum tokens in response
+            num_seeds: Number of seed nodes for retrieval
+            embedding_model: Override embedding model
+            debug: Enable debug output
+            viz_width: Width for visualization
+            use_token_coords: Use token coordinates
+            time_start: Optional ISO 8601 timestamp for time window start
+            time_end: Optional ISO 8601 timestamp for time window end
+        """
         if not document_id:
             raise ValueError("document_id is required")
         if not query_text:
@@ -273,6 +315,8 @@ class RagZoom:
                 debug=debug,
                 viz_width=viz_width,
                 use_token_coords=use_token_coords,
+                time_start=time_start,
+                time_end=time_end,
             )
 
         result = output.query_result
@@ -414,6 +458,7 @@ class AsyncRagZoom:
         units: list[str],
         *,
         collect_telemetry: bool = False,
+        timestamps: list[str | tuple[str, str]] | None = None,
     ) -> IndexingResult:
         if not document_id:
             raise ValueError("document_id is required")
@@ -426,6 +471,7 @@ class AsyncRagZoom:
             return await session.batch_append_text(
                 units,
                 collect_telemetry=collect_telemetry,
+                timestamps=timestamps,
             )
 
         # gRPC client is sync - run in thread to avoid blocking event loop
@@ -435,6 +481,7 @@ class AsyncRagZoom:
                     document_id=document_id,
                     units=units,
                     collect_telemetry=collect_telemetry,
+                    timestamps=timestamps,
                 )
 
         return await asyncio.to_thread(_do_batch_append)
@@ -491,6 +538,8 @@ class AsyncRagZoom:
         debug: bool = False,
         viz_width: int = 120,
         use_token_coords: bool = False,
+        time_start: str | None = None,
+        time_end: str | None = None,
     ) -> QueryResponse:
         # Query always goes through gRPC client (no runtime path)
         return await self._call_sync(
@@ -503,6 +552,8 @@ class AsyncRagZoom:
             debug=debug,
             viz_width=viz_width,
             use_token_coords=use_token_coords,
+            time_start=time_start,
+            time_end=time_end,
         )
 
     # jscpd:ignore-end

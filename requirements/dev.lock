@@ -460,6 +460,8 @@ tqdm==4.67.1
     #   openai
 typer==0.17.4
     # via chromadb
+types-protobuf==6.32.1.20251210
+    # via -r requirements/dev.in
 types-psutil==7.0.0.20250822
     # via -r requirements/dev.in
 types-pytz==2025.2.0.20250809

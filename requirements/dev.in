@@ -11,5 +11,6 @@ pre-commit
 grpcio-tools
 types-tqdm
 types-seaborn
+types-protobuf
 pandas-stubs
 types-psutil
