@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import struct
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
     from ragzoom.validation.types import SQLValidationResult
@@ -91,6 +91,8 @@ class SqliteNodeRepository:
                     "preceding_context": data.get("preceding_context"),
                     "preceding_context_summary": data.get("preceding_context_summary"),
                     "cost": data.get("cost"),
+                    "time_start": data.get("time_start"),
+                    "time_end": data.get("time_end"),
                 }
                 for data in nodes_data
             ]
@@ -149,6 +151,8 @@ class SqliteNodeRepository:
                     preceding_context=data.get("preceding_context"),
                     preceding_context_summary=data.get("preceding_context_summary"),
                     cost=data.get("cost"),
+                    time_start=data.get("time_start"),
+                    time_end=data.get("time_end"),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=[SQLiteTreeNode.id],
@@ -167,6 +171,8 @@ class SqliteNodeRepository:
                         "preceding_context": stmt.excluded.preceding_context,
                         "preceding_context_summary": stmt.excluded.preceding_context_summary,
                         "cost": stmt.excluded.cost,
+                        "time_start": stmt.excluded.time_start,
+                        "time_end": stmt.excluded.time_end,
                     },
                 )
                 session.execute(stmt)
@@ -1578,6 +1584,68 @@ class SqliteNodeRepository:
 
     # jscpd:ignore-end
 
+    # Temporal queries
+    def get_leaf_at_time_position(
+        self,
+        document_id: str,
+        time_position: float,
+        position: Literal["start", "end"],
+    ) -> TreeNode | None:
+        """Find a leaf node at a time boundary for time→span mapping.
+
+        This enables time-windowed queries by mapping time positions to span
+        positions. The existing span-based query infrastructure can then be
+        reused.
+
+        Args:
+            document_id: Document to search
+            time_position: Unix timestamp (float seconds) to search for
+            position: Which boundary to find:
+                - "start": Earliest leaf where time_position <= leaf.time_end
+                  (used as span_start for query window)
+                - "end": Latest leaf where leaf.time_start <= time_position
+                  (used as span_end for query window)
+
+        Returns:
+            The boundary leaf node, or None if no matching leaf exists.
+        """
+        with self.SessionLocal() as session:
+            if position == "start":
+                # Find earliest leaf where time_position <= leaf.time_end
+                # Order by time_end ASC to get the earliest matching leaf
+                stmt = (
+                    select(SQLiteTreeNode)
+                    .where(SQLiteTreeNode.document_id == document_id)
+                    .where(SQLiteTreeNode.height == 0)  # Leaves only
+                    .where(SQLiteTreeNode.time_end.isnot(None))  # Must have timestamps
+                    .where(SQLiteTreeNode.time_end >= time_position)
+                    .order_by(SQLiteTreeNode.time_end.asc())
+                    .limit(1)
+                )
+            else:  # position == "end"
+                # Find latest leaf where leaf.time_start <= time_position
+                # Order by time_start DESC to get the latest matching leaf
+                stmt = (
+                    select(SQLiteTreeNode)
+                    .where(SQLiteTreeNode.document_id == document_id)
+                    .where(SQLiteTreeNode.height == 0)  # Leaves only
+                    .where(
+                        SQLiteTreeNode.time_start.isnot(None)
+                    )  # Must have timestamps
+                    .where(SQLiteTreeNode.time_start <= time_position)
+                    .order_by(SQLiteTreeNode.time_start.desc())
+                    .limit(1)
+                )
+
+            row = session.execute(stmt).scalars().first()
+            if not row:
+                return None
+            try:
+                session.expunge(row)
+            except Exception:
+                pass
+            return cast(TreeNode, row)
+
 
 class SqliteDocumentRepository:
     def __init__(self, db: SqliteDatabaseManager):
@@ -1670,6 +1738,46 @@ class SqliteDocumentRepository:
 
     def get_document_embedding_model(self, document_id: str) -> str | None:
         return self.db.get_document_embedding_model(document_id)
+
+    def get_document_is_temporal(self, document_id: str) -> bool | None:
+        """Get the is_temporal flag for a document.
+
+        Args:
+            document_id: Document identifier
+
+        Returns:
+            True if document is temporal, False if not, None if document not found
+        """
+        with self.SessionLocal() as session:
+            row = session.execute(
+                select(SqliteDocument.is_temporal).where(
+                    SqliteDocument.id == document_id
+                )
+            ).first()
+            if row is None:
+                return None
+            # Convert int (0/1) to bool
+            return bool(row[0])
+
+    def set_document_is_temporal(self, document_id: str, *, is_temporal: bool) -> None:
+        """Set the is_temporal flag for a document.
+
+        Args:
+            document_id: Document identifier
+            is_temporal: Whether the document is temporal
+
+        Raises:
+            ValueError: If document does not exist
+        """
+        with self.SessionLocal() as session:
+            result = session.execute(
+                update(SqliteDocument)
+                .where(SqliteDocument.id == document_id)
+                .values(is_temporal=1 if is_temporal else 0)
+            )
+            if result.rowcount == 0:
+                raise ValueError(f"Document not found: {document_id}")
+            session.commit()
 
     def list_documents(self) -> list[SqliteDocument]:
         with self.SessionLocal() as session:

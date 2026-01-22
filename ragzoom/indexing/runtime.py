@@ -294,6 +294,7 @@ class DocumentIndexSession:
         *,
         replace_existing: bool,
         collect_telemetry: bool = False,
+        timestamp: str | tuple[str, str] | None = None,
     ) -> IndexingResult:
         # Allow empty text only when target_chunk_tokens=None (client-managed mode)
         if not text and self._runtime._index_config.target_chunk_tokens is not None:
@@ -361,6 +362,7 @@ class DocumentIndexSession:
                     store=document_store,
                     document_id=self._document_id,
                     new_text=text,
+                    timestamp=timestamp,
                     reporter=run_context.telemetry_collector if run_context else None,
                     run_context=run_context,
                     telemetry_manager=telemetry_manager,
@@ -442,6 +444,7 @@ class DocumentIndexSession:
         units: list[str],
         *,
         collect_telemetry: bool = False,
+        timestamps: list[str | tuple[str, str]] | None = None,
     ) -> IndexingResult:
         """Append multiple text units with forced split boundaries between them.
 
@@ -453,6 +456,9 @@ class DocumentIndexSession:
         Args:
             units: List of text units, each creating a forced boundary
             collect_telemetry: Whether to collect telemetry data
+            timestamps: Optional list of timestamps parallel to units. Each entry
+                can be an ISO 8601 string (used for both start and end) or a tuple
+                of (start, end) strings.
 
         Returns:
             IndexingResult with combined stats for all appended units
@@ -521,6 +527,7 @@ class DocumentIndexSession:
                     store=document_store,
                     document_id=self._document_id,
                     units=units,
+                    timestamps=timestamps,
                     reporter=run_context.telemetry_collector if run_context else None,
                     run_context=run_context,
                     telemetry_manager=telemetry_manager,

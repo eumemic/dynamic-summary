@@ -1693,6 +1693,12 @@ class IndexingEngine:
 
         span_start = int(getattr(left, "span_start", 0))
         span_end = int(getattr(right, "span_end", 0))
+
+        # Temporal metadata propagation: inherit boundaries from children
+        # time_start from left child (earliest), time_end from right child (latest)
+        time_start: float | None = getattr(left, "time_start", None)
+        time_end: float | None = getattr(right, "time_end", None)
+
         parent_height = max(left_height, right_height) + 1
         parent_level_index = left_level_index // 2
 
@@ -1850,6 +1856,8 @@ class IndexingEngine:
             "level_index": parent_level_index,
             "preceding_context": preceding_context_json,
             "cost": summary_cost,
+            "time_start": time_start,
+            "time_end": time_end,
         }
 
         # Prepare neighbor updates before transaction

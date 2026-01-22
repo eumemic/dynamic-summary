@@ -68,6 +68,38 @@ class DocumentRepository(BaseRepository):
         doc = self.get_document_by_id(document_id)
         return doc.embedding_model if doc else None
 
+    def get_document_is_temporal(self, document_id: str) -> bool | None:
+        """Get the is_temporal flag for a document.
+
+        Args:
+            document_id: Document identifier
+
+        Returns:
+            True if document is temporal, False if not, None if document not found
+        """
+        doc = self.get_document_by_id(document_id)
+        if doc is None:
+            return None
+        # Convert int (0/1) to bool
+        return bool(doc.is_temporal)
+
+    def set_document_is_temporal(self, document_id: str, *, is_temporal: bool) -> None:
+        """Set the is_temporal flag for a document.
+
+        Args:
+            document_id: Document identifier
+            is_temporal: Whether the document is temporal
+
+        Raises:
+            ValueError: If document does not exist
+        """
+        with self.SessionLocal() as session:
+            doc = session.query(Document).filter_by(id=document_id).first()
+            if doc is None:
+                raise ValueError(f"Document not found: {document_id}")
+            doc.is_temporal = 1 if is_temporal else 0
+            session.commit()
+
     def list_documents(self) -> list[Document]:
         """Return all Document rows."""
         with self.SessionLocal() as session:

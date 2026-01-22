@@ -3,11 +3,55 @@
 from __future__ import annotations
 
 from ragzoom.backends.vector_common import (
+    coerce_float,
     coerce_int,
     coerce_str,
     normalize_metadata_from_dict,
     normalize_metadata_from_object,
 )
+
+
+class TestCoerceFloat:
+    """Tests for coerce_float helper."""
+
+    def test_none_returns_none(self) -> None:
+        assert coerce_float(None) is None
+
+    def test_bool_true_returns_one_point_zero(self) -> None:
+        assert coerce_float(True) == 1.0
+
+    def test_bool_false_returns_zero_point_zero(self) -> None:
+        assert coerce_float(False) == 0.0
+
+    def test_int_converts_to_float(self) -> None:
+        assert coerce_float(42) == 42.0
+
+    def test_float_passthrough(self) -> None:
+        assert coerce_float(3.14159) == 3.14159
+
+    def test_numeric_string_parses(self) -> None:
+        assert coerce_float("123.456") == 123.456
+
+    def test_integer_string_parses(self) -> None:
+        assert coerce_float("789") == 789.0
+
+    def test_string_with_whitespace(self) -> None:
+        assert coerce_float("  42.5  ") == 42.5
+
+    def test_empty_string_returns_none(self) -> None:
+        assert coerce_float("") is None
+
+    def test_whitespace_only_returns_none(self) -> None:
+        assert coerce_float("   ") is None
+
+    def test_non_numeric_string_returns_none(self) -> None:
+        assert coerce_float("hello") is None
+
+    def test_scientific_notation_parses(self) -> None:
+        assert coerce_float("1.5e10") == 1.5e10
+
+    def test_negative_float_parses(self) -> None:
+        assert coerce_float("-99.9") == -99.9
 
 
 class TestCoerceInt:
@@ -97,6 +141,49 @@ class TestNormalizeMetadataFromDict:
         assert result["span_end"] == 0  # default
         assert result["parent_id"] == ""  # default
 
+    def test_normalize_metadata_includes_timestamps(self) -> None:
+        """Temporal fields are coerced to float and included in result."""
+        meta = {
+            "span_start": 0,
+            "span_end": 100,
+            "parent_id": "",
+            "document_id": "doc-1",
+            "is_leaf": True,
+            "height": 0,
+            "level_index": 0,
+            "coord_version": 1,
+            "time_start": 1705847400.0,  # 2024-01-21T14:30:00Z
+            "time_end": 1705847460.0,  # 2024-01-21T14:31:00Z
+        }
+        result = normalize_metadata_from_dict(meta)
+        assert result["time_start"] == 1705847400.0
+        assert result["time_end"] == 1705847460.0
+
+    def test_normalize_metadata_timestamps_missing_are_none(self) -> None:
+        """Missing temporal fields default to None, not 0."""
+        result = normalize_metadata_from_dict({})
+        assert result["time_start"] is None
+        assert result["time_end"] is None
+
+    def test_normalize_metadata_timestamps_coerced_from_int(self) -> None:
+        """Integer timestamps are coerced to float."""
+        meta: dict[str, object] = {"time_start": 1705847400, "time_end": 1705847460}
+        result = normalize_metadata_from_dict(meta)
+        assert result["time_start"] == 1705847400.0
+        assert result["time_end"] == 1705847460.0
+        assert isinstance(result["time_start"], float)
+        assert isinstance(result["time_end"], float)
+
+    def test_normalize_metadata_timestamps_coerced_from_string(self) -> None:
+        """Numeric string timestamps are coerced to float."""
+        meta: dict[str, object] = {
+            "time_start": "1705847400.5",
+            "time_end": "1705847460.0",
+        }
+        result = normalize_metadata_from_dict(meta)
+        assert result["time_start"] == 1705847400.5
+        assert result["time_end"] == 1705847460.0
+
 
 class MetaObject:
     """Mock object with metadata attributes for testing."""
@@ -161,3 +248,36 @@ class TestNormalizeMetadataFromObject:
         assert result["height"] == 0  # default
         assert result["level_index"] == 0  # default
         assert result["coord_version"] == 0  # default
+
+    def test_temporal_fields_from_object(self) -> None:
+        """Temporal fields are extracted from object attributes."""
+
+        class TemporalMeta:
+            span_start = 0
+            span_end = 100
+            parent_id = ""
+            document_id = "doc-1"
+            is_leaf = True
+            height = 0
+            level_index = 0
+            coord_version = 1
+            time_start = 1705847400.0
+            time_end = 1705847460.0
+
+        result = normalize_metadata_from_object(TemporalMeta())
+        assert result["time_start"] == 1705847400.0
+        assert result["time_end"] == 1705847460.0
+
+    def test_temporal_fields_missing_from_object_are_none(self) -> None:
+        """Missing temporal attributes default to None."""
+
+        class NonTemporalMeta:
+            span_start = 0
+            span_end = 100
+            parent_id = ""
+            document_id = "doc-1"
+            is_leaf = True
+
+        result = normalize_metadata_from_object(NonTemporalMeta())
+        assert result["time_start"] is None
+        assert result["time_end"] is None
