@@ -1,7 +1,0 @@
-{
-  "mcpServers": {
-    "ragzoom-memory": {
-      "command": "./scripts/start-mcp-server"
-    }
-  }
-}
