@@ -487,12 +487,12 @@ Extend the local-first transcript sync to use temporal metadata, with each conve
 
 ### Temporal Document Setup
 
-- [ ] Synced documents are temporal (`is_temporal=True`)
+- [x] Synced documents are temporal (`is_temporal=True`)
   - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 3
-  - Success: `execute_sync()` sets `is_temporal=True` on document; verified via `get_document_is_temporal()`
-  - Test: `test_synced_document_is_temporal`
-  - Location: `ragzoom/claude_memory/transcript_sync.py` (execute_sync function)
-  - Note: Currently `execute_sync()` does not set or check the `is_temporal` flag
+  - Success: `execute_sync()` passes timestamps to `append()` calls; server auto-sets `is_temporal=True` on first append
+  - Test: `tests/test_synced_document_temporal_sqlite.py::TestSyncedDocumentIsTemporal` (3 tests)
+  - Location: `ragzoom/claude_memory/transcript_sync.py:136-168` (`_extract_segment_timestamps` helper), `ragzoom/claude_memory/transcript_sync.py:1190-1200` (passing timestamps to append)
+  - Note: Document temporality is inferred from first append with timestamps (per temporal-metadata.md spec)
 
 ### AppendUnit Integration
 
