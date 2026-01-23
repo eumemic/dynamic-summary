@@ -542,3 +542,30 @@ def test_query_json_output_suppresses_debug_visualization(
     output = json.loads(result.output)
     assert "summary" in output
     assert "tiling" in output
+
+
+def test_query_json_error_response(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that --json flag outputs JSON error format when exception occurs."""
+    from ragzoom.exceptions import DocumentNotFoundError
+
+    # Make the gRPC client raise an exception
+    cli_mocks["grpc_client"].execute_query.side_effect = DocumentNotFoundError(
+        "test-doc"
+    )
+
+    result = runner.invoke(
+        cli,
+        ["query", "Tell me about cats", "-d", "test-doc", "--json"],
+    )
+
+    # Should exit with error code
+    assert result.exit_code == 1
+
+    # Output should be valid JSON with error schema
+    output = json.loads(result.output)
+    assert "error" in output
+    assert "code" in output
+    assert output["code"] == "NOT_FOUND"
+    assert "test-doc" in output["error"]

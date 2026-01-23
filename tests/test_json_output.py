@@ -11,7 +11,19 @@ from ragzoom.client.grpc_client import (
     NodeSummary,
     RetrievalView,
 )
-from ragzoom.output_formatters import build_json_output
+from ragzoom.exceptions import (
+    ConfigurationError,
+    DatabaseError,
+    DocumentNotFoundError,
+    LLMError,
+    ResourceError,
+    ValidationError,
+)
+from ragzoom.output_formatters import (
+    build_json_error,
+    build_json_error_from_exception,
+    build_json_output,
+)
 from ragzoom.services.query_service import QueryResult
 
 
@@ -284,3 +296,74 @@ class TestBuildJsonOutput:
         # Should only have the existing node
         assert len(result["tiling"]) == 1
         assert result["tiling"][0]["node_id"] == "existing-node"
+
+
+class TestBuildJsonError:
+    """Tests for build_json_error function."""
+
+    def test_basic_error_response(self) -> None:
+        """Error response has error and code fields."""
+
+        result = build_json_error("Document not found", "NOT_FOUND")
+
+        assert result["error"] == "Document not found"
+        assert result["code"] == "NOT_FOUND"
+
+    def test_error_response_keys(self) -> None:
+        """Error response contains only expected keys."""
+
+        result = build_json_error("Some error", "ERROR_CODE")
+
+        assert set(result.keys()) == {"error", "code"}
+
+    def test_error_from_document_not_found_exception(self) -> None:
+        """DocumentNotFoundError maps to NOT_FOUND code."""
+        exc = DocumentNotFoundError("test-doc")
+        result = build_json_error_from_exception(exc)
+
+        assert result["code"] == "NOT_FOUND"
+        assert "test-doc" in result["error"]
+
+    def test_error_from_validation_exception(self) -> None:
+        """ValidationError maps to VALIDATION_ERROR code."""
+        exc = ValidationError("field", "value", "bad value")
+        result = build_json_error_from_exception(exc)
+
+        assert result["code"] == "VALIDATION_ERROR"
+
+    def test_error_from_llm_exception(self) -> None:
+        """LLMError maps to LLM_ERROR code."""
+        exc = LLMError("embedding", "test-model", "API rate limit exceeded")
+        result = build_json_error_from_exception(exc)
+
+        assert result["code"] == "LLM_ERROR"
+
+    def test_error_from_configuration_exception(self) -> None:
+        """ConfigurationError maps to CONFIGURATION_ERROR code."""
+        exc = ConfigurationError("api_key", "string", None)
+        result = build_json_error_from_exception(exc)
+
+        assert result["code"] == "CONFIGURATION_ERROR"
+
+    def test_error_from_database_exception(self) -> None:
+        """DatabaseError maps to DATABASE_ERROR code."""
+        exc = DatabaseError("query", "connection failed")
+        result = build_json_error_from_exception(exc)
+
+        assert result["code"] == "DATABASE_ERROR"
+
+    def test_error_from_resource_exception(self) -> None:
+        """ResourceError maps to RESOURCE_ERROR code."""
+        exc = ResourceError("memory", "allocation", "out of memory")
+        result = build_json_error_from_exception(exc)
+
+        assert result["code"] == "RESOURCE_ERROR"
+
+    def test_error_from_generic_exception(self) -> None:
+        """Generic exceptions map to INTERNAL_ERROR code."""
+
+        exc = RuntimeError("unexpected error")
+        result = build_json_error_from_exception(exc)
+
+        assert result["code"] == "INTERNAL_ERROR"
+        assert "unexpected error" in result["error"]
