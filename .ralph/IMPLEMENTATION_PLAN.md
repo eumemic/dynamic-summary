@@ -188,12 +188,13 @@ Fix critical bugs discovered during implementation verification that prevent bas
   - Location: `ragzoom/server/append_executor.py` (lines 203-210 and 489-496)
   - **DONE**: Updated error message to follow What-Why-Fix pattern. New message explains: what is wrong (temporal documents need null), why (preserves one-to-one mapping for timestamp queries), and how to fix (set in config file or use CLI flag). Tests verify message includes "temporal", "target_chunk_tokens", "null/none", "config", and explains the reason.
 
-- [ ] Document temporal document configuration requirement
+- [x] Document temporal document configuration requirement
   - Spec: New - documentation improvement
   - Success: README or docs explain when and how to use `target_chunk_tokens: null`
   - Test: Manual verification
   - Location: `README.md` or `docs/temporal-documents.md`
   - Note: Include example config file for temporal documents
+  - **DONE**: Created comprehensive `docs/temporal-documents.md` covering: when to use temporal documents, config requirements (`target_chunk_tokens: null`), quick start guide, timestamp format, Python API examples, common patterns (conversations, log files), and validation errors. Updated `docs/README.md` with reference. Added temporal documents to main README.md features list.
 
 ---
 

@@ -9,6 +9,7 @@ Welcome to the RagZoom documentation! This guide will help you understand, use, 
 - **[Architecture](./architecture.md)** - System design, components, and data flow
 - **[Developer Guide](./developer-guide.md)** - Setup, development workflow, testing, and debugging
 - **[API Reference](./api-reference.md)** - CLI commands, REST endpoints, and configuration
+- **[Temporal Documents](./temporal-documents.md)** - Time-series data with timestamp queries
 - **[Vision](./vision.md)** - Future plans and long-term project vision
 
 ### Technical Deep-Dives
@@ -48,6 +49,7 @@ For a comprehensive understanding:
 | System components and design | [Architecture](./architecture.md) |
 | CLI commands and options | [API Reference](./api-reference.md) |
 | Configuration parameters | [API Reference - Configuration](./api-reference.md#configuration-parameters) |
+| Temporal/timestamped data | [Temporal Documents](./temporal-documents.md) |
 | Running tests | [Developer Guide](./developer-guide.md) |
 | Testing strategy and markers | [Developer Guide - Testing](./developer-guide.md#testing-strategy) |
 | DP algorithm details | [Tiling Algorithm](./deep-dives/tiling-algorithm.md) |
