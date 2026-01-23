@@ -33,7 +33,12 @@ from ragzoom.constants import (
     DEFAULT_GRPC_HOST,
     DEFAULT_GRPC_PORT,
 )
-from ragzoom.daemon import daemonize, install_shutdown_handlers, write_port_file
+from ragzoom.daemon import (
+    daemonize,
+    ensure_server_running,
+    install_shutdown_handlers,
+    write_port_file,
+)
 from ragzoom.error_handling import handle_graceful_error
 from ragzoom.exceptions import (
     ConfigurationError,
@@ -90,14 +95,20 @@ logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.ERROR)
 GRPC_ADDRESS_HELP = f"gRPC server address (defaults to {DEFAULT_GRPC_ADDRESS})"
 
 
-def _resolve_server_address(value: str | None) -> str:
-    """Resolve the gRPC server address with sensible defaults."""
+def _resolve_server_address_with_autostart(value: str | None) -> str:
+    """Resolve server address, auto-starting daemon if using default.
+
+    When the user provides an explicit address (CLI arg or env var), use it
+    directly without auto-starting. When using the default address, ensure
+    the daemon is running first.
+    """
     if value:
         return value
     env_value = os.environ.get("RAGZOOM_SERVER_ADDRESS")
     if env_value:
         return env_value
-    return DEFAULT_GRPC_ADDRESS
+    # Using default address - ensure daemon is running
+    return ensure_server_running()
 
 
 def _display_worker_snapshots(
@@ -339,7 +350,7 @@ def index(
             )
 
         result: IndexingResult
-        resolved_address = _resolve_server_address(server_address)
+        resolved_address = _resolve_server_address_with_autostart(server_address)
         final_snapshot: WorkerRunSnapshot | None = None
         refreshed_status: DocumentStatusView | None = None
         refresh_error: str | None = None
@@ -601,7 +612,7 @@ def telemetry(
 ) -> None:
     """Fetch telemetry for a previous indexing run."""
 
-    resolved_address = _resolve_server_address(server_address)
+    resolved_address = _resolve_server_address_with_autostart(server_address)
 
     try:
         with GrpcRagzoomClient(resolved_address) as client:
@@ -663,7 +674,7 @@ def telemetry(
 def telemetry_export(document_id: str, output: str, server_address: str | None) -> None:
     """Synthesize document-level telemetry from server logs."""
 
-    resolved_address = _resolve_server_address(server_address)
+    resolved_address = _resolve_server_address_with_autostart(server_address)
     try:
         with GrpcRagzoomClient(resolved_address) as client:
             result = client.export_document_telemetry(document_id=document_id)
@@ -941,7 +952,7 @@ def query(
         ctx.obj["query_config"] = query_config
 
         effective_budget = token_budget or query_config.budget_tokens
-        resolved_address = _resolve_server_address(server_address)
+        resolved_address = _resolve_server_address_with_autostart(server_address)
 
         # Calculate visualization width
         if not debug:
@@ -1238,7 +1249,9 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
     """Clear data from the database via the gRPC server."""
 
     try:
-        resolved_address = _resolve_server_address(ctx.obj.get("server_address"))
+        resolved_address = _resolve_server_address_with_autostart(
+            ctx.obj.get("server_address")
+        )
 
         with GrpcRagzoomClient(resolved_address) as client:
             if document_id:
