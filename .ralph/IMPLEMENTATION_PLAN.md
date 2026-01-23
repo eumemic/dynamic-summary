@@ -143,11 +143,12 @@ Add `--json` flag to query command for machine-readable output with temporal spa
   - Location: `proto/dynamic_summary.proto` (Node message)
   - Note: Added fields 10 and 11 to Node message, updated .pyi stub with DESCRIPTOR and HasField
 
-- [ ] Add temporal fields to NodeSummary dataclass
+- [x] Add temporal fields to NodeSummary dataclass
   - Spec: specs/json-output-mode.md § JSON Schema > Temporal Fields
   - Success: NodeSummary includes `time_start: str | None` and `time_end: str | None`
   - Test: `tests/test_node_summary.py::test_node_summary_has_temporal_fields`
-  - Location: `ragzoom/client/grpc_client.py:89-98` (NodeSummary dataclass)
+  - Location: `ragzoom/client/grpc_client.py:89-100` (NodeSummary dataclass)
+  - Note: Also updated execute_query() to extract time_start/time_end from proto using HasField()
 
 ### Phase 16: JSON Output Builder
 
