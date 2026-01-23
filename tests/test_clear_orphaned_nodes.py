@@ -147,6 +147,7 @@ class TestAutomaticClearing:
                     document_id: str,
                     content: bytes,
                     collect_telemetry: bool,
+                    summary_system_prompt: str | None = None,
                 ) -> IndexingResult:
                     storage_backend.clear_document(document_id)
                     doc_store = storage_backend.for_document(document_id)
@@ -230,6 +231,7 @@ class TestAutomaticClearing:
                     document_id: str,
                     content: bytes,
                     collect_telemetry: bool,
+                    summary_system_prompt: str | None = None,
                 ) -> IndexingResult:
                     storage_backend.clear_document(document_id)
                     refreshed_store = storage_backend.for_document(document_id)

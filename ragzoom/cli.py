@@ -61,6 +61,7 @@ class AppendTextCallable(Protocol):
         content: bytes,
         collect_telemetry: bool,
         replace_existing: bool = ...,  # optional keyword for rebuilds
+        summary_system_prompt: str | None = ...,  # optional custom prompt
     ) -> IndexingResult: ...
 
 
@@ -290,6 +291,12 @@ def cli(ctx: click.Context) -> None:
         "Disable to exit once leaf ingestion has been scheduled."
     ),
 )
+@click.option(
+    "--summary-system-prompt",
+    "summary_system_prompt",
+    default=None,
+    help="Custom system prompt for summary generation (domain-specific summarization).",
+)
 @click.pass_context
 def index(
     ctx: click.Context,
@@ -302,6 +309,7 @@ def index(
     server_address: str | None,
     await_workers: bool,
     collect_telemetry: bool,
+    summary_system_prompt: str | None,
 ) -> None:
     """Index a document from file.
 
@@ -375,12 +383,14 @@ def index(
                     content=content_bytes,
                     collect_telemetry=collect_requested,
                     replace_existing=not append,
+                    summary_system_prompt=summary_system_prompt,
                 )
             else:
                 result = append_method(
                     document_id=target_document_id,
                     content=content_bytes,
                     collect_telemetry=collect_requested,
+                    summary_system_prompt=summary_system_prompt,
                 )
             telemetry_run_id = result.telemetry_run_id
             if await_workers:
