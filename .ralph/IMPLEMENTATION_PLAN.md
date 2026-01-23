@@ -312,11 +312,12 @@ Auto-start daemon, crash recovery, and proper lifecycle management.
   - Location: `ragzoom/daemon.py:196-254` (daemonize function)
   - Note: Uses standard Unix double-fork pattern: fork → setsid → fork → redirect I/O → write PID
 
-- [ ] Implement signal handlers (SIGTERM, SIGINT)
+- [x] Implement signal handlers (SIGTERM, SIGINT)
   - Spec: specs/daemon-lifecycle.md § Implementation Notes > Signal Handling
   - Success: SIGTERM triggers graceful shutdown, finishes in-flight requests
-  - Test: `tests/test_daemon_lifecycle.py::test_sigterm_graceful_shutdown`
-  - Location: `ragzoom/daemon.py` or `ragzoom/server/server.py`
+  - Test: `tests/test_daemon_lifecycle.py::TestSignalHandlers::test_sigterm_graceful_shutdown`
+  - Location: `ragzoom/daemon.py:260-291` (install_shutdown_handlers function)
+  - Note: Added `install_shutdown_handlers(cleanup_callback)` function that registers handlers for SIGTERM and SIGINT. The optional callback allows servers to provide their own cleanup logic (e.g., finish in-flight requests). Handlers remove PID file and exit cleanly.
 
 - [ ] Add `--daemon` flag to `server start` command
   - Spec: specs/daemon-lifecycle.md § CLI Commands > ragzoom server start

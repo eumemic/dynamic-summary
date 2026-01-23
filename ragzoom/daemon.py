@@ -6,8 +6,11 @@ health checks, and auto-start capabilities.
 
 import errno
 import os
+import signal
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from types import FrameType
 
 PID_FILENAME = "daemon.pid"
 PORT_FILENAME = "daemon.port"
@@ -252,3 +255,34 @@ def daemonize(log_file: Path | None = None) -> None:
 
     # Write daemon PID to state file
     write_pid_file(os.getpid())
+
+
+def install_shutdown_handlers(
+    cleanup_callback: Callable[[], None] | None = None,
+) -> None:
+    """Install signal handlers for graceful daemon shutdown.
+
+    Handles SIGTERM and SIGINT by:
+    1. Calling the optional cleanup callback
+    2. Removing the PID file
+    3. Exiting with status 0
+
+    Args:
+        cleanup_callback: Optional function to call before cleanup.
+                         Use this to stop servers, finish in-flight work, etc.
+    """
+
+    def shutdown_handler(signum: int, frame: FrameType | None) -> None:
+        """Handle shutdown signals."""
+        # Call cleanup callback if provided
+        if cleanup_callback is not None:
+            cleanup_callback()
+
+        # Remove PID file
+        remove_pid_file()
+
+        # Exit cleanly
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, shutdown_handler)
+    signal.signal(signal.SIGINT, shutdown_handler)
