@@ -513,3 +513,118 @@ class TestTimeWindowedQueryOnSyncedTranscript:
         leaf = leaves[0]
         assert query_result.actual_start <= leaf.span_start
         assert query_result.actual_end >= leaf.span_end
+
+    def test_compaction_summaries_not_indexed(
+        self, sqlite_backend: SQLiteStorageBackend, tmp_path: Path
+    ) -> None:
+        """Compaction summaries (isCompactSummary=true) should not be indexed.
+
+        Verifies that compaction summary messages are filtered out during
+        turn grouping and do not appear in the indexed document content.
+        """
+        config = IndexConfig.load(target_chunk_tokens=None)
+        executor = AppendExecutor(config, StubEmbedder())
+        client = AppendExecutorClient(sqlite_backend, executor)
+
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        # Create a transcript with a compaction summary in the middle
+        transcript_path.write_text(
+            "\n".join(
+                [
+                    # Turn 1: normal user/assistant exchange
+                    json.dumps(
+                        {
+                            "uuid": "msg1",
+                            "parentUuid": None,
+                            "type": "user",
+                            "timestamp": "2024-01-21T14:00:00Z",
+                            "message": {"content": "Hello, I need help with my code"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "uuid": "msg2",
+                            "parentUuid": "msg1",
+                            "type": "assistant",
+                            "timestamp": "2024-01-21T14:00:30Z",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "Sure, I can help with your code!",
+                                    }
+                                ]
+                            },
+                        }
+                    ),
+                    # Compaction summary - should NOT be indexed
+                    json.dumps(
+                        {
+                            "uuid": "compact1",
+                            "parentUuid": "msg2",
+                            "type": "user",
+                            "timestamp": "2024-01-21T14:00:35Z",
+                            "isCompactSummary": True,
+                            "message": {
+                                "content": "SECRET_COMPACTION_MARKER_XYZ123 - this summary should never appear in indexed content"
+                            },
+                        }
+                    ),
+                    # Turn 2: after compaction, normal exchange
+                    json.dumps(
+                        {
+                            "uuid": "msg3",
+                            "parentUuid": "compact1",
+                            "type": "user",
+                            "timestamp": "2024-01-21T14:05:00Z",
+                            "message": {"content": "Can you fix this bug?"},
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "uuid": "msg4",
+                            "parentUuid": "msg3",
+                            "type": "assistant",
+                            "timestamp": "2024-01-21T14:05:45Z",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "I found and fixed the bug!",
+                                    }
+                                ]
+                            },
+                        }
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        # Execute sync
+        result = execute_sync(transcript_path, state_path, client)
+
+        # Verify document was created
+        assert result.document_id == "transcript"
+
+        # Get all leaf nodes and their text content
+        doc_store = sqlite_backend.for_document(result.document_id)
+        leaves = list(doc_store.nodes.iter_leaves())
+        assert len(leaves) >= 1
+
+        # Collect all indexed text
+        all_indexed_text = " ".join(
+            leaf.text for leaf in leaves if leaf.text is not None
+        )
+
+        # The compaction summary marker should NOT appear in any indexed content
+        assert "SECRET_COMPACTION_MARKER_XYZ123" not in all_indexed_text
+
+        # But real user/assistant messages SHOULD appear
+        assert "help with my code" in all_indexed_text
+        assert "fix this bug" in all_indexed_text
+
+        # Verify we have exactly 2 turns (msg1+msg2) and (msg3+msg4), not 3
+        assert len(leaves) == 2, f"Expected 2 leaves (2 turns), got {len(leaves)}"
