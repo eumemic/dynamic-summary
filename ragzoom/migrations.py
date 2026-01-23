@@ -94,3 +94,62 @@ def detect_schema_version(engine: Engine) -> SchemaVersion:
             "Invalid schema: neither summary_system_prompt nor "
             "summarization_guidance column found in documents table"
         )
+
+
+def migrate_summary_prompt_column(engine: Engine) -> None:
+    """Rename summary_system_prompt column to summarization_guidance.
+
+    Performs an idempotent migration that renames the column in the documents
+    table from the old name to the new name. Safe to run multiple times.
+
+    Args:
+        engine: SQLAlchemy engine connected to the database
+
+    Raises:
+        ValueError: If the database dialect is not supported (only sqlite and
+            postgresql are supported)
+
+    Note:
+        This migration preserves all existing data in the column. The rename
+        is atomic and will not lose data even if interrupted.
+    """
+    version = detect_schema_version(engine)
+
+    # Already migrated - nothing to do
+    if version == SchemaVersion.V2_SUMMARIZATION_GUIDANCE:
+        return
+
+    dialect = engine.dialect.name
+
+    with engine.begin() as conn:
+        if dialect == "sqlite":
+            # SQLite 3.25.0+ supports ALTER TABLE RENAME COLUMN
+            conn.execute(
+                text(
+                    "ALTER TABLE documents "
+                    "RENAME COLUMN summary_system_prompt TO summarization_guidance"
+                )
+            )
+
+        elif dialect == "postgresql":
+            # PostgreSQL conditional rename using DO block
+            conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'documents'
+                            AND column_name = 'summary_system_prompt'
+                        ) THEN
+                            ALTER TABLE documents
+                            RENAME COLUMN summary_system_prompt TO summarization_guidance;
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+
+        else:
+            raise ValueError(f"Unsupported database dialect: {dialect}")

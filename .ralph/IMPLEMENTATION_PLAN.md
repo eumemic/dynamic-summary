@@ -96,12 +96,13 @@ Fix critical bugs discovered during implementation verification that prevent bas
   - Note: Query PRAGMA table_info (SQLite) or information_schema (PostgreSQL)
   - **DONE**: Implemented `detect_schema_version()` with `SchemaVersion` enum. Supports both SQLite and PostgreSQL via dialect-specific introspection.
 
-- [ ] Implement column rename migration
+- [x] Implement column rename migration
   - Spec: specs/custom-prompt-config.md § Migration > Required Migration
   - Success: `migrate_summary_prompt_column()` renames column from old to new name
-  - Test: `tests/test_schema_migration.py::test_rename_column_sqlite`, `test_rename_column_postgres`
+  - Test: `tests/test_schema_migration_sqlite.py::TestMigrateSummaryPromptColumn`, `tests/test_schema_migration_postgres.py::TestMigrateSummaryPromptColumnPostgres`
   - Location: `ragzoom/migrations.py`
   - Note: Must be idempotent - skip if already migrated
+  - **DONE**: Implemented `migrate_summary_prompt_column()` using SQLite RENAME COLUMN and PostgreSQL conditional DO block. Includes tests for data preservation, NULL handling, and idempotency.
 
 - [ ] Add startup migration hook
   - Spec: specs/custom-prompt-config.md § Migration > Schema Migration
