@@ -63,12 +63,13 @@ Fix critical bugs discovered during implementation verification that prevent bas
 
 ### Phase 29: Daemon Exit Cleanup (Issues #1 & #6)
 
-- [ ] Add atexit cleanup for normal daemon exits
+- [x] Add atexit cleanup for normal daemon exits
   - Spec: specs/daemon-lifecycle.md § Exit Cleanup
   - Success: When `run_server()` returns normally (not via signal), PID and port files are removed
   - Test: `tests/test_daemon_atexit.py::test_normal_exit_cleans_up_state_files`
   - Location: `ragzoom/cli.py` (start_server function)
   - Note: Signal handlers only catch SIGTERM/SIGINT. Normal exit (e.g., when `server.wait_for_termination()` returns) needs `atexit.register(cleanup_stale_state)`
+  - **DONE**: Added `atexit.register(cleanup_stale_state)` in daemon mode after `install_shutdown_handlers()`
 
 - [ ] Add cleanup before lease failure sys.exit()
   - Spec: specs/daemon-lifecycle.md § Exit Cleanup
