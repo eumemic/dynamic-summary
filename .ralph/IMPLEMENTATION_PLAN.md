@@ -553,12 +553,12 @@ Extend the local-first transcript sync to use temporal metadata, with each conve
 
 ### claude-transcriber Library
 
-- [ ] Add claude-transcriber dependency
+- [x] Add claude-transcriber dependency
   - Spec: specs/timestamped-transcript-sync.md § Transcription with claude-transcriber
   - Success: `claude-transcriber` package listed in `pyproject.toml` dependencies
-  - Test: `import claude_transcriber` succeeds
-  - Location: `pyproject.toml` (dependencies section)
-  - Note: Library not currently in dependencies
+  - Test: `tests/test_claude_transcriber_dependency.py` (2 tests: import and transcribe method)
+  - Location: `pyproject.toml` (dependencies section), mypy override for untyped module
+  - Note: Added `claude-transcriber==0.2.1` to dependencies and mypy ignore for missing stubs
 
 - [ ] Replace custom transcription with claude-transcriber
   - Spec: specs/timestamped-transcript-sync.md § Transcription with claude-transcriber
