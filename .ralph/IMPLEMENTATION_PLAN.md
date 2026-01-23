@@ -434,11 +434,11 @@ Extend the local-first transcript sync to use temporal metadata, with each conve
 
 ### Turn Dataclass
 
-- [ ] Implement `Turn` dataclass
+- [x] Implement `Turn` dataclass
   - Spec: specs/timestamped-transcript-sync.md § API Changes > transcript_sync.py
   - Success: `Turn(uuids=[...], time_start="ISO8601", time_end="ISO8601")` exists
-  - Test: `test_turn_dataclass_fields`
-  - Location: `ragzoom/claude_memory/transcript_sync.py`
+  - Test: `tests/test_turn_dataclass.py::TestTurnDataclass` (8 tests)
+  - Location: `ragzoom/claude_memory/transcript_sync.py:35-52`
   - Note: Contains list of message UUIDs in the turn, plus ISO 8601 timestamps
 
 ### Turn Grouping Algorithm
