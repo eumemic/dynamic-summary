@@ -372,11 +372,12 @@ Auto-start daemon, crash recovery, and proper lifecycle management.
   - Location: `ragzoom/cli.py:1858-1890`, `ragzoom/daemon.py:486-525`
   - Note: Added `get_process_uptime(pid)` helper to daemon.py using psutil to calculate human-readable uptime. Added `server_status()` command that shows PID, port, and uptime when running. Handles edge cases: no PID file, stale PID, missing port file, negative uptime (clock skew). 4 CLI tests + 3 daemon utility tests.
 
-- [ ] Implement `ragzoom server logs` command
+- [x] Implement `ragzoom server logs` command
   - Spec: specs/daemon-lifecycle.md § CLI Commands > ragzoom server logs
   - Success: Shows daemon.log contents, `-f` follows, `-n` limits lines
   - Test: `tests/test_cli.py::test_server_logs_command`
-  - Location: `ragzoom/cli.py`
+  - Location: `ragzoom/cli.py:1894-1941`
+  - Note: Added server logs command with -n/--lines flag (default 50) and -f/--follow flag for tail-like behavior. Uses subprocess for follow mode to leverage tail's efficient file watching.
 
 ---
 
