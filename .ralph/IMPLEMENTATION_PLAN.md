@@ -152,11 +152,12 @@ Add `--json` flag to query command for machine-readable output with temporal spa
 
 ### Phase 16: JSON Output Builder
 
-- [ ] Implement `build_json_output()` function
+- [x] Implement `build_json_output()` function
   - Spec: specs/json-output-mode.md § Implementation > Response Building
   - Success: Function converts QueryResponse to dict matching JSON schema
   - Test: `tests/test_json_output.py::TestBuildJsonOutput` (schema validation, tiling order, temporal fields)
-  - Location: `ragzoom/cli.py` or `ragzoom/output_formatters.py`
+  - Location: `ragzoom/output_formatters.py`
+  - Note: Created new module with TypedDict schemas (TilingNodeDict, ActualSpanDict, QueryJsonOutput) for strict type safety. Tests cover all schema fields, tiling order preservation, temporal fields, and edge cases.
 
 - [ ] Add `--json` flag to CLI query command
   - Spec: specs/json-output-mode.md § Implementation > CLI Changes
@@ -172,11 +173,12 @@ Add `--json` flag to query command for machine-readable output with temporal spa
   - Test: `tests/test_json_output.py::test_json_error_response`
   - Location: `ragzoom/cli.py` (error handling in query command)
 
-- [ ] Handle non-temporal documents (null time fields)
+- [x] Handle non-temporal documents (null time fields)
   - Spec: specs/json-output-mode.md § JSON Schema > Temporal Fields
   - Success: Non-temporal docs have `null` for time_start/time_end in tiling
-  - Test: `tests/test_json_output.py::test_json_output_non_temporal_document`
-  - Location: `ragzoom/cli.py` (build_json_output)
+  - Test: `tests/test_json_output.py::TestBuildJsonOutput::test_temporal_fields_null_for_non_temporal`
+  - Location: `ragzoom/output_formatters.py` (build_json_output)
+  - Note: Implemented as part of build_json_output() - temporal fields pass through as-is from NodeSummary (None when not set)
 
 - [ ] Update servicer to populate temporal fields in Node response
   - Spec: specs/json-output-mode.md § JSON Schema > Temporal Fields
