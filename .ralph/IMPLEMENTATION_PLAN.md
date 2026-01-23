@@ -283,11 +283,12 @@ Auto-start daemon, crash recovery, and proper lifecycle management.
 
 ### Phase 22: State Directory & Files
 
-- [ ] Implement XDG-compliant state directory
+- [x] Implement XDG-compliant state directory
   - Spec: specs/daemon-lifecycle.md § Architecture > State Files
   - Success: `~/.local/state/ragzoom/` used by default, `RAGZOOM_STATE_DIR` overrides
-  - Test: `tests/test_daemon_state.py::test_state_directory_xdg_compliant`
-  - Location: `ragzoom/daemon.py` (new file)
+  - Test: `tests/test_daemon_state.py::TestStateDirectoryXdgCompliant`, `tests/test_daemon_state.py::TestStateDirectoryCreation`
+  - Location: `ragzoom/daemon.py`
+  - Note: Added `get_daemon_state_dir()` and `ensure_daemon_state_dir()` functions. Supports ~ expansion and relative-to-absolute conversion for RAGZOOM_STATE_DIR.
 
 - [ ] Implement PID file management (read/write/cleanup)
   - Spec: specs/daemon-lifecycle.md § Architecture > State Files
