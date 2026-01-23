@@ -1793,7 +1793,7 @@ class IndexingEngine:
             reporter=telemetry,
             prev_context=context_text,
             text_tokens=combined_tokens,
-            summary_system_prompt=document_custom_prompt,
+            summarization_guidance=document_custom_prompt,
         )
         logger.info("SUMMARIZE_END: parent_id=%s", parent_id)
         # Fail fast if mock returns wrong type - prevents silent hangs in tests

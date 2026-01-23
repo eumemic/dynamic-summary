@@ -1,7 +1,10 @@
 """Integration tests for custom prompt threading through summary workflow.
 
-These tests verify that the custom system prompt flows from IndexConfig
+These tests verify that the summarization_guidance flows from IndexConfig
 all the way to the LLM API call, as specified in specs/custom-prompt-config.md.
+
+KEY SEMANTIC: summarization_guidance is ADDITIVE - it gets appended under a
+"# Summarization Guidance" section, never replacing the default base prompt.
 """
 
 from __future__ import annotations
@@ -66,22 +69,56 @@ def assert_system_prompt(messages: list[dict[str, str]], expected_prompt: str) -
     ), f"Expected prompt: {expected_prompt!r}, Got: {system_message['content']!r}"
 
 
+def assert_guidance_appended(messages: list[dict[str, str]], guidance: str) -> None:
+    """Assert that guidance was appended under '# Summarization Guidance' section.
+
+    Verifies the additive semantic: base prompt + header + guidance.
+    """
+    assert len(messages) > 0, "Messages should have been sent to LLM"
+    system_message = get_system_message(messages)
+    assert system_message is not None, "Should have a system message"
+
+    content = system_message["content"]
+
+    # Base prompt must be at the start
+    assert content.startswith(DEFAULT_SUMMARY_SYSTEM_PROMPT), (
+        f"System prompt must start with default base prompt.\n"
+        f"Got: {content[:100]}..."
+    )
+
+    # Guidance header must be present
+    assert (
+        "# Summarization Guidance" in content
+    ), "Custom guidance must be under '# Summarization Guidance' section"
+
+    # Custom guidance must be present
+    assert guidance in content, f"Custom guidance '{guidance}' must be in system prompt"
+
+    # Verify exact structure
+    expected = (
+        f"{DEFAULT_SUMMARY_SYSTEM_PROMPT}\n\n" f"# Summarization Guidance\n{guidance}"
+    )
+    assert content == expected, f"Expected:\n{expected}\n\nGot:\n{content}"
+
+
 @pytest.mark.asyncio
-async def test_custom_prompt_reaches_llm_call() -> None:
-    """Custom prompt flows from IndexConfig to the actual LLM API call.
+async def test_guidance_appended_to_base_prompt() -> None:
+    """Custom guidance flows from IndexConfig and gets APPENDED to base prompt.
 
     This integration test verifies the complete flow:
-    IndexConfig.summary_system_prompt → SummaryWorkflowConfig
+    IndexConfig.summarization_guidance → SummaryWorkflowConfig
     → run_summary_workflow → prepare_summary_inputs → messages[0]["content"]
     → call_summary
+
+    KEY: Guidance is ADDITIVE, not replacement.
     """
-    custom_prompt = (
-        "You are a legal document summarizer. Preserve exact legal terminology "
-        "and citations. Output ONLY the compressed text, nothing else."
+    custom_guidance = (
+        "This document contains legal contracts. "
+        "Preserve exact legal terminology and citations."
     )
 
     config = IndexConfig.load()
-    object.__setattr__(config, "summary_system_prompt", custom_prompt)
+    object.__setattr__(config, "summarization_guidance", custom_guidance)
 
     text = "This is a legal document about contract law. " * 100
     captured_messages, mock_call_summary = create_message_capture()
@@ -97,14 +134,14 @@ async def test_custom_prompt_reaches_llm_call() -> None:
         text_tokens=None,
     )
 
-    assert_system_prompt(captured_messages, custom_prompt)
+    assert_guidance_appended(captured_messages, custom_guidance)
 
 
 @pytest.mark.asyncio
-async def test_default_prompt_used_when_none() -> None:
-    """Default system prompt used when IndexConfig.summary_system_prompt is None."""
+async def test_default_prompt_used_when_no_guidance() -> None:
+    """Default system prompt used when IndexConfig.summarization_guidance is None."""
     config = IndexConfig.load()
-    assert config.summary_system_prompt is None
+    assert config.summarization_guidance is None
 
     text = "This is some text to summarize. " * 100
     captured_messages, mock_call_summary = create_message_capture()
@@ -124,16 +161,16 @@ async def test_default_prompt_used_when_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_custom_prompt_via_workflow_config() -> None:
-    """Custom prompt works when using SummaryWorkflowConfig directly."""
-    custom_prompt = "You are a medical note summarizer. Preserve clinical terminology."
+async def test_guidance_via_workflow_config() -> None:
+    """Custom guidance works when using SummaryWorkflowConfig directly."""
+    custom_guidance = "Preserve clinical terminology exactly as written."
 
     config = SummaryWorkflowConfig(
         summary_model="gpt-4o-mini",
         use_anti_verbatim_vaccine=False,
         max_retries=2,
         retry_threshold=0.2,
-        summary_system_prompt=custom_prompt,
+        summarization_guidance=custom_guidance,
     )
 
     text = "Patient presents with symptoms of... " * 100
@@ -150,16 +187,16 @@ async def test_custom_prompt_via_workflow_config() -> None:
         text_tokens=None,
     )
 
-    assert_system_prompt(captured_messages, custom_prompt)
+    assert_guidance_appended(captured_messages, custom_guidance)
 
 
 @pytest.mark.asyncio
-async def test_custom_prompt_with_preceding_context() -> None:
-    """Custom prompt is used correctly when preceding context is provided."""
-    custom_prompt = "You are a code documentation summarizer."
+async def test_guidance_with_preceding_context() -> None:
+    """Custom guidance is appended correctly when preceding context is provided."""
+    custom_guidance = "Preserve function names and code structure."
 
     config = IndexConfig.load()
-    object.__setattr__(config, "summary_system_prompt", custom_prompt)
+    object.__setattr__(config, "summarization_guidance", custom_guidance)
 
     text = "def calculate_sum(a, b): return a + b " * 50
     prev_context = "This module provides mathematical utilities."
@@ -176,7 +213,7 @@ async def test_custom_prompt_with_preceding_context() -> None:
         text_tokens=None,
     )
 
-    assert_system_prompt(captured_messages, custom_prompt)
+    assert_guidance_appended(captured_messages, custom_guidance)
 
     user_messages = [m for m in captured_messages if m["role"] == "user"]
     assert len(user_messages) > 0
@@ -187,22 +224,22 @@ async def test_custom_prompt_with_preceding_context() -> None:
 
 
 @pytest.mark.asyncio
-async def test_custom_prompt_override_in_run_summary_request() -> None:
-    """Custom prompt passed via summary_system_prompt overrides IndexConfig.
+async def test_guidance_override_in_run_summary_request() -> None:
+    """Custom guidance passed via summarization_guidance overrides IndexConfig.
 
     This tests the explicit override parameter that will be used when
-    the document's stored custom prompt differs from IndexConfig.
+    the document's stored custom guidance differs from IndexConfig.
     Spec: specs/custom-prompt-config.md § Implementation
     """
     from ragzoom.services.summary_utils import SummaryRequest, run_summary_request
 
-    # IndexConfig has NO custom prompt set
+    # IndexConfig has NO custom guidance set
     config = IndexConfig.load()
-    assert config.summary_system_prompt is None
+    assert config.summarization_guidance is None
 
     # But we pass an explicit override
-    document_custom_prompt = (
-        "You are a legal document summarizer. Preserve exact legal terminology."
+    document_custom_guidance = (
+        "This document contains legal contracts. " "Preserve exact legal terminology."
     )
 
     text = "This is legal contract text. " * 100
@@ -221,8 +258,8 @@ async def test_custom_prompt_override_in_run_summary_request() -> None:
         index_config=config,
         request=request,
         call_summary=mock_call_summary,
-        summary_system_prompt=document_custom_prompt,  # Override
+        summarization_guidance=document_custom_guidance,  # Override
     )
 
-    # Document's custom prompt should be used, not IndexConfig's default
-    assert_system_prompt(captured_messages, document_custom_prompt)
+    # Document's custom guidance should be appended to base prompt
+    assert_guidance_appended(captured_messages, document_custom_guidance)

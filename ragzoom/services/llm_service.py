@@ -371,11 +371,11 @@ class LLMService:
         reporter: TelemetryCollector | None = None,
         prev_context: str | None = None,
         text_tokens: int | None = None,
-        summary_system_prompt: str | None = None,
+        summarization_guidance: str | None = None,
     ) -> SummaryResult:
         """Summarize text to approximately the target token count.
 
-        If summary_system_prompt is provided, overrides the default system prompt.
+        If summarization_guidance is provided, appends custom guidance to the system prompt.
         """
         return await self._summarizer.summarize(
             text,
@@ -384,7 +384,7 @@ class LLMService:
             parent_id=parent_id,
             reporter=reporter,
             text_tokens=text_tokens,
-            summary_system_prompt=summary_system_prompt,
+            summarization_guidance=summarization_guidance,
         )
 
     async def _contextualize_text(

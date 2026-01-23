@@ -296,14 +296,16 @@ async def test_worker_uses_document_custom_prompt(
         )
         await indexer_runtime_harness.wait_for_idle(document_id)
 
-    # Verify summarize was called with the document's custom prompt
+    # Verify summarize was called with the document's custom guidance
     assert summary_mock.await_count > 0, "Summarization should have been called"
 
-    # Check all summarization calls received the custom prompt
+    # Check all summarization calls received the custom guidance
+    # Note: LLM service uses summarization_guidance (new name), but harness uses
+    # summary_system_prompt (old name) until CLI flag rename work item is done
     for call in summary_mock.await_args_list:
         _, kwargs = call
-        actual_prompt = kwargs.get("summary_system_prompt")
-        assert actual_prompt == custom_prompt, (
-            f"Expected document custom prompt '{custom_prompt}', "
-            f"got '{actual_prompt}'"
+        actual_guidance = kwargs.get("summarization_guidance")
+        assert actual_guidance == custom_prompt, (
+            f"Expected document custom guidance '{custom_prompt}', "
+            f"got '{actual_guidance}'"
         )

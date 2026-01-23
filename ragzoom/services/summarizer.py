@@ -72,7 +72,7 @@ class Summarizer:
         parent_id: str | None = None,
         reporter: TelemetryCollector | None = None,
         text_tokens: int | None = None,
-        summary_system_prompt: str | None = None,
+        summarization_guidance: str | None = None,
     ) -> summary_utils.SummaryResult:
         request_kwargs: summary_utils.SummaryRequest = {
             "text": text,
@@ -87,7 +87,7 @@ class Summarizer:
             index_config=self.config,
             request=request_kwargs,
             call_summary=self._make_summary_call,
-            summary_system_prompt=summary_system_prompt,
+            summarization_guidance=summarization_guidance,
         )
 
     async def contextualize(

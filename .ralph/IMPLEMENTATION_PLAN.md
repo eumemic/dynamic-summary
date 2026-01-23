@@ -130,12 +130,13 @@ Fix critical bugs discovered during implementation verification that prevent bas
   - Note: Coordinate with schema migration (Phase 30)
   - **DONE**: Renamed field in both `Document` (ragzoom/models.py) and `SqliteDocument` (ragzoom/backends/sqlite_db.py). Added column rename migration in `SqliteDatabaseManager.__post_init__`. Updated `sqlite_repositories.py` to pass `summarization_guidance` when creating documents. Updated `indexing_engine.py` to read `summarization_guidance` from documents. Tests added: `test_sqlite_document_has_summarization_guidance`, `test_sqlite_summarization_guidance_instantiation`. Updated migration tests to use V1 schema fixtures since SQLite backend now creates V2 schema directly.
 
-- [ ] Update prepare_summary_inputs to append instead of replace
+- [x] Update prepare_summary_inputs to append instead of replace
   - Spec: specs/custom-prompt-config.md § System Prompt Structure
   - Success: Custom guidance appended under "# Summarization Guidance" section, not replacing
   - Test: `tests/test_summary_utils.py::test_guidance_appends_to_default_prompt`
   - Location: `ragzoom/services/summary_utils.py`
   - Note: This is the core fix - change from replacement to additive semantics
+  - **DONE**: Renamed `system_prompt` parameter to `summarization_guidance` in `prepare_summary_inputs` and updated the implementation to append guidance under "# Summarization Guidance" section. Updated all callers (`SummaryWorkflowConfig`, `run_summary_workflow`, `run_summary_from_config`, `run_summary_request`, `Summarizer.summarize`, `LLMService._summarize_text`, `IndexingEngine`). Comprehensive tests verify additive semantics.
 
 - [ ] Update CLI flag from --summary-system-prompt to --summarization-guidance
   - Spec: specs/custom-prompt-config.md § CLI Override
