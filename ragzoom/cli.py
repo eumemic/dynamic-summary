@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import inspect
 import json
 import logging
@@ -1781,8 +1782,11 @@ def start_server(
         daemonize()
         # Write port file so clients can find us
         write_port_file(port)
-        # Install signal handlers for graceful shutdown
+        # Install signal handlers for graceful shutdown (SIGTERM/SIGINT)
         install_shutdown_handlers()
+        # Register atexit cleanup for normal exits (when run_server returns)
+        # This ensures state files are cleaned up even without signals
+        atexit.register(cleanup_stale_state)
 
     # Configure logging AFTER daemonization (if any) so log output
     # goes to the daemon process, not the parent that exits
