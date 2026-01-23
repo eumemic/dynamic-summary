@@ -396,11 +396,12 @@ Complete the Claude Code plugin with commands, skills, and proper structure.
   - Location: `ragzoom/plugin/.claude-plugin/plugin.json`
   - Note: Plugin uses `.claude-plugin/plugin.json` convention per Claude Code standards. Components (commands, hooks, skills, agents) are auto-discovered by directory convention, not listed in manifest.
 
-- [ ] Add .mcp.json at repo root
+- [x] Add .mcp.json at repo root
   - Spec: specs/memzoom-plugin.md § Plugin Structure
   - Success: MCP config at repo root enables MCP server discovery
-  - Test: `tests/test_mcp_config.py::test_mcp_config_at_root`
+  - Test: `tests/test_mcp_config.py` (3 tests)
   - Location: `.mcp.json` (repo root)
+  - Note: Uses `bash scripts/start-mcp-server` to ensure proper environment setup (gRPC address discovery, user ID). Direct `python -m` would miss environment configuration.
 
 - [ ] Create config file template
   - Spec: specs/memzoom-plugin.md § Configuration > Plugin Settings
