@@ -358,11 +358,12 @@ Auto-start daemon, crash recovery, and proper lifecycle management.
 
 ### Phase 25: CLI Commands
 
-- [ ] Implement `ragzoom server stop` command
+- [x] Implement `ragzoom server stop` command
   - Spec: specs/daemon-lifecycle.md § CLI Commands > ragzoom server stop
   - Success: Sends SIGTERM, waits for graceful shutdown, cleans up state files
   - Test: `tests/test_cli.py::test_server_stop_command`
-  - Location: `ragzoom/cli.py`
+  - Location: `ragzoom/cli.py:1810-1855`
+  - Note: Added imports (signal, time, is_pid_stale, read_pid_file, cleanup_stale_state). Command is idempotent, handles stale PIDs, timeouts gracefully. 4 tests: normal stop, no daemon running, stale PID cleanup, timeout handling.
 
 - [ ] Implement `ragzoom server status` command
   - Spec: specs/daemon-lifecycle.md § CLI Commands > ragzoom server status

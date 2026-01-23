@@ -9,7 +9,9 @@ import logging
 import os
 import random
 import shutil
+import signal
 import sys
+import time
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Protocol, cast
@@ -34,9 +36,12 @@ from ragzoom.constants import (
     DEFAULT_GRPC_PORT,
 )
 from ragzoom.daemon import (
+    cleanup_stale_state,
     daemonize,
     ensure_server_running,
     install_shutdown_handlers,
+    is_pid_stale,
+    read_pid_file,
     write_port_file,
 )
 from ragzoom.error_handling import handle_graceful_error
@@ -1797,6 +1802,57 @@ def start_server(
         preceding_context_inner_token_cap=preceding_context_inner_token_cap,
     )
     run_server(options)
+
+
+# Constants for stop command
+STOP_TIMEOUT_SECONDS = 10.0
+STOP_POLL_INTERVAL = 0.2
+
+
+@server.command("stop")
+def stop_server() -> None:
+    """Stop the RagZoom daemon.
+
+    Sends SIGTERM to the daemon process for graceful shutdown,
+    then waits for the process to terminate. Cleans up state files
+    (PID and port files) after shutdown.
+
+    If no daemon is running, this command does nothing (idempotent).
+    """
+    pid = read_pid_file()
+
+    # No PID file means no daemon
+    if pid is None:
+        click.echo("Daemon is not running")
+        return
+
+    # Check if process is already dead (stale PID file)
+    if is_pid_stale(pid):
+        click.echo("Daemon is not running (cleaning up stale state)")
+        cleanup_stale_state()
+        return
+
+    # Send SIGTERM for graceful shutdown
+    click.echo(f"Stopping daemon (PID {pid})...")
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        # Process died between check and kill - that's fine
+        pass
+
+    # Wait for process to terminate
+    deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if is_pid_stale(pid):
+            # Process terminated
+            cleanup_stale_state()
+            click.echo("Stopped")
+            return
+        time.sleep(STOP_POLL_INTERVAL)
+
+    # Timeout - process didn't terminate gracefully
+    click.echo("Timeout waiting for daemon to stop (forcing cleanup)")
+    cleanup_stale_state()
 
 
 @cli.command()
