@@ -1658,7 +1658,7 @@ class SqliteDocumentRepository:
         file_path: str | None,
         embedding_model: str,
         summary_model: str,
-        summary_system_prompt: str | None = None,
+        summarization_guidance: str | None = None,
         *,
         session: Session | None = None,
     ) -> None:
@@ -1672,8 +1672,7 @@ class SqliteDocumentRepository:
                 file_path=file_path,
                 embedding_model=embedding_model,
                 summary_model=summary_model,
-                # Use new field name - parameter kept for API compatibility
-                summarization_guidance=summary_system_prompt,
+                summarization_guidance=summarization_guidance,
             )
             session.add(doc)
             if own_session:
