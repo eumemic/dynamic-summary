@@ -103,11 +103,12 @@ Allow users to customize the system prompt used during summary generation for do
 
 ### Phase 14b: Server-Side Custom Prompt Integration
 
-- [ ] Update servicer to read and store summary_system_prompt per-document
+- [x] Update servicer to read and store summary_system_prompt per-document
   - Spec: specs/custom-prompt-config.md § CLI Override
   - Success: Servicer reads `summary_system_prompt` from request and stores it for use during summarization
-  - Test: `tests/test_servicer.py::test_servicer_stores_summary_system_prompt`
-  - Location: `ragzoom/server/servicers.py` (AppendText), document schema
+  - Test: `tests/test_indexer_servicer_sqlite.py::test_servicer_stores_summary_system_prompt`
+  - Location: `ragzoom/server/servicers.py` (AppendText), `ragzoom/models.py` (Document schema)
+  - Note: Added `summary_system_prompt` field to Document models (PostgreSQL and SQLite), updated StorageBackend.add_document contract and all implementations, updated DocumentIndexSession.append_text and servicer AppendText
 
 - [ ] Thread custom prompt through worker summarization
   - Spec: specs/custom-prompt-config.md § Implementation

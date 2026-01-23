@@ -80,6 +80,13 @@ class SqliteDocument(SqliteBase):
     # See specs/temporal-metadata.md § Requirements > 1. Temporal Documents
     is_temporal: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
+    # Custom system prompt for summary generation
+    # See specs/custom-prompt-config.md § CLI Override
+    # If None, uses the default prompt from IndexConfig
+    summary_system_prompt: Mapped[str | None] = mapped_column(
+        String, nullable=True, default=None
+    )
+
 
 @dataclass
 class SqliteDatabaseManager:

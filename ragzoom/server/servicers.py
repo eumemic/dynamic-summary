@@ -314,12 +314,20 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
         if request.HasField("timestamp"):
             timestamp = _extract_timestamp(request.timestamp)
 
+        # Extract custom system prompt if present (see specs/custom-prompt-config.md)
+        summary_system_prompt = (
+            request.summary_system_prompt
+            if request.HasField("summary_system_prompt")
+            else None
+        )
+
         session = self._runtime.get_session(request.document_id)
         result = await session.append_text(
             text,
             replace_existing=bool(getattr(request, "replace_existing", False)),
             collect_telemetry=request.collect_telemetry,
             timestamp=timestamp,
+            summary_system_prompt=summary_system_prompt,
         )
 
         response = pb2.AppendTextResponse(
