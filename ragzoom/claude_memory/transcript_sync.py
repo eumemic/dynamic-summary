@@ -311,28 +311,52 @@ class SessionStateHeader:
 
 @dataclass
 class AppendEntry:
-    """A single entry in the append log."""
+    """A single entry in the append log.
+
+    For turn-level tracking, each entry represents one conversation turn.
+    The first_uuid marks the turn's start (for revert detection) and
+    last_uuid marks its end (for continuation detection).
+    """
 
     last_uuid: str
-    """UUID of the last message in this append."""
+    """UUID of the last message in this append (turn end)."""
 
     span_end: int
     """Document span position after this append."""
 
+    first_uuid: str | None = None
+    """UUID of the first message in this append (turn start).
+
+    Used for turn-granularity revert detection: if a common ancestor
+    falls between first_uuid and last_uuid (within the turn), we truncate
+    to before this turn rather than keeping it.
+
+    None for backward compatibility with pre-turn-tracking entries.
+    """
+
     def to_json(self) -> dict[str, object]:
         """Serialize to JSON-compatible dict."""
-        return {"last_uuid": self.last_uuid, "span_end": self.span_end}
+        result: dict[str, object] = {
+            "last_uuid": self.last_uuid,
+            "span_end": self.span_end,
+        }
+        if self.first_uuid is not None:
+            result["first_uuid"] = self.first_uuid
+        return result
 
     @classmethod
     def from_json(cls, data: dict[str, object]) -> AppendEntry:
         """Deserialize from JSON dict."""
         last_uuid = data["last_uuid"]
         span_end = data["span_end"]
+        first_uuid = data.get("first_uuid")
         if not isinstance(last_uuid, str):
             raise TypeError(f"last_uuid must be str, got {type(last_uuid)}")
         if not isinstance(span_end, int):
             raise TypeError(f"span_end must be int, got {type(span_end)}")
-        return cls(last_uuid=last_uuid, span_end=span_end)
+        if first_uuid is not None and not isinstance(first_uuid, str):
+            raise TypeError(f"first_uuid must be str or None, got {type(first_uuid)}")
+        return cls(last_uuid=last_uuid, span_end=span_end, first_uuid=first_uuid)
 
 
 class AppendLog:
@@ -384,6 +408,11 @@ class AppendLog:
         Walks backwards through the append log, checking each entry's last_uuid
         against the ancestor chain of current_head.
 
+        For turn-level tracking: if the common ancestor falls WITHIN a turn
+        (between first_uuid and last_uuid) rather than at a turn boundary
+        (at last_uuid), we return the PREVIOUS turn's entry. This ensures
+        we truncate to before the partially-matching turn.
+
         Returns None if the log is empty, signaling the caller should transcribe
         the entire ancestor chain from root to current_head.
         """
@@ -402,13 +431,36 @@ class AppendLog:
         if common is None:
             return None
 
-        # Walk backwards through entries to find the one containing the common ancestor
-        # An entry is valid if its last_uuid is the common ancestor or an ancestor of it
+        # Walk backwards through entries to find one whose last_uuid is an ancestor
+        # of the common ancestor (meaning the turn ended at or before the common point)
         common_ancestors = _get_ancestors(common, parent_map)
         common_ancestors.add(common)
 
-        for entry in reversed(entries):
+        for i, entry in enumerate(reversed(entries)):
             if entry.last_uuid in common_ancestors:
+                # Check if common ancestor is WITHIN this turn (not at its boundary)
+                # This only applies to turn-level entries that have first_uuid set
+                if entry.first_uuid is not None and entry.last_uuid != common:
+                    # Common ancestor is within this turn, not at its end.
+                    # Check if common is actually within this turn's UUID range.
+                    # Get all UUIDs from first_uuid to last_uuid (the turn's range)
+                    turn_ancestors = _get_ancestors(entry.last_uuid, parent_map)
+                    turn_ancestors.add(entry.last_uuid)
+
+                    # If the common ancestor is in the turn's range but not at the end,
+                    # we need to return the previous entry (before this turn)
+                    if common in turn_ancestors and common != entry.last_uuid:
+                        # Find the first_uuid's ancestors to determine turn boundary
+                        first_ancestors = _get_ancestors(entry.first_uuid, parent_map)
+                        # If common is an ancestor of first_uuid (before this turn),
+                        # this entry is still valid
+                        if common in first_ancestors:
+                            return entry
+                        # Common is within this turn - return previous entry
+                        actual_idx = len(entries) - 1 - i
+                        if actual_idx > 0:
+                            return entries[actual_idx - 1]
+                        return None
                 return entry
 
         return None
@@ -1281,6 +1333,7 @@ def execute_sync(
                             AppendEntry(
                                 last_uuid=turn_uuids[-1],
                                 span_end=cumulative_span,
+                                first_uuid=turn_uuids[0],
                             )
                         )
 
