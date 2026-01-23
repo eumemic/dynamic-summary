@@ -9,6 +9,15 @@ from __future__ import annotations
 from typing import TypedDict
 
 from ragzoom.client.grpc_client import ExecuteQueryOutput
+from ragzoom.exceptions import (
+    ConfigurationError,
+    DatabaseError,
+    DocumentNotFoundError,
+    LLMError,
+    NodeNotFoundError,
+    ResourceError,
+    ValidationError,
+)
 
 
 class TilingNodeDict(TypedDict):
@@ -102,3 +111,59 @@ def build_json_output(
         query=query_text,
         document_id=document_id,
     )
+
+
+class ErrorJsonOutput(TypedDict):
+    """JSON schema for error output per specs/json-output-mode.md."""
+
+    error: str
+    code: str
+
+
+def build_json_error(error_message: str, error_code: str) -> ErrorJsonOutput:
+    """Build a JSON error response.
+
+    Args:
+        error_message: Human-readable error description.
+        error_code: Machine-readable error code (e.g., NOT_FOUND, VALIDATION_ERROR).
+
+    Returns:
+        Dictionary with 'error' and 'code' fields for JSON serialization.
+    """
+    return ErrorJsonOutput(error=error_message, code=error_code)
+
+
+def build_json_error_from_exception(exc: Exception) -> ErrorJsonOutput:
+    """Build a JSON error response from an exception.
+
+    Maps exception types to appropriate error codes:
+    - DocumentNotFoundError, NodeNotFoundError -> NOT_FOUND
+    - ValidationError -> VALIDATION_ERROR
+    - LLMError -> LLM_ERROR
+    - ConfigurationError -> CONFIGURATION_ERROR
+    - DatabaseError -> DATABASE_ERROR
+    - ResourceError -> RESOURCE_ERROR
+    - Other exceptions -> INTERNAL_ERROR
+
+    Args:
+        exc: The exception to convert.
+
+    Returns:
+        Dictionary with 'error' and 'code' fields for JSON serialization.
+    """
+    error_message = str(exc)
+
+    if isinstance(exc, DocumentNotFoundError | NodeNotFoundError):
+        return build_json_error(error_message, "NOT_FOUND")
+    elif isinstance(exc, ValidationError):
+        return build_json_error(error_message, "VALIDATION_ERROR")
+    elif isinstance(exc, LLMError):
+        return build_json_error(error_message, "LLM_ERROR")
+    elif isinstance(exc, ConfigurationError):
+        return build_json_error(error_message, "CONFIGURATION_ERROR")
+    elif isinstance(exc, DatabaseError):
+        return build_json_error(error_message, "DATABASE_ERROR")
+    elif isinstance(exc, ResourceError):
+        return build_json_error(error_message, "RESOURCE_ERROR")
+    else:
+        return build_json_error(error_message, "INTERNAL_ERROR")

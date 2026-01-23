@@ -168,11 +168,12 @@ Add `--json` flag to query command for machine-readable output with temporal spa
 
 ### Phase 17: Error Handling & Edge Cases
 
-- [ ] Implement JSON error response format
+- [x] Implement JSON error response format
   - Spec: specs/json-output-mode.md § Compatibility
   - Success: Errors with `--json` output `{"error": "...", "code": "..."}`
-  - Test: `tests/test_json_output.py::test_json_error_response`
-  - Location: `ragzoom/cli.py` (error handling in query command)
+  - Test: `tests/test_json_output.py::TestBuildJsonError`, `tests/test_cli.py::test_query_json_error_response`
+  - Location: `ragzoom/output_formatters.py` (build_json_error, build_json_error_from_exception), `ragzoom/cli.py:1054-1058`
+  - Note: Added ErrorJsonOutput TypedDict, build_json_error() and build_json_error_from_exception() functions. Exception types map to codes: NOT_FOUND, VALIDATION_ERROR, LLM_ERROR, CONFIGURATION_ERROR, DATABASE_ERROR, RESOURCE_ERROR, INTERNAL_ERROR.
 
 - [x] Handle non-temporal documents (null time fields)
   - Spec: specs/json-output-mode.md § JSON Schema > Temporal Fields

@@ -43,7 +43,7 @@ from ragzoom.exceptions import (
     ResourceError,
     ValidationError,
 )
-from ragzoom.output_formatters import build_json_output
+from ragzoom.output_formatters import build_json_error_from_exception, build_json_output
 from ragzoom.progress_display import DocumentProgressTotals, WorkerProgressDisplay
 from ragzoom.server.app import ServerOptions, run_server
 from ragzoom.services.document_service import DocumentService
@@ -1052,6 +1052,10 @@ def query(
                 click.echo(f"  model:         {p.embedding_model}")
 
     except Exception as e:
+        if json_output:
+            error_data = build_json_error_from_exception(e)
+            click.echo(json.dumps(error_data, indent=2))
+            sys.exit(1)
         handle_cli_error(e, "processing query")
 
 
