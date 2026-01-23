@@ -88,12 +88,13 @@ Fix critical bugs discovered during implementation verification that prevent bas
 
 ### Phase 30: Database Schema Migration (Issue #4)
 
-- [ ] Implement schema detection for Document table
+- [x] Implement schema detection for Document table
   - Spec: specs/custom-prompt-config.md § Migration > Schema Migration
   - Success: `detect_schema_version()` identifies if column is `summary_system_prompt` or `summarization_guidance`
-  - Test: `tests/test_schema_migration.py::test_detect_schema_version`
-  - Location: `ragzoom/migrations.py` (new file)
+  - Test: `tests/test_schema_migration_sqlite.py::TestDetectSchemaVersion`
+  - Location: `ragzoom/migrations.py`
   - Note: Query PRAGMA table_info (SQLite) or information_schema (PostgreSQL)
+  - **DONE**: Implemented `detect_schema_version()` with `SchemaVersion` enum. Supports both SQLite and PostgreSQL via dialect-specific introspection.
 
 - [ ] Implement column rename migration
   - Spec: specs/custom-prompt-config.md § Migration > Required Migration
