@@ -1,6 +1,11 @@
 """RagZoom: Incremental, hierarchical RAG memory system."""
 
-__version__ = "0.1.0"
+try:
+    from importlib.metadata import version as _get_version
+
+    __version__ = _get_version("ragzoom")
+except Exception:
+    __version__ = "0.1.0"
 
 from ragzoom.assemble import Assembler
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig

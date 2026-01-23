@@ -1,0 +1,4 @@
+include README.md
+include LICENSE
+recursive-include ragzoom *.json
+recursive-include ragzoom py.typed
