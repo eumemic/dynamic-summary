@@ -376,3 +376,45 @@ def is_server_healthy() -> bool:
 
     # Phase 4: Check if gRPC is responsive
     return grpc_health_check(address)
+
+
+def cleanup_stale_state() -> None:
+    """Remove stale state files (PID and port files).
+
+    This is safe to call even if files don't exist - it's idempotent.
+    Use this after killing a stale process or when recovering from a crash.
+    """
+    remove_pid_file()
+    remove_port_file()
+
+
+def kill_stale_process() -> None:
+    """Kill the stale daemon process if one exists.
+
+    Reads the PID from the PID file and sends SIGTERM to the process.
+    This is a no-op if:
+    - No PID file exists
+    - The PID file contains an invalid value
+    - The process is already dead (stale PID)
+
+    Handles permission errors gracefully (e.g., if the process is
+    owned by root or another user).
+    """
+    pid = read_pid_file()
+    if pid is None:
+        return
+
+    # Check if process is already dead
+    if is_pid_stale(pid):
+        return
+
+    # Try to kill the process
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError as e:
+        # ESRCH: Process died between our check and the kill
+        # EPERM: Process owned by someone else (shouldn't happen for our daemon)
+        # Both are acceptable outcomes - the process is gone or we can't touch it
+        if e.errno in (errno.ESRCH, errno.EPERM):
+            return
+        raise

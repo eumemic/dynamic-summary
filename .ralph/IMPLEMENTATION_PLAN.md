@@ -335,11 +335,12 @@ Auto-start daemon, crash recovery, and proper lifecycle management.
   - Location: `ragzoom/daemon.py:292-378`
   - Note: Added three functions: `get_server_address()` reads port from port file and returns "127.0.0.1:port", `grpc_health_check(address, timeout)` makes a lightweight GetDocument call and treats NOT_FOUND as healthy (server responding), `is_server_healthy()` combines PID check + port file check + gRPC probe. 12 tests covering all edge cases.
 
-- [ ] Implement crash recovery logic
+- [x] Implement crash recovery logic
   - Spec: specs/daemon-lifecycle.md § Architecture > Crash Recovery
   - Success: Unhealthy server → kill stale process → cleanup state → start fresh
-  - Test: `tests/test_daemon_health.py::test_crash_recovery`
-  - Location: `ragzoom/daemon.py`
+  - Test: `tests/test_daemon_health.py::TestCrashRecovery` (7 tests)
+  - Location: `ragzoom/daemon.py:382-420` (cleanup_stale_state, kill_stale_process)
+  - Note: Added `cleanup_stale_state()` to remove PID and port files, and `kill_stale_process()` to send SIGTERM to stale daemons. Both functions handle edge cases gracefully (idempotent, process already gone, permission errors).
 
 - [ ] Implement `ensure_server_running()` function
   - Spec: specs/daemon-lifecycle.md § Architecture > Auto-Start
