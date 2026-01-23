@@ -6,10 +6,12 @@ health checks, and auto-start capabilities.
 
 import errno
 import os
+import sys
 from pathlib import Path
 
 PID_FILENAME = "daemon.pid"
 PORT_FILENAME = "daemon.port"
+LOG_FILENAME = "daemon.log"
 
 
 def get_daemon_state_dir() -> Path:
@@ -178,3 +180,75 @@ def remove_port_file() -> None:
         port_file.unlink()
     except FileNotFoundError:
         pass
+
+
+def get_log_file_path() -> Path:
+    """Get the default path to the daemon log file.
+
+    Returns:
+        Path to daemon.log in the state directory.
+    """
+    return get_daemon_state_dir() / LOG_FILENAME
+
+
+def daemonize(log_file: Path | None = None) -> None:
+    """Fork the current process into a background daemon.
+
+    Implements the standard Unix double-fork daemonization pattern:
+    1. First fork: Parent exits, child continues
+    2. setsid(): Child becomes session leader
+    3. Second fork: Session leader exits, grandchild continues
+       (prevents acquiring controlling terminal)
+    4. Redirect stdin to /dev/null, stdout/stderr to log file
+    5. Write daemon PID to state file
+
+    Args:
+        log_file: Path to redirect stdout/stderr. If None, uses default
+                  location in state directory. Parent directories will
+                  be created if they don't exist.
+
+    Note:
+        This function only returns in the final daemon process.
+        Parent processes call sys.exit(0).
+    """
+
+    if log_file is None:
+        log_file = get_log_file_path()
+
+    # Flush buffered output before forking to prevent duplication
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+    # First fork - parent exits, child continues
+    pid = os.fork()
+    if pid > 0:
+        # Parent - exit cleanly
+        sys.exit(0)
+
+    # Child - become session leader
+    os.setsid()
+
+    # Second fork - prevents acquiring controlling terminal
+    pid = os.fork()
+    if pid > 0:
+        # Intermediate process - exit
+        sys.exit(0)
+
+    # Grandchild (daemon) continues from here
+
+    # Ensure log file directory exists
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Redirect stdin to /dev/null
+    devnull_fd = os.open("/dev/null", os.O_RDONLY)
+    os.dup2(devnull_fd, sys.stdin.fileno())
+    os.close(devnull_fd)
+
+    # Redirect stdout and stderr to log file
+    log_fd = os.open(str(log_file), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    os.dup2(log_fd, sys.stdout.fileno())
+    os.dup2(log_fd, sys.stderr.fileno())
+    os.close(log_fd)
+
+    # Write daemon PID to state file
+    write_pid_file(os.getpid())
