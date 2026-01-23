@@ -1637,6 +1637,13 @@ class IndexingEngine:
         """
         store = self._store.for_document(job.document_id)
 
+        # Fetch document's custom prompt (if any) for use in summarization
+        # See specs/custom-prompt-config.md § Implementation
+        document = self._store.get_document_by_id(job.document_id)
+        document_custom_prompt: str | None = (
+            getattr(document, "summary_system_prompt", None) if document else None
+        )
+
         left = store.nodes.get(job.left_id)
         right = store.nodes.get(job.right_id)
 
@@ -1786,6 +1793,7 @@ class IndexingEngine:
             reporter=telemetry,
             prev_context=context_text,
             text_tokens=combined_tokens,
+            summary_system_prompt=document_custom_prompt,
         )
         logger.info("SUMMARIZE_END: parent_id=%s", parent_id)
         # Fail fast if mock returns wrong type - prevents silent hangs in tests

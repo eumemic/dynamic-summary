@@ -585,15 +585,23 @@ async def run_summary_from_config(
     parent_id: str | None = None,
     reporter: TelemetryCollector | None = None,
     call_summary: SummaryCall,
+    summary_system_prompt: str | None = None,
 ) -> SummaryResult:
-    """Convenience wrapper building workflow config from IndexConfig."""
+    """Convenience wrapper building workflow config from IndexConfig.
 
+    If summary_system_prompt is provided, it overrides index_config.summary_system_prompt.
+    Used when documents have per-document custom prompts.
+    """
     config_snapshot = SummaryWorkflowConfig(
         summary_model=index_config.summary_model,
         use_anti_verbatim_vaccine=index_config.use_anti_verbatim_vaccine,
         max_retries=index_config.max_retries,
         retry_threshold=index_config.retry_threshold,
-        summary_system_prompt=index_config.summary_system_prompt,
+        summary_system_prompt=(
+            summary_system_prompt
+            if summary_system_prompt is not None
+            else index_config.summary_system_prompt
+        ),
     )
 
     return await run_summary_workflow(
@@ -613,9 +621,12 @@ async def run_summary_request(
     index_config: IndexConfig,
     request: SummaryRequest,
     call_summary: SummaryCall,
+    summary_system_prompt: str | None = None,
 ) -> SummaryResult:
-    """Execute the summary workflow using a packaged request payload."""
+    """Execute the summary workflow using a packaged request payload.
 
+    If summary_system_prompt is provided, it overrides index_config.summary_system_prompt.
+    """
     return await run_summary_from_config(
         index_config=index_config,
         text=request["text"],
@@ -625,6 +636,7 @@ async def run_summary_request(
         parent_id=request["parent_id"],
         reporter=request["reporter"],
         call_summary=call_summary,
+        summary_system_prompt=summary_system_prompt,
     )
 
 

@@ -235,3 +235,75 @@ async def test_prev_context_present_when_preceding_neighbor_exists(
         # Non-empty string contexts should have content
         if isinstance(ctx, str) and ctx != "":
             assert ctx.strip()
+
+
+@pytest.mark.asyncio
+async def test_worker_uses_document_custom_prompt(
+    storage_backend: StorageBackend,
+    indexer_runtime_harness: IndexerRuntimeHarness,
+) -> None:
+    """Verify worker summarization uses document's stored custom prompt.
+
+    Spec: specs/custom-prompt-config.md § Implementation
+    Test: Integration test verifying custom prompt is used in actual LLM calls
+    """
+    index_config = IndexConfig.load(
+        target_chunk_tokens=120,
+    )
+    vector_index = RecordingVectorIndex()
+    _configure_runtime(indexer_runtime_harness, index_config, vector_index)
+
+    document_id = "doc-custom-prompt"
+    custom_prompt = "You are a legal document summarizer. Preserve exact terminology."
+
+    storage_backend.clear_document(document_id)
+
+    summary_mock = AsyncMock(
+        return_value=SummaryResult(
+            summary="summarized legal text",
+            retry_count=0,
+            summary_tokens=100,
+            usage=AccumulatedUsage(prompt_tokens=50, completion_tokens=100),
+        )
+    )
+
+    async def embed_side_effect(texts: list[str]) -> list[list[float]]:
+        return [[0.1] * 1536 for _ in texts]
+
+    embed_mock = AsyncMock(side_effect=embed_side_effect)
+
+    indexer_runtime_harness.llm_service.client = _create_mock_async_openai_client()
+    with (
+        patch.object(
+            indexer_runtime_harness.llm_service,
+            "_summarize_text",
+            new=summary_mock,
+        ),
+        patch.object(
+            indexer_runtime_harness.llm_service,
+            "embed_texts",
+            new=embed_mock,
+        ),
+    ):
+        await indexer_runtime_harness.clear(document_id)
+        # Append with custom prompt - this stores the prompt with the document
+        await indexer_runtime_harness.append(
+            document_id,
+            _document_text(6),  # Enough chunks to trigger summarization
+            replace_existing=True,
+            file_path="legal-doc.txt",
+            summary_system_prompt=custom_prompt,
+        )
+        await indexer_runtime_harness.wait_for_idle(document_id)
+
+    # Verify summarize was called with the document's custom prompt
+    assert summary_mock.await_count > 0, "Summarization should have been called"
+
+    # Check all summarization calls received the custom prompt
+    for call in summary_mock.await_args_list:
+        _, kwargs = call
+        actual_prompt = kwargs.get("summary_system_prompt")
+        assert actual_prompt == custom_prompt, (
+            f"Expected document custom prompt '{custom_prompt}', "
+            f"got '{actual_prompt}'"
+        )
