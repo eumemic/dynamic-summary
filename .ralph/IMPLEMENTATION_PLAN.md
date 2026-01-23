@@ -58,13 +58,14 @@ Allow users to customize the system prompt used during summary generation for do
 
 ### Phase 12: IndexConfig Extension
 
-- [ ] Add `summary_system_prompt` field to IndexConfig
+- [x] Add `summary_system_prompt` field to IndexConfig
   - Spec: specs/custom-prompt-config.md § Configuration > IndexConfig Field
   - Success: `IndexConfig(summary_system_prompt="...")` accepts optional string
   - Test: `tests/test_index_config.py::test_index_config_accepts_summary_system_prompt`
   - Location: `ragzoom/config.py` (IndexConfig dataclass)
+  - Note: Also added to `default_config.json` so CLI overrides work via `IndexConfig.load()`
 
-- [ ] Add `summary_system_prompt` to IndexConfigDict TypedDict
+- [x] Add `summary_system_prompt` to IndexConfigDict TypedDict
   - Spec: specs/custom-prompt-config.md § Configuration > IndexConfig Field
   - Success: TypedDict includes `summary_system_prompt: str | None`
   - Test: Type-check code using IndexConfigDict with summary_system_prompt

@@ -41,6 +41,7 @@ class IndexConfigDict(TypedDict, total=False):
     processing_strategy: str
     preceding_context: PrecedingContextSettingsDict
     summary_reasoning_level: str | None
+    summary_system_prompt: str | None
 
 
 # Sentinel value to distinguish "not provided" from "explicitly None"
@@ -298,6 +299,7 @@ class IndexConfig:
         default_factory=PrecedingContextSettings
     )
     summary_reasoning_level: str | None = None
+    summary_system_prompt: str | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -347,6 +349,12 @@ class IndexConfig:
             str(raw_reasoning) if raw_reasoning is not None else None
         )
 
+        # Get optional summary_system_prompt (may be str or None)
+        raw_system_prompt = config_dict.get("summary_system_prompt")
+        summary_system_prompt: str | None = (
+            str(raw_system_prompt) if raw_system_prompt is not None else None
+        )
+
         # Handle target_chunk_tokens which can be int or None
         raw_target_chunk = config_dict.get("target_chunk_tokens")
         target_chunk_tokens_value: int | None = (
@@ -372,6 +380,7 @@ class IndexConfig:
             ),
             preceding_context=preceding_context,
             summary_reasoning_level=summary_reasoning_level,
+            summary_system_prompt=summary_system_prompt,
         )
 
     @classmethod
@@ -408,6 +417,7 @@ class IndexConfig:
         processing_strategy: str | None = None,
         preceding_context: PrecedingContextSettings | None = None,
         summary_reasoning_level: str | None = None,
+        summary_system_prompt: str | None = None,
     ) -> "IndexConfig":
         """Create a new IndexConfig with some fields changed."""
         from dataclasses import replace
@@ -461,6 +471,11 @@ class IndexConfig:
                 summary_reasoning_level
                 if summary_reasoning_level is not None
                 else self.summary_reasoning_level
+            ),
+            summary_system_prompt=(
+                summary_system_prompt
+                if summary_system_prompt is not None
+                else self.summary_system_prompt
             ),
         )
 

@@ -4,6 +4,7 @@
   "max_parallelism": 30,
   "summary_model": "gpt-5-nano",
   "summary_reasoning_level": "minimal",
+  "summary_system_prompt": null,
   "embedding_model": "text-embedding-3-small",
   "retry_threshold": 0.2,
   "max_retries": 3,
