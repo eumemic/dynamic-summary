@@ -748,123 +748,105 @@ class TestGetCurrentHead:
         assert head == "msg1"
 
 
-class TestTranscribeUuids:
-    """Tests for transcribing specific UUIDs."""
+class TestTranscribeUuidsFromMap:
+    """Tests for transcribing UUIDs using claude-transcriber."""
 
-    def test_transcribes_user_message(self, tmp_path: Path) -> None:
-        """Should transcribe user messages."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids
+    def test_transcribes_user_message(self) -> None:
+        """Should transcribe user messages using claude-transcriber format."""
+        from ragzoom.claude_memory.transcript_sync import transcribe_uuids_from_map
 
-        jsonl = tmp_path / "transcript.jsonl"
-        jsonl.write_text(
-            json.dumps(
-                {
-                    "uuid": "msg1",
-                    "type": "user",
-                    "message": {"content": "Hello world"},
-                }
-            )
-            + "\n"
-        )
+        records: dict[str, dict[str, object]] = {
+            "msg1": {
+                "uuid": "msg1",
+                "type": "user",
+                "message": {"content": "Hello world"},
+            }
+        }
 
-        text = transcribe_uuids(jsonl, ["msg1"])
-        assert text == "[USER]\nHello world"
+        text = transcribe_uuids_from_map(["msg1"], records)
+        # claude-transcriber uses ❯ prefix for user messages
+        assert "Hello world" in text
 
-    def test_transcribes_assistant_message(self, tmp_path: Path) -> None:
-        """Should transcribe assistant messages with tool count."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids
+    def test_transcribes_assistant_message(self) -> None:
+        """Should transcribe assistant messages with tools."""
+        from ragzoom.claude_memory.transcript_sync import transcribe_uuids_from_map
 
-        jsonl = tmp_path / "transcript.jsonl"
-        jsonl.write_text(
-            json.dumps(
-                {
-                    "uuid": "msg1",
-                    "type": "assistant",
-                    "message": {
-                        "content": [
-                            {"type": "text", "text": "Here's my response"},
-                            {"type": "tool_use", "name": "read"},
-                            {"type": "tool_use", "name": "write"},
-                        ]
-                    },
-                }
-            )
-            + "\n"
-        )
+        records: dict[str, dict[str, object]] = {
+            "msg1": {
+                "uuid": "msg1",
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "Here's my response"},
+                        {"type": "tool_use", "name": "read"},
+                        {"type": "tool_use", "name": "write"},
+                    ]
+                },
+            }
+        }
 
-        text = transcribe_uuids(jsonl, ["msg1"])
-        assert "[ASSISTANT]\nHere's my response" in text
-        assert "[Used 2 tools: read, write]" in text
+        text = transcribe_uuids_from_map(["msg1"], records)
+        # claude-transcriber uses ⏺ prefix for assistant messages
+        assert "Here's my response" in text
+        # Tool uses are formatted individually
+        assert "read" in text
+        assert "write" in text
 
-    def test_transcribes_multiple_in_order(self, tmp_path: Path) -> None:
+    def test_transcribes_multiple_in_order(self) -> None:
         """Should transcribe multiple UUIDs in specified order."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids
+        from ragzoom.claude_memory.transcript_sync import transcribe_uuids_from_map
 
-        jsonl = tmp_path / "transcript.jsonl"
-        jsonl.write_text(
-            "\n".join(
-                [
-                    json.dumps(
-                        {
-                            "uuid": "msg1",
-                            "type": "user",
-                            "message": {"content": "First"},
-                        }
-                    ),
-                    json.dumps(
-                        {
-                            "uuid": "msg2",
-                            "type": "assistant",
-                            "message": {
-                                "content": [{"type": "text", "text": "Second"}]
-                            },
-                        }
-                    ),
-                    json.dumps(
-                        {
-                            "uuid": "msg3",
-                            "type": "user",
-                            "message": {"content": "Third"},
-                        }
-                    ),
-                ]
-            )
-            + "\n"
-        )
+        records: dict[str, dict[str, object]] = {
+            "msg1": {
+                "uuid": "msg1",
+                "type": "user",
+                "message": {"content": "First"},
+            },
+            "msg2": {
+                "uuid": "msg2",
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Second"}]},
+            },
+            "msg3": {
+                "uuid": "msg3",
+                "type": "user",
+                "message": {"content": "Third"},
+            },
+        }
 
-        text = transcribe_uuids(jsonl, ["msg1", "msg3"])
-        assert "[USER]\nFirst" in text
-        assert "[USER]\nThird" in text
+        text = transcribe_uuids_from_map(["msg1", "msg3"], records)
+        assert "First" in text
+        assert "Third" in text
         assert "Second" not in text
         # Verify order
         assert text.index("First") < text.index("Third")
 
-    def test_empty_uuids_returns_empty(self, tmp_path: Path) -> None:
+    def test_empty_uuids_returns_empty(self) -> None:
         """Should return empty string for empty UUID list."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids
+        from ragzoom.claude_memory.transcript_sync import transcribe_uuids_from_map
 
-        jsonl = tmp_path / "transcript.jsonl"
-        jsonl.write_text(
-            json.dumps(
-                {"uuid": "msg1", "type": "user", "message": {"content": "Hello"}}
-            )
-            + "\n"
-        )
+        records: dict[str, dict[str, object]] = {
+            "msg1": {
+                "uuid": "msg1",
+                "type": "user",
+                "message": {"content": "Hello"},
+            }
+        }
 
-        text = transcribe_uuids(jsonl, [])
+        text = transcribe_uuids_from_map([], records)
         assert text == ""
 
-    def test_skips_missing_uuids(self, tmp_path: Path) -> None:
-        """Should skip UUIDs not found in transcript."""
-        from ragzoom.claude_memory.transcript_sync import transcribe_uuids
+    def test_skips_missing_uuids(self) -> None:
+        """Should skip UUIDs not found in records map."""
+        from ragzoom.claude_memory.transcript_sync import transcribe_uuids_from_map
 
-        jsonl = tmp_path / "transcript.jsonl"
-        jsonl.write_text(
-            json.dumps(
-                {"uuid": "msg1", "type": "user", "message": {"content": "Hello"}}
-            )
-            + "\n"
-        )
+        records: dict[str, dict[str, object]] = {
+            "msg1": {
+                "uuid": "msg1",
+                "type": "user",
+                "message": {"content": "Hello"},
+            }
+        }
 
-        text = transcribe_uuids(jsonl, ["msg1", "missing", "also-missing"])
-        assert text == "[USER]\nHello"
+        text = transcribe_uuids_from_map(["msg1", "missing", "also-missing"], records)
+        assert "Hello" in text

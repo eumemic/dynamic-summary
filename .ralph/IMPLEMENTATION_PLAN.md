@@ -560,12 +560,12 @@ Extend the local-first transcript sync to use temporal metadata, with each conve
   - Location: `pyproject.toml` (dependencies section), mypy override for untyped module
   - Note: Added `claude-transcriber==0.2.1` to dependencies and mypy ignore for missing stubs
 
-- [ ] Replace custom transcription with claude-transcriber
+- [x] Replace custom transcription with claude-transcriber
   - Spec: specs/timestamped-transcript-sync.md § Transcription with claude-transcriber
   - Success: Uses `Transcriber` class from `claude-transcriber` instead of custom `transcribe_uuid_from_map()`
-  - Test: `test_uses_claude_transcriber_library`
-  - Location: `ragzoom/claude_memory/transcript_sync.py` (replace custom transcription code)
-  - Depends on: claude-transcriber dependency added
+  - Test: `tests/test_uses_claude_transcriber.py::TestUsesClaudeTranscriber` (5 tests)
+  - Location: `ragzoom/claude_memory/transcript_sync.py:12` (import), `ragzoom/claude_memory/transcript_sync.py:920-950` (transcribe_uuids_from_map)
+  - Note: Replaced custom transcription with claude-transcriber delegation. Removed ~200 lines of dead code (legacy `transcribe_uuids`, `transcribe_uuid_from_map`, and 7 helper functions). Output format now matches Claude Code `/export` (❯ for user, ⏺ for assistant). Updated tests to match new format.
 
 ---
 
