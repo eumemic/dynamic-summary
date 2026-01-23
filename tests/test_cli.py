@@ -569,3 +569,29 @@ def test_query_json_error_response(
     assert "code" in output
     assert output["code"] == "NOT_FOUND"
     assert "test-doc" in output["error"]
+
+
+def test_query_no_bm25_flag(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that --no-bm25 flag disables BM25 hybrid search.
+
+    Spec: specs/bm25-hybrid-search.md § CLI Flag
+    Success: `ragzoom query --no-bm25 "test"` disables BM25 search
+    """
+    # Run query with --no-bm25 flag
+    result = runner.invoke(
+        cli,
+        ["query", "Tell me about cats", "-d", "doc-123", "--no-bm25"],
+    )
+
+    # Command should succeed
+    assert result.exit_code == 0
+
+    # Verify the gRPC client was called
+    grpc_client = cli_mocks["grpc_client"]
+    grpc_client.execute_query.assert_called_once()
+
+    # Note: The use_bm25 flag is stored in QueryConfig but is not yet
+    # passed to execute_query (that's Phase 21: Retriever Integration).
+    # This test verifies the CLI flag is accepted without error.

@@ -888,6 +888,11 @@ def validate(
     is_flag=True,
     help="Output results as JSON for programmatic consumption",
 )
+@click.option(
+    "--no-bm25",
+    is_flag=True,
+    help="Disable BM25 hybrid search (use pure vector search)",
+)
 @click.pass_context
 def query(
     ctx: click.Context,
@@ -907,6 +912,7 @@ def query(
     server_address: str | None,
     profile: bool,
     json_output: bool,
+    no_bm25: bool,
 ) -> None:
     """Query the system and get a summary."""
     # Handle query/num_seeds defaults
@@ -928,6 +934,8 @@ def query(
             query_config = query_config.replace(budget_tokens=token_budget)
         if embedding_model is not None:
             query_config = query_config.replace(embedding_model=embedding_model)
+        if no_bm25:
+            query_config = query_config.replace(use_bm25=False)
 
         ctx.obj["query_config"] = query_config
 
