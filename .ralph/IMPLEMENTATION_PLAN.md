@@ -266,11 +266,12 @@ Add BM25 lexical search alongside vector search with Reciprocal Rank Fusion.
   - Location: `ragzoom/retrieve.py:167,623,721` (retrieve_async, retrieve, retrieve_with_telemetry)
   - Note: Added use_bm25: bool | None parameter to all three methods. None defaults to QueryConfig.use_bm25. Parameter is accepted but actual BM25 integration (using the parameter to run BM25 search) is Phase 21 item 2.
 
-- [ ] Integrate BM25 search and RRF into retrieval pipeline
+- [x] Integrate BM25 search and RRF into retrieval pipeline
   - Spec: specs/bm25-hybrid-search.md § Integration with Retriever
   - Success: When use_bm25=True, retriever runs both searches and fuses results
-  - Test: `tests/test_retriever_bm25.py::TestHybridRetrieval` (integration tests)
-  - Location: `ragzoom/retrieve.py` (retrieve_async method)
+  - Test: `tests/test_retriever_bm25_hybrid_sqlite.py::TestHybridRetrieval` (integration tests)
+  - Location: `ragzoom/retrieve.py:468-512` (Phase 2b: BM25 hybrid search)
+  - Note: Added BM25IndexCache to Retriever. When use_bm25 is enabled, builds/caches BM25 index for document, runs BM25 search, fuses with vector ranking via RRF, and reorders candidates before MMR selection. 5 integration tests verify hybrid behavior, caching, and BM25 boost for exact term matches.
 
 ---
 
