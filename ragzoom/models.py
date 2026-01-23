@@ -163,10 +163,10 @@ class Document(Base):
     # Inferred from first append (with timestamps → 1, without → 0)
     is_temporal: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
-    # Custom system prompt for summary generation
-    # See specs/custom-prompt-config.md § CLI Override
-    # If None, uses the default prompt from IndexConfig
-    summary_system_prompt: Mapped[str | None] = mapped_column(
+    # Additional guidance for summary generation (appended to default prompt)
+    # See specs/custom-prompt-config.md § IndexConfig Field
+    # If None, uses only the default prompt from IndexConfig
+    summarization_guidance: Mapped[str | None] = mapped_column(
         String, nullable=True, default=None
     )
 

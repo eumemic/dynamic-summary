@@ -1641,7 +1641,7 @@ class IndexingEngine:
         # See specs/custom-prompt-config.md § Implementation
         document = self._store.get_document_by_id(job.document_id)
         document_custom_prompt: str | None = (
-            getattr(document, "summary_system_prompt", None) if document else None
+            getattr(document, "summarization_guidance", None) if document else None
         )
 
         left = store.nodes.get(job.left_id)
