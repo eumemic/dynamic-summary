@@ -110,11 +110,12 @@ Allow users to customize the system prompt used during summary generation for do
   - Location: `ragzoom/server/servicers.py` (AppendText), `ragzoom/models.py` (Document schema)
   - Note: Added `summary_system_prompt` field to Document models (PostgreSQL and SQLite), updated StorageBackend.add_document contract and all implementations, updated DocumentIndexSession.append_text and servicer AppendText
 
-- [ ] Thread custom prompt through worker summarization
+- [x] Thread custom prompt through worker summarization
   - Spec: specs/custom-prompt-config.md § Implementation
   - Success: Workers read document's custom prompt and use it for summarization
-  - Test: Integration test verifying custom prompt is used in actual LLM calls
-  - Location: `ragzoom/server/indexing_engine.py`, `ragzoom/services/summarizer.py`
+  - Test: `tests/test_process_node_pair_parameters.py::test_worker_uses_document_custom_prompt`
+  - Location: `ragzoom/server/indexing_engine.py:1638-1645`, `ragzoom/services/llm_service.py:365-390`, `ragzoom/services/summarizer.py:66-90`, `ragzoom/services/summary_utils.py:578-645`
+  - Note: Added `summary_system_prompt` parameter through entire call chain: IndexingEngine fetches document's prompt and passes it to LLMService → Summarizer → summary_utils. Override parameter takes precedence over IndexConfig global setting.
 
 ### Phase 14c: Telemetry
 

@@ -187,3 +187,45 @@ async def test_custom_prompt_with_preceding_context() -> None:
     assert (
         "Context from previous section" in user_content or prev_context in user_content
     )
+
+
+@pytest.mark.asyncio
+async def test_custom_prompt_override_in_run_summary_request() -> None:
+    """Custom prompt passed via summary_system_prompt overrides IndexConfig.
+
+    This tests the explicit override parameter that will be used when
+    the document's stored custom prompt differs from IndexConfig.
+    Spec: specs/custom-prompt-config.md § Implementation
+    """
+    from ragzoom.services.summary_utils import SummaryRequest, run_summary_request
+
+    # IndexConfig has NO custom prompt set
+    config = IndexConfig.load()
+    assert config.summary_system_prompt is None
+
+    # But we pass an explicit override
+    document_custom_prompt = (
+        "You are a legal document summarizer. Preserve exact legal terminology."
+    )
+
+    text = "This is legal contract text. " * 100
+    captured_messages, mock_call_summary = create_message_capture()
+
+    request: SummaryRequest = {
+        "text": text,
+        "target_tokens": 100,
+        "prev_context": None,
+        "text_tokens": None,
+        "parent_id": "test-node",
+        "reporter": MagicMock(),
+    }
+
+    await run_summary_request(
+        index_config=config,
+        request=request,
+        call_summary=mock_call_summary,
+        summary_system_prompt=document_custom_prompt,  # Override
+    )
+
+    # Document's custom prompt should be used, not IndexConfig's default
+    assert_system_prompt(captured_messages, document_custom_prompt)
