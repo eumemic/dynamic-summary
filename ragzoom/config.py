@@ -525,6 +525,8 @@ class QueryConfig:
     mmr_lambda: float = 0.7
     mmr_k_multiplier: float = 2.0
     embedding_model: str = "text-embedding-3-small"
+    use_bm25: bool = True
+    """Enable BM25 hybrid search. Default True."""
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -547,6 +549,7 @@ class QueryConfig:
         mmr_lambda: float | None = None,
         mmr_k_multiplier: float | None = None,
         embedding_model: str | None = None,
+        use_bm25: bool | None = None,
     ) -> "QueryConfig":
         """Create a new QueryConfig with some fields changed."""
         from dataclasses import replace
@@ -565,6 +568,7 @@ class QueryConfig:
             embedding_model=(
                 embedding_model if embedding_model is not None else self.embedding_model
             ),
+            use_bm25=use_bm25 if use_bm25 is not None else self.use_bm25,
         )
 
 
