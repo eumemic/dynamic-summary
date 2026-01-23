@@ -531,12 +531,12 @@ Extend the local-first transcript sync to use temporal metadata, with each conve
 
 ### Time-Windowed Queries
 
-- [ ] Time-windowed queries work on synced transcripts
+- [x] Time-windowed queries work on synced transcripts
   - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 4
   - Success: `query(time_start="...", time_end="...")` returns turns in window
-  - Test: `test_time_windowed_query_on_synced_transcript`
-  - Location: Already implemented in `ragzoom/retrieve.py`, test in `tests/test_transcript_temporal_queries.py`
-  - Note: Query infrastructure exists; need integration test verifying it works with synced transcripts
+  - Test: `tests/test_transcript_temporal_queries_sqlite.py::TestTimeWindowedQueryOnSyncedTranscript` (3 tests)
+  - Location: `ragzoom/retrieve.py:224-288` (time→span mapping), tests verify full sync + query flow
+  - Note: Tests verify: (1) time-windowed query on synced transcript returns correct turns, (2) non-temporal document raises clear error, (3) partial time overlap includes turn per overlap semantics
 
 ### Compaction Summary Filtering
 
