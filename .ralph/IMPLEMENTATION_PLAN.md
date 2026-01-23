@@ -42,7 +42,7 @@ Fix critical bugs preventing the plugin from working.
   - Test: `tests/test_memzoom_session_hook.py::test_session_start_hook_uses_correct_module`
   - Location: `.claude/hooks/session-start.sh:29`
 
-- [ ] Fix start-mcp-server module path
+- [x] Fix start-mcp-server module path
   - Spec: specs/memzoom-plugin.md § MCP Server
   - Success: Script uses `ragzoom.claude_memory.mcp_server` instead of incorrect `memory_service.ingestion.claude.mcp_server`
   - Test: `tests/test_mcp_server_script.py::test_start_mcp_server_uses_correct_module`
