@@ -50,6 +50,125 @@ class Turn:
     """ISO 8601 timestamp of the last message in the turn."""
 
 
+def _is_user_prompt(record: dict[str, object]) -> bool:
+    """Check if record is a user prompt (not a tool result)."""
+    return record.get("type") == "user" and "toolUseResult" not in record
+
+
+def _should_skip_record(record: dict[str, object]) -> bool:
+    """Check if record should be filtered out of turn grouping."""
+    if record.get("isCompactSummary"):
+        return True
+    if record.get("type") == "queue-operation":
+        return True
+    return False
+
+
+def group_into_turns(
+    uuids: list[str],
+    records_by_uuid: dict[str, dict[str, object]],
+) -> list[Turn]:
+    """Group message UUIDs into conversation turns.
+
+    A turn starts with a user prompt (user message without toolUseResult) and
+    includes all subsequent messages until the next user prompt. This includes
+    assistant messages and tool results.
+
+    Filters out:
+    - Compaction summaries (isCompactSummary=True)
+    - Queue operations (type="queue-operation")
+    - UUIDs not found in records_by_uuid
+
+    Args:
+        uuids: Message UUIDs in chronological order
+        records_by_uuid: UUID -> record mapping
+
+    Returns:
+        List of Turn objects, each containing UUIDs and timestamps
+
+    Raises:
+        ValueError: If a record in a turn is missing a timestamp field
+    """
+    if not uuids:
+        return []
+
+    turns: list[Turn] = []
+    current_turn_uuids: list[str] = []
+
+    for uuid in uuids:
+        record = records_by_uuid.get(uuid)
+        if record is None:
+            continue
+
+        if _should_skip_record(record):
+            continue
+
+        if _is_user_prompt(record):
+            # Finish current turn if it has content
+            if current_turn_uuids:
+                turns.append(_build_turn(current_turn_uuids, records_by_uuid))
+            # Start new turn
+            current_turn_uuids = [uuid]
+        elif current_turn_uuids:
+            # Add to current turn (assistant message or tool result)
+            current_turn_uuids.append(uuid)
+        # Orphan messages without a current turn are skipped
+
+    # Finalize the last turn
+    if current_turn_uuids:
+        turns.append(_build_turn(current_turn_uuids, records_by_uuid))
+
+    return turns
+
+
+def _get_record_timestamp(uuid: str, record: dict[str, object]) -> str:
+    """Extract and validate timestamp from a record.
+
+    Raises:
+        ValueError: If record is missing timestamp field
+    """
+    timestamp = record.get("timestamp")
+    if not isinstance(timestamp, str):
+        raise ValueError(f"Record {uuid} missing timestamp field")
+    return timestamp
+
+
+def _build_turn(
+    uuids: list[str],
+    records_by_uuid: dict[str, dict[str, object]],
+) -> Turn:
+    """Build a Turn from a list of UUIDs.
+
+    Args:
+        uuids: Message UUIDs in this turn (must be non-empty)
+        records_by_uuid: UUID -> record mapping
+
+    Returns:
+        Turn with timestamps from first and last messages
+
+    Raises:
+        ValueError: If uuids is empty, UUID not in records, or missing timestamp
+    """
+    if not uuids:
+        raise ValueError("Cannot build turn from empty UUID list")
+
+    first_uuid, last_uuid = uuids[0], uuids[-1]
+
+    if first_uuid not in records_by_uuid:
+        raise ValueError(f"UUID {first_uuid} not in records_by_uuid")
+    if last_uuid not in records_by_uuid:
+        raise ValueError(f"UUID {last_uuid} not in records_by_uuid")
+
+    first_record = records_by_uuid[first_uuid]
+    last_record = records_by_uuid[last_uuid]
+
+    return Turn(
+        uuids=uuids,
+        time_start=_get_record_timestamp(first_uuid, first_record),
+        time_end=_get_record_timestamp(last_uuid, last_record),
+    )
+
+
 @dataclass
 class SessionStateHeader:
     """Header line of session state file."""

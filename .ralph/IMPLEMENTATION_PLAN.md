@@ -443,23 +443,23 @@ Extend the local-first transcript sync to use temporal metadata, with each conve
 
 ### Turn Grouping Algorithm
 
-- [ ] Implement `group_into_turns()` function
+- [x] Implement `group_into_turns()` function
   - Spec: specs/timestamped-transcript-sync.md § Turn Grouping Algorithm
   - Success: Messages grouped by UserMessage boundaries; each Turn spans user→assistant cycle
-  - Test: `test_group_into_turns_basic`, `test_group_into_turns_filters_compaction`
-  - Location: `ragzoom/claude_memory/transcript_sync.py`
+  - Test: `tests/test_group_into_turns.py::TestGroupIntoTurnsBasic` (4 tests), `TestGroupIntoTurnsFiltering` (3 tests)
+  - Location: `ragzoom/claude_memory/transcript_sync.py:67-121`
   - Note: Filters compaction summaries and queue operations; UserMessage = user without toolUseResult
 
-- [ ] Tool-only assistant messages batched within turn
+- [x] Tool-only assistant messages batched within turn
   - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 5
   - Success: Assistant message with only tool calls (no text) stays in current turn
-  - Test: `test_tool_only_assistant_batched_within_turn`
+  - Test: `tests/test_group_into_turns.py::TestGroupIntoTurnsToolOnly::test_tool_only_assistant_batched_within_turn`
   - Location: `ragzoom/claude_memory/transcript_sync.py` (within `group_into_turns`)
 
-- [ ] Standalone user messages create valid turns
+- [x] Standalone user messages create valid turns
   - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 6
   - Success: Single user message with no response creates valid Turn
-  - Test: `test_standalone_user_message_creates_turn`
+  - Test: `tests/test_group_into_turns.py::TestGroupIntoTurnsStandalone` (2 tests)
   - Location: `ragzoom/claude_memory/transcript_sync.py` (within `group_into_turns`)
 
 ---
