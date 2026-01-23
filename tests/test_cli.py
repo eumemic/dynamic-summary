@@ -595,3 +595,77 @@ def test_query_no_bm25_flag(
     # Note: The use_bm25 flag is stored in QueryConfig but is not yet
     # passed to execute_query (that's Phase 21: Retriever Integration).
     # This test verifies the CLI flag is accepted without error.
+
+
+def test_server_start_daemon_flag(runner: CliRunner) -> None:
+    """Test that --daemon flag triggers daemonization.
+
+    Spec: specs/daemon-lifecycle.md § CLI Commands > ragzoom server start
+    Success: `ragzoom server start --daemon` runs in background
+    """
+    with (
+        patch("ragzoom.cli.run_server") as mock_run_server,
+        patch("ragzoom.cli.daemonize") as mock_daemonize,
+        patch("ragzoom.cli.write_port_file") as mock_write_port,
+        patch("ragzoom.cli.install_shutdown_handlers") as mock_handlers,
+    ):
+        result = runner.invoke(cli, ["server", "start", "--daemon"])
+
+        # Command should succeed
+        assert result.exit_code == 0
+
+        # Daemonize should be called (forks to background)
+        mock_daemonize.assert_called_once()
+
+        # Port file should be written
+        mock_write_port.assert_called_once_with(50051)
+
+        # Signal handlers should be installed for graceful shutdown
+        mock_handlers.assert_called_once()
+
+        # Server should be started
+        mock_run_server.assert_called_once()
+
+
+def test_server_start_daemon_flag_with_custom_port(runner: CliRunner) -> None:
+    """Test that --daemon with --port writes correct port to port file."""
+    with (
+        patch("ragzoom.cli.run_server") as mock_run_server,
+        patch("ragzoom.cli.daemonize") as mock_daemonize,
+        patch("ragzoom.cli.write_port_file") as mock_write_port,
+        patch("ragzoom.cli.install_shutdown_handlers"),
+    ):
+        result = runner.invoke(cli, ["server", "start", "--daemon", "--port", "50052"])
+
+        assert result.exit_code == 0
+        mock_daemonize.assert_called_once()
+        mock_write_port.assert_called_once_with(50052)
+        mock_run_server.assert_called_once()
+
+        # Verify port passed to run_server
+        call_args = mock_run_server.call_args
+        assert call_args[0][0].port == 50052
+
+
+def test_server_start_without_daemon_flag(runner: CliRunner) -> None:
+    """Test that without --daemon, daemonize is NOT called (foreground mode)."""
+    with (
+        patch("ragzoom.cli.run_server") as mock_run_server,
+        patch("ragzoom.cli.daemonize") as mock_daemonize,
+        patch("ragzoom.cli.write_port_file") as mock_write_port,
+    ):
+        # Note: Without --daemon, the server runs in foreground (current behavior)
+        # We don't actually run it in tests, so we mock run_server to prevent it
+        result = runner.invoke(cli, ["server", "start"])
+
+        # Should succeed
+        assert result.exit_code == 0
+
+        # Daemonize should NOT be called in foreground mode
+        mock_daemonize.assert_not_called()
+
+        # Port file should NOT be written in foreground mode
+        mock_write_port.assert_not_called()
+
+        # Server should still be started
+        mock_run_server.assert_called_once()
