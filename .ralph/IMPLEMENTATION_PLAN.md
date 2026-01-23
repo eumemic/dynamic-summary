@@ -412,23 +412,24 @@ Complete the Claude Code plugin with commands, skills, and proper structure.
 
 ### Phase 27: Commands
 
-- [ ] Implement /memory command
+- [x] Implement /memory command
   - Spec: specs/memzoom-plugin.md § Commands > /memory
   - Success: `/memory "query"` queries session memory with optional time range
   - Test: Manual testing of /memory command
-  - Location: `ragzoom/plugin/commands/memory.md`
+  - Location: `ragzoom/plugin/.claude-plugin/commands/memory.md`
+  - Note: Commands live under `.claude-plugin/` directory per Claude Code plugin conventions. Command provides step-by-step instructions for syncing session, querying with --json, and formatting results for zoom interaction.
 
 - [ ] Implement /memory-sync command
   - Spec: specs/memzoom-plugin.md § Commands > /memory-sync
   - Success: `/memory-sync` manually triggers transcript sync
   - Test: Manual testing of /memory-sync command
-  - Location: `ragzoom/plugin/commands/memory-sync.md`
+  - Location: `ragzoom/plugin/.claude-plugin/commands/memory-sync.md`
 
 - [ ] Implement /memory-zoom command
   - Spec: specs/memzoom-plugin.md § Commands > /memory-zoom
   - Success: `/memory-zoom 2` zooms into tiling span from previous results
   - Test: Manual testing of /memory-zoom command
-  - Location: `ragzoom/plugin/commands/memory-zoom.md`
+  - Location: `ragzoom/plugin/.claude-plugin/commands/memory-zoom.md`
 
 ### Phase 28: Skill
 
@@ -436,7 +437,7 @@ Complete the Claude Code plugin with commands, skills, and proper structure.
   - Spec: specs/memzoom-plugin.md § Skills > memory-recall
   - Success: Skill triggers on "what did we discuss", "earlier we talked about", etc.
   - Test: Manual testing of skill triggers
-  - Location: `ragzoom/plugin/skills/memory-recall.md`
+  - Location: `ragzoom/plugin/.claude-plugin/skills/memory-recall.md`
 
 ---
 
