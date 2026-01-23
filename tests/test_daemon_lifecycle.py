@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -425,3 +425,63 @@ time.sleep(10)
             # Restore original handlers
             signal.signal(signal.SIGTERM, original_sigterm)
             signal.signal(signal.SIGINT, original_sigint)
+
+
+class TestGetProcessUptime:
+    """Tests for the get_process_uptime() function."""
+
+    def test_get_process_uptime_current_process(self) -> None:
+        """get_process_uptime() should return a valid uptime string for current process."""
+        from ragzoom.daemon import get_process_uptime
+
+        # Use the current process (guaranteed to exist)
+        uptime = get_process_uptime(os.getpid())
+
+        # Should return a non-empty string
+        assert uptime
+        assert uptime != "unknown"
+
+        # Should match expected format (seconds, minutes, or hours)
+        import re
+
+        assert re.match(r"^\d+[smh]", uptime), f"Uptime '{uptime}' should match format"
+
+    def test_get_process_uptime_nonexistent_pid(self) -> None:
+        """get_process_uptime() should return 'unknown' for nonexistent PID."""
+        from ragzoom.daemon import get_process_uptime
+
+        # Use a PID that's very unlikely to exist
+        uptime = get_process_uptime(999999999)
+
+        assert uptime == "unknown"
+
+    def test_get_process_uptime_formats_correctly(self) -> None:
+        """get_process_uptime() should format uptime in human-readable form."""
+
+        import psutil
+
+        from ragzoom.daemon import get_process_uptime
+
+        # Mock psutil.Process to control the create_time
+        mock_process = MagicMock()
+
+        with patch.object(psutil, "Process", return_value=mock_process):
+            # Test seconds format (< 60s)
+            mock_process.create_time.return_value = time.time() - 30
+            assert get_process_uptime(1234) == "30s"
+
+            # Test minutes format (< 1h)
+            mock_process.create_time.return_value = time.time() - 300
+            assert get_process_uptime(1234) == "5m"
+
+            # Test hours format with minutes
+            mock_process.create_time.return_value = time.time() - 8100  # 2h 15m
+            assert get_process_uptime(1234) == "2h 15m"
+
+            # Test hours format without minutes (exact hours)
+            mock_process.create_time.return_value = time.time() - 7200  # 2h exactly
+            assert get_process_uptime(1234) == "2h"
+
+            # Test negative uptime (clock skew) returns "unknown"
+            mock_process.create_time.return_value = time.time() + 100  # Future time
+            assert get_process_uptime(1234) == "unknown"

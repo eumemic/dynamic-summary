@@ -39,9 +39,11 @@ from ragzoom.daemon import (
     cleanup_stale_state,
     daemonize,
     ensure_server_running,
+    get_process_uptime,
     install_shutdown_handlers,
     is_pid_stale,
     read_pid_file,
+    read_port_file,
     write_port_file,
 )
 from ragzoom.error_handling import handle_graceful_error
@@ -1853,6 +1855,35 @@ def stop_server() -> None:
     # Timeout - process didn't terminate gracefully
     click.echo("Timeout waiting for daemon to stop (forcing cleanup)")
     cleanup_stale_state()
+
+
+@server.command("status")
+def server_status() -> None:
+    """Show daemon status.
+
+    Displays whether the daemon is running, and if so, shows:
+    - PID (process ID)
+    - Port (if known)
+    - Uptime (how long the daemon has been running)
+
+    Does NOT auto-start the daemon - just reports current state.
+    """
+    pid = read_pid_file()
+    if pid is None or is_pid_stale(pid):
+        click.echo("Not running")
+        return
+
+    # Daemon is running - get details
+    port = read_port_file()
+    uptime = get_process_uptime(pid)
+
+    # Build status line
+    parts = [f"Running: PID {pid}"]
+    if port is not None:
+        parts.append(f"port {port}")
+    parts.append(f"uptime {uptime}")
+
+    click.echo(", ".join(parts))
 
 
 @cli.command()

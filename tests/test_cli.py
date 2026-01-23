@@ -768,3 +768,80 @@ def test_server_stop_timeout(runner: CliRunner) -> None:
 
         # Should indicate timeout
         assert "timeout" in result.output.lower() or "force" in result.output.lower()
+
+
+def test_server_status_command(runner: CliRunner) -> None:
+    """Test that `server status` shows running daemon info.
+
+    Spec: specs/daemon-lifecycle.md § CLI Commands > ragzoom server status
+    Success: Shows "Running: PID X, port Y, uptime Z" when daemon is running
+    """
+    with (
+        patch("ragzoom.cli.read_pid_file", return_value=12345),
+        patch("ragzoom.cli.read_port_file", return_value=50051),
+        patch("ragzoom.cli.is_pid_stale", return_value=False),
+        patch("ragzoom.cli.get_process_uptime", return_value="2h 15m"),
+    ):
+        result = runner.invoke(cli, ["server", "status"])
+
+        # Command should succeed
+        assert result.exit_code == 0
+
+        # Should show PID
+        assert "12345" in result.output
+
+        # Should show port
+        assert "50051" in result.output
+
+        # Should show uptime
+        assert "2h 15m" in result.output
+
+        # Should indicate running
+        assert "running" in result.output.lower()
+
+
+def test_server_status_not_running(runner: CliRunner) -> None:
+    """Test that `server status` shows 'Not running' when no daemon."""
+    with patch("ragzoom.cli.read_pid_file", return_value=None):
+        result = runner.invoke(cli, ["server", "status"])
+
+        # Command should succeed
+        assert result.exit_code == 0
+
+        # Should indicate not running
+        assert "not running" in result.output.lower()
+
+
+def test_server_status_stale_pid(runner: CliRunner) -> None:
+    """Test that `server status` detects stale PID (process died)."""
+    with (
+        patch("ragzoom.cli.read_pid_file", return_value=12345),
+        patch("ragzoom.cli.is_pid_stale", return_value=True),
+    ):
+        result = runner.invoke(cli, ["server", "status"])
+
+        # Command should succeed
+        assert result.exit_code == 0
+
+        # Should indicate not running (stale PID means effectively not running)
+        assert "not running" in result.output.lower()
+
+
+def test_server_status_no_port_file(runner: CliRunner) -> None:
+    """Test that `server status` handles missing port file gracefully."""
+    with (
+        patch("ragzoom.cli.read_pid_file", return_value=12345),
+        patch("ragzoom.cli.read_port_file", return_value=None),
+        patch("ragzoom.cli.is_pid_stale", return_value=False),
+        patch("ragzoom.cli.get_process_uptime", return_value="5m"),
+    ):
+        result = runner.invoke(cli, ["server", "status"])
+
+        # Command should succeed
+        assert result.exit_code == 0
+
+        # Should show PID
+        assert "12345" in result.output
+
+        # Should indicate running (port unknown is OK)
+        assert "running" in result.output.lower()
