@@ -34,6 +34,32 @@ T = TypeVar("T")
 
 
 @dataclass
+class AppendUnit:
+    """A text unit with optional temporal metadata for batch append operations.
+
+    Used with batch_append() to bundle text content with timestamps.
+    Either both time_start and time_end must be provided, or neither.
+    """
+
+    text: str
+    time_start: str | None = None  # ISO 8601 with timezone
+    time_end: str | None = None  # ISO 8601 with timezone
+
+    def __post_init__(self) -> None:
+        has_start = self.time_start is not None
+        has_end = self.time_end is not None
+        if has_start != has_end:
+            raise ValueError(
+                "AppendUnit: must provide both time_start and time_end, or neither"
+            )
+
+    @property
+    def is_temporal(self) -> bool:
+        """Return True if this unit has timestamps."""
+        return self.time_start is not None
+
+
+@dataclass
 class QueryResponse:
     """Convenience container for query outputs."""
 
