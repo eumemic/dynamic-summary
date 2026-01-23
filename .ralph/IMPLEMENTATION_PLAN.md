@@ -402,12 +402,12 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Location: `proto/dynamic_summary.proto:61-65`
   - Note: Updated proto, stub types, gRPC client (batch_append_text), and servicer (BatchAppendText)
 
-- [ ] Update `batch_append()` to accept `list[AppendUnit]`
+- [x] Update `batch_append()` to accept `list[AppendUnit]`
   - Spec: specs/temporal-metadata.md § API Changes
   - Success: `batch_append(units=[AppendUnit(...), ...])` replaces parallel arrays API
-  - Test: `test_batch_append_accepts_append_units`
-  - Location: `ragzoom/wrapper.py` (batch_append method)
-  - Depends on: AppendUnit dataclass, AppendUnit proto message
+  - Test: `tests/test_batch_append_with_append_units_sqlite.py` (8 tests)
+  - Location: `ragzoom/wrapper.py` (RagZoom.batch_append at line 242, AsyncRagZoom.batch_append at line 548)
+  - Note: Both sync and async wrappers now accept `list[str] | list[AppendUnit]` via `_normalize_units_for_client()` helper. Also fixed bug in `append_executor.py:476` where `has_timestamps` checked raw `timestamps` parameter instead of `parsed_timestamps`.
 
 ### CLI Time Query Parameters (Medium Priority)
 

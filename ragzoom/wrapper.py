@@ -33,6 +33,65 @@ def _resolve_address(explicit: str | None) -> str:
 T = TypeVar("T")
 
 
+def _normalize_units_for_client(
+    units: list[str] | list[AppendUnit],
+    timestamps: list[str | tuple[str, str]] | None,
+) -> tuple[list[str], list[str | tuple[str, str]] | None]:
+    """Normalize units to (text_list, timestamps) for the gRPC client.
+
+    When units contains AppendUnit objects, extracts text and timestamps from them.
+    When units contains strings, passes through unchanged.
+
+    Args:
+        units: Either a list of strings or AppendUnit objects.
+        timestamps: Optional timestamps for string units. Must be None when
+            units contains AppendUnit objects.
+
+    Returns:
+        Tuple of (text_units, timestamps) for the gRPC client.
+
+    Raises:
+        ValueError: If timestamps is provided with AppendUnit objects.
+    """
+    if not units:
+        return ([], None)
+
+    first_unit = units[0]
+    if isinstance(first_unit, AppendUnit):
+        # Extract from AppendUnit objects
+        if timestamps is not None:
+            raise ValueError(
+                "timestamps parameter must be None when using AppendUnit objects "
+                "(timestamps are embedded in AppendUnit)"
+            )
+
+        text_list: list[str] = []
+        ts_list: list[str | tuple[str, str]] = []
+        has_any_timestamps = False
+
+        for unit in units:
+            if not isinstance(unit, AppendUnit):
+                raise ValueError(
+                    "All units must be AppendUnit objects when first unit is AppendUnit"
+                )
+            text_list.append(unit.text)
+
+            if unit.is_temporal:
+                assert unit.time_start is not None and unit.time_end is not None
+                ts_list.append((unit.time_start, unit.time_end))
+                has_any_timestamps = True
+            else:
+                # Placeholder - will be filtered by downstream code
+                ts_list.append(("", ""))
+
+        # Only return timestamps if any unit had them
+        effective_timestamps = ts_list if has_any_timestamps else None
+        return (text_list, effective_timestamps)
+
+    # String units - pass through
+    return ([str(u) for u in units], timestamps)
+
+
 @dataclass
 class AppendUnit:
     """A text unit with optional temporal metadata for batch append operations.
@@ -183,7 +242,7 @@ class RagZoom:
     def batch_append(
         self,
         document_id: str,
-        units: list[str],
+        units: list[str] | list[AppendUnit],
         *,
         collect_telemetry: bool = False,
         timestamps: list[str | tuple[str, str]] | None = None,
@@ -196,33 +255,41 @@ class RagZoom:
 
         Args:
             document_id: The document to append to
-            units: List of text units, each creating a forced boundary
+            units: List of text units or AppendUnit objects. When using AppendUnit
+                objects, timestamps are embedded in each unit and the timestamps
+                parameter must be None.
             collect_telemetry: Whether to collect telemetry data
             timestamps: Optional list of ISO 8601 timestamps parallel to units.
                 Each entry can be a single string (used for both start and end)
-                or a tuple of (start, end) strings.
+                or a tuple of (start, end) strings. Must be None when units
+                contains AppendUnit objects.
         """
         if not document_id:
             raise ValueError("document_id is required")
         if not units:
             raise ValueError("units must be non-empty")
 
+        # Normalize AppendUnit objects to (text_units, timestamps) for the client
+        text_units, effective_timestamps = _normalize_units_for_client(
+            units, timestamps
+        )
+
         if self._runtime is not None:
             session = self._runtime.get_session(document_id)
             return self._run_runtime(
                 session.batch_append_text(
-                    units,
+                    text_units,
                     collect_telemetry=collect_telemetry,
-                    timestamps=timestamps,
+                    timestamps=effective_timestamps,
                 )
             )
 
         with self._client() as client:
             return client.batch_append_text(
                 document_id=document_id,
-                units=units,
+                units=text_units,
                 collect_telemetry=collect_telemetry,
-                timestamps=timestamps,
+                timestamps=effective_timestamps,
             )
 
     def _append(
@@ -481,23 +548,45 @@ class AsyncRagZoom:
     async def batch_append(
         self,
         document_id: str,
-        units: list[str],
+        units: list[str] | list[AppendUnit],
         *,
         collect_telemetry: bool = False,
         timestamps: list[str | tuple[str, str]] | None = None,
     ) -> IndexingResult:
+        """Append multiple text units with forced split boundaries between them.
+
+        Each unit creates a forced boundary, meaning text is never merged across
+        unit boundaries. Semantically equivalent to calling append() for each unit
+        sequentially, but executed in a single transaction for efficiency.
+
+        Args:
+            document_id: The document to append to
+            units: List of text units or AppendUnit objects. When using AppendUnit
+                objects, timestamps are embedded in each unit and the timestamps
+                parameter must be None.
+            collect_telemetry: Whether to collect telemetry data
+            timestamps: Optional list of ISO 8601 timestamps parallel to units.
+                Each entry can be a single string (used for both start and end)
+                or a tuple of (start, end) strings. Must be None when units
+                contains AppendUnit objects.
+        """
         if not document_id:
             raise ValueError("document_id is required")
         if not units:
             raise ValueError("units must be non-empty")
 
+        # Normalize AppendUnit objects to (text_units, timestamps) for the client
+        text_units, effective_timestamps = _normalize_units_for_client(
+            units, timestamps
+        )
+
         if self._runtime is not None:
             # Call session directly on current loop - critical for background tasks
             session = self._runtime.get_session(document_id)
             return await session.batch_append_text(
-                units,
+                text_units,
                 collect_telemetry=collect_telemetry,
-                timestamps=timestamps,
+                timestamps=effective_timestamps,
             )
 
         # gRPC client is sync - run in thread to avoid blocking event loop
@@ -505,9 +594,9 @@ class AsyncRagZoom:
             with self._client() as client:
                 return client.batch_append_text(
                     document_id=document_id,
-                    units=units,
+                    units=text_units,
                     collect_telemetry=collect_telemetry,
-                    timestamps=timestamps,
+                    timestamps=effective_timestamps,
                 )
 
         return await asyncio.to_thread(_do_batch_append)

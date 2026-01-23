@@ -20,6 +20,7 @@ from ragzoom.document_store import DocumentStore
 from ragzoom.splitter import TextSplitter
 from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
+from ragzoom.wrapper import AppendUnit
 
 logger = logging.getLogger(__name__)
 
@@ -400,7 +401,7 @@ class AppendExecutor:
         *,
         store: DocumentStore,
         document_id: str,
-        units: Sequence[str],
+        units: Sequence[str] | Sequence[AppendUnit],
         timestamps: Sequence[str | tuple[str, str]] | None = None,
         reporter: TelemetryCollector | None = None,
         run_context: IndexRunContext | None = None,
@@ -416,11 +417,14 @@ class AppendExecutor:
         Args:
             store: Document store to append to
             document_id: ID of the document
-            units: Sequence of text units, each creating a forced boundary
+            units: Sequence of text units or AppendUnit objects. When using
+                AppendUnit objects, timestamps are extracted from them and
+                the timestamps parameter must be None.
             timestamps: Optional sequence parallel to units. Each entry can be:
                 - ISO 8601 string (used for both time_start and time_end)
                 - Tuple of (time_start, time_end) ISO 8601 strings
-                Must match length of units when provided.
+                Must match length of units when provided. Must be None when
+                units contains AppendUnit objects.
             reporter: Optional telemetry collector
             run_context: Optional run context for telemetry
             telemetry_manager: Optional telemetry manager
@@ -429,25 +433,18 @@ class AppendExecutor:
             AppendOutcome with all new leaf IDs and span info
 
         Raises:
-            ValueError: If timestamps length doesn't match units length
+            ValueError: If timestamps length doesn't match units length, or if
+                timestamps is provided when units contains AppendUnit objects.
         """
-        # Validate timestamps length matches units
-        if timestamps is not None and len(timestamps) != len(units):
-            raise ValueError(
-                f"timestamps length ({len(timestamps)}) must match "
-                f"units length ({len(units)})"
-            )
-
-        # Parse all timestamps upfront (before filtering which changes indices)
-        parsed_timestamps = (
-            [parse_timestamp_param(ts) for ts in timestamps]
-            if timestamps is not None
-            else None
+        # Normalize units: convert AppendUnit objects to (text, timestamps) format
+        text_units, parsed_timestamps = self._normalize_units_input(
+            units=units,
+            timestamps=timestamps,
         )
 
         # Process units based on chunking mode
         non_empty_units, unit_timestamps = self._process_units_for_batch(
-            units=units,
+            units=text_units,
             parsed_timestamps=parsed_timestamps,
             document_id=document_id,
         )
@@ -476,7 +473,7 @@ class AppendExecutor:
 
         # Handle temporal document validation and inference
         is_first_append = right_leaf is None
-        has_timestamps = timestamps is not None
+        has_timestamps = parsed_timestamps is not None
 
         if is_first_append:
             # First append: infer is_temporal from presence of timestamps
@@ -736,6 +733,87 @@ class AppendExecutor:
         )
 
     # jscpd:ignore-end
+
+    def _normalize_units_input(
+        self,
+        *,
+        units: Sequence[str] | Sequence[AppendUnit],
+        timestamps: Sequence[str | tuple[str, str]] | None,
+    ) -> tuple[list[str], list[tuple[float, float] | None] | None]:
+        """Normalize units input to (text_list, parsed_timestamps) format.
+
+        Handles both the legacy API (list[str] + timestamps) and the new API
+        (list[AppendUnit] with embedded timestamps).
+
+        Args:
+            units: Either a sequence of strings or AppendUnit objects.
+            timestamps: Optional timestamps for string units. Must be None
+                when units contains AppendUnit objects.
+
+        Returns:
+            Tuple of (text_units, parsed_timestamps) where text_units is a list
+            of strings and parsed_timestamps is either None or a list of
+            (time_start, time_end) tuples.
+
+        Raises:
+            ValueError: If timestamps is provided with AppendUnit objects, or
+                if timestamps length doesn't match units length.
+        """
+        if not units:
+            return ([], None)
+
+        # Check if units are AppendUnit objects
+        first_unit = units[0]
+        if isinstance(first_unit, AppendUnit):
+            # New API: extract text and timestamps from AppendUnit objects
+            if timestamps is not None:
+                raise ValueError(
+                    "timestamps parameter must be None when using AppendUnit objects "
+                    "(timestamps are embedded in AppendUnit)"
+                )
+
+            text_units: list[str] = []
+            parsed_timestamps: list[tuple[float, float] | None] = []
+            has_any_timestamps = False
+
+            for unit in units:
+                if not isinstance(unit, AppendUnit):
+                    raise ValueError(
+                        "All units must be AppendUnit objects when first unit is AppendUnit"
+                    )
+                text_units.append(unit.text)
+
+                if unit.is_temporal:
+                    # AppendUnit validates that both are set or neither
+                    assert unit.time_start is not None and unit.time_end is not None
+                    unit_ts = parse_timestamp_param((unit.time_start, unit.time_end))
+                    parsed_timestamps.append(unit_ts)
+                    has_any_timestamps = True
+                else:
+                    parsed_timestamps.append(None)
+
+            # Return timestamps list only if any unit had timestamps
+            final_timestamps = parsed_timestamps if has_any_timestamps else None
+            return (text_units, final_timestamps)
+
+        # Legacy API: units are strings
+        # Validate timestamps length matches units
+        if timestamps is not None and len(timestamps) != len(units):
+            raise ValueError(
+                f"timestamps length ({len(timestamps)}) must match "
+                f"units length ({len(units)})"
+            )
+
+        # Cast to list[str] since we verified first element is str
+        string_units = [str(u) for u in units]
+
+        # Parse all timestamps upfront (before filtering which changes indices)
+        parsed = (
+            [parse_timestamp_param(ts) for ts in timestamps]
+            if timestamps is not None
+            else None
+        )
+        return (string_units, parsed)
 
     def _build_leaf_specs(
         self,
