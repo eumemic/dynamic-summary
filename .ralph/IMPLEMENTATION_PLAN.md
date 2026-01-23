@@ -138,12 +138,13 @@ Fix critical bugs discovered during implementation verification that prevent bas
   - Note: This is the core fix - change from replacement to additive semantics
   - **DONE**: Renamed `system_prompt` parameter to `summarization_guidance` in `prepare_summary_inputs` and updated the implementation to append guidance under "# Summarization Guidance" section. Updated all callers (`SummaryWorkflowConfig`, `run_summary_workflow`, `run_summary_from_config`, `run_summary_request`, `Summarizer.summarize`, `LLMService._summarize_text`, `IndexingEngine`). Comprehensive tests verify additive semantics.
 
-- [ ] Update CLI flag from --summary-system-prompt to --summarization-guidance
+- [x] Update CLI flag from --summary-system-prompt to --summarization-guidance
   - Spec: specs/custom-prompt-config.md § CLI Override
   - Success: `ragzoom index --summarization-guidance "..."` works
   - Test: `tests/test_cli.py::test_index_with_summarization_guidance`
   - Location: `ragzoom/cli.py` (index command)
   - Note: Remove old flag, add new one
+  - **DONE**: Renamed flag and parameter from `summary_system_prompt` to `summarization_guidance`. Updated help text to reflect additive semantics. CLI parameter is passed to gRPC client as `summary_system_prompt` (protobuf field rename is a separate work item).
 
 - [ ] Update protobuf field name
   - Spec: specs/custom-prompt-config.md § Migration > Field Rename
