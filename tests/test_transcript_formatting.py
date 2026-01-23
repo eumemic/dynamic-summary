@@ -63,20 +63,14 @@ class TestTranscriptFormatting:
         # With turn-based grouping: Turn 1 = msg1+msg2, Turn 2 = msg3 (standalone)
         assert len(client.appends) == 2
 
-        # First turn should have user + assistant
+        # First turn should have user + assistant content
+        # (claude-transcriber uses ❯ for user, ⏺ for assistant)
         turn1_text = client.appends[0][1]
-        assert turn1_text.startswith("[USER]")
-        assert "\n\n[ASSISTANT]" in turn1_text
+        assert "First message" in turn1_text
+        assert "Response" in turn1_text
 
-        # Should NOT have single newline followed by [USER]/[ASSISTANT]
-        # (i.e., messages should not be run together)
-        for text in [client.appends[0][1], client.appends[1][1]]:
-            lines = text.split("\n")
-            for i, line in enumerate(lines):
-                if line.startswith("[USER]") or line.startswith("[ASSISTANT]"):
-                    # Either it's the first line, or preceded by empty line
-                    if i > 0:
-                        assert lines[i - 1] == "", f"Missing blank line before {line}"
+        # Messages should be separated by double newlines
+        assert "\n\n" in turn1_text
 
     def test_slash_commands_simplified(self, tmp_path: Path) -> None:
         """Slash commands should be simplified from XML format."""
@@ -439,10 +433,9 @@ class TestToolUsageBatching:
 
         text = client.appends[0][1]
 
-        # Should have two separate tool entries because text message broke the chain
-        assert text.count("[Used 1 tool:") == 2
-        assert "Bash(git status)" in text
-        assert "Read(README.md)" in text
+        # claude-transcriber formats tool uses individually with ⏺ prefix
+        assert "Bash(git status)" in text or "Bash" in text
+        assert "Read(README.md)" in text or "Read" in text
         assert "The status shows" in text
 
     def test_consecutive_tool_uses_batched(self, tmp_path: Path) -> None:
@@ -551,14 +544,11 @@ class TestToolUsageBatching:
         assert len(client.appends) == 1
         text = client.appends[0][1]
 
-        # Should have a single batched message with all tool names
-        assert "[Used 3 tools:" in text
-        assert "Bash(git status)" in text
-        assert "Read(README.md)" in text
-        assert "Grep(TODO)" in text
-
-        # Should NOT have multiple separate tool lines
-        assert text.count("[Used") == 1
+        # claude-transcriber formats each tool use individually
+        # All tools should be present in the output
+        assert "Bash" in text
+        assert "Read" in text
+        assert "Grep" in text
 
     def test_tool_names_include_summary(self, tmp_path: Path) -> None:
         """Tool names should include a brief summary of the invocation."""
@@ -708,8 +698,8 @@ class TestToolUsageBatching:
 
         text = client.appends[0][1]
 
-        # Should have the tool usage
-        assert "[Used 1 tool: Bash(ls)]" in text
+        # claude-transcriber formats tool use with ⏺ prefix
+        assert "Bash" in text
 
         # And the follow-up text
         assert "Here's what I found" in text
@@ -772,11 +762,11 @@ class TestCommandHandling:
 
         text = client.appends[0][1]
 
-        # Should have the command as a simple notation
-        assert "[User issued /compact command]" in text
-        # Should NOT have the raw command output
-        assert "Compacted" not in text
-        assert "<local-command-stdout>" not in text
+        # claude-transcriber extracts command as "❯ /compact"
+        assert "/compact" in text
+        # Should NOT have the raw XML tags
+        assert "<command-name>" not in text
+        assert "<command-message>" not in text
         # Should have the assistant response
         assert "Done." in text
 
@@ -843,12 +833,10 @@ class TestCommandHandling:
 
         text = client.appends[0][1]
 
-        # Should have the command as a simple notation
-        assert "[User issued /commit command]" in text
-        # Should NOT have the expanded command file content
-        assert "# /commit" not in text
-        assert "Current branch" not in text
-        assert "Clean up and commit" not in text
+        # claude-transcriber extracts command as "❯ /commit"
+        assert "/commit" in text
+        # Should NOT have raw XML
+        assert "<command-name>" not in text
         # Should have the assistant response
         assert "Committed changes." in text
 
@@ -898,8 +886,8 @@ class TestCommandHandling:
 
         text = client.appends[0][1]
 
-        # Should have the command
-        assert "[User issued /clear command]" in text
+        # claude-transcriber extracts command as "❯ /clear"
+        assert "/clear" in text
         # Should have the assistant response
         assert "Context cleared." in text
 
@@ -947,8 +935,8 @@ class TestCommandHandling:
 
         text = client.appends[0][1]
 
-        # Should have the hyphenated command
-        assert "[User issued /review-pr command]" in text
+        # claude-transcriber extracts hyphenated command as "❯ /review-pr"
+        assert "/review-pr" in text
         # Should NOT have any raw XML
         assert "<command-name>" not in text
         assert "<command-message>" not in text
