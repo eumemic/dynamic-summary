@@ -297,11 +297,11 @@ Auto-start daemon, crash recovery, and proper lifecycle management.
   - Location: `ragzoom/daemon.py:49-111` (write_pid_file, read_pid_file, remove_pid_file, is_pid_stale)
   - Note: Added 4 functions - write_pid_file(), read_pid_file(), remove_pid_file(), is_pid_stale(). Uses os.kill(pid, 0) for stale detection with proper ESRCH/EPERM handling. 9 new tests cover all operations.
 
-- [ ] Implement port file management
+- [x] Implement port file management
   - Spec: specs/daemon-lifecycle.md § Architecture > State Files
   - Success: `daemon.port` written with actual port daemon is listening on
-  - Test: `tests/test_daemon_state.py::test_port_file_management`
-  - Location: `ragzoom/daemon.py`
+  - Test: `tests/test_daemon_state.py::TestPortFileManagement` (8 tests)
+  - Location: `ragzoom/daemon.py:130-182` (get_port_file_path, write_port_file, read_port_file, remove_port_file)
 
 ### Phase 23: Daemonization
 

@@ -175,3 +175,86 @@ class TestPidFileManagement:
             write_pid_file(12345)
             assert state_dir.exists()
             assert (state_dir / "daemon.pid").exists()
+
+
+class TestPortFileManagement:
+    """Test port file read/write/cleanup operations."""
+
+    def test_write_port_file(self, tmp_path: Path) -> None:
+        """write_port_file() creates daemon.port with correct content."""
+        from ragzoom.daemon import write_port_file
+
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
+            write_port_file(50051)
+            port_file = tmp_path / "daemon.port"
+            assert port_file.exists()
+            assert port_file.read_text().strip() == "50051"
+
+    def test_read_port_file_returns_port(self, tmp_path: Path) -> None:
+        """read_port_file() returns port when file exists."""
+        from ragzoom.daemon import read_port_file
+
+        port_file = tmp_path / "daemon.port"
+        port_file.write_text("50052\n")
+
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
+            result = read_port_file()
+            assert result == 50052
+
+    def test_read_port_file_returns_none_when_missing(self, tmp_path: Path) -> None:
+        """read_port_file() returns None when file doesn't exist."""
+        from ragzoom.daemon import read_port_file
+
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
+            result = read_port_file()
+            assert result is None
+
+    def test_read_port_file_returns_none_for_invalid_content(
+        self, tmp_path: Path
+    ) -> None:
+        """read_port_file() returns None for non-integer content."""
+        from ragzoom.daemon import read_port_file
+
+        port_file = tmp_path / "daemon.port"
+        port_file.write_text("not-a-port\n")
+
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
+            result = read_port_file()
+            assert result is None
+
+    def test_remove_port_file_deletes_file(self, tmp_path: Path) -> None:
+        """remove_port_file() deletes the port file."""
+        from ragzoom.daemon import remove_port_file
+
+        port_file = tmp_path / "daemon.port"
+        port_file.write_text("50051\n")
+
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
+            remove_port_file()
+            assert not port_file.exists()
+
+    def test_remove_port_file_idempotent(self, tmp_path: Path) -> None:
+        """remove_port_file() succeeds even if file doesn't exist."""
+        from ragzoom.daemon import remove_port_file
+
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
+            # Should not raise
+            remove_port_file()
+
+    def test_write_port_file_creates_state_directory(self, tmp_path: Path) -> None:
+        """write_port_file() creates state directory if needed."""
+        from ragzoom.daemon import write_port_file
+
+        state_dir = tmp_path / "nested" / "state"
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(state_dir)}):
+            write_port_file(50051)
+            assert state_dir.exists()
+            assert (state_dir / "daemon.port").exists()
+
+    def test_get_port_file_path(self, tmp_path: Path) -> None:
+        """get_port_file_path() returns correct path."""
+        from ragzoom.daemon import get_port_file_path
+
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
+            result = get_port_file_path()
+            assert result == tmp_path / "daemon.port"
