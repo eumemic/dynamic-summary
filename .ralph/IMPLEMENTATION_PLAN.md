@@ -181,12 +181,12 @@ Fix critical bugs discovered during implementation verification that prevent bas
 
 ### Phase 33: Temporal Document UX Improvement (Issue #2)
 
-- [ ] Add clear error message for temporal document config mismatch
+- [x] Add clear error message for temporal document config mismatch
   - Spec: New - improving user experience for temporal documents
   - Success: Error message includes exact fix: "Temporal documents require target_chunk_tokens=null in config"
-  - Test: `tests/test_temporal_config_error.py::test_helpful_error_for_temporal_without_null_chunks`
-  - Location: `ragzoom/server/append_executor.py:481-486`
-  - Note: Current error is cryptic. Make it actionable with exact config fix.
+  - Test: `tests/test_temporal_config_error_sqlite.py::test_helpful_error_for_temporal_without_null_chunks`
+  - Location: `ragzoom/server/append_executor.py` (lines 203-210 and 489-496)
+  - **DONE**: Updated error message to follow What-Why-Fix pattern. New message explains: what is wrong (temporal documents need null), why (preserves one-to-one mapping for timestamp queries), and how to fix (set in config file or use CLI flag). Tests verify message includes "temporal", "target_chunk_tokens", "null/none", "config", and explains the reason.
 
 - [ ] Document temporal document configuration requirement
   - Spec: New - documentation improvement
