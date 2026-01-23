@@ -17,6 +17,7 @@ from typing import Protocol, cast
 import click
 from dotenv import load_dotenv
 
+from ragzoom.claude_memory import set_session_pid
 from ragzoom.client import (
     DocumentStatusView,
     GrpcRagzoomClient,
@@ -2272,6 +2273,25 @@ def reset_session_cmd(session_id: str, user_id: str, server: str) -> None:
                 raise SystemExit(1)
     except Exception as e:
         handle_cli_error(e, "resetting session")
+
+
+@cli.command("set-session-pid")
+@click.argument("document_id")
+@click.argument("pid", type=int)
+def set_session_pid_cmd(document_id: str, pid: int) -> None:
+    """Set the PID for a session's state file.
+
+    Called by the SessionStart hook to register the Claude Code PID
+    before any tool calls. Creates the state file if needed.
+
+    Example:
+      ragzoom set-session-pid my-session-123 12345
+    """
+    try:
+        set_session_pid(document_id, pid)
+        click.echo(f"Set PID {pid} for session '{document_id}'")
+    except Exception as e:
+        handle_cli_error(e, "setting session PID")
 
 
 if __name__ == "__main__":
