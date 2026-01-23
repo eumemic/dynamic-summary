@@ -368,6 +368,209 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
 
 ---
 
+## Phase 5: Remaining Gaps (Temporal Metadata)
+
+### Client-Controlled Chunking Validation (High Priority)
+
+- [x] Validate temporal documents require client-controlled chunking
+  - Spec: specs/temporal-metadata.md § Client-Controlled Chunking Requirement
+  - Success: First append with timestamps on document with `target_chunk_tokens` set → reject with clear error
+  - Test: `tests/test_temporal_validation_sqlite.py::TestTemporalRequiresClientControlledChunking` (4 tests)
+  - Location: `ragzoom/server/append_executor.py:200-204` (append), `ragzoom/server/append_executor.py:484-488` (append_batch)
+  - Note: Temporal documents MUST have `target_chunk_tokens=None` because client controls chunk boundaries
+
+### AppendUnit API (Medium Priority)
+
+- [ ] Implement `AppendUnit` dataclass
+  - Spec: specs/temporal-metadata.md § API Changes
+  - Success: `AppendUnit(text="...", time_start="...", time_end="...")` bundles text with timestamps
+  - Test: `test_append_unit_dataclass`, `test_append_unit_validates_timestamps`
+  - Location: New in `ragzoom/wrapper.py`, export from `ragzoom/__init__.py`
+  - Note: Validation rule - both timestamps or neither (not just one)
+
+- [ ] Add `AppendUnit` proto message to gRPC protocol
+  - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
+  - Success: Proto defines `message AppendUnit { bytes content = 1; optional string time_start = 2; optional string time_end = 3; }`
+  - Test: `test_append_unit_proto_message`
+  - Location: `proto/dynamic_summary.proto`
+  - Note: Current proto uses parallel arrays (`repeated bytes units` + `repeated Timestamp timestamps`); needs self-contained AppendUnit
+
+- [ ] Update `BatchAppendTextRequest` to use `repeated AppendUnit`
+  - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
+  - Success: BatchAppendTextRequest uses `repeated AppendUnit units` instead of parallel arrays
+  - Test: `test_batch_append_request_uses_append_unit`
+  - Location: `proto/dynamic_summary.proto:53-58`
+  - Depends on: AppendUnit proto message
+
+- [ ] Update `batch_append()` to accept `list[AppendUnit]`
+  - Spec: specs/temporal-metadata.md § API Changes
+  - Success: `batch_append(units=[AppendUnit(...), ...])` replaces parallel arrays API
+  - Test: `test_batch_append_accepts_append_units`
+  - Location: `ragzoom/wrapper.py` (batch_append method)
+  - Depends on: AppendUnit dataclass, AppendUnit proto message
+
+### CLI Time Query Parameters (Medium Priority)
+
+- [ ] Add `--time-start` and `--time-end` to CLI `query` command
+  - Spec: specs/temporal-metadata.md § Acceptance Criteria 14
+  - Success: `ragzoom query --time-start "2024-01-21T14:30:00Z" --time-end "..."` works
+  - Test: `test_cli_query_with_time_window`
+  - Location: `ragzoom/cli.py` (around line 821, in query command definition)
+  - Note: Backend already supports time-windowed queries, CLI just needs to expose it
+
+---
+
+## Next Feature: Timestamped Transcript Sync
+
+**Spec**: `specs/timestamped-transcript-sync.md` (status: READY)
+
+**Partial Blocker**: Phase 8's AppendUnit conversion depends on Temporal Metadata Phase 5 (AppendUnit API). However, Phases 6-7 and 9-11 can proceed now, and Phase 8's turn-level tracking and revert detection can use the current parallel arrays API as a workaround.
+
+Extend the local-first transcript sync to use temporal metadata, with each conversation turn becoming exactly one leaf node with timestamps from the turn's first/last messages.
+
+---
+
+## Phase 6: Turn Dataclass & Grouping
+
+### Turn Dataclass
+
+- [ ] Implement `Turn` dataclass
+  - Spec: specs/timestamped-transcript-sync.md § API Changes > transcript_sync.py
+  - Success: `Turn(uuids=[...], time_start="ISO8601", time_end="ISO8601")` exists
+  - Test: `test_turn_dataclass_fields`
+  - Location: `ragzoom/claude_memory/transcript_sync.py`
+  - Note: Contains list of message UUIDs in the turn, plus ISO 8601 timestamps
+
+### Turn Grouping Algorithm
+
+- [ ] Implement `group_into_turns()` function
+  - Spec: specs/timestamped-transcript-sync.md § Turn Grouping Algorithm
+  - Success: Messages grouped by UserMessage boundaries; each Turn spans user→assistant cycle
+  - Test: `test_group_into_turns_basic`, `test_group_into_turns_filters_compaction`
+  - Location: `ragzoom/claude_memory/transcript_sync.py`
+  - Note: Filters compaction summaries and queue operations; UserMessage = user without toolUseResult
+
+- [ ] Tool-only assistant messages batched within turn
+  - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 5
+  - Success: Assistant message with only tool calls (no text) stays in current turn
+  - Test: `test_tool_only_assistant_batched_within_turn`
+  - Location: `ragzoom/claude_memory/transcript_sync.py` (within `group_into_turns`)
+
+- [ ] Standalone user messages create valid turns
+  - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 6
+  - Success: Single user message with no response creates valid Turn
+  - Test: `test_standalone_user_message_creates_turn`
+  - Location: `ragzoom/claude_memory/transcript_sync.py` (within `group_into_turns`)
+
+---
+
+## Phase 7: Timestamp Extraction
+
+### JSONL Timestamp Extraction
+
+- [ ] Extract timestamps from JSONL transcript records
+  - Spec: specs/timestamped-transcript-sync.md § Turn Timestamp Assignment
+  - Success: Extract `timestamp` field (already ISO 8601) from each JSONL record
+  - Test: `test_extract_timestamp_from_jsonl_record`
+  - Location: `ragzoom/claude_memory/transcript_sync.py`
+  - Note: Timestamps are ISO 8601 strings, not converted to float until AppendUnit
+
+- [ ] Turn timestamps from first/last message
+  - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 2
+  - Success: `Turn.time_start` = first message timestamp, `Turn.time_end` = last message timestamp
+  - Test: `test_turn_timestamps_from_first_last_message`
+  - Location: `ragzoom/claude_memory/transcript_sync.py` (within `group_into_turns`)
+
+---
+
+## Phase 8: Sync Integration
+
+### Temporal Document Setup
+
+- [ ] Synced documents are temporal (`is_temporal=True`)
+  - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 3
+  - Success: `execute_sync()` sets `is_temporal=True` on document; verified via `get_document_is_temporal()`
+  - Test: `test_synced_document_is_temporal`
+  - Location: `ragzoom/claude_memory/transcript_sync.py` (execute_sync function)
+  - Note: Currently `execute_sync()` does not set or check the `is_temporal` flag
+
+### AppendUnit Integration
+
+- [ ] Convert Turns to AppendUnits for indexing (BLOCKED)
+  - Spec: specs/timestamped-transcript-sync.md § Batch Append with AppendUnit
+  - Success: Each Turn becomes one AppendUnit with text and timestamps
+  - Test: `test_turn_to_append_unit_conversion`
+  - Location: `ragzoom/claude_memory/transcript_sync.py`
+  - Depends on: AppendUnit dataclass (Phase 5)
+  - Workaround: Use current parallel arrays API (`timestamps=[...]`) until AppendUnit is available
+
+- [ ] Use `batch_append()` instead of individual `append()` calls
+  - Spec: specs/timestamped-transcript-sync.md § Batch Append with AppendUnit
+  - Success: `execute_sync()` calls `batch_append()` with turn texts and timestamps
+  - Test: `test_execute_sync_uses_batch_append`
+  - Location: `ragzoom/claude_memory/transcript_sync.py` (execute_sync function)
+  - Note: Current implementation uses individual `append()` calls
+
+### Turn-Level Tracking
+
+- [ ] Track AppendEntries at turn granularity
+  - Spec: specs/timestamped-transcript-sync.md § AppendEntry Tracking
+  - Success: Each conversation turn maps to exactly one leaf node; `AppendEntry.last_uuid` = last UUID in turn
+  - Test: `test_each_turn_creates_one_leaf_node`
+  - Location: `ragzoom/claude_memory/transcript_sync.py`
+  - Note: Current implementation tracks at segment boundaries, not turn boundaries
+
+- [ ] Revert detection at turn granularity
+  - Spec: specs/timestamped-transcript-sync.md § AppendEntry Tracking
+  - Success: Common ancestor in middle of turn → truncate to before that turn, re-index from turn boundary
+  - Test: `test_revert_detection_at_turn_granularity`
+  - Location: `ragzoom/claude_memory/transcript_sync.py`
+  - Note: Current revert detection doesn't understand turn boundaries
+
+---
+
+## Phase 9: Query & Filtering
+
+### Time-Windowed Queries
+
+- [ ] Time-windowed queries work on synced transcripts
+  - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 4
+  - Success: `query(time_start="...", time_end="...")` returns turns in window
+  - Test: `test_time_windowed_query_on_synced_transcript`
+  - Location: Already implemented in `ragzoom/retrieve.py`, test in `tests/test_transcript_temporal_queries.py`
+  - Note: Query infrastructure exists; need integration test verifying it works with synced transcripts
+
+### Compaction Summary Filtering
+
+- [ ] Compaction summaries not indexed
+  - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 8
+  - Success: `isCompactSummary: true` messages excluded from turn grouping and indexing
+  - Test: `test_compaction_summaries_not_indexed`
+  - Location: `ragzoom/claude_memory/transcript_sync.py` (in `group_into_turns` and `get_records_by_uuid`)
+  - Note: Filtering exists in `get_compaction_uuid`, `get_current_head`, `build_records_map` but needs explicit test and integration with turn grouping
+
+---
+
+## Phase 10: External Integration
+
+### claude-transcriber Library
+
+- [ ] Add claude-transcriber dependency
+  - Spec: specs/timestamped-transcript-sync.md § Transcription with claude-transcriber
+  - Success: `claude-transcriber` package listed in `pyproject.toml` dependencies
+  - Test: `import claude_transcriber` succeeds
+  - Location: `pyproject.toml` (dependencies section)
+  - Note: Library not currently in dependencies
+
+- [ ] Replace custom transcription with claude-transcriber
+  - Spec: specs/timestamped-transcript-sync.md § Transcription with claude-transcriber
+  - Success: Uses `Transcriber` class from `claude-transcriber` instead of custom `transcribe_uuid_from_map()`
+  - Test: `test_uses_claude_transcriber_library`
+  - Location: `ragzoom/claude_memory/transcript_sync.py` (replace custom transcription code)
+  - Depends on: claude-transcriber dependency added
+
+---
+
 ## Notes
 
 - The temporal metadata feature builds on top of client-managed chunking
@@ -375,3 +578,4 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
 - Time queries reuse existing span query infrastructure via time→span mapping
 - Document temporality is all-or-nothing: either all chunks have timestamps or none do
 - No database migration needed - existing databases can be blown away and recreated with new schema
+- **Timestamped transcript sync partial blocker**: Only Phase 8's AppendUnit conversion is blocked; Phases 6-7, 9-11 can proceed now; Phase 8's other items can use parallel arrays workaround

@@ -197,6 +197,12 @@ class AppendExecutor:
         if is_first_append:
             # First append: infer is_temporal from presence of timestamps
             if has_timestamps:
+                # Temporal documents require client-controlled chunking
+                if self._config.target_chunk_tokens is not None:
+                    raise ValueError(
+                        "Temporal documents require client-controlled chunking "
+                        "(target_chunk_tokens=None)"
+                    )
                 store._doc_repo.set_document_is_temporal(document_id, is_temporal=True)
         else:
             # Subsequent append: validate timestamp presence matches document temporality
@@ -475,6 +481,12 @@ class AppendExecutor:
         if is_first_append:
             # First append: infer is_temporal from presence of timestamps
             if has_timestamps:
+                # Temporal documents require client-controlled chunking
+                if self._config.target_chunk_tokens is not None:
+                    raise ValueError(
+                        "Temporal documents require client-controlled chunking "
+                        "(target_chunk_tokens=None)"
+                    )
                 store._doc_repo.set_document_is_temporal(document_id, is_temporal=True)
         else:
             # Subsequent append: validate timestamp presence matches document temporality
