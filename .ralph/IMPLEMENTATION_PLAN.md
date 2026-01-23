@@ -411,12 +411,12 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
 
 ### CLI Time Query Parameters (Medium Priority)
 
-- [ ] Add `--time-start` and `--time-end` to CLI `query` command
+- [x] Add `--time-start` and `--time-end` to CLI `query` command
   - Spec: specs/temporal-metadata.md § Acceptance Criteria 14
   - Success: `ragzoom query --time-start "2024-01-21T14:30:00Z" --time-end "..."` works
-  - Test: `test_cli_query_with_time_window`
-  - Location: `ragzoom/cli.py` (around line 821, in query command definition)
-  - Note: Backend already supports time-windowed queries, CLI just needs to expose it
+  - Test: `tests/test_cli.py::test_query_with_time_window`, `tests/test_cli.py::test_query_time_window_defaults_to_none`
+  - Location: `ragzoom/cli.py:831-841` (option definitions), `ragzoom/cli.py:880-882` (function parameters), `ragzoom/cli.py:941-942` (passed to gRPC client)
+  - Note: Backend already supports time-windowed queries; CLI now exposes it with ISO 8601 format help text
 
 ---
 
