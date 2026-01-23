@@ -419,11 +419,12 @@ Complete the Claude Code plugin with commands, skills, and proper structure.
   - Location: `ragzoom/plugin/.claude-plugin/commands/memory.md`
   - Note: Commands live under `.claude-plugin/` directory per Claude Code plugin conventions. Command provides step-by-step instructions for syncing session, querying with --json, and formatting results for zoom interaction.
 
-- [ ] Implement /memory-sync command
+- [x] Implement /memory-sync command
   - Spec: specs/memzoom-plugin.md § Commands > /memory-sync
   - Success: `/memory-sync` manually triggers transcript sync
   - Test: Manual testing of /memory-sync command
   - Location: `ragzoom/plugin/.claude-plugin/commands/memory-sync.md`
+  - Note: Command provides step-by-step instructions for locating session transcript and calling `ragzoom sync-claude-code-transcript`
 
 - [ ] Implement /memory-zoom command
   - Spec: specs/memzoom-plugin.md § Commands > /memory-zoom
