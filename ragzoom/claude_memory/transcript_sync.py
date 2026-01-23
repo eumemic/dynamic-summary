@@ -1253,33 +1253,40 @@ def execute_sync(
 
                 # Call batch_append with all units at once
                 batch_append_method = getattr(client, "batch_append")
-                result = batch_append_method(document_id, non_empty_units)
+                batch_append_method(document_id, non_empty_units)
 
-                # Track all UUIDs from turns that produced content
-                for _, turn in units_with_turns:
-                    # Filter out tool results from appended UUIDs
-                    for uuid in turn.uuids:
-                        record = records_by_uuid.get(uuid)
-                        if record is None:
-                            continue
-                        # Skip tool use results
-                        if record.get("type") == "user" and "toolUseResult" in record:
-                            continue
-                        appended_uuids.append(uuid)
+                # Determine starting span position for this batch
+                last_entry = append_log.last_entry()
+                span_start = last_entry.span_end if last_entry else 0
 
-                # Record the final span_end from the batch append result
-                new_span_end = getattr(result, "span_end", 0)
+                # Record one AppendEntry per turn with cumulative span_end
+                cumulative_span = span_start
+                for unit, turn in units_with_turns:
+                    cumulative_span += len(unit.text)
 
-                # Record a single entry for the batch with the last UUID
-                # (appended_uuids is non-empty because each turn starts with a
-                # user message, and only tool result messages are filtered out)
-                if appended_uuids:
-                    append_log.append(
-                        AppendEntry(
-                            last_uuid=appended_uuids[-1],
-                            span_end=new_span_end,
+                    # Collect UUIDs excluding tool results
+                    turn_uuids = [
+                        uuid
+                        for uuid in turn.uuids
+                        if uuid in records_by_uuid
+                        and not (
+                            records_by_uuid[uuid].get("type") == "user"
+                            and "toolUseResult" in records_by_uuid[uuid]
                         )
-                    )
+                    ]
+                    appended_uuids.extend(turn_uuids)
+
+                    if turn_uuids:
+                        append_log.append(
+                            AppendEntry(
+                                last_uuid=turn_uuids[-1],
+                                span_end=cumulative_span,
+                            )
+                        )
+
+                # Use cumulative span for consistency with stored entries
+                # (matches what we recorded in each turn's AppendEntry)
+                new_span_end = cumulative_span
 
     # Fall back to existing span_end if nothing was appended
     if not appended_uuids:
