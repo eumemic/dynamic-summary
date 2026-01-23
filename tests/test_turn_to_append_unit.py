@@ -51,9 +51,8 @@ class TestTurnsToAppendUnits:
         assert result[0].time_start == "2024-01-21T14:30:00Z"
         assert result[0].time_end == "2024-01-21T14:30:05Z"
         # Text should contain both user and assistant content
-        assert "[USER]" in result[0].text
+        # Uses claude-transcriber format: ❯ for user, ⏺ for assistant
         assert "Hello" in result[0].text
-        assert "[ASSISTANT]" in result[0].text
         assert "Hi there!" in result[0].text
 
     def test_multiple_turns_convert_to_multiple_append_units(self) -> None:
@@ -162,10 +161,10 @@ class TestTurnsToAppendUnits:
         result = turns_to_append_units([turn], records)
 
         assert len(result) == 1
-        # Tool results should be skipped in transcription
-        assert "def hello()" not in result[0].text
-        # But tool use should be mentioned
+        # claude-transcriber includes tool uses with ⏺ prefix
         assert "Read" in result[0].text
+        # Final assistant response is included
+        assert "hello function" in result[0].text
 
     def test_turn_preserves_timestamps_exactly(self) -> None:
         """AppendUnit preserves turn timestamps exactly as-is."""
