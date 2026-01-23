@@ -71,12 +71,12 @@ Fix critical bugs discovered during implementation verification that prevent bas
   - Note: Signal handlers only catch SIGTERM/SIGINT. Normal exit (e.g., when `server.wait_for_termination()` returns) needs `atexit.register(cleanup_stale_state)`
   - **DONE**: Added `atexit.register(cleanup_stale_state)` in daemon mode after `install_shutdown_handlers()`
 
-- [ ] Add cleanup before lease failure sys.exit()
+- [x] Add cleanup before lease failure sys.exit()
   - Spec: specs/daemon-lifecycle.md § Exit Cleanup
   - Success: When lease acquisition fails, state files are cleaned up before `sys.exit(1)`
   - Test: `tests/test_daemon_lease_cleanup.py::test_lease_failure_cleans_up_state_files`
   - Location: `ragzoom/server/app.py:179`
-  - Note: Currently `sys.exit(1)` doesn't trigger cleanup. Add explicit `cleanup_stale_state()` call before exit.
+  - **DONE**: The atexit handler already covers this case. Python's atexit handlers run for sys.exit(), not just normal returns. Test added to verify: `tests/test_daemon_lease_cleanup.py`
 
 - [ ] Add try/finally wrapper around run_server for daemon mode
   - Spec: specs/daemon-lifecycle.md § Exit Cleanup
