@@ -343,17 +343,32 @@ class GrpcRagzoomClient:
         Returns:
             IndexingResult with combined stats for all appended units
         """
-        # Encode each unit as bytes
-        encoded_units = [u.encode("utf-8") for u in units]
-        # Build timestamp protos if provided
-        ts_protos: list[pb2.Timestamp] = []
-        if timestamps is not None:
-            ts_protos = [_build_timestamp_proto(ts) for ts in timestamps]
+        # Build AppendUnit protos with bundled content and optional timestamps
+        append_units: list[pb2.AppendUnit] = []
+        for i, text in enumerate(units):
+            content = text.encode("utf-8")
+
+            if timestamps is None or i >= len(timestamps):
+                append_units.append(pb2.AppendUnit(content=content))
+                continue
+
+            ts = timestamps[i]
+            if isinstance(ts, tuple):
+                time_start, time_end = ts
+            else:
+                # Single timestamp: use for both start and end
+                time_start = time_end = ts
+
+            append_units.append(
+                pb2.AppendUnit(
+                    content=content, time_start=time_start, time_end=time_end
+                )
+            )
+
         request = pb2.BatchAppendTextRequest(
             document_id=document_id,
-            units=encoded_units,
+            units=append_units,
             collect_telemetry=collect_telemetry,
-            timestamps=ts_protos,
         )
         try:
             response = self._indexer.BatchAppendText(request, timeout=self._timeout)

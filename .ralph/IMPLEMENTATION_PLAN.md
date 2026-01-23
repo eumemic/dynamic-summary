@@ -395,12 +395,12 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Location: `proto/dynamic_summary.proto:14-19`
   - Note: Implemented self-contained AppendUnit message with content bytes and optional timestamps
 
-- [ ] Update `BatchAppendTextRequest` to use `repeated AppendUnit`
+- [x] Update `BatchAppendTextRequest` to use `repeated AppendUnit`
   - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
   - Success: BatchAppendTextRequest uses `repeated AppendUnit units` instead of parallel arrays
-  - Test: `test_batch_append_request_uses_append_unit`
-  - Location: `proto/dynamic_summary.proto:53-58`
-  - Depends on: AppendUnit proto message
+  - Test: `tests/test_temporal_proto.py::TestBatchAppendTextRequestUsesAppendUnit` (3 tests)
+  - Location: `proto/dynamic_summary.proto:61-65`
+  - Note: Updated proto, stub types, gRPC client (batch_append_text), and servicer (BatchAppendText)
 
 - [ ] Update `batch_append()` to accept `list[AppendUnit]`
   - Spec: specs/temporal-metadata.md § API Changes
