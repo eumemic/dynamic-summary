@@ -88,7 +88,7 @@ class SummaryWorkflowConfig:
     use_anti_verbatim_vaccine: bool
     max_retries: int
     retry_threshold: float
-    summary_system_prompt: str | None = None
+    summarization_guidance: str | None = None
 
 
 def tokens_to_words(target_tokens: int) -> int:
@@ -148,9 +148,15 @@ def prepare_summary_inputs(
     prev_context: str | None = None,
     text_tokens: int | None = None,
     use_anti_verbatim_vaccine: bool = False,
-    system_prompt: str | None = None,
+    summarization_guidance: str | None = None,
 ) -> SummaryPreparation:
-    """Return prepared prompt messages and token counts for summarization."""
+    """Return prepared prompt messages and token counts for summarization.
+
+    Args:
+        summarization_guidance: Domain-specific guidance to append to the default
+            system prompt. This is ADDITIVE - it gets appended under a
+            "# Summarization Guidance" section, never replacing the base prompt.
+    """
 
     combined_text = text.strip()
 
@@ -193,15 +199,17 @@ def prepare_summary_inputs(
 
     full_prompt = "\n".join(prompt_parts)
 
+    # Build system prompt with optional guidance section (additive, not replacement)
+    if summarization_guidance and summarization_guidance.strip():
+        system_prompt = (
+            f"{DEFAULT_SUMMARY_SYSTEM_PROMPT}\n\n"
+            f"# Summarization Guidance\n{summarization_guidance}"
+        )
+    else:
+        system_prompt = DEFAULT_SUMMARY_SYSTEM_PROMPT
+
     messages: list[dict[str, str]] = [
-        {
-            "role": "system",
-            "content": (
-                system_prompt
-                if system_prompt is not None
-                else DEFAULT_SUMMARY_SYSTEM_PROMPT
-            ),
-        },
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": full_prompt},
     ]
 
@@ -469,7 +477,7 @@ async def run_summary_workflow(
         prev_context=prev_context,
         text_tokens=text_tokens,
         use_anti_verbatim_vaccine=config.use_anti_verbatim_vaccine,
-        system_prompt=config.summary_system_prompt,
+        summarization_guidance=config.summarization_guidance,
     )
 
     # Passthrough when: (1) target <= 0 (signal from dynamic targets), OR
@@ -583,22 +591,22 @@ async def run_summary_from_config(
     parent_id: str | None = None,
     reporter: TelemetryCollector | None = None,
     call_summary: SummaryCall,
-    summary_system_prompt: str | None = None,
+    summarization_guidance: str | None = None,
 ) -> SummaryResult:
     """Convenience wrapper building workflow config from IndexConfig.
 
-    If summary_system_prompt is provided, it overrides index_config.summary_system_prompt.
-    Used when documents have per-document custom prompts.
+    If summarization_guidance is provided, it overrides index_config.summarization_guidance.
+    Used when documents have per-document custom guidance.
     """
     config_snapshot = SummaryWorkflowConfig(
         summary_model=index_config.summary_model,
         use_anti_verbatim_vaccine=index_config.use_anti_verbatim_vaccine,
         max_retries=index_config.max_retries,
         retry_threshold=index_config.retry_threshold,
-        summary_system_prompt=(
-            summary_system_prompt
-            if summary_system_prompt is not None
-            else index_config.summary_system_prompt
+        summarization_guidance=(
+            summarization_guidance
+            if summarization_guidance is not None
+            else index_config.summarization_guidance
         ),
     )
 
@@ -619,11 +627,11 @@ async def run_summary_request(
     index_config: IndexConfig,
     request: SummaryRequest,
     call_summary: SummaryCall,
-    summary_system_prompt: str | None = None,
+    summarization_guidance: str | None = None,
 ) -> SummaryResult:
     """Execute the summary workflow using a packaged request payload.
 
-    If summary_system_prompt is provided, it overrides index_config.summary_system_prompt.
+    If summarization_guidance is provided, it overrides index_config.summarization_guidance.
     """
     return await run_summary_from_config(
         index_config=index_config,
@@ -634,7 +642,7 @@ async def run_summary_request(
         parent_id=request["parent_id"],
         reporter=request["reporter"],
         call_summary=call_summary,
-        summary_system_prompt=summary_system_prompt,
+        summarization_guidance=summarization_guidance,
     )
 
 
@@ -794,7 +802,7 @@ async def run_contextualization_from_config(
         use_anti_verbatim_vaccine=index_config.use_anti_verbatim_vaccine,
         max_retries=index_config.max_retries,
         retry_threshold=index_config.retry_threshold,
-        summary_system_prompt=index_config.summary_system_prompt,
+        summarization_guidance=index_config.summarization_guidance,
     )
 
     return await run_contextualization_workflow(

@@ -545,8 +545,8 @@ async def test_servicer_stores_summary_system_prompt() -> None:
         doc = backend.get_document_by_id(document_id)
         assert doc is not None, "Document should be created"
         assert (
-            doc.summary_system_prompt == custom_prompt
-        ), f"Expected custom prompt stored, got: {doc.summary_system_prompt!r}"
+            doc.summarization_guidance == custom_prompt
+        ), f"Expected custom prompt stored, got: {doc.summarization_guidance!r}"
 
     finally:
         backend.close()
