@@ -219,11 +219,12 @@ Add BM25 lexical search alongside vector search with Reciprocal Rank Fusion.
   - Location: `ragzoom/bm25.py` (new file)
   - Note: Uses helper functions to isolate untyped rank_bm25 imports. Tokenization is simple whitespace+lowercase. Tests use 4-5 node corpora to avoid BM25 IDF edge cases with tiny corpora (IDF can go negative when a term appears in most documents).
 
-- [ ] Implement BM25IndexCache with LRU eviction
+- [x] Implement BM25IndexCache with LRU eviction
   - Spec: specs/bm25-hybrid-search.md § Architecture > BM25 Index Caching
   - Success: Cache stores up to N indexes, evicts LRU on overflow
   - Test: `tests/test_bm25_index.py::TestBM25IndexCache` (get_or_build, eviction)
-  - Location: `ragzoom/bm25.py`
+  - Location: `ragzoom/bm25.py:113-179`
+  - Note: Uses OrderedDict for LRU tracking. get_or_build() moves hits to end with move_to_end(), evicts with popitem(last=False) when over capacity. 6 tests cover creation, caching, eviction, LRU order update, edge cases, and clear().
 
 ### Phase 19: Rank Fusion
 
