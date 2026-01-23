@@ -250,11 +250,12 @@ Add BM25 lexical search alongside vector search with Reciprocal Rank Fusion.
   - Location: `ragzoom/config.py:531` (QueryConfig dataclass)
   - Note: Added bm25_weight field with default 1.0, validation (must be positive), and replace() support. 4 new tests cover default value, validation, use with other fields, and replace().
 
-- [ ] Add `--no-bm25` CLI flag to query command
+- [x] Add `--no-bm25` CLI flag to query command
   - Spec: specs/bm25-hybrid-search.md § CLI Flag
   - Success: `ragzoom query --no-bm25 "test"` disables BM25 search
   - Test: `tests/test_cli.py::test_query_no_bm25_flag`
-  - Location: `ragzoom/cli.py` (query command)
+  - Location: `ragzoom/cli.py:891-941` (query command)
+  - Note: Flag updates QueryConfig.use_bm25; actual effect on retrieval comes in Phase 21 (Retriever Integration)
 
 ### Phase 21: Retriever Integration
 
