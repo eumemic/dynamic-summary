@@ -15,6 +15,8 @@ from pathlib import Path
 from types import TracebackType
 from typing import cast
 
+from sqlalchemy.engine import Engine
+
 from ragzoom.backends.sqlite_db import SqliteDatabaseManager
 from ragzoom.backends.sqlite_repositories import (
     SqliteDocumentRepository,
@@ -79,7 +81,10 @@ class SQLiteStorageBackend(StorageBackend):
         self.tree_nav = TreeNavigator(cast(NodeRepositoryProtocol, self.node_repo))
         # Vector search is handled by independent VectorIndex; no search shim here
 
-    # Removed internal vector index; backends do not manage vector storage
+    @property
+    def engine(self) -> Engine:
+        """Return the SQLAlchemy engine for this backend."""
+        return self.db.engine
 
     def _get_lock(self, doc_id: str | None) -> threading.Lock:
         lock = self._locks.get(doc_id)

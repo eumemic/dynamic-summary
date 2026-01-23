@@ -153,6 +153,40 @@ async def _serve_async(state: ServerState, options: ServerOptions) -> None:
     await serve(state, host=options.host, port=options.port)
 
 
+def _run_startup_migrations(store: StorageBackend) -> None:
+    """Run database migrations on server startup.
+
+    This runs before lease acquisition and serving requests to ensure the
+    database schema is up-to-date. Migrations are idempotent and safe to
+    run multiple times.
+
+    See specs/custom-prompt-config.md § Migration for requirements.
+    """
+    from ragzoom.migrations import (
+        SchemaVersion,
+        detect_schema_version,
+        migrate_summary_prompt_column,
+    )
+
+    try:
+        version = detect_schema_version(store.engine)
+    except ValueError as e:
+        # Table doesn't exist yet (first run) or invalid schema
+        # This is expected on first startup before any documents are indexed
+        logger.debug(f"Skipping migration: {e}")
+        return
+
+    if version == SchemaVersion.V2_SUMMARIZATION_GUIDANCE:
+        logger.debug("Database schema is up-to-date (v2)")
+        return
+
+    logger.info(
+        "Migrating database schema: summary_system_prompt -> summarization_guidance"
+    )
+    migrate_summary_prompt_column(store.engine)
+    logger.info("Database migration completed successfully")
+
+
 async def _run_with_lease(
     options: ServerOptions,
     store: StorageBackend,
@@ -199,6 +233,9 @@ def run_server(options: ServerOptions) -> None:
         config_path=Path(options.config_path) if options.config_path else None
     )
     store = create_store(operational_cfg, embedding_model=index_cfg.embedding_model)
+
+    # Run database migrations before serving requests
+    _run_startup_migrations(store)
 
     logger.info("Acquiring global indexer lease")
     try:

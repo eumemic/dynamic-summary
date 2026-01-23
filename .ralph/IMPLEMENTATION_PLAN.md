@@ -104,12 +104,13 @@ Fix critical bugs discovered during implementation verification that prevent bas
   - Note: Must be idempotent - skip if already migrated
   - **DONE**: Implemented `migrate_summary_prompt_column()` using SQLite RENAME COLUMN and PostgreSQL conditional DO block. Includes tests for data preservation, NULL handling, and idempotency.
 
-- [ ] Add startup migration hook
+- [x] Add startup migration hook
   - Spec: specs/custom-prompt-config.md § Migration > Schema Migration
   - Success: On server start, migration runs automatically if needed
-  - Test: `tests/test_schema_migration.py::test_startup_migration_runs`
+  - Test: `tests/test_startup_migration_sqlite.py::TestStartupMigration`
   - Location: `ragzoom/server/app.py` (run_server or build_state)
   - Note: Run migration after store creation, before serving requests
+  - **DONE**: Added `_run_startup_migrations()` function called from `run_server()`. Migration runs after store creation, detects schema version, and migrates if needed. Also added `engine` property to `StorageBackend` protocol for migration access.
 
 ### Phase 31: Custom Prompt Semantic Fix (Issue #5)
 
