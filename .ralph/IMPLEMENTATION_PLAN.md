@@ -73,7 +73,7 @@ Allow users to customize the system prompt used during summary generation for do
 
 ### Phase 13: Summary Pipeline Integration
 
-- [ ] Update `prepare_summary_inputs()` to accept system_prompt parameter
+- [x] Update `prepare_summary_inputs()` to accept system_prompt parameter
   - Spec: specs/custom-prompt-config.md § Implementation > summary_utils.py Changes
   - Success: `prepare_summary_inputs(..., system_prompt="custom")` uses custom prompt in messages
   - Test: `tests/test_summary_utils.py::test_prepare_summary_inputs_uses_custom_system_prompt`
