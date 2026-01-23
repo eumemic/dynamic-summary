@@ -119,11 +119,12 @@ Allow users to customize the system prompt used during summary generation for do
 
 ### Phase 14c: Telemetry
 
-- [ ] Update telemetry to capture actual prompt used
+- [x] Update telemetry to capture actual prompt used
   - Spec: specs/custom-prompt-config.md § Telemetry
   - Success: `_get_system_prompts()` returns custom prompt when used, default otherwise
-  - Test: `tests/test_telemetry.py::test_telemetry_captures_custom_summary_prompt`
-  - Location: `ragzoom/telemetry_collection.py` (_get_system_prompts function)
+  - Test: `tests/test_telemetry.py::TestTelemetryCapturesCustomSummaryPrompt`
+  - Location: `ragzoom/telemetry_collection.py:829-846` (_get_system_prompts function)
+  - Note: Updated `_get_system_prompts()` to read from `self.config.summary_system_prompt`, with fallback to default prompt. Added 3 tests verifying behavior with None, custom, and full telemetry data.
 
 ---
 

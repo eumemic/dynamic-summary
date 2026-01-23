@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Final, TypedDict
 
 from ragzoom.config import IndexConfig
+from ragzoom.constants import DEFAULT_SUMMARY_SYSTEM_PROMPT
 from ragzoom.contracts.chat_model import UsageInfo
 from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
@@ -192,16 +193,13 @@ def prepare_summary_inputs(
 
     full_prompt = "\n".join(prompt_parts)
 
-    default_system_prompt = (
-        "You are a text compressor. You compress sections of documents while "
-        "preserving their meaning. You output ONLY the compressed text, nothing else."
-    )
-
     messages: list[dict[str, str]] = [
         {
             "role": "system",
             "content": (
-                system_prompt if system_prompt is not None else default_system_prompt
+                system_prompt
+                if system_prompt is not None
+                else DEFAULT_SUMMARY_SYSTEM_PROMPT
             ),
         },
         {"role": "user", "content": full_prompt},

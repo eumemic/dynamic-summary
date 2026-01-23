@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from ragzoom.config import IndexConfig
+from ragzoom.constants import DEFAULT_SUMMARY_SYSTEM_PROMPT
 from ragzoom.contracts.chat_model import UsageInfo
 from ragzoom.services.summary_utils import (
     SummaryWorkflowConfig,
@@ -119,11 +120,7 @@ async def test_default_prompt_used_when_none() -> None:
         text_tokens=None,
     )
 
-    expected_default = (
-        "You are a text compressor. You compress sections of documents while "
-        "preserving their meaning. You output ONLY the compressed text, nothing else."
-    )
-    assert_system_prompt(captured_messages, expected_default)
+    assert_system_prompt(captured_messages, DEFAULT_SUMMARY_SYSTEM_PROMPT)
 
 
 @pytest.mark.asyncio

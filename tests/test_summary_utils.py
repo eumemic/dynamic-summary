@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ragzoom.constants import DEFAULT_SUMMARY_SYSTEM_PROMPT
 from ragzoom.services.summary_utils import SummaryWorkflowConfig, prepare_summary_inputs
 
 
@@ -15,18 +16,12 @@ class TestPrepareSummaryInputsSystemPrompt:
             target_tokens=100,
         )
 
-        # Find the system message
         system_message = next(
             (m for m in result.messages if m["role"] == "system"), None
         )
         assert system_message is not None, "Should have a system message"
 
-        # Verify default prompt content
-        expected_default = (
-            "You are a text compressor. You compress sections of documents while "
-            "preserving their meaning. You output ONLY the compressed text, nothing else."
-        )
-        assert system_message["content"] == expected_default
+        assert system_message["content"] == DEFAULT_SUMMARY_SYSTEM_PROMPT
 
     def test_prepare_summary_inputs_uses_custom_system_prompt(self) -> None:
         """Custom system_prompt is used in messages when provided."""

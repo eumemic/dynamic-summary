@@ -10,6 +10,12 @@ DEFAULT_GRPC_STREAM_TIMEOUT: float | None = None
 # Session ingestion may trigger full re-index requiring tree building + embeddings
 DEFAULT_SESSION_INGEST_TIMEOUT = 300.0
 
+# Default system prompt for summary generation
+DEFAULT_SUMMARY_SYSTEM_PROMPT = (
+    "You are a text compressor. You compress sections of documents while "
+    "preserving their meaning. You output ONLY the compressed text, nothing else."
+)
+
 __all__ = [
     "DEFAULT_GRPC_HOST",
     "DEFAULT_GRPC_PORT",
@@ -17,4 +23,5 @@ __all__ = [
     "DEFAULT_GRPC_TIMEOUT",
     "DEFAULT_GRPC_STREAM_TIMEOUT",
     "DEFAULT_SESSION_INGEST_TIMEOUT",
+    "DEFAULT_SUMMARY_SYSTEM_PROMPT",
 ]

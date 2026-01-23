@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 import psutil
 
 from ragzoom.config import IndexConfig
+from ragzoom.constants import DEFAULT_SUMMARY_SYSTEM_PROMPT
 from ragzoom.telemetry_types import (
     ModelMetadataDict,
     NodeTelemetryDict,
@@ -830,12 +831,14 @@ class TelemetryCollector:
         """Get system prompts used during indexing for reproducibility.
 
         Returns:
-            Dictionary containing the system prompts used
+            Dictionary containing the actual system prompt used (custom or default)
         """
-        # The hardcoded system prompt from index.py _summarize_text method
-        # This ensures exact reproducibility of summary generation
         return {
-            "summary_system_prompt": "You are a precise summarizer who ONLY uses information explicitly provided in the input text. You NEVER add context or details from outside the given text."
+            "summary_system_prompt": (
+                self.config.summary_system_prompt
+                if self.config.summary_system_prompt is not None
+                else DEFAULT_SUMMARY_SYSTEM_PROMPT
+            )
         }
 
     def _get_runtime_info(self) -> RuntimeInfoDict:
