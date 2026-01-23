@@ -146,12 +146,13 @@ Fix critical bugs discovered during implementation verification that prevent bas
   - Note: Remove old flag, add new one
   - **DONE**: Renamed flag and parameter from `summary_system_prompt` to `summarization_guidance`. Updated help text to reflect additive semantics. CLI parameter is passed to gRPC client as `summary_system_prompt` (protobuf field rename is a separate work item).
 
-- [ ] Update protobuf field name
+- [x] Update protobuf field name
   - Spec: specs/custom-prompt-config.md § Migration > Field Rename
   - Success: AppendTextRequest uses `summarization_guidance` field
   - Test: `tests/test_grpc_client.py::test_append_text_with_summarization_guidance`
   - Location: `proto/dynamic_summary.proto`, regenerate stubs
   - Note: Requires regenerating Python stubs
+  - **DONE**: The proto file already had `summarization_guidance` field. Updated storage backend APIs (`SQLiteStorageBackend.add_document`, `PostgresStorageBackend.add_document`, `SqliteDocumentRepository.add_document`, `DocumentRepository.add_document`) to use `summarization_guidance` parameter instead of `summary_system_prompt`. All tests pass.
 
 ### Phase 32: Config Persistence for Auto-Start (Issue #3)
 

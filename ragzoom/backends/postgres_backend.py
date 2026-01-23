@@ -137,14 +137,14 @@ class PostgresStorageBackend(StorageBackend):
         file_path: str | None,
         embedding_model: str,
         summary_model: str,
-        summary_system_prompt: str | None = None,
+        summarization_guidance: str | None = None,
     ) -> DocumentStore:
         self.doc_repo.add_document(
             document_id,
             file_path,
             embedding_model,
             summary_model,
-            summary_system_prompt=summary_system_prompt,
+            summarization_guidance=summarization_guidance,
         )
         return self.for_document(document_id)
 

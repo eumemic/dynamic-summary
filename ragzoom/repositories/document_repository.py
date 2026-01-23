@@ -111,7 +111,7 @@ class DocumentRepository(BaseRepository):
         file_path: str | None,
         embedding_model: str,
         summary_model: str,
-        summary_system_prompt: str | None = None,
+        summarization_guidance: str | None = None,
         *,
         session: Optional["Session"] = None,
     ) -> Document:
@@ -122,7 +122,7 @@ class DocumentRepository(BaseRepository):
             file_path: Optional path to the source file
             embedding_model: Name of the embedding model used for indexing
             summary_model: Name of the summarization model used
-            summary_system_prompt: Custom system prompt for summary generation
+            summarization_guidance: Additional guidance for summary generation
             session: Optional database session for transactional operations
 
         Returns:
@@ -137,7 +137,7 @@ class DocumentRepository(BaseRepository):
                 file_path=file_path,
                 embedding_model=embedding_model,
                 summary_model=summary_model,
-                summary_system_prompt=summary_system_prompt,
+                summarization_guidance=summarization_guidance,
             )
             db_session.add(doc)
             return doc
