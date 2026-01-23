@@ -339,3 +339,97 @@ class TestTemporalValidationOnSubsequentAppends:
 
         leaves = store.nodes.get_leaves()
         assert len(leaves) == 3
+
+
+class TestTemporalRequiresClientControlledChunking:
+    """Test that temporal documents require client-controlled chunking."""
+
+    @pytest.mark.asyncio
+    async def test_append_with_timestamp_and_target_chunk_tokens_raises(
+        self, sqlite_backend: SQLiteStorageBackend
+    ) -> None:
+        """First append with timestamps + target_chunk_tokens set → Error."""
+        # Create config WITH target_chunk_tokens (server-controlled chunking)
+        config = IndexConfig.load(target_chunk_tokens=512)
+        store = _create_document(sqlite_backend, "doc-chunking-val-1")
+        executor = AppendExecutor(config, StubEmbedder())
+
+        # Attempt append WITH timestamp should fail because target_chunk_tokens is set
+        with pytest.raises(ValueError) as exc_info:
+            await executor.append(
+                store=store,
+                document_id="doc-chunking-val-1",
+                new_text="First message",
+                timestamp="2024-01-21T14:30:00Z",
+            )
+
+        error_msg = str(exc_info.value).lower()
+        assert "temporal" in error_msg
+        assert "client-controlled" in error_msg or "target_chunk_tokens" in error_msg
+
+    @pytest.mark.asyncio
+    async def test_batch_append_with_timestamps_and_target_chunk_tokens_raises(
+        self, sqlite_backend: SQLiteStorageBackend
+    ) -> None:
+        """First batch append with timestamps + target_chunk_tokens set → Error."""
+        # Create config WITH target_chunk_tokens (server-controlled chunking)
+        config = IndexConfig.load(target_chunk_tokens=512)
+        store = _create_document(sqlite_backend, "doc-chunking-val-2")
+        executor = AppendExecutor(config, StubEmbedder())
+
+        # Attempt batch append WITH timestamps should fail
+        with pytest.raises(ValueError) as exc_info:
+            await executor.append_batch(
+                store=store,
+                document_id="doc-chunking-val-2",
+                units=["Turn A", "Turn B"],
+                timestamps=["2024-01-21T14:30:00Z", "2024-01-21T14:30:05Z"],
+            )
+
+        error_msg = str(exc_info.value).lower()
+        assert "temporal" in error_msg
+        assert "client-controlled" in error_msg or "target_chunk_tokens" in error_msg
+
+    @pytest.mark.asyncio
+    async def test_append_without_timestamp_and_target_chunk_tokens_succeeds(
+        self, sqlite_backend: SQLiteStorageBackend
+    ) -> None:
+        """First append without timestamps + target_chunk_tokens set → Success (non-temporal)."""
+        config = IndexConfig.load(target_chunk_tokens=512)
+        store = _create_document(sqlite_backend, "doc-chunking-val-3")
+        executor = AppendExecutor(config, StubEmbedder())
+
+        # Append WITHOUT timestamp with target_chunk_tokens should succeed
+        await executor.append(
+            store=store,
+            document_id="doc-chunking-val-3",
+            new_text="First message without timestamp",
+        )
+
+        # Verify document is non-temporal
+        assert (
+            sqlite_backend.doc_repo.get_document_is_temporal("doc-chunking-val-3")
+            is False
+        )
+
+    @pytest.mark.asyncio
+    async def test_append_with_timestamp_tuple_and_target_chunk_tokens_raises(
+        self, sqlite_backend: SQLiteStorageBackend
+    ) -> None:
+        """First append with timestamp tuple + target_chunk_tokens set → Error."""
+        config = IndexConfig.load(target_chunk_tokens=512)
+        store = _create_document(sqlite_backend, "doc-chunking-val-4")
+        executor = AppendExecutor(config, StubEmbedder())
+
+        # Attempt append WITH timestamp tuple should fail
+        with pytest.raises(ValueError) as exc_info:
+            await executor.append(
+                store=store,
+                document_id="doc-chunking-val-4",
+                new_text="First message",
+                timestamp=("2024-01-21T14:30:00Z", "2024-01-21T14:30:05Z"),
+            )
+
+        error_msg = str(exc_info.value).lower()
+        assert "temporal" in error_msg
+        assert "client-controlled" in error_msg or "target_chunk_tokens" in error_msg
