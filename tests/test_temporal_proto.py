@@ -185,6 +185,69 @@ class TestExecuteQueryRequestTimeFields:
         assert req.time_end == "2024-01-21T14:30:00-05:00"
 
 
+class TestAppendUnitProtoMessage:
+    """Test the AppendUnit message type for batch_append with bundled timestamps."""
+
+    def test_append_unit_type_exists(self) -> None:
+        """AppendUnit message type should be importable from generated proto."""
+        assert hasattr(dynamic_summary_pb2, "AppendUnit")
+
+    def test_append_unit_has_content_field(self) -> None:
+        """AppendUnit message should have a content field for text."""
+        unit = dynamic_summary_pb2.AppendUnit()
+        unit.content = b"test content"
+        assert unit.content == b"test content"
+
+    def test_append_unit_has_optional_time_start_field(self) -> None:
+        """AppendUnit message should have an optional time_start field."""
+        unit = dynamic_summary_pb2.AppendUnit()
+
+        # time_start defaults to empty string in proto3
+        assert unit.time_start == ""
+        assert unit.HasField("time_start") is False
+
+        unit.time_start = "2024-01-21T14:30:00Z"
+        assert unit.time_start == "2024-01-21T14:30:00Z"
+        assert unit.HasField("time_start") is True
+
+    def test_append_unit_has_optional_time_end_field(self) -> None:
+        """AppendUnit message should have an optional time_end field."""
+        unit = dynamic_summary_pb2.AppendUnit()
+
+        # time_end defaults to empty string in proto3
+        assert unit.time_end == ""
+        assert unit.HasField("time_end") is False
+
+        unit.time_end = "2024-01-21T14:30:12Z"
+        assert unit.time_end == "2024-01-21T14:30:12Z"
+        assert unit.HasField("time_end") is True
+
+    def test_append_unit_can_be_created_with_all_fields(self) -> None:
+        """AppendUnit message can be created with content and both timestamps."""
+        unit = dynamic_summary_pb2.AppendUnit(
+            content=b"test content",
+            time_start="2024-01-21T14:30:00Z",
+            time_end="2024-01-21T14:30:12Z",
+        )
+        assert unit.content == b"test content"
+        assert unit.time_start == "2024-01-21T14:30:00Z"
+        assert unit.time_end == "2024-01-21T14:30:12Z"
+
+    def test_append_unit_field_numbers(self) -> None:
+        """AppendUnit fields should have correct field numbers per spec."""
+        descriptor = dynamic_summary_pb2.AppendUnit.DESCRIPTOR
+        content_field = descriptor.fields_by_name.get("content")
+        time_start_field = descriptor.fields_by_name.get("time_start")
+        time_end_field = descriptor.fields_by_name.get("time_end")
+
+        assert content_field is not None
+        assert content_field.number == 1
+        assert time_start_field is not None
+        assert time_start_field.number == 2
+        assert time_end_field is not None
+        assert time_end_field.number == 3
+
+
 class TestDocumentStatusIsTemporalField:
     """Test that DocumentStatus has is_temporal field for temporal documents."""
 

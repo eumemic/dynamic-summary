@@ -21,6 +21,23 @@ class Timestamp:
     ) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
 
+class AppendUnit:
+    """Self-contained unit for batch_append with bundled text and timestamps."""
+
+    DESCRIPTOR: ClassVar[Descriptor]
+    content: bytes
+    time_start: str
+    time_end: str
+
+    def __init__(
+        self,
+        *,
+        content: bytes = ...,
+        time_start: str = ...,
+        time_end: str = ...,
+    ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
+
 class DocumentStats:
     document_id: str
     chunks_created: int

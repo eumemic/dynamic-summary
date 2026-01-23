@@ -11,6 +11,14 @@ message Timestamp {
   optional string time_end = 2;  // If omitted, time_end = time_start
 }
 
+// Self-contained unit for batch_append with bundled text and optional timestamps.
+// Both time_start and time_end must be provided together, or neither.
+message AppendUnit {
+  bytes content = 1;  // Text content
+  optional string time_start = 2;  // ISO 8601 with timezone
+  optional string time_end = 3;    // ISO 8601 with timezone
+}
+
 message DocumentStats {
   string document_id = 1;
   int32 chunks_created = 2;
