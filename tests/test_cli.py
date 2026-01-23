@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Iterator
 from datetime import datetime
@@ -440,3 +441,104 @@ def test_set_session_pid_command(runner: CliRunner) -> None:
         mock_set_pid.assert_called_once_with("my-session-123", 42)
         assert "my-session-123" in result.output
         assert "42" in result.output
+
+
+def test_query_json_output(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that --json flag outputs valid JSON with expected schema."""
+
+    # Set up a more realistic response with tiling nodes
+    node1 = NodeSummary(
+        node_id="node-1",
+        text="First chunk of content",
+        token_count=25,
+        span_start=0,
+        span_end=100,
+        parent_id="",
+        left_child_id="",
+        right_child_id="",
+        height=0,
+        time_start="2024-01-21T10:00:00Z",
+        time_end="2024-01-21T10:15:00Z",
+    )
+    node2 = NodeSummary(
+        node_id="node-2",
+        text="Second chunk of content",
+        token_count=25,
+        span_start=100,
+        span_end=200,
+        parent_id="",
+        left_child_id="",
+        right_child_id="",
+        height=0,
+        time_start="2024-01-21T10:15:00Z",
+        time_end="2024-01-21T10:30:00Z",
+    )
+    retrieval_view = RetrievalView(
+        selected_ids=["node-1"],
+        tiling_ids=["node-1", "node-2"],
+        scores={"node-1": 0.9, "node-2": 0.7},
+        coverage_map={"node-1": True, "node-2": True},
+        nodes={"node-1": node1, "node-2": node2},
+    )
+    execute_output = ExecuteQueryOutput(
+        query_result=QueryResult(
+            summary="Summary of the content about cats.",
+            token_count=50,
+            nodes_retrieved=2,
+            tiling_size=2,
+            query_id="test-query",
+            seed_count=1,
+            verbatim_count=0,
+            actual_start=0,
+            actual_end=200,
+        ),
+        retrieval=retrieval_view,
+        visualization="",
+        validation_warning="",
+    )
+    cli_mocks["grpc_client"].execute_query.return_value = execute_output
+
+    result = runner.invoke(
+        cli,
+        ["query", "Tell me about cats", "-d", "doc-123", "--json"],
+    )
+    assert result.exit_code == 0
+
+    # Parse output as JSON
+    output = json.loads(result.output)
+
+    # Verify top-level schema fields
+    assert output["summary"] == "Summary of the content about cats."
+    assert output["token_count"] == 50
+    assert output["seed_count"] == 1
+    assert output["tiling_size"] == 2
+    assert output["query"] == "Tell me about cats"
+    assert output["document_id"] == "doc-123"
+    assert output["actual_span"] == {"start": 0, "end": 200}
+
+    # Verify tiling structure
+    assert len(output["tiling"]) == 2
+    assert output["tiling"][0]["node_id"] == "node-1"
+    assert output["tiling"][0]["is_seed"] is True
+    assert output["tiling"][0]["time_start"] == "2024-01-21T10:00:00Z"
+    assert output["tiling"][1]["node_id"] == "node-2"
+    assert output["tiling"][1]["is_seed"] is False
+
+
+def test_query_json_output_suppresses_debug_visualization(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that --json with --debug still outputs only JSON (no visualization)."""
+
+    result = runner.invoke(
+        cli,
+        ["query", "Tell me about cats", "-d", "doc-123", "--json", "--debug"],
+    )
+    assert result.exit_code == 0
+
+    # Output should be valid JSON (no extra text from debug visualization)
+    output = json.loads(result.output)
+    assert "summary" in output
+    assert "tiling" in output
