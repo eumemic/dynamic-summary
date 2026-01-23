@@ -518,12 +518,12 @@ Extend the local-first transcript sync to use temporal metadata, with each conve
   - Location: `ragzoom/claude_memory/transcript_sync.py:1228-1291` (execute_sync turn-level entry tracking)
   - Note: Refactored to record one AppendEntry per turn instead of one for entire batch; span_end calculated cumulatively per turn
 
-- [ ] Revert detection at turn granularity
+- [x] Revert detection at turn granularity
   - Spec: specs/timestamped-transcript-sync.md § AppendEntry Tracking
   - Success: Common ancestor in middle of turn → truncate to before that turn, re-index from turn boundary
-  - Test: `test_revert_detection_at_turn_granularity`
-  - Location: `ragzoom/claude_memory/transcript_sync.py`
-  - Note: Current revert detection doesn't understand turn boundaries
+  - Test: `tests/test_revert_turn_granularity.py::TestRevertDetectionAtTurnGranularity` (4 tests)
+  - Location: `ragzoom/claude_memory/transcript_sync.py:403-463` (find_valid_prefix with turn awareness)
+  - Note: Added `first_uuid` field to `AppendEntry` to track turn boundaries. When common ancestor is within a turn (not at its boundary), the algorithm returns the previous turn's entry, ensuring proper truncation.
 
 ---
 
