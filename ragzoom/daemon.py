@@ -5,6 +5,7 @@ health checks, and auto-start capabilities.
 """
 
 import errno
+import json
 import os
 import signal
 import subprocess
@@ -14,9 +15,30 @@ from collections.abc import Callable
 from pathlib import Path
 from types import FrameType
 
+# Type alias for daemon config values (primitives only - JSON-serializable)
+ConfigValue = str | int | float | bool | None
+
 PID_FILENAME = "daemon.pid"
 PORT_FILENAME = "daemon.port"
 LOG_FILENAME = "daemon.log"
+CONFIG_FILENAME = "daemon.config.json"
+
+
+def _resolve_path(path_str: str) -> Path:
+    """Resolve a path string to an absolute Path.
+
+    Expands ~ and converts relative paths to absolute.
+
+    Args:
+        path_str: Path string to resolve.
+
+    Returns:
+        Absolute path.
+    """
+    path = Path(path_str).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path
 
 
 def get_daemon_state_dir() -> Path:
@@ -31,11 +53,7 @@ def get_daemon_state_dir() -> Path:
     """
     env_override = os.environ.get("RAGZOOM_STATE_DIR")
     if env_override:
-        # Expand ~ and convert to absolute path
-        path = Path(env_override).expanduser()
-        if not path.is_absolute():
-            path = Path.cwd() / path
-        return path
+        return _resolve_path(env_override)
 
     # XDG default: ~/.local/state/ragzoom/
     return Path("~/.local/state/ragzoom").expanduser()
@@ -194,6 +212,89 @@ def get_log_file_path() -> Path:
         Path to daemon.log in the state directory.
     """
     return get_daemon_state_dir() / LOG_FILENAME
+
+
+def get_config_file_path() -> Path:
+    """Get the path to the daemon config file.
+
+    Uses RAGZOOM_DAEMON_CONFIG environment variable if set,
+    otherwise uses daemon.config.json in the state directory.
+
+    Returns:
+        Path to daemon.config.json or custom location.
+    """
+    env_override = os.environ.get("RAGZOOM_DAEMON_CONFIG")
+    if env_override:
+        return _resolve_path(env_override)
+
+    return get_daemon_state_dir() / CONFIG_FILENAME
+
+
+def write_config_file(config: dict[str, ConfigValue]) -> None:
+    """Write daemon configuration to the config file.
+
+    Creates the parent directory if it doesn't exist.
+    Only persists fields that affect daemon behavior.
+
+    Args:
+        config: Configuration dict with daemon settings.
+               Supported keys:
+               - target_chunk_tokens: int | None
+               - summarization_guidance: str | None
+               - database_url: str | None
+    """
+    # Only persist daemon-relevant fields
+    persistent_fields = [
+        "target_chunk_tokens",
+        "summarization_guidance",
+        "database_url",
+    ]
+    filtered_config = {k: v for k, v in config.items() if k in persistent_fields}
+
+    # Skip if nothing to persist
+    if not filtered_config:
+        return
+
+    config_file = get_config_file_path()
+    # Ensure parent directory exists (handles both default and custom paths)
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(json.dumps(filtered_config, indent=2) + "\n")
+    # Restrict permissions since config may contain database credentials
+    config_file.chmod(0o600)
+
+
+def read_config_file() -> dict[str, ConfigValue] | None:
+    """Read daemon configuration from the config file.
+
+    Returns:
+        Configuration dict, or None if:
+        - The file doesn't exist
+        - The file contents are not valid JSON
+    """
+    config_file = get_config_file_path()
+    if not config_file.exists():
+        return None
+
+    try:
+        content = config_file.read_text()
+        data = json.loads(content)
+        if not isinstance(data, dict):
+            return None
+        return data
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def remove_config_file() -> None:
+    """Remove the config file if it exists.
+
+    This is idempotent - does not raise if the file doesn't exist.
+    """
+    config_file = get_config_file_path()
+    try:
+        config_file.unlink()
+    except FileNotFoundError:
+        pass
 
 
 def daemonize(log_file: Path | None = None) -> None:

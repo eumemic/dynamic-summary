@@ -156,12 +156,13 @@ Fix critical bugs discovered during implementation verification that prevent bas
 
 ### Phase 32: Config Persistence for Auto-Start (Issue #3)
 
-- [ ] Implement config persistence to daemon.config.json
+- [x] Implement config persistence to daemon.config.json
   - Spec: specs/daemon-lifecycle.md § Config Persistence
   - Success: When starting with `--config`, relevant settings saved to `daemon.config.json`
   - Test: `tests/test_daemon_config_persistence.py::test_config_saved_on_daemon_start`
   - Location: `ragzoom/daemon.py` (new functions)
   - Note: Only persist fields that affect daemon behavior (target_chunk_tokens, summarization_guidance, db settings)
+  - **DONE**: Added config file functions (get_config_file_path, write_config_file, read_config_file, remove_config_file) to daemon.py. Added _persist_daemon_config() to cli.py that extracts target_chunk_tokens and summarization_guidance from IndexConfig and persists them. File permissions set to 0o600 for security. Comprehensive tests in test_daemon_config_persistence.py (17 tests).
 
 - [ ] Load persisted config in auto-start
   - Spec: specs/daemon-lifecycle.md § Config Persistence
@@ -170,11 +171,12 @@ Fix critical bugs discovered during implementation verification that prevent bas
   - Location: `ragzoom/daemon.py` (start_daemon, ensure_server_running)
   - Note: Pass config path to spawned subprocess if config file exists
 
-- [ ] Add RAGZOOM_DAEMON_CONFIG env var support
+- [x] Add RAGZOOM_DAEMON_CONFIG env var support
   - Spec: specs/daemon-lifecycle.md § Config Persistence
   - Success: Setting env var overrides default config file location
   - Test: `tests/test_daemon_config_persistence.py::test_env_var_overrides_config_path`
   - Location: `ragzoom/daemon.py`
+  - **DONE**: Implemented as part of get_config_file_path() - checks RAGZOOM_DAEMON_CONFIG env var first, falls back to daemon.config.json in state directory. Test coverage verifies behavior.
 
 ### Phase 33: Temporal Document UX Improvement (Issue #2)
 

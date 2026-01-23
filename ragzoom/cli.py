@@ -46,6 +46,7 @@ from ragzoom.daemon import (
     is_pid_stale,
     read_pid_file,
     read_port_file,
+    write_config_file,
     write_port_file,
 )
 from ragzoom.error_handling import handle_graceful_error
@@ -1668,6 +1669,34 @@ def server() -> None:
     """Manage the RagZoom gRPC server."""
 
 
+def _persist_daemon_config(config_path: Path) -> None:
+    """Persist relevant config fields for auto-start.
+
+    Reads the config file and extracts fields that affect daemon behavior,
+    saving them to daemon.config.json for use by ensure_server_running().
+
+    Args:
+        config_path: Path to the config file to read.
+    """
+    from ragzoom.config import IndexConfig
+
+    # Load the config to get resolved values
+    index_cfg = IndexConfig.load(config_path=config_path)
+
+    # Extract fields that affect daemon behavior
+    daemon_config: dict[str, str | int | float | bool | None] = {}
+
+    # target_chunk_tokens is critical for temporal documents
+    daemon_config["target_chunk_tokens"] = index_cfg.target_chunk_tokens
+
+    # summarization_guidance affects summary quality
+    if index_cfg.summarization_guidance is not None:
+        daemon_config["summarization_guidance"] = index_cfg.summarization_guidance
+
+    # Persist the config
+    write_config_file(daemon_config)
+
+
 @server.command("start")
 @click.option(
     "--host",
@@ -1782,6 +1811,9 @@ def start_server(
         daemonize()
         # Write port file so clients can find us
         write_port_file(port)
+        # Persist config for auto-start if a config file is provided
+        if config_path:
+            _persist_daemon_config(config_path)
         # Install signal handlers for graceful shutdown (SIGTERM/SIGINT)
         install_shutdown_handlers()
         # Register atexit cleanup for normal exits (when run_server returns)
