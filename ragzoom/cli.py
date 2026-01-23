@@ -1808,7 +1808,18 @@ def start_server(
         preceding_context_inner_min_forest_completeness=preceding_context_inner_min_forest_completeness,
         preceding_context_inner_token_cap=preceding_context_inner_token_cap,
     )
-    run_server(options)
+
+    # In daemon mode, wrap run_server in try/finally for belt-and-suspenders cleanup.
+    # This ensures state files are cleaned up when run_server raises an exception,
+    # complementing the atexit handler which covers normal exits.
+    # cleanup_stale_state is idempotent, so calling it from both paths is safe.
+    if daemon:
+        try:
+            run_server(options)
+        finally:
+            cleanup_stale_state()
+    else:
+        run_server(options)
 
 
 # Constants for stop command
