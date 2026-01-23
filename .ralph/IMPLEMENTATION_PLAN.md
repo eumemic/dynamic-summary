@@ -228,11 +228,12 @@ Add BM25 lexical search alongside vector search with Reciprocal Rank Fusion.
 
 ### Phase 19: Rank Fusion
 
-- [ ] Implement `reciprocal_rank_fusion()` function
+- [x] Implement `reciprocal_rank_fusion()` function
   - Spec: specs/bm25-hybrid-search.md § Architecture > Reciprocal Rank Fusion
   - Success: Combines two rankings into fused (node_id, rrf_score) list
   - Test: `tests/test_bm25_rrf.py::TestReciprocalRankFusion` (basic fusion, weights, edge cases)
-  - Location: `ragzoom/bm25.py` or `ragzoom/retrieve.py`
+  - Location: `ragzoom/bm25.py:188-227`
+  - Note: Implemented with k=60 default, accumulates 1/(k+rank+1) scores for items in each list. 12 tests cover: identical rankings, different rankings, overlapping, custom k, empty inputs, single items, symmetric positions, stability, and many items.
 
 ### Phase 20: Configuration
 
