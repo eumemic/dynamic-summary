@@ -114,12 +114,13 @@ Fix critical bugs discovered during implementation verification that prevent bas
 
 ### Phase 31: Custom Prompt Semantic Fix (Issue #5)
 
-- [ ] Rename field from `summary_system_prompt` to `summarization_guidance` in IndexConfig
+- [x] Rename field from `summary_system_prompt` to `summarization_guidance` in IndexConfig
   - Spec: specs/custom-prompt-config.md § IndexConfig Field
   - Success: `IndexConfig(summarization_guidance="...")` works, old name logs deprecation warning
   - Test: `tests/test_index_config.py::test_summarization_guidance_field`
   - Location: `ragzoom/config.py` (IndexConfig dataclass)
   - Note: Add property for backward compat that forwards to new name with warning
+  - **DONE**: Field already renamed in IndexConfig with deprecated property. Fixed `default_config.json` to use new field name so `IndexConfig.load(summarization_guidance="...")` works correctly.
 
 - [ ] Rename field in Document model
   - Spec: specs/custom-prompt-config.md § Migration > Field Rename

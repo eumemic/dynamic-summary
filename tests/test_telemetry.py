@@ -656,7 +656,7 @@ class TestTelemetryCapturesCustomSummaryPrompt:
     def test_telemetry_captures_default_prompt_when_none_configured(self) -> None:
         """When no custom prompt is configured, telemetry captures the default prompt."""
         config = IndexConfig.load()
-        assert config.summary_system_prompt is None
+        assert config.summarization_guidance is None
 
         collector = TelemetryCollector(
             document_id="test-doc",
@@ -670,11 +670,11 @@ class TestTelemetryCapturesCustomSummaryPrompt:
 
     def test_telemetry_captures_custom_prompt_when_configured(self) -> None:
         """When a custom prompt is configured, telemetry captures it."""
-        custom_prompt = (
+        custom_guidance = (
             "You are a legal document summarizer. Preserve exact legal terminology."
         )
-        config = IndexConfig.load(summary_system_prompt=custom_prompt)
-        assert config.summary_system_prompt == custom_prompt
+        config = IndexConfig.load(summarization_guidance=custom_guidance)
+        assert config.summarization_guidance == custom_guidance
 
         collector = TelemetryCollector(
             document_id="test-doc",
@@ -684,13 +684,13 @@ class TestTelemetryCapturesCustomSummaryPrompt:
 
         system_prompts = collector._get_system_prompts()
 
-        # Should capture the custom prompt, not the default
-        assert system_prompts["summary_system_prompt"] == custom_prompt
+        # Should capture the custom guidance, not the default
+        assert system_prompts["summary_system_prompt"] == custom_guidance
 
     def test_telemetry_data_includes_custom_prompt(self) -> None:
         """The full telemetry data dict should include custom prompt in system_prompts."""
-        custom_prompt = "You are a medical note summarizer."
-        config = IndexConfig.load(summary_system_prompt=custom_prompt)
+        custom_guidance = "You are a medical note summarizer."
+        config = IndexConfig.load(summarization_guidance=custom_guidance)
 
         collector = TelemetryCollector(
             document_id="test-doc",
@@ -702,5 +702,5 @@ class TestTelemetryCapturesCustomSummaryPrompt:
 
         assert "system_prompts" in telemetry_data
         assert (
-            telemetry_data["system_prompts"]["summary_system_prompt"] == custom_prompt
+            telemetry_data["system_prompts"]["summary_system_prompt"] == custom_guidance
         )
