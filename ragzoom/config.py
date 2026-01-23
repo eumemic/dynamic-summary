@@ -527,6 +527,8 @@ class QueryConfig:
     embedding_model: str = "text-embedding-3-small"
     use_bm25: bool = True
     """Enable BM25 hybrid search. Default True."""
+    bm25_weight: float = 1.0
+    """Weight for BM25 in RRF. 1.0 = equal weight with vector."""
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -542,6 +544,8 @@ class QueryConfig:
             raise ValueError(
                 f"mmr_k_multiplier must be positive, got {self.mmr_k_multiplier}"
             )
+        if self.bm25_weight <= 0:
+            raise ValueError(f"bm25_weight must be positive, got {self.bm25_weight}")
 
     def replace(
         self,
@@ -550,6 +554,7 @@ class QueryConfig:
         mmr_k_multiplier: float | None = None,
         embedding_model: str | None = None,
         use_bm25: bool | None = None,
+        bm25_weight: float | None = None,
     ) -> "QueryConfig":
         """Create a new QueryConfig with some fields changed."""
         from dataclasses import replace
@@ -569,6 +574,7 @@ class QueryConfig:
                 embedding_model if embedding_model is not None else self.embedding_model
             ),
             use_bm25=use_bm25 if use_bm25 is not None else self.use_bm25,
+            bm25_weight=bm25_weight if bm25_weight is not None else self.bm25_weight,
         )
 
 
