@@ -20,434 +20,182 @@ The timestamped transcript sync feature specified in `specs/timestamped-transcri
 
 ---
 
+## Previous Feature: BM25 Hybrid Search (Complete)
+
+The BM25 hybrid search feature specified in `specs/bm25-hybrid-search.md` is **fully implemented**. All phases (18-21) complete with BM25Index, caching, RRF fusion, and retriever integration.
+
+---
+
+## Previous Feature: JSON Output Mode (Complete)
+
+The JSON output mode feature specified in `specs/json-output-mode.md` is **fully implemented**. All phases (15-17) complete with temporal fields, JSON error format, and CLI integration.
+
+---
+
+## Previous Feature: Daemon Lifecycle (Complete)
+
+The daemon lifecycle feature specified in `specs/daemon-lifecycle.md` is **fully implemented**. All phases (22-25) complete with state directory, daemonization, health checks, and CLI commands.
+
+---
+
+## Previous Feature: Custom Prompt Config (Partial - Needs Migration)
+
+The custom prompt config feature specified in `specs/custom-prompt-config.md` was implemented with incorrect semantics. Phases 12-14c completed but implementation doesn't match spec:
+- Uses `summary_system_prompt` instead of `summarization_guidance`
+- Replaces entire prompt instead of appending under "# Summarization Guidance"
+- Missing database migration for field rename
+
+---
+
+## Previous Feature: Memzoom Plugin (Complete)
+
+The memzoom plugin specified in `specs/memzoom-plugin.md` is **fully implemented**. All phases (26-28) complete with plugin infrastructure, commands, and skills.
+
+---
+
 # Active Features
 
-## Feature: Memzoom Plugin Bug Fix (Priority: CRITICAL)
+## Feature: Bug Fixes from Verification (Priority: CRITICAL)
 
-**Spec**: `specs/memzoom-plugin.md`
+**Spec**: `.ralph/ISSUES_DISCOVERED.md`, `specs/daemon-lifecycle.md`, `specs/custom-prompt-config.md`
 
-Fix critical bugs preventing the plugin from working.
+Fix critical bugs discovered during implementation verification that prevent basic functionality.
 
-### Phase 11: Bug Fixes
+### Phase 29: Daemon Exit Cleanup (Issues #1 & #6)
 
-- [x] Add `set-session-pid` CLI command
-  - Spec: specs/memzoom-plugin.md § Auto-Sync Hook
-  - Success: `ragzoom set-session-pid PID` calls existing function at `ragzoom/claude_memory/transcript_sync.py:515`
-  - Test: `tests/test_cli.py::test_set_session_pid_command`
-  - Location: `ragzoom/cli.py`
+- [ ] Add atexit cleanup for normal daemon exits
+  - Spec: specs/daemon-lifecycle.md § Exit Cleanup
+  - Success: When `run_server()` returns normally (not via signal), PID and port files are removed
+  - Test: `tests/test_daemon_atexit.py::test_normal_exit_cleans_up_state_files`
+  - Location: `ragzoom/cli.py` (start_server function)
+  - Note: Signal handlers only catch SIGTERM/SIGINT. Normal exit (e.g., when `server.wait_for_termination()` returns) needs `atexit.register(cleanup_stale_state)`
 
-- [x] Fix session-start.sh module path
-  - Spec: specs/memzoom-plugin.md § Auto-Sync Hook
-  - Success: Hook calls `ragzoom set-session-pid` CLI command instead of incorrect `memory_service.ingestion.claude`
-  - Test: `tests/test_memzoom_session_hook.py::test_session_start_hook_uses_correct_module`
-  - Location: `.claude/hooks/session-start.sh:29`
+- [ ] Add cleanup before lease failure sys.exit()
+  - Spec: specs/daemon-lifecycle.md § Exit Cleanup
+  - Success: When lease acquisition fails, state files are cleaned up before `sys.exit(1)`
+  - Test: `tests/test_daemon_lease_cleanup.py::test_lease_failure_cleans_up_state_files`
+  - Location: `ragzoom/server/app.py:179`
+  - Note: Currently `sys.exit(1)` doesn't trigger cleanup. Add explicit `cleanup_stale_state()` call before exit.
 
-- [x] Fix start-mcp-server module path
-  - Spec: specs/memzoom-plugin.md § MCP Server
-  - Success: Script uses `ragzoom.claude_memory.mcp_server` instead of incorrect `memory_service.ingestion.claude.mcp_server`
-  - Test: `tests/test_mcp_server_script.py::test_start_mcp_server_uses_correct_module`
-  - Location: `scripts/start-mcp-server:26`
+- [ ] Add try/finally wrapper around run_server for daemon mode
+  - Spec: specs/daemon-lifecycle.md § Exit Cleanup
+  - Success: All exit paths (normal, exception, lease failure) clean up state files
+  - Test: `tests/test_daemon_cleanup.py::test_all_exit_paths_cleanup`
+  - Location: `ragzoom/cli.py` (start_server function)
+  - Note: Belt-and-suspenders approach: atexit + try/finally ensures cleanup
 
----
+### Phase 30: Database Schema Migration (Issue #4)
 
-## Feature: Custom Prompt Config (Priority: HIGH - Quick Win)
+- [ ] Implement schema detection for Document table
+  - Spec: specs/custom-prompt-config.md § Migration > Schema Migration
+  - Success: `detect_schema_version()` identifies if column is `summary_system_prompt` or `summarization_guidance`
+  - Test: `tests/test_schema_migration.py::test_detect_schema_version`
+  - Location: `ragzoom/migrations.py` (new file)
+  - Note: Query PRAGMA table_info (SQLite) or information_schema (PostgreSQL)
 
-**Spec**: `specs/custom-prompt-config.md` (status: READY)
+- [ ] Implement column rename migration
+  - Spec: specs/custom-prompt-config.md § Migration > Required Migration
+  - Success: `migrate_summary_prompt_column()` renames column from old to new name
+  - Test: `tests/test_schema_migration.py::test_rename_column_sqlite`, `test_rename_column_postgres`
+  - Location: `ragzoom/migrations.py`
+  - Note: Must be idempotent - skip if already migrated
 
-Allow users to customize the system prompt used during summary generation for domain-specific content.
+- [ ] Add startup migration hook
+  - Spec: specs/custom-prompt-config.md § Migration > Schema Migration
+  - Success: On server start, migration runs automatically if needed
+  - Test: `tests/test_schema_migration.py::test_startup_migration_runs`
+  - Location: `ragzoom/server/app.py` (run_server or build_state)
+  - Note: Run migration after store creation, before serving requests
 
-### Phase 12: IndexConfig Extension
+### Phase 31: Custom Prompt Semantic Fix (Issue #5)
 
-- [x] Add `summary_system_prompt` field to IndexConfig
-  - Spec: specs/custom-prompt-config.md § Configuration > IndexConfig Field
-  - Success: `IndexConfig(summary_system_prompt="...")` accepts optional string
-  - Test: `tests/test_index_config.py::test_index_config_accepts_summary_system_prompt`
+- [ ] Rename field from `summary_system_prompt` to `summarization_guidance` in IndexConfig
+  - Spec: specs/custom-prompt-config.md § IndexConfig Field
+  - Success: `IndexConfig(summarization_guidance="...")` works, old name logs deprecation warning
+  - Test: `tests/test_index_config.py::test_summarization_guidance_field`
   - Location: `ragzoom/config.py` (IndexConfig dataclass)
-  - Note: Also added to `default_config.json` so CLI overrides work via `IndexConfig.load()`
+  - Note: Add property for backward compat that forwards to new name with warning
 
-- [x] Add `summary_system_prompt` to IndexConfigDict TypedDict
-  - Spec: specs/custom-prompt-config.md § Configuration > IndexConfig Field
-  - Success: TypedDict includes `summary_system_prompt: str | None`
-  - Test: Type-check code using IndexConfigDict with summary_system_prompt
-  - Location: `ragzoom/config.py` (IndexConfigDict)
+- [ ] Rename field in Document model
+  - Spec: specs/custom-prompt-config.md § Migration > Field Rename
+  - Success: Document.summarization_guidance stores the value
+  - Test: `tests/test_models.py::test_document_has_summarization_guidance`
+  - Location: `ragzoom/models.py`
+  - Note: Coordinate with schema migration (Phase 30)
 
-### Phase 13: Summary Pipeline Integration
+- [ ] Update prepare_summary_inputs to append instead of replace
+  - Spec: specs/custom-prompt-config.md § System Prompt Structure
+  - Success: Custom guidance appended under "# Summarization Guidance" section, not replacing
+  - Test: `tests/test_summary_utils.py::test_guidance_appends_to_default_prompt`
+  - Location: `ragzoom/services/summary_utils.py`
+  - Note: This is the core fix - change from replacement to additive semantics
 
-- [x] Update `prepare_summary_inputs()` to accept system_prompt parameter
-  - Spec: specs/custom-prompt-config.md § Implementation > summary_utils.py Changes
-  - Success: `prepare_summary_inputs(..., system_prompt="custom")` uses custom prompt in messages
-  - Test: `tests/test_summary_utils.py::test_prepare_summary_inputs_uses_custom_system_prompt`
-  - Location: `ragzoom/services/summary_utils.py` (prepare_summary_inputs function)
-
-- [x] Add `summary_system_prompt` field to SummaryWorkflowConfig
-  - Spec: specs/custom-prompt-config.md § Implementation > Workflow Changes
-  - Success: SummaryWorkflowConfig has `summary_system_prompt: str | None` field
-  - Test: `tests/test_summary_utils.py::TestSummaryWorkflowConfigSystemPrompt::test_workflow_config_has_summary_system_prompt`
-  - Location: `ragzoom/services/summary_utils.py:83-91` (SummaryWorkflowConfig dataclass)
-
-- [x] Thread custom prompt through run_summary_workflow
-  - Spec: specs/custom-prompt-config.md § Implementation > Workflow Changes
-  - Success: Custom prompt flows from IndexConfig to LLM API call
-  - Test: `tests/test_custom_prompt_integration.py::test_custom_prompt_reaches_llm_call`
-  - Location: `ragzoom/services/summary_utils.py:474,596` (run_summary_workflow, run_summary_from_config)
-  - Note: Implementation was already complete - added integration tests to verify the flow
-
-### Phase 14: CLI & Telemetry
-
-- [x] Add `--summary-system-prompt` CLI option to index command
+- [ ] Update CLI flag from --summary-system-prompt to --summarization-guidance
   - Spec: specs/custom-prompt-config.md § CLI Override
-  - Success: CLI passes value to gRPC client; server-side integration requires Phase 14b
-  - Test: `tests/test_cli.py::test_index_with_summary_system_prompt`
-  - Location: `ragzoom/cli.py` (index command), `proto/dynamic_summary.proto`, `ragzoom/client/grpc_client.py`
-  - Note: Added CLI option, protobuf field, and gRPC client support. Server-side servicer doesn't yet read/apply the field.
+  - Success: `ragzoom index --summarization-guidance "..."` works
+  - Test: `tests/test_cli.py::test_index_with_summarization_guidance`
+  - Location: `ragzoom/cli.py` (index command)
+  - Note: Remove old flag, add new one
 
-### Phase 14b: Server-Side Custom Prompt Integration
+- [ ] Update protobuf field name
+  - Spec: specs/custom-prompt-config.md § Migration > Field Rename
+  - Success: AppendTextRequest uses `summarization_guidance` field
+  - Test: `tests/test_grpc_client.py::test_append_text_with_summarization_guidance`
+  - Location: `proto/dynamic_summary.proto`, regenerate stubs
+  - Note: Requires regenerating Python stubs
 
-- [x] Update servicer to read and store summary_system_prompt per-document
-  - Spec: specs/custom-prompt-config.md § CLI Override
-  - Success: Servicer reads `summary_system_prompt` from request and stores it for use during summarization
-  - Test: `tests/test_indexer_servicer_sqlite.py::test_servicer_stores_summary_system_prompt`
-  - Location: `ragzoom/server/servicers.py` (AppendText), `ragzoom/models.py` (Document schema)
-  - Note: Added `summary_system_prompt` field to Document models (PostgreSQL and SQLite), updated StorageBackend.add_document contract and all implementations, updated DocumentIndexSession.append_text and servicer AppendText
+### Phase 32: Config Persistence for Auto-Start (Issue #3)
 
-- [x] Thread custom prompt through worker summarization
-  - Spec: specs/custom-prompt-config.md § Implementation
-  - Success: Workers read document's custom prompt and use it for summarization
-  - Test: `tests/test_process_node_pair_parameters.py::test_worker_uses_document_custom_prompt`
-  - Location: `ragzoom/server/indexing_engine.py:1638-1645`, `ragzoom/services/llm_service.py:365-390`, `ragzoom/services/summarizer.py:66-90`, `ragzoom/services/summary_utils.py:578-645`
-  - Note: Added `summary_system_prompt` parameter through entire call chain: IndexingEngine fetches document's prompt and passes it to LLMService → Summarizer → summary_utils. Override parameter takes precedence over IndexConfig global setting.
+- [ ] Implement config persistence to daemon.config.json
+  - Spec: specs/daemon-lifecycle.md § Config Persistence
+  - Success: When starting with `--config`, relevant settings saved to `daemon.config.json`
+  - Test: `tests/test_daemon_config_persistence.py::test_config_saved_on_daemon_start`
+  - Location: `ragzoom/daemon.py` (new functions)
+  - Note: Only persist fields that affect daemon behavior (target_chunk_tokens, summarization_guidance, db settings)
 
-### Phase 14c: Telemetry
+- [ ] Load persisted config in auto-start
+  - Spec: specs/daemon-lifecycle.md § Config Persistence
+  - Success: `ensure_server_running()` passes persisted config to `start_daemon()`
+  - Test: `tests/test_daemon_config_persistence.py::test_autostart_uses_persisted_config`
+  - Location: `ragzoom/daemon.py` (start_daemon, ensure_server_running)
+  - Note: Pass config path to spawned subprocess if config file exists
 
-- [x] Update telemetry to capture actual prompt used
-  - Spec: specs/custom-prompt-config.md § Telemetry
-  - Success: `_get_system_prompts()` returns custom prompt when used, default otherwise
-  - Test: `tests/test_telemetry.py::TestTelemetryCapturesCustomSummaryPrompt`
-  - Location: `ragzoom/telemetry_collection.py:829-846` (_get_system_prompts function)
-  - Note: Updated `_get_system_prompts()` to read from `self.config.summary_system_prompt`, with fallback to default prompt. Added 3 tests verifying behavior with None, custom, and full telemetry data.
-
----
-
-## Feature: JSON Output Mode (Priority: HIGH - Plugin Dependency)
-
-**Spec**: `specs/json-output-mode.md` (status: READY)
-
-Add `--json` flag to query command for machine-readable output with temporal spans.
-
-### Phase 15: Data Model Extensions
-
-- [x] Add `time_start` and `time_end` fields to Node protobuf message
-  - Spec: specs/json-output-mode.md § JSON Schema > Temporal Fields
-  - Success: Node message has `optional string time_start` and `optional string time_end`
-  - Test: `tests/test_json_output_proto.py::test_node_has_temporal_fields`
-  - Location: `proto/dynamic_summary.proto` (Node message)
-  - Note: Added fields 10 and 11 to Node message, updated .pyi stub with DESCRIPTOR and HasField
-
-- [x] Add temporal fields to NodeSummary dataclass
-  - Spec: specs/json-output-mode.md § JSON Schema > Temporal Fields
-  - Success: NodeSummary includes `time_start: str | None` and `time_end: str | None`
-  - Test: `tests/test_node_summary.py::test_node_summary_has_temporal_fields`
-  - Location: `ragzoom/client/grpc_client.py:89-100` (NodeSummary dataclass)
-  - Note: Also updated execute_query() to extract time_start/time_end from proto using HasField()
-
-### Phase 16: JSON Output Builder
-
-- [x] Implement `build_json_output()` function
-  - Spec: specs/json-output-mode.md § Implementation > Response Building
-  - Success: Function converts QueryResponse to dict matching JSON schema
-  - Test: `tests/test_json_output.py::TestBuildJsonOutput` (schema validation, tiling order, temporal fields)
-  - Location: `ragzoom/output_formatters.py`
-  - Note: Created new module with TypedDict schemas (TilingNodeDict, ActualSpanDict, QueryJsonOutput) for strict type safety. Tests cover all schema fields, tiling order preservation, temporal fields, and edge cases.
-
-- [x] Add `--json` flag to CLI query command
-  - Spec: specs/json-output-mode.md § Implementation > CLI Changes
-  - Success: `ragzoom query --json "test" -d doc.txt` outputs valid JSON
-  - Test: `tests/test_cli.py::test_query_json_output`
-  - Location: `ragzoom/cli.py` (query command)
-  - Note: Added --json flag that calls build_json_output() and outputs formatted JSON. Also added test for --json with --debug to ensure visualization is suppressed.
-
-### Phase 17: Error Handling & Edge Cases
-
-- [x] Implement JSON error response format
-  - Spec: specs/json-output-mode.md § Compatibility
-  - Success: Errors with `--json` output `{"error": "...", "code": "..."}`
-  - Test: `tests/test_json_output.py::TestBuildJsonError`, `tests/test_cli.py::test_query_json_error_response`
-  - Location: `ragzoom/output_formatters.py` (build_json_error, build_json_error_from_exception), `ragzoom/cli.py:1054-1058`
-  - Note: Added ErrorJsonOutput TypedDict, build_json_error() and build_json_error_from_exception() functions. Exception types map to codes: NOT_FOUND, VALIDATION_ERROR, LLM_ERROR, CONFIGURATION_ERROR, DATABASE_ERROR, RESOURCE_ERROR, INTERNAL_ERROR.
-
-- [x] Handle non-temporal documents (null time fields)
-  - Spec: specs/json-output-mode.md § JSON Schema > Temporal Fields
-  - Success: Non-temporal docs have `null` for time_start/time_end in tiling
-  - Test: `tests/test_json_output.py::TestBuildJsonOutput::test_temporal_fields_null_for_non_temporal`
-  - Location: `ragzoom/output_formatters.py` (build_json_output)
-  - Note: Implemented as part of build_json_output() - temporal fields pass through as-is from NodeSummary (None when not set)
-
-- [x] Update servicer to populate temporal fields in Node response
-  - Spec: specs/json-output-mode.md § JSON Schema > Temporal Fields
-  - Success: Servicer sets time_start/time_end on Node when available in summary
-  - Test: `tests/test_temporal_servicer.py::TestServicerPopulatesTemporalFieldsInNode`
-  - Location: `ragzoom/server/servicers.py:191-212`
-  - Note: Added `_unix_to_iso8601()` helper to convert Unix timestamps to ISO 8601 format. Modified `_retrieval_to_proto()` to populate temporal fields on Node proto when present.
-
-- [x] Add actual_start/actual_end to ExecuteQueryResponse
-  - Spec: specs/json-output-mode.md § Response Schema
-  - Success: ExecuteQueryResponse includes actual temporal bounds of results
-  - Note: Already implemented in `proto/dynamic_summary.proto:157-158`
-  - Location: `proto/dynamic_summary.proto`
-
----
-
-## Feature: BM25 Hybrid Search (Priority: MEDIUM - Independent)
-
-**Spec**: `specs/bm25-hybrid-search.md` (status: READY)
-
-Add BM25 lexical search alongside vector search with Reciprocal Rank Fusion.
-
-### Phase 18: Dependencies & Core Classes
-
-- [x] Add `rank_bm25>=0.2.2` dependency
-  - Spec: specs/bm25-hybrid-search.md § Dependencies
-  - Success: `rank_bm25` listed in pyproject.toml, import succeeds
-  - Test: `tests/test_bm25_dependency.py::test_rank_bm25_import`
-  - Location: `pyproject.toml` (dependencies)
-  - Note: Also added mypy override since rank_bm25 doesn't ship type stubs
-
-- [x] Implement BM25Index class
-  - Spec: specs/bm25-hybrid-search.md § Architecture > BM25 Index
-  - Success: `BM25Index(nodes).search(query, top_k)` returns ranked (node_id, score) pairs
-  - Test: `tests/test_bm25_index.py::TestBM25Index` (build, search, tokenization)
-  - Location: `ragzoom/bm25.py` (new file)
-  - Note: Uses helper functions to isolate untyped rank_bm25 imports. Tokenization is simple whitespace+lowercase. Tests use 4-5 node corpora to avoid BM25 IDF edge cases with tiny corpora (IDF can go negative when a term appears in most documents).
-
-- [x] Implement BM25IndexCache with LRU eviction
-  - Spec: specs/bm25-hybrid-search.md § Architecture > BM25 Index Caching
-  - Success: Cache stores up to N indexes, evicts LRU on overflow
-  - Test: `tests/test_bm25_index.py::TestBM25IndexCache` (get_or_build, eviction)
-  - Location: `ragzoom/bm25.py:113-179`
-  - Note: Uses OrderedDict for LRU tracking. get_or_build() moves hits to end with move_to_end(), evicts with popitem(last=False) when over capacity. 6 tests cover creation, caching, eviction, LRU order update, edge cases, and clear().
-
-### Phase 19: Rank Fusion
-
-- [x] Implement `reciprocal_rank_fusion()` function
-  - Spec: specs/bm25-hybrid-search.md § Architecture > Reciprocal Rank Fusion
-  - Success: Combines two rankings into fused (node_id, rrf_score) list
-  - Test: `tests/test_bm25_rrf.py::TestReciprocalRankFusion` (basic fusion, weights, edge cases)
-  - Location: `ragzoom/bm25.py:188-227`
-  - Note: Implemented with k=60 default, accumulates 1/(k+rank+1) scores for items in each list. 12 tests cover: identical rankings, different rankings, overlapping, custom k, empty inputs, single items, symmetric positions, stability, and many items.
-
-### Phase 20: Configuration
-
-- [x] Add `use_bm25` field to QueryConfig
-  - Spec: specs/bm25-hybrid-search.md § Configuration > QueryConfig Field
-  - Success: `QueryConfig(use_bm25=True)` is default; `False` disables BM25
-  - Test: `tests/test_query_config.py::test_query_config_has_use_bm25`
-  - Location: `ragzoom/config.py:529` (QueryConfig dataclass)
-
-- [x] Add `bm25_weight` field to QueryConfig
-  - Spec: specs/bm25-hybrid-search.md § Configuration > QueryConfig Field
-  - Success: `QueryConfig(bm25_weight=1.0)` controls BM25 weight in RRF
-  - Test: `tests/test_query_config.py::test_query_config_has_bm25_weight`
-  - Location: `ragzoom/config.py:531` (QueryConfig dataclass)
-  - Note: Added bm25_weight field with default 1.0, validation (must be positive), and replace() support. 4 new tests cover default value, validation, use with other fields, and replace().
-
-- [x] Add `--no-bm25` CLI flag to query command
-  - Spec: specs/bm25-hybrid-search.md § CLI Flag
-  - Success: `ragzoom query --no-bm25 "test"` disables BM25 search
-  - Test: `tests/test_cli.py::test_query_no_bm25_flag`
-  - Location: `ragzoom/cli.py:891-941` (query command)
-  - Note: Flag updates QueryConfig.use_bm25; actual effect on retrieval comes in Phase 21 (Retriever Integration)
-
-### Phase 21: Retriever Integration
-
-- [x] Add `use_bm25` parameter to Retriever.retrieve_async()
-  - Spec: specs/bm25-hybrid-search.md § Integration with Retriever
-  - Success: `retrieve_async(..., use_bm25=True)` enables hybrid search
-  - Test: `tests/test_retriever_bm25_sqlite.py::TestRetrieverBM25Parameter::test_retrieve_async_accepts_use_bm25`
-  - Location: `ragzoom/retrieve.py:167,623,721` (retrieve_async, retrieve, retrieve_with_telemetry)
-  - Note: Added use_bm25: bool | None parameter to all three methods. None defaults to QueryConfig.use_bm25. Parameter is accepted but actual BM25 integration (using the parameter to run BM25 search) is Phase 21 item 2.
-
-- [x] Integrate BM25 search and RRF into retrieval pipeline
-  - Spec: specs/bm25-hybrid-search.md § Integration with Retriever
-  - Success: When use_bm25=True, retriever runs both searches and fuses results
-  - Test: `tests/test_retriever_bm25_hybrid_sqlite.py::TestHybridRetrieval` (integration tests)
-  - Location: `ragzoom/retrieve.py:468-512` (Phase 2b: BM25 hybrid search)
-  - Note: Added BM25IndexCache to Retriever. When use_bm25 is enabled, builds/caches BM25 index for document, runs BM25 search, fuses with vector ranking via RRF, and reorders candidates before MMR selection. 5 integration tests verify hybrid behavior, caching, and BM25 boost for exact term matches.
-
----
-
-## Feature: Daemon Lifecycle (Priority: MEDIUM - Deployment Foundation)
-
-**Spec**: `specs/daemon-lifecycle.md` (status: READY)
-
-Auto-start daemon, crash recovery, and proper lifecycle management.
-
-### Phase 22: State Directory & Files
-
-- [x] Implement XDG-compliant state directory
-  - Spec: specs/daemon-lifecycle.md § Architecture > State Files
-  - Success: `~/.local/state/ragzoom/` used by default, `RAGZOOM_STATE_DIR` overrides
-  - Test: `tests/test_daemon_state.py::TestStateDirectoryXdgCompliant`, `tests/test_daemon_state.py::TestStateDirectoryCreation`
+- [ ] Add RAGZOOM_DAEMON_CONFIG env var support
+  - Spec: specs/daemon-lifecycle.md § Config Persistence
+  - Success: Setting env var overrides default config file location
+  - Test: `tests/test_daemon_config_persistence.py::test_env_var_overrides_config_path`
   - Location: `ragzoom/daemon.py`
-  - Note: Added `get_daemon_state_dir()` and `ensure_daemon_state_dir()` functions. Supports ~ expansion and relative-to-absolute conversion for RAGZOOM_STATE_DIR.
 
-- [x] Implement PID file management (read/write/cleanup)
-  - Spec: specs/daemon-lifecycle.md § Architecture > State Files
-  - Success: `daemon.pid` written on start, removed on stop, stale PIDs detected
-  - Test: `tests/test_daemon_state.py::TestPidFileManagement` (write, read, cleanup, stale detection)
-  - Location: `ragzoom/daemon.py:49-111` (write_pid_file, read_pid_file, remove_pid_file, is_pid_stale)
-  - Note: Added 4 functions - write_pid_file(), read_pid_file(), remove_pid_file(), is_pid_stale(). Uses os.kill(pid, 0) for stale detection with proper ESRCH/EPERM handling. 9 new tests cover all operations.
+### Phase 33: Temporal Document UX Improvement (Issue #2)
 
-- [x] Implement port file management
-  - Spec: specs/daemon-lifecycle.md § Architecture > State Files
-  - Success: `daemon.port` written with actual port daemon is listening on
-  - Test: `tests/test_daemon_state.py::TestPortFileManagement` (8 tests)
-  - Location: `ragzoom/daemon.py:130-182` (get_port_file_path, write_port_file, read_port_file, remove_port_file)
+- [ ] Add clear error message for temporal document config mismatch
+  - Spec: New - improving user experience for temporal documents
+  - Success: Error message includes exact fix: "Temporal documents require target_chunk_tokens=null in config"
+  - Test: `tests/test_temporal_config_error.py::test_helpful_error_for_temporal_without_null_chunks`
+  - Location: `ragzoom/server/append_executor.py:481-486`
+  - Note: Current error is cryptic. Make it actionable with exact config fix.
 
-### Phase 23: Daemonization
-
-- [x] Implement process daemonization (fork, setsid, detach)
-  - Spec: specs/daemon-lifecycle.md § Implementation Notes > Process Daemonization
-  - Success: `daemonize()` forks to background, redirects stdout/stderr to log, writes PID file
-  - Test: `tests/test_daemon_lifecycle.py::TestDaemonizeFunction` (7 tests covering fork, PID, stdout/stderr, setsid, stdin, log creation)
-  - Location: `ragzoom/daemon.py:196-254` (daemonize function)
-  - Note: Uses standard Unix double-fork pattern: fork → setsid → fork → redirect I/O → write PID
-
-- [x] Implement signal handlers (SIGTERM, SIGINT)
-  - Spec: specs/daemon-lifecycle.md § Implementation Notes > Signal Handling
-  - Success: SIGTERM triggers graceful shutdown, finishes in-flight requests
-  - Test: `tests/test_daemon_lifecycle.py::TestSignalHandlers::test_sigterm_graceful_shutdown`
-  - Location: `ragzoom/daemon.py:260-291` (install_shutdown_handlers function)
-  - Note: Added `install_shutdown_handlers(cleanup_callback)` function that registers handlers for SIGTERM and SIGINT. The optional callback allows servers to provide their own cleanup logic (e.g., finish in-flight requests). Handlers remove PID file and exit cleanly.
-
-- [x] Add `--daemon` flag to `server start` command
-  - Spec: specs/daemon-lifecycle.md § CLI Commands > ragzoom server start
-  - Success: `ragzoom server start --daemon` runs in background
-  - Test: `tests/test_cli.py::test_server_start_daemon_flag`
-  - Location: `ragzoom/cli.py:1733-1786` (server start command)
-  - Note: Calls daemonize() to fork to background, writes port file, installs shutdown handlers. Fixed port file cleanup in shutdown handlers and ensured logging setup happens after daemonization.
-
-### Phase 24: Health Check & Auto-Start
-
-- [x] Implement health check (PID + gRPC probe)
-  - Spec: specs/daemon-lifecycle.md § Architecture > Health Check
-  - Success: `is_server_healthy()` returns True only if process running AND gRPC responds
-  - Test: `tests/test_daemon_health.py::TestIsServerHealthy`, `tests/test_daemon_health.py::TestGrpcHealthCheck`, `tests/test_daemon_health.py::TestGetServerAddress`
-  - Location: `ragzoom/daemon.py:292-378`
-  - Note: Added three functions: `get_server_address()` reads port from port file and returns "127.0.0.1:port", `grpc_health_check(address, timeout)` makes a lightweight GetDocument call and treats NOT_FOUND as healthy (server responding), `is_server_healthy()` combines PID check + port file check + gRPC probe. 12 tests covering all edge cases.
-
-- [x] Implement crash recovery logic
-  - Spec: specs/daemon-lifecycle.md § Architecture > Crash Recovery
-  - Success: Unhealthy server → kill stale process → cleanup state → start fresh
-  - Test: `tests/test_daemon_health.py::TestCrashRecovery` (7 tests)
-  - Location: `ragzoom/daemon.py:382-420` (cleanup_stale_state, kill_stale_process)
-  - Note: Added `cleanup_stale_state()` to remove PID and port files, and `kill_stale_process()` to send SIGTERM to stale daemons. Both functions handle edge cases gracefully (idempotent, process already gone, permission errors).
-
-- [x] Implement `ensure_server_running()` function
-  - Spec: specs/daemon-lifecycle.md § Architecture > Auto-Start
-  - Success: Function ensures daemon running before returning server address
-  - Test: `tests/test_daemon_autostart.py::TestEnsureServerRunning` (4 tests), `tests/test_daemon_autostart.py::TestStartDaemon` (3 tests)
-  - Location: `ragzoom/daemon.py:423-525`
-  - Note: Added `DaemonStartError` exception, `start_daemon()` to spawn subprocess with `ragzoom server start --daemon`, `wait_for_healthy()` to poll until healthy, and `ensure_server_running()` as the main auto-start entry point. Uses subprocess.Popen with `start_new_session=True` for proper process detachment.
-
-- [x] Add auto-start triggers to client commands (index, query, clear, status)
-  - Spec: specs/daemon-lifecycle.md § Architecture > Auto-Start
-  - Success: `ragzoom query` auto-starts daemon if not running
-  - Test: `tests/test_daemon_autostart.py::test_query_autostarts_daemon`
-  - Location: `ragzoom/cli.py` (affected commands)
-  - Note: Added `_resolve_server_address_with_autostart()` that calls `ensure_server_running()` when using default address. Updated index, query, clear, telemetry, and telemetry-export commands. The `status` command does NOT trigger auto-start because it accesses local store directly without gRPC.
-
-### Phase 25: CLI Commands
-
-- [x] Implement `ragzoom server stop` command
-  - Spec: specs/daemon-lifecycle.md § CLI Commands > ragzoom server stop
-  - Success: Sends SIGTERM, waits for graceful shutdown, cleans up state files
-  - Test: `tests/test_cli.py::test_server_stop_command`
-  - Location: `ragzoom/cli.py:1810-1855`
-  - Note: Added imports (signal, time, is_pid_stale, read_pid_file, cleanup_stale_state). Command is idempotent, handles stale PIDs, timeouts gracefully. 4 tests: normal stop, no daemon running, stale PID cleanup, timeout handling.
-
-- [x] Implement `ragzoom server status` command
-  - Spec: specs/daemon-lifecycle.md § CLI Commands > ragzoom server status
-  - Success: Shows "Running: PID X, port Y, uptime Z" or "Not running"
-  - Test: `tests/test_cli.py::test_server_status_command`
-  - Location: `ragzoom/cli.py:1858-1890`, `ragzoom/daemon.py:486-525`
-  - Note: Added `get_process_uptime(pid)` helper to daemon.py using psutil to calculate human-readable uptime. Added `server_status()` command that shows PID, port, and uptime when running. Handles edge cases: no PID file, stale PID, missing port file, negative uptime (clock skew). 4 CLI tests + 3 daemon utility tests.
-
-- [x] Implement `ragzoom server logs` command
-  - Spec: specs/daemon-lifecycle.md § CLI Commands > ragzoom server logs
-  - Success: Shows daemon.log contents, `-f` follows, `-n` limits lines
-  - Test: `tests/test_cli.py::test_server_logs_command`
-  - Location: `ragzoom/cli.py:1894-1941`
-  - Note: Added server logs command with -n/--lines flag (default 50) and -f/--follow flag for tail-like behavior. Uses subprocess for follow mode to leverage tail's efficient file watching.
+- [ ] Document temporal document configuration requirement
+  - Spec: New - documentation improvement
+  - Success: README or docs explain when and how to use `target_chunk_tokens: null`
+  - Test: Manual verification
+  - Location: `README.md` or `docs/temporal-documents.md`
+  - Note: Include example config file for temporal documents
 
 ---
 
-## Feature: Memzoom Plugin Completion (Priority: LOW - User-Facing)
+## Dependencies
 
-**Spec**: `specs/memzoom-plugin.md` (status: READY)
-
-Complete the Claude Code plugin with commands, skills, and proper structure.
-
-### Phase 26: Plugin Infrastructure
-
-- [x] Create formal plugin.json manifest
-  - Spec: specs/memzoom-plugin.md § Plugin Structure
-  - Success: Valid plugin.json with name, version, description, author
-  - Test: `tests/test_plugin_json.py` (5 tests)
-  - Location: `ragzoom/plugin/.claude-plugin/plugin.json`
-  - Note: Plugin uses `.claude-plugin/plugin.json` convention per Claude Code standards. Components (commands, hooks, skills, agents) are auto-discovered by directory convention, not listed in manifest.
-
-- [x] Add .mcp.json at repo root
-  - Spec: specs/memzoom-plugin.md § Plugin Structure
-  - Success: MCP config at repo root enables MCP server discovery
-  - Test: `tests/test_mcp_config.py` (3 tests)
-  - Location: `.mcp.json` (repo root)
-  - Note: Uses `bash scripts/start-mcp-server` to ensure proper environment setup (gRPC address discovery, user ID). Direct `python -m` would miss environment configuration.
-
-- [x] Create config file template
-  - Spec: specs/memzoom-plugin.md § Configuration > Plugin Settings
-  - Success: `.claude/memzoom.local.yaml` template with documented options
-  - Test: Manual verification of config template
-  - Location: `ragzoom/plugin/memzoom.local.yaml.template`
-  - Note: Template includes all spec settings plus additional query settings (token_budget, use_bm25) from other features. Extensive inline documentation.
-
-### Phase 27: Commands
-
-- [x] Implement /memory command
-  - Spec: specs/memzoom-plugin.md § Commands > /memory
-  - Success: `/memory "query"` queries session memory with optional time range
-  - Test: Manual testing of /memory command
-  - Location: `ragzoom/plugin/.claude-plugin/commands/memory.md`
-  - Note: Commands live under `.claude-plugin/` directory per Claude Code plugin conventions. Command provides step-by-step instructions for syncing session, querying with --json, and formatting results for zoom interaction.
-
-- [x] Implement /memory-sync command
-  - Spec: specs/memzoom-plugin.md § Commands > /memory-sync
-  - Success: `/memory-sync` manually triggers transcript sync
-  - Test: Manual testing of /memory-sync command
-  - Location: `ragzoom/plugin/.claude-plugin/commands/memory-sync.md`
-  - Note: Command provides step-by-step instructions for locating session transcript and calling `ragzoom sync-claude-code-transcript`
-
-- [x] Implement /memory-zoom command
-  - Spec: specs/memzoom-plugin.md § Commands > /memory-zoom
-  - Success: `/memory-zoom 2` zooms into tiling span from previous results
-  - Test: Manual testing of /memory-zoom command
-  - Location: `ragzoom/plugin/.claude-plugin/commands/memory-zoom.md`
-  - Note: Command supports numeric index (zoom into span [N]), dotted notation for nested zoom (N.M), explicit time ranges, and handles non-temporal documents with span-based zoom.
-
-### Phase 28: Skill
-
-- [x] Implement memory-recall skill
-  - Spec: specs/memzoom-plugin.md § Skills > memory-recall
-  - Success: Skill triggers on "what did we discuss", "earlier we talked about", etc.
-  - Test: Manual testing of skill triggers
-  - Location: `ragzoom/plugin/.claude-plugin/skills/memory-recall.md`
-  - Note: Skill includes 10 trigger phrases covering common recall patterns. Provides step-by-step guidance for syncing, querying, and presenting results conversationally.
+- **Phase 30** (schema migration) must complete before **Phase 31** (field rename) to ensure DB column exists
+- **Phase 29** (exit cleanup) can run in parallel with other phases
+- **Phase 32** (config persistence) can run after Phase 31 since it uses the new field names
+- **Phase 33** (temporal UX) is independent
 
 ---
 
 ## Notes
 
-- **Dependencies**: JSON Output Mode should be completed before Memzoom Plugin commands (they need `--json` output)
-- **Dependencies**: Daemon Lifecycle is foundational but not blocking other features
-- **Quick Wins**: Custom Prompt Config is self-contained and can be completed quickly
-- **Bug Fix First**: The session-start.sh and start-mcp-server module path bugs should be fixed immediately, along with adding the missing `set-session-pid` CLI command
-- Both Temporal Metadata and Timestamped Transcript Sync are **complete** - all phases fully implemented and tested
+- All phases include test requirements - no code should merge without passing tests
+- Schema migration must be idempotent and safe to run multiple times
+- Backward compatibility is important - old configs/databases should continue working
+- These fixes are blocking for production use of the memzoom plugin

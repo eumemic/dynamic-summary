@@ -195,6 +195,52 @@ Daemon should handle:
 - `SIGINT` - Same as SIGTERM
 - `SIGHUP` - Reload configuration (future)
 
+### Exit Cleanup
+
+**Critical:** State files (PID, port) must be cleaned up on ALL exit paths:
+
+1. **Signal handlers** - SIGTERM/SIGINT already handled
+2. **Normal exit** - Use `atexit.register()` to ensure cleanup when `run_server()` returns normally (e.g., when `server.wait_for_termination()` completes)
+3. **Lease failure** - When lease acquisition fails with `sys.exit(1)`, cleanup must run first
+
+```python
+# In daemon mode, register atexit cleanup BEFORE run_server()
+if daemon:
+    daemonize()
+    write_port_file(port)
+    install_shutdown_handlers()
+    atexit.register(cleanup_stale_state)  # Catches normal exits
+
+run_server(options)
+```
+
+Without atexit cleanup, stale PID/port files persist after normal server termination, breaking subsequent auto-start attempts.
+
+### Config Persistence
+
+Auto-started daemons need configuration to work correctly. Persist config in well-known location:
+
+```
+~/.local/state/ragzoom/
+├── daemon.pid
+├── daemon.port
+├── daemon.log
+└── daemon.config.json    # Persisted config for auto-started daemons
+```
+
+When manually starting with `--config`:
+1. Copy relevant config to `daemon.config.json`
+2. Auto-start uses this config if present
+
+When no config file present, auto-start uses defaults.
+
+**Key config fields to persist:**
+- `target_chunk_tokens` - Critical for temporal documents (must be `null`)
+- `summary_system_prompt` / `summarization_guidance` - Document-specific prompts
+- Database connection settings
+
+Environment variable `RAGZOOM_DAEMON_CONFIG` overrides the default location.
+
 ### Log Rotation
 
 Keep last 5 log files, 10MB each:
@@ -218,6 +264,8 @@ Store actual port in `daemon.port` file.
 - PID file read/write/cleanup
 - Health check logic (mock gRPC)
 - Auto-start trigger detection
+- atexit cleanup registered in daemon mode
+- Config persistence read/write
 
 ### Integration Tests
 
@@ -226,6 +274,9 @@ Store actual port in `daemon.port` file.
 - Kill daemon, verify auto-restart on next command
 - Graceful stop cleans up state files
 - Concurrent commands don't race on auto-start
+- **Normal server exit cleans up state files** (atexit path)
+- **Lease failure cleans up state files before exit**
+- Config persistence survives daemon restart
 
 ### Manual Testing
 
