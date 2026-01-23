@@ -43,6 +43,7 @@ from ragzoom.exceptions import (
     ResourceError,
     ValidationError,
 )
+from ragzoom.output_formatters import build_json_output
 from ragzoom.progress_display import DocumentProgressTotals, WorkerProgressDisplay
 from ragzoom.server.app import ServerOptions, run_server
 from ragzoom.services.document_service import DocumentService
@@ -881,6 +882,12 @@ def validate(
     is_flag=True,
     help="Show detailed timing breakdown for each pipeline phase",
 )
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Output results as JSON for programmatic consumption",
+)
 @click.pass_context
 def query(
     ctx: click.Context,
@@ -899,6 +906,7 @@ def query(
     viz_coords: str,
     server_address: str | None,
     profile: bool,
+    json_output: bool,
 ) -> None:
     """Query the system and get a summary."""
     # Handle query/num_seeds defaults
@@ -926,14 +934,14 @@ def query(
         effective_budget = token_budget or query_config.budget_tokens
         resolved_address = _resolve_server_address(server_address)
 
-        if debug:
-            if viz_width:
-                actual_viz_width = viz_width
-            else:
-                terminal_width = shutil.get_terminal_size(fallback=(120, 24)).columns
-                actual_viz_width = max(80, terminal_width - 1)
-        else:
+        # Calculate visualization width
+        if not debug:
             actual_viz_width = viz_width or 0
+        elif viz_width:
+            actual_viz_width = viz_width
+        else:
+            terminal_width = shutil.get_terminal_size(fallback=(120, 24)).columns
+            actual_viz_width = max(80, terminal_width - 1)
 
         use_token_coords = viz_coords == "output-tokens"
 
@@ -957,6 +965,16 @@ def query(
 
         query_result = response.query_result
         retrieval = response.retrieval
+
+        # JSON output mode: output structured JSON and return
+        if json_output:
+            json_data = build_json_output(
+                response=response,
+                query_text=query_text,
+                document_id=document_id,
+            )
+            click.echo(json.dumps(json_data, indent=2))
+            return
 
         click.echo("\n" + "=" * 60)
         click.echo("SUMMARY")

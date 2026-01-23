@@ -159,11 +159,12 @@ Add `--json` flag to query command for machine-readable output with temporal spa
   - Location: `ragzoom/output_formatters.py`
   - Note: Created new module with TypedDict schemas (TilingNodeDict, ActualSpanDict, QueryJsonOutput) for strict type safety. Tests cover all schema fields, tiling order preservation, temporal fields, and edge cases.
 
-- [ ] Add `--json` flag to CLI query command
+- [x] Add `--json` flag to CLI query command
   - Spec: specs/json-output-mode.md § Implementation > CLI Changes
   - Success: `ragzoom query --json "test" -d doc.txt` outputs valid JSON
   - Test: `tests/test_cli.py::test_query_json_output`
   - Location: `ragzoom/cli.py` (query command)
+  - Note: Added --json flag that calls build_json_output() and outputs formatted JSON. Also added test for --json with --debug to ensure visualization is suppressed.
 
 ### Phase 17: Error Handling & Edge Cases
 
