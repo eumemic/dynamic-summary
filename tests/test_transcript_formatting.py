@@ -28,6 +28,7 @@ class TestTranscriptFormatting:
                             "uuid": "msg1",
                             "parentUuid": None,
                             "type": "user",
+                            "timestamp": "2024-01-21T14:30:00Z",
                             "message": {"content": "First message"},
                         }
                     ),
@@ -36,6 +37,7 @@ class TestTranscriptFormatting:
                             "uuid": "msg2",
                             "parentUuid": "msg1",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:05Z",
                             "message": {
                                 "content": [{"type": "text", "text": "Response"}]
                             },
@@ -46,6 +48,7 @@ class TestTranscriptFormatting:
                             "uuid": "msg3",
                             "parentUuid": "msg2",
                             "type": "user",
+                            "timestamp": "2024-01-21T14:30:10Z",
                             "message": {"content": "Second message"},
                         }
                     ),
@@ -57,21 +60,23 @@ class TestTranscriptFormatting:
         client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
-        assert len(client.appends) == 1
-        combined_text = client.appends[0][1]
+        # With turn-based grouping: Turn 1 = msg1+msg2, Turn 2 = msg3 (standalone)
+        assert len(client.appends) == 2
 
-        # Should have double newlines between messages
-        assert "\n\n[USER]" in combined_text or combined_text.startswith("[USER]")
-        assert "\n\n[ASSISTANT]" in combined_text
+        # First turn should have user + assistant
+        turn1_text = client.appends[0][1]
+        assert turn1_text.startswith("[USER]")
+        assert "\n\n[ASSISTANT]" in turn1_text
 
         # Should NOT have single newline followed by [USER]/[ASSISTANT]
         # (i.e., messages should not be run together)
-        lines = combined_text.split("\n")
-        for i, line in enumerate(lines):
-            if line.startswith("[USER]") or line.startswith("[ASSISTANT]"):
-                # Either it's the first line, or preceded by empty line
-                if i > 0:
-                    assert lines[i - 1] == "", f"Missing blank line before {line}"
+        for text in [client.appends[0][1], client.appends[1][1]]:
+            lines = text.split("\n")
+            for i, line in enumerate(lines):
+                if line.startswith("[USER]") or line.startswith("[ASSISTANT]"):
+                    # Either it's the first line, or preceded by empty line
+                    if i > 0:
+                        assert lines[i - 1] == "", f"Missing blank line before {line}"
 
     def test_slash_commands_simplified(self, tmp_path: Path) -> None:
         """Slash commands should be simplified from XML format."""
@@ -94,6 +99,7 @@ class TestTranscriptFormatting:
                     "uuid": "msg1",
                     "parentUuid": None,
                     "type": "user",
+                    "timestamp": "2024-01-21T14:30:00Z",
                     "message": {"content": command_content},
                 }
             )
@@ -126,6 +132,7 @@ class TestTranscriptFormatting:
                     "uuid": "msg1",
                     "parentUuid": None,
                     "type": "user",
+                    "timestamp": "2024-01-21T14:30:00Z",
                     "message": {
                         "content": "<local-command-stdout></local-command-stdout>"
                     },
@@ -144,24 +151,25 @@ class TestTranscriptFormatting:
             assert "<local-command-stdout>" not in text
 
 
-class TestCompactionSegmentBatching:
-    """Tests for batching at compaction boundaries."""
+class TestTurnBasedBatching:
+    """Tests for turn-based batching (one AppendUnit per conversation turn)."""
 
-    def test_one_append_per_compaction_segment(self, tmp_path: Path) -> None:
-        """Each compaction segment should be a separate append."""
+    def test_one_append_per_turn(self, tmp_path: Path) -> None:
+        """Each conversation turn should be a separate AppendUnit."""
         transcript_path = tmp_path / "transcript.jsonl"
         state_path = tmp_path / "state.jsonl"
 
         transcript_path.write_text(
             "\n".join(
                 [
-                    # First segment (pre-compaction)
+                    # Turn 1: user + assistant
                     json.dumps(
                         {
                             "uuid": "a1",
                             "parentUuid": None,
                             "type": "user",
-                            "message": {"content": "Segment 1 message 1"},
+                            "timestamp": "2024-01-21T14:30:00Z",
+                            "message": {"content": "Turn 1 question"},
                         }
                     ),
                     json.dumps(
@@ -169,27 +177,20 @@ class TestCompactionSegmentBatching:
                             "uuid": "a2",
                             "parentUuid": "a1",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:05Z",
                             "message": {
-                                "content": [{"type": "text", "text": "Segment 1 reply"}]
+                                "content": [{"type": "text", "text": "Turn 1 reply"}]
                             },
                         }
                     ),
-                    # First compaction boundary
-                    json.dumps({"uuid": "sys1", "parentUuid": None, "type": "system"}),
-                    json.dumps(
-                        {
-                            "uuid": "c1",
-                            "parentUuid": "sys1",
-                            "isCompactSummary": True,
-                        }
-                    ),
-                    # Second segment
+                    # Turn 2: user + assistant
                     json.dumps(
                         {
                             "uuid": "b1",
-                            "parentUuid": "c1",
+                            "parentUuid": "a2",
                             "type": "user",
-                            "message": {"content": "Segment 2 message 1"},
+                            "timestamp": "2024-01-21T14:30:10Z",
+                            "message": {"content": "Turn 2 question"},
                         }
                     ),
                     json.dumps(
@@ -197,27 +198,20 @@ class TestCompactionSegmentBatching:
                             "uuid": "b2",
                             "parentUuid": "b1",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:15Z",
                             "message": {
-                                "content": [{"type": "text", "text": "Segment 2 reply"}]
+                                "content": [{"type": "text", "text": "Turn 2 reply"}]
                             },
                         }
                     ),
-                    # Second compaction boundary
-                    json.dumps({"uuid": "sys2", "parentUuid": None, "type": "system"}),
+                    # Turn 3: standalone user message
                     json.dumps(
                         {
-                            "uuid": "c2",
-                            "parentUuid": "sys2",
-                            "isCompactSummary": True,
-                        }
-                    ),
-                    # Third segment
-                    json.dumps(
-                        {
-                            "uuid": "d1",
-                            "parentUuid": "c2",
+                            "uuid": "c1",
+                            "parentUuid": "b2",
                             "type": "user",
-                            "message": {"content": "Segment 3 message 1"},
+                            "timestamp": "2024-01-21T14:30:20Z",
+                            "message": {"content": "Turn 3 question"},
                         }
                     ),
                 ]
@@ -228,46 +222,43 @@ class TestCompactionSegmentBatching:
         client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
-        # Should have 3 appends (one per segment)
+        # Should have 3 appends (one per turn)
         assert len(client.appends) == 3
 
-        # First append should contain segment 1 content
-        assert "Segment 1" in client.appends[0][1]
+        # First append should contain turn 1 content
+        assert "Turn 1" in client.appends[0][1]
 
-        # Second append should contain segment 2 content
-        assert "Segment 2" in client.appends[1][1]
+        # Second append should contain turn 2 content
+        assert "Turn 2" in client.appends[1][1]
 
-        # Third append should contain segment 3 content
-        assert "Segment 3" in client.appends[2][1]
+        # Third append should contain turn 3 content
+        assert "Turn 3" in client.appends[2][1]
 
-    def test_state_has_entry_per_segment(self, tmp_path: Path) -> None:
-        """State should have one entry per compaction segment for rollback."""
+    def test_state_has_single_entry_for_batch(self, tmp_path: Path) -> None:
+        """State should have one entry for the entire batch."""
         transcript_path = tmp_path / "transcript.jsonl"
         state_path = tmp_path / "state.jsonl"
 
         transcript_path.write_text(
             "\n".join(
                 [
-                    # First segment
+                    # Turn 1
                     json.dumps(
                         {
                             "uuid": "a1",
                             "parentUuid": None,
                             "type": "user",
+                            "timestamp": "2024-01-21T14:30:00Z",
                             "message": {"content": "First"},
                         }
                     ),
-                    # Compaction
-                    json.dumps({"uuid": "sys1", "parentUuid": None, "type": "system"}),
-                    json.dumps(
-                        {"uuid": "c1", "parentUuid": "sys1", "isCompactSummary": True}
-                    ),
-                    # Second segment
+                    # Turn 2
                     json.dumps(
                         {
                             "uuid": "b1",
-                            "parentUuid": "c1",
+                            "parentUuid": "a1",
                             "type": "user",
+                            "timestamp": "2024-01-21T14:30:05Z",
                             "message": {"content": "Second"},
                         }
                     ),
@@ -282,44 +273,38 @@ class TestCompactionSegmentBatching:
         state = SessionState.load(state_path)
         assert state is not None
 
-        # Should have 2 entries (one per segment)
-        assert len(state.entries) == 2
+        # Should have 1 entry for the batch (with last UUID from all turns)
+        assert len(state.entries) == 1
 
-        # First entry should be for last UUID in first segment
-        assert state.entries[0].last_uuid == "a1"
+        # Entry should be for last UUID
+        assert state.entries[0].last_uuid == "b1"
 
-        # Second entry should be for last UUID in second segment
-        assert state.entries[1].last_uuid == "b1"
-
-    def test_compaction_boundary_spans_are_correct(self, tmp_path: Path) -> None:
-        """Each segment's span_end should be the boundary for that segment."""
+    def test_batch_spans_are_cumulative(self, tmp_path: Path) -> None:
+        """Batch span_end should cover all turns."""
         transcript_path = tmp_path / "transcript.jsonl"
         state_path = tmp_path / "state.jsonl"
 
         transcript_path.write_text(
             "\n".join(
                 [
-                    # First segment
+                    # Turn 1
                     json.dumps(
                         {
                             "uuid": "a1",
                             "parentUuid": None,
                             "type": "user",
-                            "message": {"content": "First segment content"},
+                            "timestamp": "2024-01-21T14:30:00Z",
+                            "message": {"content": "First turn content"},
                         }
                     ),
-                    # Compaction
-                    json.dumps({"uuid": "sys1", "parentUuid": None, "type": "system"}),
-                    json.dumps(
-                        {"uuid": "c1", "parentUuid": "sys1", "isCompactSummary": True}
-                    ),
-                    # Second segment
+                    # Turn 2
                     json.dumps(
                         {
                             "uuid": "b1",
-                            "parentUuid": "c1",
+                            "parentUuid": "a1",
                             "type": "user",
-                            "message": {"content": "Second segment content"},
+                            "timestamp": "2024-01-21T14:30:05Z",
+                            "message": {"content": "Second turn content"},
                         }
                     ),
                 ]
@@ -332,15 +317,11 @@ class TestCompactionSegmentBatching:
 
         state = SessionState.load(state_path)
         assert state is not None
-        assert len(state.entries) == 2
+        assert len(state.entries) == 1
 
-        # First segment's span_end should be length of first append
-        first_text = client.appends[0][1]
-        assert state.entries[0].span_end == len(first_text)
-
-        # Second segment's span_end should be cumulative
-        second_text = client.appends[1][1]
-        assert state.entries[1].span_end == len(first_text) + len(second_text)
+        # span_end should be cumulative of all turn texts
+        total_len = sum(len(text) for _, text in client.appends)
+        assert state.entries[0].span_end == total_len
 
 
 class TestToolUsageBatching:
@@ -351,16 +332,29 @@ class TestToolUsageBatching:
         transcript_path = tmp_path / "transcript.jsonl"
         state_path = tmp_path / "state.jsonl"
 
-        # This mirrors real transcript pattern: tool, result, text, tool, result
+        # Turns must start with a user message
         transcript_path.write_text(
             "\n".join(
                 [
+                    # User prompt starts the turn
+                    json.dumps(
+                        {
+                            "uuid": "user1",
+                            "parentUuid": None,
+                            "type": "user",
+                            "timestamp": "2024-01-21T14:29:55Z",
+                            "message": {
+                                "content": "Check git status and read the readme"
+                            },
+                        }
+                    ),
                     # First tool use
                     json.dumps(
                         {
                             "uuid": "msg1",
-                            "parentUuid": None,
+                            "parentUuid": "user1",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:00Z",
                             "message": {
                                 "content": [
                                     {
@@ -378,6 +372,7 @@ class TestToolUsageBatching:
                             "uuid": "msg2",
                             "parentUuid": "msg1",
                             "type": "user",
+                            "timestamp": "2024-01-21T14:30:05Z",
                             "toolUseResult": "output",
                             "message": {"content": "..."},
                         }
@@ -388,6 +383,7 @@ class TestToolUsageBatching:
                             "uuid": "msg3",
                             "parentUuid": "msg2",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:10Z",
                             "message": {
                                 "content": [
                                     {"type": "text", "text": "The status shows..."},
@@ -401,6 +397,7 @@ class TestToolUsageBatching:
                             "uuid": "msg4",
                             "parentUuid": "msg3",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:15Z",
                             "message": {
                                 "content": [
                                     {
@@ -418,6 +415,7 @@ class TestToolUsageBatching:
                             "uuid": "msg5",
                             "parentUuid": "msg4",
                             "type": "user",
+                            "timestamp": "2024-01-21T14:30:20Z",
                             "toolUseResult": "content",
                             "message": {"content": "..."},
                         }
@@ -443,16 +441,27 @@ class TestToolUsageBatching:
         transcript_path = tmp_path / "transcript.jsonl"
         state_path = tmp_path / "state.jsonl"
 
-        # Simulate consecutive tool-only assistant messages
+        # Turns must start with a user message
         transcript_path.write_text(
             "\n".join(
                 [
+                    # User prompt starts the turn
+                    json.dumps(
+                        {
+                            "uuid": "user1",
+                            "parentUuid": None,
+                            "type": "user",
+                            "timestamp": "2024-01-21T14:29:55Z",
+                            "message": {"content": "Search the codebase"},
+                        }
+                    ),
                     # First tool use (tool-only, no text)
                     json.dumps(
                         {
                             "uuid": "msg1",
-                            "parentUuid": None,
+                            "parentUuid": "user1",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:00Z",
                             "message": {
                                 "content": [
                                     {
@@ -470,6 +479,7 @@ class TestToolUsageBatching:
                             "uuid": "msg2",
                             "parentUuid": "msg1",
                             "type": "user",
+                            "timestamp": "2024-01-21T14:30:05Z",
                             "toolUseResult": "some output",
                             "message": {"content": "..."},
                         }
@@ -480,6 +490,7 @@ class TestToolUsageBatching:
                             "uuid": "msg3",
                             "parentUuid": "msg2",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:10Z",
                             "message": {
                                 "content": [
                                     {
@@ -497,6 +508,7 @@ class TestToolUsageBatching:
                             "uuid": "msg4",
                             "parentUuid": "msg3",
                             "type": "user",
+                            "timestamp": "2024-01-21T14:30:15Z",
                             "toolUseResult": "file content",
                             "message": {"content": "..."},
                         }
@@ -507,6 +519,7 @@ class TestToolUsageBatching:
                             "uuid": "msg5",
                             "parentUuid": "msg4",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:20Z",
                             "message": {
                                 "content": [
                                     {
@@ -546,11 +559,22 @@ class TestToolUsageBatching:
         transcript_path.write_text(
             "\n".join(
                 [
+                    # User prompt starts the turn
+                    json.dumps(
+                        {
+                            "uuid": "user1",
+                            "parentUuid": None,
+                            "type": "user",
+                            "timestamp": "2024-01-21T14:29:55Z",
+                            "message": {"content": "Run the query"},
+                        }
+                    ),
                     json.dumps(
                         {
                             "uuid": "msg1",
-                            "parentUuid": None,
+                            "parentUuid": "user1",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:00Z",
                             "message": {
                                 "content": [
                                     {
@@ -569,6 +593,7 @@ class TestToolUsageBatching:
                             "uuid": "msg2",
                             "parentUuid": "msg1",
                             "type": "user",
+                            "timestamp": "2024-01-21T14:30:05Z",
                             "toolUseResult": "output",
                             "message": {"content": "..."},
                         }
@@ -578,6 +603,7 @@ class TestToolUsageBatching:
                             "uuid": "msg3",
                             "parentUuid": "msg2",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:10Z",
                             "message": {
                                 "content": [
                                     {
@@ -611,11 +637,22 @@ class TestToolUsageBatching:
         transcript_path.write_text(
             "\n".join(
                 [
+                    # User prompt starts the turn
+                    json.dumps(
+                        {
+                            "uuid": "user1",
+                            "parentUuid": None,
+                            "type": "user",
+                            "timestamp": "2024-01-21T14:29:55Z",
+                            "message": {"content": "List the files"},
+                        }
+                    ),
                     json.dumps(
                         {
                             "uuid": "msg1",
-                            "parentUuid": None,
+                            "parentUuid": "user1",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:00Z",
                             "message": {
                                 "content": [
                                     {"type": "text", "text": "Let me check."},
@@ -633,6 +670,7 @@ class TestToolUsageBatching:
                             "uuid": "msg2",
                             "parentUuid": "msg1",
                             "type": "user",
+                            "timestamp": "2024-01-21T14:30:05Z",
                             "toolUseResult": "output",
                             "message": {"content": "..."},
                         }
@@ -643,6 +681,7 @@ class TestToolUsageBatching:
                             "uuid": "msg3",
                             "parentUuid": "msg2",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:10Z",
                             "message": {
                                 "content": [
                                     {"type": "text", "text": "Here's what I found."},
@@ -684,6 +723,7 @@ class TestCommandHandling:
                             "uuid": "cmd1",
                             "parentUuid": None,
                             "type": "user",
+                            "timestamp": "2024-01-21T14:30:00Z",
                             "message": {
                                 "content": "<command-name>/compact</command-name>\n"
                                 "<command-message>compact</command-message>\n"
@@ -697,6 +737,7 @@ class TestCommandHandling:
                             "uuid": "out1",
                             "parentUuid": "cmd1",
                             "type": "user",
+                            "timestamp": "2024-01-21T14:30:05Z",
                             "message": {
                                 "content": "<local-command-stdout>Compacted</local-command-stdout>"
                             },
@@ -708,6 +749,7 @@ class TestCommandHandling:
                             "uuid": "resp1",
                             "parentUuid": "out1",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:10Z",
                             "message": {"content": [{"type": "text", "text": "Done."}]},
                         }
                     ),
@@ -743,6 +785,7 @@ class TestCommandHandling:
                             "uuid": "cmd1",
                             "parentUuid": None,
                             "type": "user",
+                            "timestamp": "2024-01-21T14:30:00Z",
                             "message": {
                                 "content": "<command-message>commit</command-message>\n"
                                 "<command-name>/commit</command-name>"
@@ -755,6 +798,7 @@ class TestCommandHandling:
                             "uuid": "exp1",
                             "parentUuid": "cmd1",
                             "type": "user",
+                            "timestamp": "2024-01-21T14:30:05Z",
                             "message": {
                                 "content": [
                                     {
@@ -772,6 +816,7 @@ class TestCommandHandling:
                             "uuid": "resp1",
                             "parentUuid": "exp1",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:10Z",
                             "message": {
                                 "content": [
                                     {"type": "text", "text": "Committed changes."}
@@ -812,6 +857,7 @@ class TestCommandHandling:
                             "uuid": "cmd1",
                             "parentUuid": None,
                             "type": "user",
+                            "timestamp": "2024-01-21T14:30:00Z",
                             "message": {
                                 "content": "<command-name>/clear</command-name>\n"
                                 "<command-message>clear</command-message>\n"
@@ -825,6 +871,7 @@ class TestCommandHandling:
                             "uuid": "resp1",
                             "parentUuid": "cmd1",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:05Z",
                             "message": {
                                 "content": [
                                     {"type": "text", "text": "Context cleared."}
@@ -861,6 +908,7 @@ class TestCommandHandling:
                             "uuid": "cmd1",
                             "parentUuid": None,
                             "type": "user",
+                            "timestamp": "2024-01-21T14:30:00Z",
                             "message": {
                                 "content": "<command-name>/review-pr</command-name>\n"
                                 "<command-message>review-pr</command-message>\n"
@@ -874,6 +922,7 @@ class TestCommandHandling:
                             "uuid": "resp1",
                             "parentUuid": "cmd1",
                             "type": "assistant",
+                            "timestamp": "2024-01-21T14:30:05Z",
                             "message": {
                                 "content": [{"type": "text", "text": "Reviewing PR."}]
                             },

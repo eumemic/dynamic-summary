@@ -1082,12 +1082,27 @@ class FakeTranscriptClient:
             chunks_created=1,
         )
 
-    def batch_append(self, document_id: str, units: list[str]) -> FakeAppendResult:
-        """Batch append multiple units and return span positions."""
+    def batch_append(self, document_id: str, units: list[object]) -> FakeAppendResult:
+        """Batch append multiple units and return span positions.
+
+        Args:
+            document_id: Document to append to
+            units: Either list of strings or list of AppendUnit objects
+        """
         span_start = self._current_span
         for unit in units:
-            self.appends.append((document_id, unit))
-            self._current_span += len(unit)
+            # Support both string units and AppendUnit objects
+            if hasattr(unit, "text"):
+                text = unit.text  # AppendUnit
+                timestamp = None
+                if hasattr(unit, "time_start") and hasattr(unit, "time_end"):
+                    if unit.time_start is not None and unit.time_end is not None:
+                        timestamp = (unit.time_start, unit.time_end)
+                self.timestamps.append(timestamp)
+            else:
+                text = str(unit)
+            self.appends.append((document_id, text))
+            self._current_span += len(text)
         return FakeAppendResult(
             span_start=span_start,
             span_end=self._current_span,
