@@ -1658,6 +1658,7 @@ class SqliteDocumentRepository:
         file_path: str | None,
         embedding_model: str,
         summary_model: str,
+        summary_system_prompt: str | None = None,
         *,
         session: Session | None = None,
     ) -> None:
@@ -1671,6 +1672,7 @@ class SqliteDocumentRepository:
                 file_path=file_path,
                 embedding_model=embedding_model,
                 summary_model=summary_model,
+                summary_system_prompt=summary_system_prompt,
             )
             session.add(doc)
             if own_session:

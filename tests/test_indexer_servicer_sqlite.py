@@ -438,3 +438,115 @@ async def test_index_document_clears_then_appends() -> None:
         assert stats.resummarized_nodes == 0
     finally:
         backend.close()
+
+
+@pytest.mark.asyncio
+async def test_servicer_stores_summary_system_prompt() -> None:
+    """Verify servicer extracts summary_system_prompt from request and stores per-document.
+
+    Spec: specs/custom-prompt-config.md § CLI Override
+    Test: tests/test_indexer_servicer_sqlite.py::test_servicer_stores_summary_system_prompt
+    """
+    backend = SQLiteStorageBackend()
+    try:
+        index_config = IndexConfig.load()
+        query_config = QueryConfig()
+        operational_config = OperationalConfig(
+            openai_api_key=SecretStr("test"),
+            vector_backend="python",
+            database_url="sqlite:///:memory:",
+        )
+
+        document_id = "doc-custom-prompt"
+        custom_prompt = (
+            "You are a legal document summarizer. Output ONLY compressed text."
+        )
+
+        outcome = AppendOutcome(
+            document_id=document_id,
+            appended_span_start=0,
+            appended_span_end=10,
+            new_leaf_ids=["leaf-1"],
+            deleted_node_ids=[],
+            total_leaves=1,
+        )
+
+        append_executor = StubAppendExecutor(outcome)
+        indexing_engine = StubIndexingEngine()
+        telemetry_manager = TelemetryRunManager(index_config)
+
+        class VectorIndexStub:
+            def delete(
+                self,
+                filter: dict[str, object] | None = None,
+                ids: list[str] | None = None,
+            ) -> int:
+                return 0
+
+            def upsert(
+                self,
+                items: list[tuple[str, list[float], dict[str, object]]],
+            ) -> None:
+                return None
+
+            def search_similar(
+                self,
+                query_embedding: object,
+                k: int,
+                where: dict[str, object] | None = None,
+            ) -> list[object]:
+                return []
+
+            def get_vectors(self, ids: list[str]) -> list[object]:
+                return []
+
+        def vector_factory(model: str) -> VectorIndexStub:
+            return VectorIndexStub()
+
+        runtime = IndexerRuntime(
+            store=backend,
+            index_config=index_config,
+            append_executor=cast(AppendExecutor, append_executor),
+            indexing_engine=cast(IndexingEngine, indexing_engine),
+            telemetry_manager=telemetry_manager,
+            vector_index_factory=cast(Callable[[str], VectorIndex], vector_factory),
+        )
+
+        state = cast(
+            ServerState,
+            SimpleNamespace(
+                index_config=index_config,
+                query_config=query_config,
+                operational_config=operational_config,
+                store=backend,
+                indexing_service=None,
+                query_service=None,
+                llm_service=None,
+                telemetry_run_manager=telemetry_manager,
+                append_executor=append_executor,
+                indexing_engine=indexing_engine,
+                index_runtime=runtime,
+            ),
+        )
+
+        servicer = IndexerServicer(state)
+
+        # Create request with custom system prompt
+        request = pb2.AppendTextRequest(
+            document_id=document_id,
+            content=b"Legal contract text here.",
+            collect_telemetry=False,
+            summary_system_prompt=custom_prompt,
+        )
+
+        await servicer.AppendText(request, StubContext())
+
+        # Verify document was created with custom prompt stored
+        doc = backend.get_document_by_id(document_id)
+        assert doc is not None, "Document should be created"
+        assert (
+            doc.summary_system_prompt == custom_prompt
+        ), f"Expected custom prompt stored, got: {doc.summary_system_prompt!r}"
+
+    finally:
+        backend.close()
