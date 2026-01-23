@@ -576,4 +576,4 @@ Extend the local-first transcript sync to use temporal metadata, with each conve
 - Time queries reuse existing span query infrastructure via time→span mapping
 - Document temporality is all-or-nothing: either all chunks have timestamps or none do
 - No database migration needed - existing databases can be blown away and recreated with new schema
-- **Timestamped transcript sync partial blocker**: Only Phase 8's AppendUnit conversion is blocked; Phases 6-7, 9-11 can proceed now; Phase 8's other items can use parallel arrays workaround
+- **Both features complete**: Temporal Metadata and Timestamped Transcript Sync fully implemented and tested

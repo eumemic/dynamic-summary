@@ -1,5 +1,5 @@
 ---
-status: READY
+status: COMPLETE
 ---
 
 # Temporal Metadata for Client-Controlled Chunking
