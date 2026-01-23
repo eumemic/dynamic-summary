@@ -212,11 +212,12 @@ Add BM25 lexical search alongside vector search with Reciprocal Rank Fusion.
   - Location: `pyproject.toml` (dependencies)
   - Note: Also added mypy override since rank_bm25 doesn't ship type stubs
 
-- [ ] Implement BM25Index class
+- [x] Implement BM25Index class
   - Spec: specs/bm25-hybrid-search.md § Architecture > BM25 Index
   - Success: `BM25Index(nodes).search(query, top_k)` returns ranked (node_id, score) pairs
   - Test: `tests/test_bm25_index.py::TestBM25Index` (build, search, tokenization)
   - Location: `ragzoom/bm25.py` (new file)
+  - Note: Uses helper functions to isolate untyped rank_bm25 imports. Tokenization is simple whitespace+lowercase. Tests use 4-5 node corpora to avoid BM25 IDF edge cases with tiny corpora (IDF can go negative when a term appears in most documents).
 
 - [ ] Implement BM25IndexCache with LRU eviction
   - Spec: specs/bm25-hybrid-search.md § Architecture > BM25 Index Caching
