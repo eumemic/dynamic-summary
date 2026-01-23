@@ -79,11 +79,11 @@ Allow users to customize the system prompt used during summary generation for do
   - Test: `tests/test_summary_utils.py::test_prepare_summary_inputs_uses_custom_system_prompt`
   - Location: `ragzoom/services/summary_utils.py` (prepare_summary_inputs function)
 
-- [ ] Add `summary_system_prompt` field to SummaryWorkflowConfig
+- [x] Add `summary_system_prompt` field to SummaryWorkflowConfig
   - Spec: specs/custom-prompt-config.md § Implementation > Workflow Changes
   - Success: SummaryWorkflowConfig has `summary_system_prompt: str | None` field
-  - Test: `tests/test_summary_workflow_config.py::test_workflow_config_has_summary_system_prompt`
-  - Location: `ragzoom/summary_workflow.py` or relevant workflow config module
+  - Test: `tests/test_summary_utils.py::TestSummaryWorkflowConfigSystemPrompt::test_workflow_config_has_summary_system_prompt`
+  - Location: `ragzoom/services/summary_utils.py:83-91` (SummaryWorkflowConfig dataclass)
 
 - [ ] Thread custom prompt through run_summary_workflow
   - Spec: specs/custom-prompt-config.md § Implementation > Workflow Changes

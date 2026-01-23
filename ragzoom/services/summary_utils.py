@@ -87,6 +87,7 @@ class SummaryWorkflowConfig:
     use_anti_verbatim_vaccine: bool
     max_retries: int
     retry_threshold: float
+    summary_system_prompt: str | None = None
 
 
 def tokens_to_words(target_tokens: int) -> int:
@@ -470,6 +471,7 @@ async def run_summary_workflow(
         prev_context=prev_context,
         text_tokens=text_tokens,
         use_anti_verbatim_vaccine=config.use_anti_verbatim_vaccine,
+        system_prompt=config.summary_system_prompt,
     )
 
     # Passthrough when: (1) target <= 0 (signal from dynamic targets), OR
@@ -591,6 +593,7 @@ async def run_summary_from_config(
         use_anti_verbatim_vaccine=index_config.use_anti_verbatim_vaccine,
         max_retries=index_config.max_retries,
         retry_threshold=index_config.retry_threshold,
+        summary_system_prompt=index_config.summary_system_prompt,
     )
 
     return await run_summary_workflow(
@@ -781,6 +784,7 @@ async def run_contextualization_from_config(
         use_anti_verbatim_vaccine=index_config.use_anti_verbatim_vaccine,
         max_retries=index_config.max_retries,
         retry_threshold=index_config.retry_threshold,
+        summary_system_prompt=index_config.summary_system_prompt,
     )
 
     return await run_contextualization_workflow(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ragzoom.services.summary_utils import prepare_summary_inputs
+from ragzoom.services.summary_utils import SummaryWorkflowConfig, prepare_summary_inputs
 
 
 class TestPrepareSummaryInputsSystemPrompt:
@@ -100,3 +100,51 @@ class TestPrepareSummaryInputsSystemPrompt:
         assert system_message is not None
         # Empty string should be used (falsy but explicit)
         assert system_message["content"] == ""
+
+
+class TestSummaryWorkflowConfigSystemPrompt:
+    """Tests for summary_system_prompt field in SummaryWorkflowConfig."""
+
+    def test_workflow_config_has_summary_system_prompt(self) -> None:
+        """SummaryWorkflowConfig has summary_system_prompt field with None default."""
+        config = SummaryWorkflowConfig(
+            summary_model="gpt-4o-mini",
+            use_anti_verbatim_vaccine=False,
+            max_retries=2,
+            retry_threshold=0.2,
+        )
+
+        # Field exists and defaults to None
+        assert hasattr(config, "summary_system_prompt")
+        assert config.summary_system_prompt is None
+
+    def test_workflow_config_accepts_custom_system_prompt(self) -> None:
+        """SummaryWorkflowConfig accepts custom summary_system_prompt."""
+        custom_prompt = "You are a legal document summarizer."
+
+        config = SummaryWorkflowConfig(
+            summary_model="gpt-4o-mini",
+            use_anti_verbatim_vaccine=False,
+            max_retries=2,
+            retry_threshold=0.2,
+            summary_system_prompt=custom_prompt,
+        )
+
+        assert config.summary_system_prompt == custom_prompt
+
+    def test_workflow_config_is_frozen(self) -> None:
+        """SummaryWorkflowConfig is frozen (immutable)."""
+        config = SummaryWorkflowConfig(
+            summary_model="gpt-4o-mini",
+            use_anti_verbatim_vaccine=False,
+            max_retries=2,
+            retry_threshold=0.2,
+            summary_system_prompt="test",
+        )
+
+        # Attempting to modify should raise
+        try:
+            config.summary_system_prompt = "new value"  # type: ignore[misc]
+            raise AssertionError("Should have raised FrozenInstanceError")
+        except AttributeError:
+            pass  # Expected - frozen dataclass
