@@ -1,5 +1,6 @@
 """Tests for daemon health check functionality."""
 
+import signal
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -235,3 +236,147 @@ class TestIsServerHealthy:
 
             result = is_server_healthy()
             assert result is False
+
+
+class TestCrashRecovery:
+    """Tests for crash recovery functions."""
+
+    def test_cleanup_stale_state_removes_pid_and_port_files(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """cleanup_stale_state() removes PID and port files."""
+        from ragzoom.daemon import cleanup_stale_state
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            monkeypatch.setenv("RAGZOOM_STATE_DIR", str(state_dir))
+            state_dir.mkdir(parents=True, exist_ok=True)
+
+            # Create state files
+            pid_file = state_dir / "daemon.pid"
+            port_file = state_dir / "daemon.port"
+            pid_file.write_text("12345\n")
+            port_file.write_text("50051\n")
+
+            cleanup_stale_state()
+
+            assert not pid_file.exists()
+            assert not port_file.exists()
+
+    def test_cleanup_stale_state_is_idempotent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """cleanup_stale_state() doesn't raise when files don't exist."""
+        from ragzoom.daemon import cleanup_stale_state
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            monkeypatch.setenv("RAGZOOM_STATE_DIR", str(state_dir))
+            state_dir.mkdir(parents=True, exist_ok=True)
+
+            # No files exist - should not raise
+            cleanup_stale_state()
+
+    def test_kill_stale_process_sends_sigterm(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """kill_stale_process() sends SIGTERM to the process."""
+        from ragzoom.daemon import kill_stale_process
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            monkeypatch.setenv("RAGZOOM_STATE_DIR", str(state_dir))
+            state_dir.mkdir(parents=True, exist_ok=True)
+
+            # Write a PID file with a mock PID
+            pid_file = state_dir / "daemon.pid"
+            pid_file.write_text("12345\n")
+
+            # Mock os.kill to verify SIGTERM is sent
+            with patch("os.kill") as mock_kill:
+                # Make is_pid_stale return False (process exists)
+                with patch("ragzoom.daemon.is_pid_stale", return_value=False):
+                    kill_stale_process()
+                    mock_kill.assert_called_once_with(12345, signal.SIGTERM)
+
+    def test_kill_stale_process_no_op_when_no_pid_file(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """kill_stale_process() does nothing when no PID file exists."""
+        from ragzoom.daemon import kill_stale_process
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            monkeypatch.setenv("RAGZOOM_STATE_DIR", str(state_dir))
+            state_dir.mkdir(parents=True, exist_ok=True)
+
+            # No PID file exists - should not raise
+            with patch("os.kill") as mock_kill:
+                kill_stale_process()
+                mock_kill.assert_not_called()
+
+    def test_kill_stale_process_no_op_when_process_already_gone(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """kill_stale_process() does nothing when process is already dead."""
+        from ragzoom.daemon import kill_stale_process
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            monkeypatch.setenv("RAGZOOM_STATE_DIR", str(state_dir))
+            state_dir.mkdir(parents=True, exist_ok=True)
+
+            # Write a PID file
+            pid_file = state_dir / "daemon.pid"
+            pid_file.write_text("12345\n")
+
+            # Process is already gone (stale PID)
+            with patch("os.kill") as mock_kill:
+                with patch("ragzoom.daemon.is_pid_stale", return_value=True):
+                    kill_stale_process()
+                    mock_kill.assert_not_called()
+
+    def test_kill_stale_process_handles_eperm(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """kill_stale_process() handles EPERM gracefully (process owned by root)."""
+        import errno
+
+        from ragzoom.daemon import kill_stale_process
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            monkeypatch.setenv("RAGZOOM_STATE_DIR", str(state_dir))
+            state_dir.mkdir(parents=True, exist_ok=True)
+
+            pid_file = state_dir / "daemon.pid"
+            pid_file.write_text("1\n")  # PID 1 (init) we don't own
+
+            with patch("os.kill") as mock_kill:
+                mock_kill.side_effect = OSError(errno.EPERM, "Operation not permitted")
+                with patch("ragzoom.daemon.is_pid_stale", return_value=False):
+                    # Should not raise
+                    kill_stale_process()
+
+    def test_kill_stale_process_handles_esrch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """kill_stale_process() handles ESRCH gracefully (process disappeared)."""
+        import errno
+
+        from ragzoom.daemon import kill_stale_process
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            monkeypatch.setenv("RAGZOOM_STATE_DIR", str(state_dir))
+            state_dir.mkdir(parents=True, exist_ok=True)
+
+            pid_file = state_dir / "daemon.pid"
+            pid_file.write_text("12345\n")
+
+            with patch("os.kill") as mock_kill:
+                # Process existed when is_pid_stale checked, but died before kill
+                mock_kill.side_effect = OSError(errno.ESRCH, "No such process")
+                with patch("ragzoom.daemon.is_pid_stale", return_value=False):
+                    # Should not raise
+                    kill_stale_process()
