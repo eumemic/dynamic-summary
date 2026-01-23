@@ -388,12 +388,12 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
   - Location: `ragzoom/wrapper.py:36-57`, exported from `ragzoom/__init__.py`
   - Note: Validation rule - both timestamps or neither (not just one); includes `is_temporal` property
 
-- [ ] Add `AppendUnit` proto message to gRPC protocol
+- [x] Add `AppendUnit` proto message to gRPC protocol
   - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
   - Success: Proto defines `message AppendUnit { bytes content = 1; optional string time_start = 2; optional string time_end = 3; }`
-  - Test: `test_append_unit_proto_message`
-  - Location: `proto/dynamic_summary.proto`
-  - Note: Current proto uses parallel arrays (`repeated bytes units` + `repeated Timestamp timestamps`); needs self-contained AppendUnit
+  - Test: `tests/test_temporal_proto.py::TestAppendUnitProtoMessage` (6 tests)
+  - Location: `proto/dynamic_summary.proto:14-19`
+  - Note: Implemented self-contained AppendUnit message with content bytes and optional timestamps
 
 - [ ] Update `BatchAppendTextRequest` to use `repeated AppendUnit`
   - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
@@ -468,18 +468,18 @@ Extend the local-first transcript sync to use temporal metadata, with each conve
 
 ### JSONL Timestamp Extraction
 
-- [ ] Extract timestamps from JSONL transcript records
+- [x] Extract timestamps from JSONL transcript records
   - Spec: specs/timestamped-transcript-sync.md § Turn Timestamp Assignment
   - Success: Extract `timestamp` field (already ISO 8601) from each JSONL record
-  - Test: `test_extract_timestamp_from_jsonl_record`
-  - Location: `ragzoom/claude_memory/transcript_sync.py`
+  - Test: `tests/test_group_into_turns.py::TestGroupIntoTurnsMissingTimestamp::test_record_without_timestamp_raises_error`
+  - Location: `ragzoom/claude_memory/transcript_sync.py:124-133` (`_get_record_timestamp` function)
   - Note: Timestamps are ISO 8601 strings, not converted to float until AppendUnit
 
-- [ ] Turn timestamps from first/last message
+- [x] Turn timestamps from first/last message
   - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 2
   - Success: `Turn.time_start` = first message timestamp, `Turn.time_end` = last message timestamp
-  - Test: `test_turn_timestamps_from_first_last_message`
-  - Location: `ragzoom/claude_memory/transcript_sync.py` (within `group_into_turns`)
+  - Test: `tests/test_group_into_turns.py::TestGroupIntoTurnsBasic` (multiple tests verify this)
+  - Location: `ragzoom/claude_memory/transcript_sync.py:136-169` (`_build_turn` function)
 
 ---
 
