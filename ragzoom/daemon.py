@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 PID_FILENAME = "daemon.pid"
+PORT_FILENAME = "daemon.port"
 
 
 def get_daemon_state_dir() -> Path:
@@ -124,3 +125,56 @@ def is_pid_stale(pid: int) -> bool:
             return False
         # Other errors - assume stale to be safe
         return True
+
+
+def get_port_file_path() -> Path:
+    """Get the path to the port file.
+
+    Returns:
+        Path to daemon.port in the state directory.
+    """
+    return get_daemon_state_dir() / PORT_FILENAME
+
+
+def write_port_file(port: int) -> None:
+    """Write the daemon port to the port file.
+
+    Creates the state directory if it doesn't exist.
+
+    Args:
+        port: Port number to write.
+    """
+    state_dir = ensure_daemon_state_dir()
+    port_file = state_dir / PORT_FILENAME
+    port_file.write_text(f"{port}\n")
+
+
+def read_port_file() -> int | None:
+    """Read the daemon port from the port file.
+
+    Returns:
+        The port as an integer, or None if:
+        - The file doesn't exist
+        - The file contents are not a valid integer
+    """
+    port_file = get_port_file_path()
+    if not port_file.exists():
+        return None
+
+    try:
+        content = port_file.read_text().strip()
+        return int(content)
+    except (ValueError, OSError):
+        return None
+
+
+def remove_port_file() -> None:
+    """Remove the port file if it exists.
+
+    This is idempotent - does not raise if the file doesn't exist.
+    """
+    port_file = get_port_file_path()
+    try:
+        port_file.unlink()
+    except FileNotFoundError:
+        pass
