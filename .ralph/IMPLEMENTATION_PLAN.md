@@ -259,11 +259,12 @@ Add BM25 lexical search alongside vector search with Reciprocal Rank Fusion.
 
 ### Phase 21: Retriever Integration
 
-- [ ] Add `use_bm25` parameter to Retriever.retrieve_async()
+- [x] Add `use_bm25` parameter to Retriever.retrieve_async()
   - Spec: specs/bm25-hybrid-search.md § Integration with Retriever
   - Success: `retrieve_async(..., use_bm25=True)` enables hybrid search
-  - Test: `tests/test_retriever_bm25.py::test_retrieve_async_accepts_use_bm25`
-  - Location: `ragzoom/retrieve.py` (retrieve_async method)
+  - Test: `tests/test_retriever_bm25_sqlite.py::TestRetrieverBM25Parameter::test_retrieve_async_accepts_use_bm25`
+  - Location: `ragzoom/retrieve.py:167,623,721` (retrieve_async, retrieve, retrieve_with_telemetry)
+  - Note: Added use_bm25: bool | None parameter to all three methods. None defaults to QueryConfig.use_bm25. Parameter is accepted but actual BM25 integration (using the parameter to run BM25 search) is Phase 21 item 2.
 
 - [ ] Integrate BM25 search and RRF into retrieval pipeline
   - Spec: specs/bm25-hybrid-search.md § Integration with Retriever
