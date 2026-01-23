@@ -540,12 +540,12 @@ Extend the local-first transcript sync to use temporal metadata, with each conve
 
 ### Compaction Summary Filtering
 
-- [ ] Compaction summaries not indexed
+- [x] Compaction summaries not indexed
   - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 8
   - Success: `isCompactSummary: true` messages excluded from turn grouping and indexing
-  - Test: `test_compaction_summaries_not_indexed`
-  - Location: `ragzoom/claude_memory/transcript_sync.py` (in `group_into_turns` and `get_records_by_uuid`)
-  - Note: Filtering exists in `get_compaction_uuid`, `get_current_head`, `build_records_map` but needs explicit test and integration with turn grouping
+  - Test: `tests/test_transcript_temporal_queries_sqlite.py::TestTimeWindowedQueryOnSyncedTranscript::test_compaction_summaries_not_indexed`, `tests/test_group_into_turns.py::TestGroupIntoTurnsFiltering::test_filters_compaction_summaries`
+  - Location: `ragzoom/claude_memory/transcript_sync.py:103-109` (`_should_skip_record` helper), line 148 (applied in `group_into_turns`), line 839 (applied in `build_records_map`)
+  - Note: Filtering is comprehensive: `_should_skip_record()` is the core filter, applied in `group_into_turns()`. Also filtered in `build_records_map()`, `get_current_head()`, and `get_compaction_uuid()`. Integration test verifies end-to-end: synced transcripts with compaction summaries do not include them in indexed leaf content.
 
 ---
 
