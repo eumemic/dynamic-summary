@@ -314,10 +314,10 @@ def cli(ctx: click.Context) -> None:
     ),
 )
 @click.option(
-    "--summary-system-prompt",
-    "summary_system_prompt",
+    "--summarization-guidance",
+    "summarization_guidance",
     default=None,
-    help="Custom system prompt for summary generation (domain-specific summarization).",
+    help="Custom guidance for summarization (appended to default prompt).",
 )
 @click.pass_context
 def index(
@@ -331,7 +331,7 @@ def index(
     server_address: str | None,
     await_workers: bool,
     collect_telemetry: bool,
-    summary_system_prompt: str | None,
+    summarization_guidance: str | None,
 ) -> None:
     """Index a document from file.
 
@@ -405,14 +405,14 @@ def index(
                     content=content_bytes,
                     collect_telemetry=collect_requested,
                     replace_existing=not append,
-                    summary_system_prompt=summary_system_prompt,
+                    summary_system_prompt=summarization_guidance,
                 )
             else:
                 result = append_method(
                     document_id=target_document_id,
                     content=content_bytes,
                     collect_telemetry=collect_requested,
-                    summary_system_prompt=summary_system_prompt,
+                    summary_system_prompt=summarization_guidance,
                 )
             telemetry_run_id = result.telemetry_run_id
             if await_workers:

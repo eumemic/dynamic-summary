@@ -284,24 +284,25 @@ def test_index_append_invokes_append(
     assert not cli_mocks["grpc_client"].index_document.called
 
 
-def test_index_with_summary_system_prompt(
+def test_index_with_summarization_guidance(
     runner: CliRunner, cli_mocks: CliMocks, api_key: None, tmp_path: Path
 ) -> None:
-    """Test that --summary-system-prompt is passed to the gRPC client."""
-    custom_prompt = "You are a legal document summarizer. Output ONLY compressed text."
+    """Test that --summarization-guidance is passed to the gRPC client."""
+    custom_guidance = "This is medical documentation. Preserve all medication names."
     file_path = _write_temp_file(tmp_path, "doc.txt", "Test content for indexing")
     result = runner.invoke(
         cli,
         [
             "index",
             str(file_path),
-            "--summary-system-prompt",
-            custom_prompt,
+            "--summarization-guidance",
+            custom_guidance,
         ],
     )
     assert result.exit_code == 0
     call = cli_mocks["grpc_client"].append_text.call_args
-    assert call.kwargs["summary_system_prompt"] == custom_prompt
+    # Note: gRPC still uses summary_system_prompt until protobuf field is renamed
+    assert call.kwargs["summary_system_prompt"] == custom_guidance
 
 
 def test_query_command(runner: CliRunner, cli_mocks: CliMocks, api_key: None) -> None:
