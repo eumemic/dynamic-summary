@@ -342,11 +342,12 @@ Auto-start daemon, crash recovery, and proper lifecycle management.
   - Location: `ragzoom/daemon.py:382-420` (cleanup_stale_state, kill_stale_process)
   - Note: Added `cleanup_stale_state()` to remove PID and port files, and `kill_stale_process()` to send SIGTERM to stale daemons. Both functions handle edge cases gracefully (idempotent, process already gone, permission errors).
 
-- [ ] Implement `ensure_server_running()` function
+- [x] Implement `ensure_server_running()` function
   - Spec: specs/daemon-lifecycle.md § Architecture > Auto-Start
   - Success: Function ensures daemon running before returning server address
-  - Test: `tests/test_daemon_autostart.py::test_ensure_server_running`
-  - Location: `ragzoom/daemon.py`
+  - Test: `tests/test_daemon_autostart.py::TestEnsureServerRunning` (4 tests), `tests/test_daemon_autostart.py::TestStartDaemon` (3 tests)
+  - Location: `ragzoom/daemon.py:423-525`
+  - Note: Added `DaemonStartError` exception, `start_daemon()` to spawn subprocess with `ragzoom server start --daemon`, `wait_for_healthy()` to poll until healthy, and `ensure_server_running()` as the main auto-start entry point. Uses subprocess.Popen with `start_new_session=True` for proper process detachment.
 
 - [ ] Add auto-start triggers to client commands (index, query, clear, status)
   - Spec: specs/daemon-lifecycle.md § Architecture > Auto-Start

@@ -7,7 +7,9 @@ health checks, and auto-start capabilities.
 import errno
 import os
 import signal
+import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from types import FrameType
@@ -418,3 +420,105 @@ def kill_stale_process() -> None:
         if e.errno in (errno.ESRCH, errno.EPERM):
             return
         raise
+
+
+class DaemonStartError(Exception):
+    """Raised when the daemon fails to start or become healthy."""
+
+
+DEFAULT_PORT = 50051
+DEFAULT_STARTUP_TIMEOUT = 30.0
+HEALTH_CHECK_INTERVAL = 0.2
+
+
+def start_daemon(port: int = DEFAULT_PORT) -> None:
+    """Start the daemon as a background subprocess.
+
+    Spawns a new process running `ragzoom server start --daemon`.
+    This function returns immediately after spawning; it does NOT
+    wait for the server to become healthy.
+
+    Args:
+        port: Port number for the daemon to listen on.
+    """
+    # Build command to start daemon
+    cmd = [
+        sys.executable,
+        "-m",
+        "ragzoom.cli",
+        "server",
+        "start",
+        "--daemon",
+        "--port",
+        str(port),
+    ]
+
+    # Spawn subprocess and detach - we don't wait for it
+    # The daemon itself handles forking and writing PID/port files
+    subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def wait_for_healthy(timeout: float = DEFAULT_STARTUP_TIMEOUT) -> bool:
+    """Wait for the daemon to become healthy.
+
+    Polls is_server_healthy() until it returns True or timeout is reached.
+
+    Args:
+        timeout: Maximum time to wait in seconds.
+
+    Returns:
+        True if server became healthy, False if timeout.
+    """
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if is_server_healthy():
+            return True
+        time.sleep(HEALTH_CHECK_INTERVAL)
+    return False
+
+
+def ensure_server_running(timeout: float = DEFAULT_STARTUP_TIMEOUT) -> str:
+    """Ensure the daemon is running and return its address.
+
+    This is the main entry point for auto-start functionality:
+    1. If server is already healthy, returns its address immediately
+    2. Otherwise, cleans up stale state and starts a fresh daemon
+    3. Waits for the daemon to become healthy
+    4. Returns the server address
+
+    Args:
+        timeout: Maximum time to wait for server to become healthy.
+
+    Returns:
+        Server address in "host:port" format.
+
+    Raises:
+        DaemonStartError: If server fails to start or become healthy within timeout.
+    """
+    # Fast path: server already running and healthy
+    if is_server_healthy():
+        address = get_server_address()
+        if address is not None:
+            return address
+
+    # Server not running or unhealthy - start fresh
+    cleanup_stale_state()
+    start_daemon()
+
+    # Wait for server to become healthy
+    if not wait_for_healthy(timeout):
+        raise DaemonStartError(
+            f"Daemon failed to start: timed out after {timeout}s waiting for healthy state"
+        )
+
+    address = get_server_address()
+    if address is None:
+        raise DaemonStartError("Daemon started but port file not found")
+
+    return address
