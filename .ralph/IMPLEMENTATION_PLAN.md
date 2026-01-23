@@ -36,7 +36,7 @@ Fix critical bugs preventing the plugin from working.
   - Test: `tests/test_cli.py::test_set_session_pid_command`
   - Location: `ragzoom/cli.py`
 
-- [ ] Fix session-start.sh module path
+- [x] Fix session-start.sh module path
   - Spec: specs/memzoom-plugin.md § Auto-Sync Hook
   - Success: Hook calls `ragzoom set-session-pid` CLI command instead of incorrect `memory_service.ingestion.claude`
   - Test: `tests/test_memzoom_session_hook.py::test_session_start_hook_uses_correct_module`
