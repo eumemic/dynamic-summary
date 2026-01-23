@@ -85,11 +85,12 @@ Allow users to customize the system prompt used during summary generation for do
   - Test: `tests/test_summary_utils.py::TestSummaryWorkflowConfigSystemPrompt::test_workflow_config_has_summary_system_prompt`
   - Location: `ragzoom/services/summary_utils.py:83-91` (SummaryWorkflowConfig dataclass)
 
-- [ ] Thread custom prompt through run_summary_workflow
+- [x] Thread custom prompt through run_summary_workflow
   - Spec: specs/custom-prompt-config.md § Implementation > Workflow Changes
   - Success: Custom prompt flows from IndexConfig to LLM API call
   - Test: `tests/test_custom_prompt_integration.py::test_custom_prompt_reaches_llm_call`
-  - Location: `ragzoom/summary_workflow.py` (or equivalent)
+  - Location: `ragzoom/services/summary_utils.py:474,596` (run_summary_workflow, run_summary_from_config)
+  - Note: Implementation was already complete - added integration tests to verify the flow
 
 ### Phase 14: CLI & Telemetry
 
