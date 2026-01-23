@@ -18,6 +18,7 @@ from ragzoom.claude_memory.transcript_sync import (
 from ragzoom.config import IndexConfig
 from ragzoom.contracts.embedding_model import EmbeddingProvider
 from ragzoom.server.append_executor import AppendExecutor, AppendOutcome
+from ragzoom.wrapper import AppendUnit
 
 
 class StubEmbedder(EmbeddingProvider):
@@ -80,6 +81,49 @@ class AppendExecutorClient:
                     document_id=document_id,
                     new_text=text,
                     timestamp=timestamp,
+                )
+            )
+            return AppendResult(
+                span_start=result.appended_span_start,
+                span_end=result.appended_span_end,
+            )
+        finally:
+            loop.close()
+
+    def batch_append(
+        self,
+        document_id: str,
+        units: list[AppendUnit],
+    ) -> AppendResult:
+        """Batch append multiple units to document.
+
+        Uses AppendExecutor.append_batch internally.
+        """
+        import asyncio
+
+        self._ensure_document(document_id)
+        store = self._backend.for_document(document_id)
+
+        # Convert AppendUnits to (texts, timestamps) format expected by executor
+        texts = [u.text for u in units]
+
+        # Build timestamps list - if any unit has timestamps, all should
+        # (temporal documents are all-or-nothing per spec)
+        timestamps: list[tuple[str, str]] | None = None
+        if units and units[0].is_temporal:
+            timestamps = []
+            for u in units:
+                assert u.time_start is not None and u.time_end is not None
+                timestamps.append((u.time_start, u.time_end))
+
+        loop = asyncio.new_event_loop()
+        try:
+            result: AppendOutcome = loop.run_until_complete(
+                self._executor.append_batch(
+                    store=store,
+                    document_id=document_id,
+                    units=texts,
+                    timestamps=timestamps,
                 )
             )
             return AppendResult(
