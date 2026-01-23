@@ -136,11 +136,12 @@ Add `--json` flag to query command for machine-readable output with temporal spa
 
 ### Phase 15: Data Model Extensions
 
-- [ ] Add `time_start` and `time_end` fields to Node protobuf message
+- [x] Add `time_start` and `time_end` fields to Node protobuf message
   - Spec: specs/json-output-mode.md § JSON Schema > Temporal Fields
   - Success: Node message has `optional string time_start` and `optional string time_end`
   - Test: `tests/test_json_output_proto.py::test_node_has_temporal_fields`
   - Location: `proto/dynamic_summary.proto` (Node message)
+  - Note: Added fields 10 and 11 to Node message, updated .pyi stub with DESCRIPTOR and HasField
 
 - [ ] Add temporal fields to NodeSummary dataclass
   - Spec: specs/json-output-mode.md § JSON Schema > Temporal Fields
