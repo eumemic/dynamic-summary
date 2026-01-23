@@ -182,3 +182,43 @@ class BM25IndexCache:
     def clear(self) -> None:
         """Remove all cached indexes."""
         self._cache.clear()
+
+
+def reciprocal_rank_fusion(
+    vector_ranking: Sequence[str],
+    bm25_ranking: Sequence[str],
+    k: int = 60,
+) -> list[tuple[str, float]]:
+    """Combine two rankings using Reciprocal Rank Fusion.
+
+    Spec: specs/bm25-hybrid-search.md § Architecture > Reciprocal Rank Fusion
+
+    RRF assigns each item a score of 1/(k + rank + 1) from each ranking it
+    appears in. Items appearing in both rankings accumulate scores from both.
+    The k constant (typically 60) dampens the impact of high ranks.
+
+    Args:
+        vector_ranking: Node IDs ordered by vector similarity (best first).
+        bm25_ranking: Node IDs ordered by BM25 score (best first).
+        k: RRF constant controlling rank sensitivity. Default 60 is standard.
+
+    Returns:
+        List of (node_id, rrf_score) tuples sorted by score descending.
+        Ties are broken by insertion order (vector ranking first).
+
+    Example:
+        >>> vector = ["a", "b", "c"]
+        >>> bm25 = ["b", "a", "d"]
+        >>> reciprocal_rank_fusion(vector, bm25)
+        [('a', 0.0327...), ('b', 0.0327...), ('c', 0.0159...), ('d', 0.0159...)]
+    """
+    scores: dict[str, float] = {}
+
+    for rank, node_id in enumerate(vector_ranking):
+        scores[node_id] = scores.get(node_id, 0.0) + 1.0 / (k + rank + 1)
+
+    for rank, node_id in enumerate(bm25_ranking):
+        scores[node_id] = scores.get(node_id, 0.0) + 1.0 / (k + rank + 1)
+
+    # Sort by score descending, then by first appearance for stability
+    return sorted(scores.items(), key=lambda item: -item[1])
