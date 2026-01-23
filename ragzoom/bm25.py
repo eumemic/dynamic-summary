@@ -7,6 +7,7 @@ similarity search. BM25 excels at finding exact term matches like names,
 IDs, error codes, and technical jargon that embeddings may miss.
 """
 
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
@@ -107,3 +108,77 @@ class BM25Index:
             List of lowercase tokens split on whitespace.
         """
         return text.lower().split()
+
+
+class BM25IndexCache:
+    """LRU cache for document BM25 indexes.
+
+    Spec: specs/bm25-hybrid-search.md § Architecture > BM25 Index Caching
+
+    Caches BM25Index instances per document_id with LRU eviction policy.
+    When the cache exceeds max_size, the least recently used entry is evicted.
+
+    Example:
+        >>> cache = BM25IndexCache(max_size=10)
+        >>> index = cache.get_or_build("doc123", nodes)
+        >>> # Later, get same index from cache:
+        >>> index = cache.get_or_build("doc123", nodes)  # Returns cached
+    """
+
+    def __init__(self, max_size: int = 10) -> None:
+        """Initialize the cache with a maximum size.
+
+        Args:
+            max_size: Maximum number of BM25 indexes to cache. When exceeded,
+                the least recently used index is evicted. Must be at least 1.
+
+        Raises:
+            ValueError: If max_size is less than 1.
+        """
+        if max_size < 1:
+            raise ValueError(f"max_size must be at least 1, got {max_size}")
+
+        self._cache: OrderedDict[str, BM25Index] = OrderedDict()
+        self._max_size = max_size
+
+    def get_or_build(
+        self,
+        document_id: str,
+        nodes: Mapping[str, "TreeNode"],
+    ) -> BM25Index:
+        """Get cached index or build and cache a new one.
+
+        Args:
+            document_id: Unique identifier for the document.
+            nodes: Mapping of node_id to TreeNode for building the index.
+                Only used if the index is not already cached.
+
+        Returns:
+            BM25Index for the document, either from cache or newly built.
+        """
+        if document_id in self._cache:
+            # Move to end (most recently used)
+            self._cache.move_to_end(document_id)
+            return self._cache[document_id]
+
+        # Build new index
+        index = BM25Index(nodes)
+        self._cache[document_id] = index
+
+        # Evict LRU entries if over capacity
+        while len(self._cache) > self._max_size:
+            self._cache.popitem(last=False)
+
+        return index
+
+    def __len__(self) -> int:
+        """Return the number of cached indexes."""
+        return len(self._cache)
+
+    def __contains__(self, document_id: str) -> bool:
+        """Check if a document's index is cached."""
+        return document_id in self._cache
+
+    def clear(self) -> None:
+        """Remove all cached indexes."""
+        self._cache.clear()

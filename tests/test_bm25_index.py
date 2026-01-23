@@ -281,3 +281,170 @@ class TestBM25Index:
         assert results[0][1] > results[1][1] > 0  # Both positive, node1 higher
         # Remaining nodes have zero scores
         assert all(r[1] == 0.0 for r in results[2:])
+
+
+class TestBM25IndexCache:
+    """Tests for BM25IndexCache LRU eviction functionality.
+
+    Spec: specs/bm25-hybrid-search.md § Architecture > BM25 Index Caching
+    """
+
+    def test_get_or_build_creates_new_index(self) -> None:
+        """Test that get_or_build creates index when not cached.
+
+        Spec: specs/bm25-hybrid-search.md § Architecture > BM25 Index Caching
+        Success: get_or_build returns a BM25Index for new document_id
+        """
+        from ragzoom.bm25 import BM25IndexCache
+
+        cache = BM25IndexCache(max_size=10)
+        nodes = {
+            "node1": MockNode(id="node1", text="hello world"),
+            "node2": MockNode(id="node2", text="foo bar"),
+        }
+
+        index = cache.get_or_build("doc1", nodes)
+
+        assert isinstance(index, BM25Index)
+        # Verify the index works
+        results = index.search("hello", top_k=2)
+        assert results[0][0] == "node1"
+
+    def test_get_or_build_returns_cached_index(self) -> None:
+        """Test that get_or_build returns same index on subsequent calls.
+
+        Spec: specs/bm25-hybrid-search.md § Architecture > BM25 Index Caching
+        Success: Same BM25Index instance returned for same document_id
+        """
+        from ragzoom.bm25 import BM25IndexCache
+
+        cache = BM25IndexCache(max_size=10)
+        nodes = {
+            "node1": MockNode(id="node1", text="hello world"),
+        }
+
+        index1 = cache.get_or_build("doc1", nodes)
+        index2 = cache.get_or_build("doc1", nodes)
+
+        assert index1 is index2  # Same instance, not rebuilt
+
+    def test_lru_eviction_on_overflow(self) -> None:
+        """Test that LRU entries are evicted when cache exceeds max_size.
+
+        Spec: specs/bm25-hybrid-search.md § Architecture > BM25 Index Caching
+        Success: Cache stores up to N indexes, evicts LRU on overflow
+        """
+        from ragzoom.bm25 import BM25IndexCache
+
+        cache = BM25IndexCache(max_size=3)
+
+        # Add 3 documents to fill cache
+        for i in range(3):
+            nodes = {f"node{i}": MockNode(id=f"node{i}", text=f"text{i}")}
+            cache.get_or_build(f"doc{i}", nodes)
+
+        # Verify all 3 are cached
+        assert len(cache) == 3
+
+        # Add a 4th document - should evict doc0 (LRU)
+        nodes4 = {"node4": MockNode(id="node4", text="text4")}
+        cache.get_or_build("doc3", nodes4)
+
+        # Cache should still be at max_size
+        assert len(cache) == 3
+
+        # doc0 should be evicted, doc1, doc2, doc3 should remain
+        assert "doc0" not in cache
+        assert "doc1" in cache
+        assert "doc2" in cache
+        assert "doc3" in cache
+
+    def test_access_updates_lru_order(self) -> None:
+        """Test that accessing a cached entry moves it to most recently used.
+
+        Spec: specs/bm25-hybrid-search.md § Architecture > BM25 Index Caching
+        Success: Accessed entries moved to end, not evicted next
+        """
+        from ragzoom.bm25 import BM25IndexCache
+
+        cache = BM25IndexCache(max_size=3)
+
+        # Add 3 documents: doc0, doc1, doc2
+        for i in range(3):
+            nodes = {f"node{i}": MockNode(id=f"node{i}", text=f"text{i}")}
+            cache.get_or_build(f"doc{i}", nodes)
+
+        # Access doc0 to make it most recently used
+        nodes0 = {"node0": MockNode(id="node0", text="text0")}
+        cache.get_or_build("doc0", nodes0)
+
+        # Add doc3 - should evict doc1 (now LRU), not doc0
+        nodes3 = {"node3": MockNode(id="node3", text="text3")}
+        cache.get_or_build("doc3", nodes3)
+
+        # doc0 should still be cached (accessed recently)
+        # doc1 should be evicted (oldest untouched)
+        assert "doc0" in cache
+        assert "doc1" not in cache
+        assert "doc2" in cache
+        assert "doc3" in cache
+
+    def test_cache_with_max_size_one(self) -> None:
+        """Test cache behavior with max_size=1 (extreme case).
+
+        Spec: N/A (edge case handling)
+        Success: Only one index cached at a time
+        """
+        from ragzoom.bm25 import BM25IndexCache
+
+        cache = BM25IndexCache(max_size=1)
+
+        nodes1 = {"node1": MockNode(id="node1", text="text1")}
+        cache.get_or_build("doc1", nodes1)
+        assert len(cache) == 1
+
+        nodes2 = {"node2": MockNode(id="node2", text="text2")}
+        cache.get_or_build("doc2", nodes2)
+
+        # doc1 should be evicted
+        assert len(cache) == 1
+        assert "doc1" not in cache
+        assert "doc2" in cache
+
+    def test_clear_empties_cache(self) -> None:
+        """Test that clear() removes all cached indexes.
+
+        Spec: N/A (utility method)
+        Success: clear() empties the cache
+        """
+        from ragzoom.bm25 import BM25IndexCache
+
+        cache = BM25IndexCache(max_size=10)
+
+        for i in range(5):
+            nodes = {f"node{i}": MockNode(id=f"node{i}", text=f"text{i}")}
+            cache.get_or_build(f"doc{i}", nodes)
+
+        assert len(cache) == 5
+
+        cache.clear()
+
+        assert len(cache) == 0
+
+    def test_max_size_validation(self) -> None:
+        """Test that max_size must be at least 1.
+
+        Spec: N/A (input validation)
+        Success: ValueError raised for invalid max_size values
+        """
+        import pytest
+
+        from ragzoom.bm25 import BM25IndexCache
+
+        # Zero is invalid
+        with pytest.raises(ValueError, match="max_size must be at least 1"):
+            BM25IndexCache(max_size=0)
+
+        # Negative is invalid
+        with pytest.raises(ValueError, match="max_size must be at least 1"):
+            BM25IndexCache(max_size=-1)
