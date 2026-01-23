@@ -496,13 +496,11 @@ Extend the local-first transcript sync to use temporal metadata, with each conve
 
 ### AppendUnit Integration
 
-- [ ] Convert Turns to AppendUnits for indexing (BLOCKED)
+- [x] Convert Turns to AppendUnits for indexing
   - Spec: specs/timestamped-transcript-sync.md § Batch Append with AppendUnit
   - Success: Each Turn becomes one AppendUnit with text and timestamps
-  - Test: `test_turn_to_append_unit_conversion`
-  - Location: `ragzoom/claude_memory/transcript_sync.py`
-  - Depends on: AppendUnit dataclass (Phase 5)
-  - Workaround: Use current parallel arrays API (`timestamps=[...]`) until AppendUnit is available
+  - Test: `tests/test_turn_to_append_unit.py::TestTurnsToAppendUnits` (6 tests)
+  - Location: `ragzoom/claude_memory/transcript_sync.py:209-238` (`turns_to_append_units` function)
 
 - [ ] Use `batch_append()` instead of individual `append()` calls
   - Spec: specs/timestamped-transcript-sync.md § Batch Append with AppendUnit

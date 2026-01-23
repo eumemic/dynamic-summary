@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ragzoom.claude_memory.jsonl_reader import iter_jsonl, iter_jsonl_reversed
+from ragzoom.wrapper import AppendUnit
 
 # Patterns for cleaning user text (system noise from Claude Code)
 _CAVEAT_PATTERN = re.compile(
@@ -204,6 +205,38 @@ def _build_turn(
         time_start=_get_record_timestamp(first_uuid, first_record),
         time_end=_get_record_timestamp(last_uuid, last_record),
     )
+
+
+def turns_to_append_units(
+    turns: list[Turn],
+    records_by_uuid: dict[str, dict[str, object]],
+) -> list[AppendUnit]:
+    """Convert turns to AppendUnits for batch indexing.
+
+    Each turn is transcribed to text and bundled with its timestamps
+    into an AppendUnit for temporal indexing.
+
+    Args:
+        turns: List of conversation turns
+        records_by_uuid: UUID -> record mapping for transcription
+
+    Returns:
+        List of AppendUnits with text and timestamps from each turn
+    """
+    if not turns:
+        return []
+
+    result: list[AppendUnit] = []
+    for turn in turns:
+        text = transcribe_uuids_from_map(turn.uuids, records_by_uuid)
+        result.append(
+            AppendUnit(
+                text=text,
+                time_start=turn.time_start,
+                time_end=turn.time_end,
+            )
+        )
+    return result
 
 
 @dataclass
