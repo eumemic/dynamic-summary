@@ -1060,12 +1060,19 @@ class FakeTranscriptClient:
 
     def __init__(self) -> None:
         self.appends: list[tuple[str, str]] = []
+        self.timestamps: list[tuple[str, str] | None] = []
         self.truncates: list[tuple[str, int]] = []
         self._current_span: int = 0
 
-    def append(self, document_id: str, text: str) -> FakeAppendResult:
+    def append(
+        self,
+        document_id: str,
+        text: str,
+        timestamp: tuple[str, str] | None = None,
+    ) -> FakeAppendResult:
         """Append text and return span positions."""
         self.appends.append((document_id, text))
+        self.timestamps.append(timestamp)
         span_start = self._current_span
         span_end = self._current_span + len(text)
         self._current_span = span_end

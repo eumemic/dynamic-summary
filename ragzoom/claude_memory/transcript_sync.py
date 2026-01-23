@@ -133,6 +133,43 @@ def _get_record_timestamp(uuid: str, record: dict[str, object]) -> str:
     return timestamp
 
 
+def _extract_segment_timestamps(
+    uuids: list[str],
+    records_by_uuid: dict[str, dict[str, object]],
+) -> tuple[str, str] | None:
+    """Extract time_start and time_end from a segment's first/last messages.
+
+    Returns (time_start, time_end) tuple if timestamps are available,
+    or None if no timestamps found.
+    """
+    if not uuids:
+        return None
+
+    # Find first UUID with a valid timestamp
+    time_start: str | None = None
+    for uuid in uuids:
+        record = records_by_uuid.get(uuid)
+        if record is not None:
+            ts = record.get("timestamp")
+            if isinstance(ts, str):
+                time_start = ts
+                break
+
+    # Find last UUID with a valid timestamp
+    time_end: str | None = None
+    for uuid in reversed(uuids):
+        record = records_by_uuid.get(uuid)
+        if record is not None:
+            ts = record.get("timestamp")
+            if isinstance(ts, str):
+                time_end = ts
+                break
+
+    if time_start is not None and time_end is not None:
+        return (time_start, time_end)
+    return None
+
+
 def _build_turn(
     uuids: list[str],
     records_by_uuid: dict[str, dict[str, object]],
@@ -1154,7 +1191,13 @@ def execute_sync(
             combined_text = transcribe_uuids_from_map(segment_uuids, records_by_uuid)
 
             if combined_text:
-                result = append_method(document_id, combined_text)
+                # Extract timestamps from the segment for temporal indexing
+                segment_timestamp = _extract_segment_timestamps(
+                    segment_uuids, records_by_uuid
+                )
+                result = append_method(
+                    document_id, combined_text, timestamp=segment_timestamp
+                )
                 # Track the last uuid that produced content
                 segment_appended_uuids = [
                     u
