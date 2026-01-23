@@ -264,7 +264,7 @@ def install_shutdown_handlers(
 
     Handles SIGTERM and SIGINT by:
     1. Calling the optional cleanup callback
-    2. Removing the PID file
+    2. Removing state files (PID and port files)
     3. Exiting with status 0
 
     Args:
@@ -278,8 +278,9 @@ def install_shutdown_handlers(
         if cleanup_callback is not None:
             cleanup_callback()
 
-        # Remove PID file
+        # Remove state files
         remove_pid_file()
+        remove_port_file()
 
         # Exit cleanly
         sys.exit(0)

@@ -33,6 +33,7 @@ from ragzoom.constants import (
     DEFAULT_GRPC_HOST,
     DEFAULT_GRPC_PORT,
 )
+from ragzoom.daemon import daemonize, install_shutdown_handlers, write_port_file
 from ragzoom.error_handling import handle_graceful_error
 from ragzoom.exceptions import (
     ConfigurationError,
@@ -1729,6 +1730,11 @@ def server() -> None:
     type=int,
     help="Token cap for inner node preceding context (select rightmost N tokens)",
 )
+@click.option(
+    "--daemon",
+    is_flag=True,
+    help="Run as background daemon (fork to background, redirect output to log file)",
+)
 def start_server(
     host: str,
     port: int,
@@ -1745,10 +1751,22 @@ def start_server(
     preceding_context_inner_verbatim_tokens: int | None,
     preceding_context_inner_min_forest_completeness: float | None,
     preceding_context_inner_token_cap: int | None,
+    daemon: bool,
 ) -> None:
     """Start the RagZoom gRPC server."""
 
+    # If daemon mode, fork to background before starting server
+    if daemon:
+        daemonize()
+        # Write port file so clients can find us
+        write_port_file(port)
+        # Install signal handlers for graceful shutdown
+        install_shutdown_handlers()
+
+    # Configure logging AFTER daemonization (if any) so log output
+    # goes to the daemon process, not the parent that exits
     setup_command_environment(None, debug)
+
     options = ServerOptions(
         host=host,
         port=port,

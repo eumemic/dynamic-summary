@@ -319,11 +319,12 @@ Auto-start daemon, crash recovery, and proper lifecycle management.
   - Location: `ragzoom/daemon.py:260-291` (install_shutdown_handlers function)
   - Note: Added `install_shutdown_handlers(cleanup_callback)` function that registers handlers for SIGTERM and SIGINT. The optional callback allows servers to provide their own cleanup logic (e.g., finish in-flight requests). Handlers remove PID file and exit cleanly.
 
-- [ ] Add `--daemon` flag to `server start` command
+- [x] Add `--daemon` flag to `server start` command
   - Spec: specs/daemon-lifecycle.md § CLI Commands > ragzoom server start
   - Success: `ragzoom server start --daemon` runs in background
   - Test: `tests/test_cli.py::test_server_start_daemon_flag`
-  - Location: `ragzoom/cli.py` (server start command)
+  - Location: `ragzoom/cli.py:1733-1786` (server start command)
+  - Note: Calls daemonize() to fork to background, writes port file, installs shutdown handlers. Fixed port file cleanup in shutdown handlers and ensured logging setup happens after daemonization.
 
 ### Phase 24: Health Check & Auto-Start
 
