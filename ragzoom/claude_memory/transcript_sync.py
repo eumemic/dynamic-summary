@@ -32,6 +32,25 @@ _COMMAND_NAME_PATTERN = re.compile(r"<command-name>(/[\w-]+)</command-name>")
 
 
 @dataclass
+class Turn:
+    """A conversation turn with timestamp range.
+
+    A turn groups messages from a user prompt through the assistant's complete
+    response cycle. Used for timestamped transcript sync where each turn becomes
+    one leaf node with temporal metadata.
+    """
+
+    uuids: list[str]
+    """UUIDs of messages in this turn, in chronological order."""
+
+    time_start: str
+    """ISO 8601 timestamp of the first message in the turn."""
+
+    time_end: str
+    """ISO 8601 timestamp of the last message in the turn."""
+
+
+@dataclass
 class SessionStateHeader:
     """Header line of session state file."""
 
