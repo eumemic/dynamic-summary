@@ -532,7 +532,7 @@ DEFAULT_STARTUP_TIMEOUT = 30.0
 HEALTH_CHECK_INTERVAL = 0.2
 
 
-def start_daemon(port: int = DEFAULT_PORT) -> None:
+def start_daemon(port: int = DEFAULT_PORT, config_path: Path | None = None) -> None:
     """Start the daemon as a background subprocess.
 
     Spawns a new process running `ragzoom server start --daemon`.
@@ -541,6 +541,9 @@ def start_daemon(port: int = DEFAULT_PORT) -> None:
 
     Args:
         port: Port number for the daemon to listen on.
+        config_path: Optional path to config file. If provided, the daemon
+                     will be started with `--config <path>` to use persisted
+                     settings (e.g., target_chunk_tokens, summarization_guidance).
     """
     # Build command to start daemon
     cmd = [
@@ -553,6 +556,10 @@ def start_daemon(port: int = DEFAULT_PORT) -> None:
         "--port",
         str(port),
     ]
+
+    # Add config path if provided
+    if config_path is not None:
+        cmd.extend(["--config", str(config_path)])
 
     # Spawn subprocess and detach - we don't wait for it
     # The daemon itself handles forking and writing PID/port files
@@ -636,6 +643,10 @@ def ensure_server_running(timeout: float = DEFAULT_STARTUP_TIMEOUT) -> str:
     3. Waits for the daemon to become healthy
     4. Returns the server address
 
+    If a persisted config file exists (from a previous `--config` invocation),
+    it will be passed to the daemon to restore settings like target_chunk_tokens
+    and summarization_guidance.
+
     Args:
         timeout: Maximum time to wait for server to become healthy.
 
@@ -653,7 +664,13 @@ def ensure_server_running(timeout: float = DEFAULT_STARTUP_TIMEOUT) -> str:
 
     # Server not running or unhealthy - start fresh
     cleanup_stale_state()
-    start_daemon()
+
+    # Check for persisted config from previous daemon start
+    config_path: Path | None = None
+    if read_config_file() is not None:
+        config_path = get_config_file_path()
+
+    start_daemon(config_path=config_path)
 
     # Wait for server to become healthy
     if not wait_for_healthy(timeout):

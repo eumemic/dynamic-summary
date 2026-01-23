@@ -267,3 +267,105 @@ class TestEnvVarOverridesConfigPath:
             # Write should use env var location
             write_config_file({"target_chunk_tokens": 500})
             assert custom_config.exists()
+
+
+class TestAutostartUsesPersistedConfig:
+    """Test that auto-start uses persisted config."""
+
+    def test_autostart_uses_persisted_config(self, tmp_path: Path) -> None:
+        """ensure_server_running() passes persisted config to start_daemon()."""
+        from ragzoom.daemon import write_config_file
+
+        state_dir = tmp_path / "state"
+        env = {"RAGZOOM_STATE_DIR": str(state_dir)}
+        with patch.dict(os.environ, env, clear=True):
+            # Write a config file with target_chunk_tokens=None (for temporal docs)
+            write_config_file(
+                {
+                    "target_chunk_tokens": None,
+                    "summarization_guidance": "Legal docs guidance",
+                }
+            )
+
+            # Verify config file exists
+            config_file = state_dir / "daemon.config.json"
+            assert config_file.exists()
+
+            # Mock start_daemon to capture the config_path argument
+            with patch("ragzoom.daemon.start_daemon") as mock_start:
+                with patch("ragzoom.daemon.is_server_healthy", return_value=False):
+                    with patch("ragzoom.daemon.wait_for_healthy", return_value=True):
+                        with patch(
+                            "ragzoom.daemon.get_server_address",
+                            return_value="127.0.0.1:50051",
+                        ):
+                            from ragzoom.daemon import ensure_server_running
+
+                            ensure_server_running()
+
+                            # start_daemon should be called with config_path
+                            mock_start.assert_called_once()
+                            call_kwargs = mock_start.call_args.kwargs
+                            assert "config_path" in call_kwargs
+                            assert call_kwargs["config_path"] == config_file
+
+    def test_autostart_without_config_file(self, tmp_path: Path) -> None:
+        """ensure_server_running() works without persisted config."""
+        state_dir = tmp_path / "state"
+        state_dir.mkdir(parents=True)  # Create dir but no config file
+        env = {"RAGZOOM_STATE_DIR": str(state_dir)}
+        with patch.dict(os.environ, env, clear=True):
+            # No config file exists
+            config_file = state_dir / "daemon.config.json"
+            assert not config_file.exists()
+
+            # Mock start_daemon to capture arguments
+            with patch("ragzoom.daemon.start_daemon") as mock_start:
+                with patch("ragzoom.daemon.is_server_healthy", return_value=False):
+                    with patch("ragzoom.daemon.wait_for_healthy", return_value=True):
+                        with patch(
+                            "ragzoom.daemon.get_server_address",
+                            return_value="127.0.0.1:50051",
+                        ):
+                            from ragzoom.daemon import ensure_server_running
+
+                            ensure_server_running()
+
+                            # start_daemon should be called without config_path
+                            mock_start.assert_called_once()
+                            call_kwargs = mock_start.call_args.kwargs
+                            # config_path should be None when no config file exists
+                            assert call_kwargs.get("config_path") is None
+
+    def test_start_daemon_includes_config_in_command(self, tmp_path: Path) -> None:
+        """start_daemon() includes --config flag when config_path is provided."""
+        import subprocess
+
+        config_file = tmp_path / "daemon.config.json"
+        config_file.write_text('{"target_chunk_tokens": null}')
+
+        with patch.object(subprocess, "Popen") as mock_popen:
+            from ragzoom.daemon import start_daemon
+
+            start_daemon(config_path=config_file)
+
+            # Verify the command includes --config flag
+            mock_popen.assert_called_once()
+            cmd = mock_popen.call_args.args[0]
+            assert "--config" in cmd
+            config_idx = cmd.index("--config")
+            assert cmd[config_idx + 1] == str(config_file)
+
+    def test_start_daemon_without_config_path(self, tmp_path: Path) -> None:
+        """start_daemon() omits --config flag when config_path is None."""
+        import subprocess
+
+        with patch.object(subprocess, "Popen") as mock_popen:
+            from ragzoom.daemon import start_daemon
+
+            start_daemon()  # No config_path
+
+            # Verify the command does NOT include --config flag
+            mock_popen.assert_called_once()
+            cmd = mock_popen.call_args.args[0]
+            assert "--config" not in cmd

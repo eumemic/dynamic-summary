@@ -164,12 +164,13 @@ Fix critical bugs discovered during implementation verification that prevent bas
   - Note: Only persist fields that affect daemon behavior (target_chunk_tokens, summarization_guidance, db settings)
   - **DONE**: Added config file functions (get_config_file_path, write_config_file, read_config_file, remove_config_file) to daemon.py. Added _persist_daemon_config() to cli.py that extracts target_chunk_tokens and summarization_guidance from IndexConfig and persists them. File permissions set to 0o600 for security. Comprehensive tests in test_daemon_config_persistence.py (17 tests).
 
-- [ ] Load persisted config in auto-start
+- [x] Load persisted config in auto-start
   - Spec: specs/daemon-lifecycle.md § Config Persistence
   - Success: `ensure_server_running()` passes persisted config to `start_daemon()`
   - Test: `tests/test_daemon_config_persistence.py::test_autostart_uses_persisted_config`
   - Location: `ragzoom/daemon.py` (start_daemon, ensure_server_running)
   - Note: Pass config path to spawned subprocess if config file exists
+  - **DONE**: Added `config_path` parameter to `start_daemon()` that includes `--config <path>` in the subprocess command. Updated `ensure_server_running()` to check for persisted config via `read_config_file()` and pass it to `start_daemon()`. Added 4 tests: `test_autostart_uses_persisted_config`, `test_autostart_without_config_file`, `test_start_daemon_includes_config_in_command`, `test_start_daemon_without_config_path`.
 
 - [x] Add RAGZOOM_DAEMON_CONFIG env var support
   - Spec: specs/daemon-lifecycle.md § Config Persistence
