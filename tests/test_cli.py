@@ -845,3 +845,81 @@ def test_server_status_no_port_file(runner: CliRunner) -> None:
 
         # Should indicate running (port unknown is OK)
         assert "running" in result.output.lower()
+
+
+def test_server_logs_command(runner: CliRunner, tmp_path: Path) -> None:
+    """Test that `server logs` shows daemon log contents.
+
+    Spec: specs/daemon-lifecycle.md § CLI Commands > ragzoom server logs
+    Success: Shows daemon.log contents (default: 50 lines)
+    """
+    # Create a test log file with 60 lines
+    log_file = tmp_path / "daemon.log"
+    log_lines = [f"Log line {i}\n" for i in range(60)]
+    log_file.write_text("".join(log_lines))
+
+    with patch("ragzoom.cli.get_log_file_path", return_value=log_file):
+        result = runner.invoke(cli, ["server", "logs"])
+
+        # Command should succeed
+        assert result.exit_code == 0
+
+        # Should show the last 50 lines (default)
+        # Lines 10-59 should be present (0-indexed: lines 10 through 59)
+        assert "Log line 10" in result.output
+        assert "Log line 59" in result.output
+
+        # Line 9 should NOT be present (it's outside the default 50)
+        assert "Log line 9" not in result.output
+
+
+def test_server_logs_with_n_flag(runner: CliRunner, tmp_path: Path) -> None:
+    """Test that `server logs -n` limits the number of lines."""
+    # Create a test log file
+    log_file = tmp_path / "daemon.log"
+    log_lines = [f"Log line {i}\n" for i in range(20)]
+    log_file.write_text("".join(log_lines))
+
+    with patch("ragzoom.cli.get_log_file_path", return_value=log_file):
+        result = runner.invoke(cli, ["server", "logs", "-n", "5"])
+
+        # Command should succeed
+        assert result.exit_code == 0
+
+        # Should show only last 5 lines (lines 15-19)
+        assert "Log line 15" in result.output
+        assert "Log line 19" in result.output
+
+        # Line 14 should NOT be present
+        assert "Log line 14" not in result.output
+
+
+def test_server_logs_no_log_file(runner: CliRunner, tmp_path: Path) -> None:
+    """Test that `server logs` handles missing log file gracefully."""
+    # Point to a non-existent log file
+    log_file = tmp_path / "daemon.log"
+
+    with patch("ragzoom.cli.get_log_file_path", return_value=log_file):
+        result = runner.invoke(cli, ["server", "logs"])
+
+        # Command should succeed but indicate no logs
+        assert result.exit_code == 0
+        assert (
+            "no log file" in result.output.lower()
+            or "not found" in result.output.lower()
+        )
+
+
+def test_server_logs_empty_file(runner: CliRunner, tmp_path: Path) -> None:
+    """Test that `server logs` handles empty log file gracefully."""
+    # Create an empty log file
+    log_file = tmp_path / "daemon.log"
+    log_file.write_text("")
+
+    with patch("ragzoom.cli.get_log_file_path", return_value=log_file):
+        result = runner.invoke(cli, ["server", "logs"])
+
+        # Command should succeed
+        assert result.exit_code == 0
+        # Output should be empty or indicate no logs
+        # (no assertion on specific message - empty output is valid)

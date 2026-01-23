@@ -39,6 +39,7 @@ from ragzoom.daemon import (
     cleanup_stale_state,
     daemonize,
     ensure_server_running,
+    get_log_file_path,
     get_process_uptime,
     install_shutdown_handlers,
     is_pid_stale,
@@ -1884,6 +1885,63 @@ def server_status() -> None:
     parts.append(f"uptime {uptime}")
 
     click.echo(", ".join(parts))
+
+
+# Constants for logs command
+DEFAULT_LOG_LINES = 50
+
+
+@server.command("logs")
+@click.option(
+    "-n",
+    "--lines",
+    "num_lines",
+    default=DEFAULT_LOG_LINES,
+    type=int,
+    help=f"Number of lines to show (default: {DEFAULT_LOG_LINES})",
+)
+@click.option(
+    "-f",
+    "--follow",
+    is_flag=True,
+    help="Follow log output (like tail -f)",
+)
+def server_logs(num_lines: int, follow: bool) -> None:
+    """Show daemon logs.
+
+    Displays contents of the daemon log file. By default shows the
+    last 50 lines. Use -n to change the number of lines, or -f to
+    continuously follow new output.
+    """
+    log_file = get_log_file_path()
+
+    if not log_file.exists():
+        click.echo("No log file found (daemon may not have run yet)")
+        return
+
+    if follow:
+        import subprocess
+
+        try:
+            subprocess.run(
+                ["tail", "-n", str(num_lines), "-f", str(log_file)],
+                check=False,
+            )
+        except KeyboardInterrupt:
+            pass
+        return
+
+    try:
+        content = log_file.read_text()
+    except OSError as e:
+        click.echo(f"Error reading log file: {e}")
+        return
+
+    if not content:
+        return
+
+    for line in content.splitlines()[-num_lines:]:
+        click.echo(line)
 
 
 @cli.command()
