@@ -50,6 +50,7 @@ def cli_mocks() -> Iterator[CliMocks]:
         patch("ragzoom.cli.DocumentService") as mock_document_service,
         patch("ragzoom.cli.GrpcRagzoomClient") as mock_grpc_client_cls,
         patch("ragzoom.vector_factory.create_vector_index") as mock_create_vector_index,
+        patch("ragzoom.cli.ensure_server_running", return_value="127.0.0.1:50051"),
     ):
         # Storage backend impersonation used by several commands
         store = MagicMock(name="store")

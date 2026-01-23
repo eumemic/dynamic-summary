@@ -4,8 +4,16 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from click.testing import CliRunner
 
+from ragzoom.client.grpc_client import (
+    ClearedDocumentResult,
+    ExecuteQueryOutput,
+    RetrievalView,
+)
 from ragzoom.daemon import DaemonStartError, ensure_server_running
+from ragzoom.services.indexing_service import IndexingResult
+from ragzoom.services.query_service import QueryResult
 
 
 class TestEnsureServerRunning:
@@ -153,3 +161,174 @@ class TestStartDaemon:
             assert "--port" in cmd
             port_idx = cmd.index("--port")
             assert cmd[port_idx + 1] == "50099"
+
+
+class TestCliAutoStartTriggers:
+    """Tests for CLI commands triggering daemon auto-start."""
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        """Provide a Click test runner."""
+        return CliRunner()
+
+    def test_query_autostarts_daemon(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Query command triggers auto-start when using default server address."""
+        monkeypatch.setenv("RAGZOOM_STATE_DIR", str(tmp_path))
+        # Clear any server address env var so default is used
+        monkeypatch.delenv("RAGZOOM_SERVER_ADDRESS", raising=False)
+
+        from ragzoom.cli import cli
+
+        with (
+            patch("ragzoom.cli.ensure_server_running") as mock_ensure,
+            patch("ragzoom.cli.GrpcRagzoomClient") as mock_client_cls,
+        ):
+            mock_ensure.return_value = "127.0.0.1:50051"
+            mock_client = MagicMock()
+            mock_client_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+            mock_client_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+            mock_client.execute_query.return_value = ExecuteQueryOutput(
+                query_result=QueryResult(
+                    summary="Test summary",
+                    token_count=10,
+                    nodes_retrieved=1,
+                    tiling_size=1,
+                    query_id="test-query-id",
+                ),
+                retrieval=RetrievalView(
+                    tiling_ids=[],
+                    nodes={},
+                    selected_ids=[],
+                    scores={},
+                    coverage_map={},
+                ),
+                visualization="",
+                validation_warning="",
+            )
+
+            result = runner.invoke(cli, ["query", "test query", "-d", "doc-123"])
+
+            # ensure_server_running should be called when no explicit address
+            mock_ensure.assert_called_once()
+            assert result.exit_code == 0
+
+    def test_query_skips_autostart_with_explicit_address(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Query command does NOT auto-start when explicit server address given."""
+        monkeypatch.setenv("RAGZOOM_STATE_DIR", str(tmp_path))
+        monkeypatch.delenv("RAGZOOM_SERVER_ADDRESS", raising=False)
+
+        from ragzoom.cli import cli
+
+        with (
+            patch("ragzoom.cli.ensure_server_running") as mock_ensure,
+            patch("ragzoom.cli.GrpcRagzoomClient") as mock_client_cls,
+        ):
+            mock_client = MagicMock()
+            mock_client_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+            mock_client_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+            mock_client.execute_query.return_value = ExecuteQueryOutput(
+                query_result=QueryResult(
+                    summary="Test summary",
+                    token_count=10,
+                    nodes_retrieved=1,
+                    tiling_size=1,
+                    query_id="test-query-id",
+                ),
+                retrieval=RetrievalView(
+                    tiling_ids=[],
+                    nodes={},
+                    selected_ids=[],
+                    scores={},
+                    coverage_map={},
+                ),
+                visualization="",
+                validation_warning="",
+            )
+
+            runner.invoke(
+                cli,
+                [
+                    "query",
+                    "test query",
+                    "-d",
+                    "doc-123",
+                    "--server-address",
+                    "192.168.1.100:50051",
+                ],
+            )
+
+            # ensure_server_running should NOT be called with explicit address
+            mock_ensure.assert_not_called()
+            # GrpcRagzoomClient should be called with the explicit address
+            mock_client_cls.assert_called_once_with("192.168.1.100:50051")
+
+    def test_index_autostarts_daemon(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Index command triggers auto-start when using default server address."""
+        monkeypatch.setenv("RAGZOOM_STATE_DIR", str(tmp_path))
+        monkeypatch.delenv("RAGZOOM_SERVER_ADDRESS", raising=False)
+
+        from ragzoom.cli import cli
+
+        # Create a test file to index
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("Test content for indexing")
+
+        with (
+            patch("ragzoom.cli.ensure_server_running") as mock_ensure,
+            patch("ragzoom.cli.GrpcRagzoomClient") as mock_client_cls,
+        ):
+            mock_ensure.return_value = "127.0.0.1:50051"
+            mock_client = MagicMock()
+            mock_client_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+            mock_client_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+            mock_client.append_text.return_value = IndexingResult(
+                document_id="test.txt",
+                chunks_created=1,
+                tree_depth=1,
+                mutated_nodes=1,
+                resummarized_nodes=0,
+                new_leaves=1,
+            )
+
+            runner.invoke(cli, ["index", str(test_file)])
+
+            # ensure_server_running should be called when no explicit address
+            mock_ensure.assert_called_once()
+
+    def test_clear_autostarts_daemon(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Clear command triggers auto-start when using default server address."""
+        monkeypatch.setenv("RAGZOOM_STATE_DIR", str(tmp_path))
+        monkeypatch.delenv("RAGZOOM_SERVER_ADDRESS", raising=False)
+
+        from ragzoom.cli import cli
+
+        with (
+            patch("ragzoom.cli.ensure_server_running") as mock_ensure,
+            patch("ragzoom.cli.GrpcRagzoomClient") as mock_client_cls,
+        ):
+            mock_ensure.return_value = "127.0.0.1:50051"
+            mock_client = MagicMock()
+            mock_client_cls.return_value.__enter__ = MagicMock(return_value=mock_client)
+            mock_client_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+            mock_client.clear_document.return_value = ClearedDocumentResult(
+                document_id="doc-123",
+                document_existed=True,
+                deleted_nodes=10,
+            )
+
+            runner.invoke(cli, ["clear", "-d", "doc-123", "--confirm"])
+
+            # ensure_server_running should be called when no explicit address
+            mock_ensure.assert_called_once()

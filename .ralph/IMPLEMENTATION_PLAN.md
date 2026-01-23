@@ -349,11 +349,12 @@ Auto-start daemon, crash recovery, and proper lifecycle management.
   - Location: `ragzoom/daemon.py:423-525`
   - Note: Added `DaemonStartError` exception, `start_daemon()` to spawn subprocess with `ragzoom server start --daemon`, `wait_for_healthy()` to poll until healthy, and `ensure_server_running()` as the main auto-start entry point. Uses subprocess.Popen with `start_new_session=True` for proper process detachment.
 
-- [ ] Add auto-start triggers to client commands (index, query, clear, status)
+- [x] Add auto-start triggers to client commands (index, query, clear, status)
   - Spec: specs/daemon-lifecycle.md § Architecture > Auto-Start
   - Success: `ragzoom query` auto-starts daemon if not running
   - Test: `tests/test_daemon_autostart.py::test_query_autostarts_daemon`
   - Location: `ragzoom/cli.py` (affected commands)
+  - Note: Added `_resolve_server_address_with_autostart()` that calls `ensure_server_running()` when using default address. Updated index, query, clear, telemetry, and telemetry-export commands. The `status` command does NOT trigger auto-start because it accesses local store directly without gRPC.
 
 ### Phase 25: CLI Commands
 

@@ -137,7 +137,12 @@ class TestAutomaticClearing:
             temp_file = f.name
 
         try:
-            with patch("ragzoom.cli.GrpcRagzoomClient") as mock_client_cls:
+            with (
+                patch(
+                    "ragzoom.cli.ensure_server_running", return_value="127.0.0.1:50051"
+                ),
+                patch("ragzoom.cli.GrpcRagzoomClient") as mock_client_cls,
+            ):
                 client = MagicMock()
                 client.__enter__.return_value = client
                 client.__exit__.return_value = None
@@ -221,7 +226,12 @@ class TestAutomaticClearing:
             temp_file = f.name
 
         try:
-            with patch("ragzoom.cli.GrpcRagzoomClient") as mock_client_cls:
+            with (
+                patch(
+                    "ragzoom.cli.ensure_server_running", return_value="127.0.0.1:50051"
+                ),
+                patch("ragzoom.cli.GrpcRagzoomClient") as mock_client_cls,
+            ):
                 client = MagicMock()
                 client.__enter__.return_value = client
                 client.__exit__.return_value = None
