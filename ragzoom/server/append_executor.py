@@ -201,8 +201,11 @@ class AppendExecutor:
                 # Temporal documents require client-controlled chunking
                 if self._config.target_chunk_tokens is not None:
                     raise ValueError(
-                        "Temporal documents require client-controlled chunking "
-                        "(target_chunk_tokens=None)"
+                        "Temporal documents require target_chunk_tokens=null in config. "
+                        "This setting preserves one-to-one mapping between input units and "
+                        "leaf nodes, which is required for accurate timestamp-based queries. "
+                        "Set 'target_chunk_tokens: null' in your config file or use "
+                        "'--target-chunk-tokens null' on the CLI."
                     )
                 store._doc_repo.set_document_is_temporal(document_id, is_temporal=True)
         else:
@@ -481,8 +484,11 @@ class AppendExecutor:
                 # Temporal documents require client-controlled chunking
                 if self._config.target_chunk_tokens is not None:
                     raise ValueError(
-                        "Temporal documents require client-controlled chunking "
-                        "(target_chunk_tokens=None)"
+                        "Temporal documents require target_chunk_tokens=null in config. "
+                        "This setting preserves one-to-one mapping between input units and "
+                        "leaf nodes, which is required for accurate timestamp-based queries. "
+                        "Set 'target_chunk_tokens: null' in your config file or use "
+                        "'--target-chunk-tokens null' on the CLI."
                     )
                 store._doc_repo.set_document_is_temporal(document_id, is_temporal=True)
         else:
