@@ -122,12 +122,13 @@ Fix critical bugs discovered during implementation verification that prevent bas
   - Note: Add property for backward compat that forwards to new name with warning
   - **DONE**: Field already renamed in IndexConfig with deprecated property. Fixed `default_config.json` to use new field name so `IndexConfig.load(summarization_guidance="...")` works correctly.
 
-- [ ] Rename field in Document model
+- [x] Rename field in Document model
   - Spec: specs/custom-prompt-config.md § Migration > Field Rename
   - Success: Document.summarization_guidance stores the value
   - Test: `tests/test_models.py::test_document_has_summarization_guidance`
   - Location: `ragzoom/models.py`
   - Note: Coordinate with schema migration (Phase 30)
+  - **DONE**: Renamed field in both `Document` (ragzoom/models.py) and `SqliteDocument` (ragzoom/backends/sqlite_db.py). Added column rename migration in `SqliteDatabaseManager.__post_init__`. Updated `sqlite_repositories.py` to pass `summarization_guidance` when creating documents. Updated `indexing_engine.py` to read `summarization_guidance` from documents. Tests added: `test_sqlite_document_has_summarization_guidance`, `test_sqlite_summarization_guidance_instantiation`. Updated migration tests to use V1 schema fixtures since SQLite backend now creates V2 schema directly.
 
 - [ ] Update prepare_summary_inputs to append instead of replace
   - Spec: specs/custom-prompt-config.md § System Prompt Structure

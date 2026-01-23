@@ -1672,7 +1672,8 @@ class SqliteDocumentRepository:
                 file_path=file_path,
                 embedding_model=embedding_model,
                 summary_model=summary_model,
-                summary_system_prompt=summary_system_prompt,
+                # Use new field name - parameter kept for API compatibility
+                summarization_guidance=summary_system_prompt,
             )
             session.add(doc)
             if own_session:
