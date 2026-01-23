@@ -7,6 +7,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import suppress
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Protocol, TypeVar, cast
 
@@ -150,6 +151,20 @@ def _extract_timestamp(
 T = TypeVar("T")
 
 
+def _unix_to_iso8601(ts: float) -> str:
+    """Convert Unix timestamp (float seconds) to ISO 8601 string with Z suffix.
+
+    Args:
+        ts: Unix timestamp as float seconds since epoch.
+
+    Returns:
+        ISO 8601 formatted string with Z timezone (e.g., "2024-01-21T14:00:00Z").
+    """
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    # Format as ISO 8601 with Z suffix (replace +00:00 with Z for consistency)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _require(value: T | None, *, field: str, node_id: str) -> T:
     if value is None:
         raise ValueError(f"Node '{node_id}' is missing required field `{field}`")
@@ -173,7 +188,17 @@ def _retrieval_to_proto(retrieval_result: Retrievable) -> pb2.RetrieveResponse:
         span_end = int(_require(node.span_end, field="span_end", node_id=node_id))
         height = int(_require(node.height, field="height", node_id=node_id))
 
-        nodes[node_id] = pb2.Node(
+        # Populate temporal fields if present (Unix timestamp → ISO 8601)
+        time_start_attr = getattr(node, "time_start", None)
+        time_end_attr = getattr(node, "time_end", None)
+        time_start_iso = (
+            _unix_to_iso8601(time_start_attr) if time_start_attr is not None else None
+        )
+        time_end_iso = (
+            _unix_to_iso8601(time_end_attr) if time_end_attr is not None else None
+        )
+
+        node_proto = pb2.Node(
             node_id=node_id,
             text=text,
             token_count=token_count,
@@ -184,6 +209,12 @@ def _retrieval_to_proto(retrieval_result: Retrievable) -> pb2.RetrieveResponse:
             right_child_id=node.right_child_id or "",
             height=height,
         )
+        if time_start_iso is not None:
+            node_proto.time_start = time_start_iso
+        if time_end_iso is not None:
+            node_proto.time_end = time_end_iso
+
+        nodes[node_id] = node_proto
 
     return pb2.RetrieveResponse(
         selected_ids=list(retrieval_result.node_ids),
