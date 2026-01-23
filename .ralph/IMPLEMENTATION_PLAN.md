@@ -290,11 +290,12 @@ Auto-start daemon, crash recovery, and proper lifecycle management.
   - Location: `ragzoom/daemon.py`
   - Note: Added `get_daemon_state_dir()` and `ensure_daemon_state_dir()` functions. Supports ~ expansion and relative-to-absolute conversion for RAGZOOM_STATE_DIR.
 
-- [ ] Implement PID file management (read/write/cleanup)
+- [x] Implement PID file management (read/write/cleanup)
   - Spec: specs/daemon-lifecycle.md § Architecture > State Files
   - Success: `daemon.pid` written on start, removed on stop, stale PIDs detected
   - Test: `tests/test_daemon_state.py::TestPidFileManagement` (write, read, cleanup, stale detection)
-  - Location: `ragzoom/daemon.py`
+  - Location: `ragzoom/daemon.py:49-111` (write_pid_file, read_pid_file, remove_pid_file, is_pid_stale)
+  - Note: Added 4 functions - write_pid_file(), read_pid_file(), remove_pid_file(), is_pid_stale(). Uses os.kill(pid, 0) for stale detection with proper ESRCH/EPERM handling. 9 new tests cover all operations.
 
 - [ ] Implement port file management
   - Spec: specs/daemon-lifecycle.md § Architecture > State Files
