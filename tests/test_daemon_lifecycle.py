@@ -14,6 +14,7 @@ import pytest
 class TestDaemonizeFunction:
     """Tests for the daemonize() function."""
 
+    @pytest.mark.slow_threshold(5)
     def test_daemonize_forks_to_background(self, tmp_path: Path) -> None:
         """daemonize() should fork process to background and write flag."""
         log_file = tmp_path / "daemon.log"
@@ -48,6 +49,7 @@ Path("{flag_file}").write_text(f"daemon pid: {{os.getpid()}}")
         content = flag_file.read_text()
         assert content.startswith("daemon pid:")
 
+    @pytest.mark.slow_threshold(5)
     def test_daemonize_writes_pid_file(self, tmp_path: Path) -> None:
         """daemonize() should write daemon PID to state file."""
         log_file = tmp_path / "daemon.log"
@@ -82,6 +84,7 @@ time.sleep(0.3)
         pid = int(pid_content)
         assert pid > 0, "PID should be positive"
 
+    @pytest.mark.slow_threshold(5)
     def test_daemonize_redirects_stdout_stderr(self, tmp_path: Path) -> None:
         """daemonize() should redirect stdout/stderr to log file."""
         log_file = tmp_path / "daemon.log"
@@ -116,6 +119,7 @@ sys.stderr.flush()
         assert "stdout message" in log_content
         assert "stderr message" in log_content
 
+    @pytest.mark.slow_threshold(5)
     def test_daemonize_detaches_from_terminal(self, tmp_path: Path) -> None:
         """daemonize() should create new session (setsid)."""
         log_file = tmp_path / "daemon.log"
@@ -164,6 +168,7 @@ Path("{result_file}").write_text(
             new_sid != original_sid or pid != new_sid
         ), "Daemon should be detached from original session"
 
+    @pytest.mark.slow_threshold(5)
     def test_daemonize_closes_stdin(self, tmp_path: Path) -> None:
         """daemonize() should close stdin (redirect to /dev/null)."""
         log_file = tmp_path / "daemon.log"
@@ -199,6 +204,7 @@ except Exception as e:
         # Reading from /dev/null returns empty string
         assert "read: ''" in content or "error:" in content
 
+    @pytest.mark.slow_threshold(5)
     def test_daemonize_log_file_created_if_missing(self, tmp_path: Path) -> None:
         """daemonize() should create log file and parent dirs if they don't exist."""
         log_file = tmp_path / "subdir" / "daemon.log"
@@ -275,3 +281,147 @@ Path("{marker_file}").write_text("still_running")
                     os.kill(pid, signal.SIGTERM)
                 except OSError:
                     pass  # Already exited
+
+
+class TestSignalHandlers:
+    """Tests for signal handling in the daemon."""
+
+    @pytest.mark.slow_threshold(5)
+    def test_sigterm_graceful_shutdown(self, tmp_path: Path) -> None:
+        """SIGTERM should trigger graceful shutdown and cleanup state files."""
+        from ragzoom.daemon import read_pid_file
+
+        log_file = tmp_path / "daemon.log"
+        pid_file = tmp_path / "daemon.pid"
+        cleanup_marker = tmp_path / "cleanup_ran"
+
+        # Script starts daemon with signal handlers and waits for signal
+        script = f"""
+import os
+import sys
+import time
+sys.path.insert(0, "{Path.cwd()}")
+os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
+from ragzoom.daemon import daemonize, install_shutdown_handlers, remove_pid_file
+from pathlib import Path
+
+daemonize(Path("{log_file}"))
+
+# Install signal handlers with a cleanup callback
+def on_shutdown():
+    Path("{cleanup_marker}").write_text("cleanup_ran")
+
+install_shutdown_handlers(cleanup_callback=on_shutdown)
+
+# Write marker indicating daemon is ready
+Path("{tmp_path / 'ready'}").write_text("ready")
+
+# Wait for signal (up to 10 seconds)
+time.sleep(10)
+"""
+        proc = subprocess.Popen(
+            [sys.executable, "-c", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        proc.wait(timeout=5)  # Parent exits
+
+        # Wait for daemon to be ready
+        ready_file = tmp_path / "ready"
+        for _ in range(20):
+            if ready_file.exists():
+                break
+            time.sleep(0.1)
+        assert ready_file.exists(), "Daemon should signal ready"
+
+        # Get daemon PID and verify it's running
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
+            pid = read_pid_file()
+        assert pid is not None, "PID file should exist"
+
+        # Send SIGTERM
+        os.kill(pid, signal.SIGTERM)
+
+        # Wait for cleanup
+        time.sleep(0.5)
+
+        # Cleanup callback should have run
+        assert cleanup_marker.exists(), "Cleanup callback should have run"
+        assert cleanup_marker.read_text() == "cleanup_ran"
+
+        # PID file should be removed
+        assert not pid_file.exists(), "PID file should be removed on shutdown"
+
+    @pytest.mark.slow_threshold(5)
+    def test_sigint_graceful_shutdown(self, tmp_path: Path) -> None:
+        """SIGINT should trigger graceful shutdown like SIGTERM."""
+        from ragzoom.daemon import read_pid_file
+
+        log_file = tmp_path / "daemon.log"
+        pid_file = tmp_path / "daemon.pid"
+        cleanup_marker = tmp_path / "cleanup_ran"
+
+        script = f"""
+import os
+import sys
+import time
+sys.path.insert(0, "{Path.cwd()}")
+os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
+from ragzoom.daemon import daemonize, install_shutdown_handlers
+from pathlib import Path
+
+daemonize(Path("{log_file}"))
+
+def on_shutdown():
+    Path("{cleanup_marker}").write_text("cleanup_ran")
+
+install_shutdown_handlers(cleanup_callback=on_shutdown)
+Path("{tmp_path / 'ready'}").write_text("ready")
+time.sleep(10)
+"""
+        proc = subprocess.Popen(
+            [sys.executable, "-c", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        proc.wait(timeout=5)
+
+        ready_file = tmp_path / "ready"
+        for _ in range(20):
+            if ready_file.exists():
+                break
+            time.sleep(0.1)
+        assert ready_file.exists()
+
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
+            pid = read_pid_file()
+        assert pid is not None
+
+        # Send SIGINT instead of SIGTERM
+        os.kill(pid, signal.SIGINT)
+
+        time.sleep(0.5)
+
+        assert cleanup_marker.exists(), "Cleanup callback should have run"
+        assert not pid_file.exists(), "PID file should be removed"
+
+    def test_install_shutdown_handlers_registers_signals(self) -> None:
+        """install_shutdown_handlers() should register SIGTERM and SIGINT handlers."""
+        from ragzoom.daemon import install_shutdown_handlers
+
+        original_sigterm = signal.getsignal(signal.SIGTERM)
+        original_sigint = signal.getsignal(signal.SIGINT)
+
+        try:
+            install_shutdown_handlers()
+
+            # Handlers should be installed
+            new_sigterm = signal.getsignal(signal.SIGTERM)
+            new_sigint = signal.getsignal(signal.SIGINT)
+
+            assert new_sigterm != signal.SIG_DFL, "SIGTERM handler should be installed"
+            assert new_sigint != signal.SIG_DFL, "SIGINT handler should be installed"
+        finally:
+            # Restore original handlers
+            signal.signal(signal.SIGTERM, original_sigterm)
+            signal.signal(signal.SIGINT, original_sigint)
