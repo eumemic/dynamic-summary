@@ -234,8 +234,12 @@ class TestTurnBasedBatching:
         # Third append should contain turn 3 content
         assert "Turn 3" in client.appends[2][1]
 
-    def test_state_has_single_entry_for_batch(self, tmp_path: Path) -> None:
-        """State should have one entry for the entire batch."""
+    def test_state_has_one_entry_per_turn(self, tmp_path: Path) -> None:
+        """State should have one entry per turn for turn-level tracking.
+
+        Per timestamped-transcript-sync.md § AppendEntry Tracking:
+        "Each turn's AppendEntry.last_uuid = the last message UUID in that turn."
+        """
         transcript_path = tmp_path / "transcript.jsonl"
         state_path = tmp_path / "state.jsonl"
 
@@ -273,14 +277,15 @@ class TestTurnBasedBatching:
         state = SessionState.load(state_path)
         assert state is not None
 
-        # Should have 1 entry for the batch (with last UUID from all turns)
-        assert len(state.entries) == 1
+        # Should have 2 entries (one per turn)
+        assert len(state.entries) == 2
 
-        # Entry should be for last UUID
-        assert state.entries[0].last_uuid == "b1"
+        # Each entry should be for its turn's last UUID
+        assert state.entries[0].last_uuid == "a1"
+        assert state.entries[1].last_uuid == "b1"
 
-    def test_batch_spans_are_cumulative(self, tmp_path: Path) -> None:
-        """Batch span_end should cover all turns."""
+    def test_turn_spans_are_cumulative(self, tmp_path: Path) -> None:
+        """Each turn's span_end should be cumulative up to that turn."""
         transcript_path = tmp_path / "transcript.jsonl"
         state_path = tmp_path / "state.jsonl"
 
@@ -317,11 +322,15 @@ class TestTurnBasedBatching:
 
         state = SessionState.load(state_path)
         assert state is not None
-        assert len(state.entries) == 1
+        assert len(state.entries) == 2
 
-        # span_end should be cumulative of all turn texts
+        # First entry's span_end should be the length of turn 1 text
+        first_turn_len = len(client.appends[0][1])
+        assert state.entries[0].span_end == first_turn_len
+
+        # Second entry's span_end should be cumulative of all turn texts
         total_len = sum(len(text) for _, text in client.appends)
-        assert state.entries[0].span_end == total_len
+        assert state.entries[1].span_end == total_len
 
 
 class TestToolUsageBatching:

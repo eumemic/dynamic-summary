@@ -511,12 +511,12 @@ Extend the local-first transcript sync to use temporal metadata, with each conve
 
 ### Turn-Level Tracking
 
-- [ ] Track AppendEntries at turn granularity
+- [x] Track AppendEntries at turn granularity
   - Spec: specs/timestamped-transcript-sync.md § AppendEntry Tracking
   - Success: Each conversation turn maps to exactly one leaf node; `AppendEntry.last_uuid` = last UUID in turn
-  - Test: `test_each_turn_creates_one_leaf_node`
-  - Location: `ragzoom/claude_memory/transcript_sync.py`
-  - Note: Current implementation tracks at segment boundaries, not turn boundaries
+  - Test: `tests/test_turn_level_tracking.py::TestTurnLevelAppendEntryTracking` (4 tests)
+  - Location: `ragzoom/claude_memory/transcript_sync.py:1228-1291` (execute_sync turn-level entry tracking)
+  - Note: Refactored to record one AppendEntry per turn instead of one for entire batch; span_end calculated cumulatively per turn
 
 - [ ] Revert detection at turn granularity
   - Spec: specs/timestamped-transcript-sync.md § AppendEntry Tracking
