@@ -94,11 +94,28 @@ Allow users to customize the system prompt used during summary generation for do
 
 ### Phase 14: CLI & Telemetry
 
-- [ ] Add `--summary-system-prompt` CLI option to index command
+- [x] Add `--summary-system-prompt` CLI option to index command
   - Spec: specs/custom-prompt-config.md § CLI Override
-  - Success: `ragzoom index --summary-system-prompt "..." doc.txt` uses custom prompt
+  - Success: CLI passes value to gRPC client; server-side integration requires Phase 14b
   - Test: `tests/test_cli.py::test_index_with_summary_system_prompt`
-  - Location: `ragzoom/cli.py` (index command)
+  - Location: `ragzoom/cli.py` (index command), `proto/dynamic_summary.proto`, `ragzoom/client/grpc_client.py`
+  - Note: Added CLI option, protobuf field, and gRPC client support. Server-side servicer doesn't yet read/apply the field.
+
+### Phase 14b: Server-Side Custom Prompt Integration
+
+- [ ] Update servicer to read and store summary_system_prompt per-document
+  - Spec: specs/custom-prompt-config.md § CLI Override
+  - Success: Servicer reads `summary_system_prompt` from request and stores it for use during summarization
+  - Test: `tests/test_servicer.py::test_servicer_stores_summary_system_prompt`
+  - Location: `ragzoom/server/servicers.py` (AppendText), document schema
+
+- [ ] Thread custom prompt through worker summarization
+  - Spec: specs/custom-prompt-config.md § Implementation
+  - Success: Workers read document's custom prompt and use it for summarization
+  - Test: Integration test verifying custom prompt is used in actual LLM calls
+  - Location: `ragzoom/server/indexing_engine.py`, `ragzoom/services/summarizer.py`
+
+### Phase 14c: Telemetry
 
 - [ ] Update telemetry to capture actual prompt used
   - Spec: specs/custom-prompt-config.md § Telemetry
