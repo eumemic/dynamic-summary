@@ -119,17 +119,15 @@ class AppendTextResponse:
 class BatchAppendTextRequest:
     DESCRIPTOR: ClassVar[Descriptor]
     document_id: str
-    units: Sequence[bytes]
+    units: Sequence[AppendUnit]
     collect_telemetry: bool
-    timestamps: Sequence[Timestamp]
 
     def __init__(
         self,
         *,
         document_id: str,
-        units: Iterable[bytes] = ...,
+        units: Iterable[AppendUnit] = ...,
         collect_telemetry: bool = ...,
-        timestamps: Iterable[Timestamp] = ...,
     ) -> None: ...
 
 class BatchAppendTextResponse:
