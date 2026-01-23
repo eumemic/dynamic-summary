@@ -328,11 +328,12 @@ Auto-start daemon, crash recovery, and proper lifecycle management.
 
 ### Phase 24: Health Check & Auto-Start
 
-- [ ] Implement health check (PID + gRPC probe)
+- [x] Implement health check (PID + gRPC probe)
   - Spec: specs/daemon-lifecycle.md § Architecture > Health Check
   - Success: `is_server_healthy()` returns True only if process running AND gRPC responds
-  - Test: `tests/test_daemon_health.py::TestHealthCheck` (healthy, stale PID, unresponsive)
-  - Location: `ragzoom/daemon.py`
+  - Test: `tests/test_daemon_health.py::TestIsServerHealthy`, `tests/test_daemon_health.py::TestGrpcHealthCheck`, `tests/test_daemon_health.py::TestGetServerAddress`
+  - Location: `ragzoom/daemon.py:292-378`
+  - Note: Added three functions: `get_server_address()` reads port from port file and returns "127.0.0.1:port", `grpc_health_check(address, timeout)` makes a lightweight GetDocument call and treats NOT_FOUND as healthy (server responding), `is_server_healthy()` combines PID check + port file check + gRPC probe. 12 tests covering all edge cases.
 
 - [ ] Implement crash recovery logic
   - Spec: specs/daemon-lifecycle.md § Architecture > Crash Recovery

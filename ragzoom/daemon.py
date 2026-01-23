@@ -287,3 +287,92 @@ def install_shutdown_handlers(
 
     signal.signal(signal.SIGTERM, shutdown_handler)
     signal.signal(signal.SIGINT, shutdown_handler)
+
+
+def get_server_address() -> str | None:
+    """Get the server address from the port file.
+
+    Returns:
+        Server address in "host:port" format, or None if:
+        - Port file doesn't exist
+        - Port file contents are invalid
+    """
+    port = read_port_file()
+    if port is None:
+        return None
+    return f"127.0.0.1:{port}"
+
+
+def grpc_health_check(address: str, timeout: float = 2.0) -> bool:
+    """Check if a gRPC server is responsive at the given address.
+
+    Performs a lightweight gRPC call to verify the server is accepting
+    connections and responding to requests.
+
+    Args:
+        address: Server address in "host:port" format.
+        timeout: Maximum time to wait for response in seconds.
+
+    Returns:
+        True if server responds successfully, False otherwise.
+    """
+    import grpc
+
+    from ragzoom.rpc import dynamic_summary_pb2 as pb2
+    from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
+
+    try:
+        # Create a channel and make a lightweight call
+        channel = grpc.insecure_channel(address)
+        stub = pb2_grpc.WorkerServiceStub(channel)
+
+        # Use GetDocument with empty ID - fast, read-only, minimal side effects
+        request = pb2.GetDocumentRequest(document_id="")
+        # The call will fail with NOT_FOUND but that proves the server is alive
+        try:
+            stub.GetDocument(request, timeout=timeout)
+        except grpc.RpcError as rpc_error:
+            # NOT_FOUND means server is responding - that's healthy!
+            code = rpc_error.code()
+            if code == grpc.StatusCode.NOT_FOUND:
+                return True
+            # UNAVAILABLE or DEADLINE_EXCEEDED means server is not healthy
+            return False
+        finally:
+            channel.close()
+
+        # If we got here without exception, server is healthy
+        return True
+    except Exception:
+        # Any other exception means unhealthy
+        return False
+
+
+def is_server_healthy() -> bool:
+    """Check if the daemon is running and responsive.
+
+    Performs a two-phase health check:
+    1. Verify PID file exists and process is running
+    2. Verify gRPC server responds to requests
+
+    Both checks must pass for the server to be considered healthy.
+
+    Returns:
+        True only if process is running AND gRPC responds.
+    """
+    # Phase 1: Check PID file
+    pid = read_pid_file()
+    if pid is None:
+        return False
+
+    # Phase 2: Check if process is still running
+    if is_pid_stale(pid):
+        return False
+
+    # Phase 3: Check if we have a port file
+    address = get_server_address()
+    if address is None:
+        return False
+
+    # Phase 4: Check if gRPC is responsive
+    return grpc_health_check(address)
