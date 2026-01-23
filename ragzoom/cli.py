@@ -831,6 +831,18 @@ def validate(
     help="End of document window (character position, default: document end)",
 )
 @click.option(
+    "--time-start",
+    type=str,
+    default=None,
+    help="Start of time window (ISO 8601 with timezone, e.g., 2024-01-21T14:00:00Z)",
+)
+@click.option(
+    "--time-end",
+    type=str,
+    default=None,
+    help="End of time window (ISO 8601 with timezone, e.g., 2024-01-21T15:00:00Z)",
+)
+@click.option(
     "--debug",
     is_flag=True,
     help="Show debug information including retrieval statistics",
@@ -869,6 +881,8 @@ def query(
     recent_verbatim_token_budget: int | None,
     span_start: int,
     span_end: int | None,
+    time_start: str | None,
+    time_end: str | None,
     debug: bool,
     viz_width: int | None,
     viz_coords: str,
@@ -926,6 +940,8 @@ def query(
                 profile=profile,
                 span_start=span_start,
                 span_end=span_end,
+                time_start=time_start,
+                time_end=time_end,
             )
 
         query_result = response.query_result
