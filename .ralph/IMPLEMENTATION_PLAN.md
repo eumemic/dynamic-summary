@@ -237,11 +237,11 @@ Add BM25 lexical search alongside vector search with Reciprocal Rank Fusion.
 
 ### Phase 20: Configuration
 
-- [ ] Add `use_bm25` field to QueryConfig
+- [x] Add `use_bm25` field to QueryConfig
   - Spec: specs/bm25-hybrid-search.md § Configuration > QueryConfig Field
   - Success: `QueryConfig(use_bm25=True)` is default; `False` disables BM25
   - Test: `tests/test_query_config.py::test_query_config_has_use_bm25`
-  - Location: `ragzoom/config.py` (QueryConfig dataclass)
+  - Location: `ragzoom/config.py:529` (QueryConfig dataclass)
 
 - [ ] Add `bm25_weight` field to QueryConfig
   - Spec: specs/bm25-hybrid-search.md § Configuration > QueryConfig Field
