@@ -502,12 +502,12 @@ Extend the local-first transcript sync to use temporal metadata, with each conve
   - Test: `tests/test_turn_to_append_unit.py::TestTurnsToAppendUnits` (6 tests)
   - Location: `ragzoom/claude_memory/transcript_sync.py:209-238` (`turns_to_append_units` function)
 
-- [ ] Use `batch_append()` instead of individual `append()` calls
+- [x] Use `batch_append()` instead of individual `append()` calls
   - Spec: specs/timestamped-transcript-sync.md § Batch Append with AppendUnit
   - Success: `execute_sync()` calls `batch_append()` with turn texts and timestamps
-  - Test: `test_execute_sync_uses_batch_append`
-  - Location: `ragzoom/claude_memory/transcript_sync.py` (execute_sync function)
-  - Note: Current implementation uses individual `append()` calls
+  - Test: `tests/test_execute_sync_batch_append.py::TestExecuteSyncUsesBatchAppend` (7 tests)
+  - Location: `ragzoom/claude_memory/transcript_sync.py:1184-1241` (execute_sync function)
+  - Note: Refactored from segment-based to turn-based processing with single batch_append call
 
 ### Turn-Level Tracking
 

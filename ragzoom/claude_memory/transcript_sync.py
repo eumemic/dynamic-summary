@@ -51,9 +51,53 @@ class Turn:
     """ISO 8601 timestamp of the last message in the turn."""
 
 
-def _is_user_prompt(record: dict[str, object]) -> bool:
-    """Check if record is a user prompt (not a tool result)."""
-    return record.get("type") == "user" and "toolUseResult" not in record
+def _is_command_output_or_expansion(
+    record: dict[str, object], records_by_uuid: dict[str, dict[str, object]]
+) -> bool:
+    """Check if record is command output or expansion (part of a command's turn).
+
+    Command output: User message with <local-command-stdout>
+    Command expansion: User message whose parent is a command invocation
+    """
+    if record.get("type") != "user":
+        return False
+
+    message = record.get("message")
+    if not isinstance(message, dict):
+        return False
+
+    content = message.get("content")
+    if not content:
+        return False
+
+    # Check string content for command output markers
+    if isinstance(content, str):
+        if "<local-command-stdout>" in content:
+            return True
+
+    # Check if parent is a command invocation (command expansion case)
+    parent_uuid = record.get("parentUuid")
+    if isinstance(parent_uuid, str):
+        parent_record = records_by_uuid.get(parent_uuid)
+        if parent_record is not None:
+            if _is_command_invocation(parent_record) is not None:
+                return True
+
+    return False
+
+
+def _is_user_prompt(
+    record: dict[str, object], records_by_uuid: dict[str, dict[str, object]]
+) -> bool:
+    """Check if record is a user prompt (not a tool result or command output)."""
+    if record.get("type") != "user":
+        return False
+    if "toolUseResult" in record:
+        return False
+    # Command output/expansion messages should not start a new turn
+    if _is_command_output_or_expansion(record, records_by_uuid):
+        return False
+    return True
 
 
 def _should_skip_record(record: dict[str, object]) -> bool:
@@ -104,7 +148,7 @@ def group_into_turns(
         if _should_skip_record(record):
             continue
 
-        if _is_user_prompt(record):
+        if _is_user_prompt(record, records_by_uuid):
             # Finish current turn if it has content
             if current_turn_uuids:
                 turns.append(_build_turn(current_turn_uuids, records_by_uuid))
@@ -1181,86 +1225,64 @@ def execute_sync(
             # Disjoint branches - clear the state entries
             state.entries = []
 
-    # Transcribe and append UUIDs, batching per compaction segment
+    # Group UUIDs into turns and batch append with temporal metadata
     appended_uuids: list[str] = []
     new_span_end = 0
     if plan.uuids_to_transcribe:
-        append_method = getattr(client, "append")
-
         # Build records map once for all UUIDs
         records_by_uuid = build_records_map(
             transcript_path, set(plan.uuids_to_transcribe)
         )
 
-        # Split UUIDs into segments at compaction boundaries
-        # A segment ends when the NEXT uuid has parentUuid=None (system message)
-        # which indicates a compaction boundary
-        segments: list[list[str]] = []
-        current_segment: list[str] = []
+        # Group UUIDs into conversation turns
+        turns = group_into_turns(plan.uuids_to_transcribe, records_by_uuid)
 
-        for uuid in plan.uuids_to_transcribe:
-            record = records_by_uuid.get(uuid)
+        if turns:
+            # Convert turns to AppendUnits with timestamps
+            append_units = turns_to_append_units(turns, records_by_uuid)
 
-            # Skip UUIDs not in records map (compaction summaries are filtered out)
-            if record is None:
-                continue
+            # Pair units with turns, keeping only non-empty units
+            units_with_turns = [
+                (unit, turn)
+                for unit, turn in zip(append_units, turns)
+                if unit.text.strip()
+            ]
 
-            # Check if this starts a new segment (system message with no parent)
-            parent_uuid = record.get("parentUuid")
-            if parent_uuid is None and current_segment:
-                # This UUID starts a new segment - save the current one
-                segments.append(current_segment)
-                current_segment = []
+            if units_with_turns:
+                non_empty_units = [unit for unit, _ in units_with_turns]
 
-            current_segment.append(uuid)
+                # Call batch_append with all units at once
+                batch_append_method = getattr(client, "batch_append")
+                result = batch_append_method(document_id, non_empty_units)
 
-        # Don't forget the last segment
-        if current_segment:
-            segments.append(current_segment)
+                # Track all UUIDs from turns that produced content
+                for _, turn in units_with_turns:
+                    # Filter out tool results from appended UUIDs
+                    for uuid in turn.uuids:
+                        record = records_by_uuid.get(uuid)
+                        if record is None:
+                            continue
+                        # Skip tool use results
+                        if record.get("type") == "user" and "toolUseResult" in record:
+                            continue
+                        appended_uuids.append(uuid)
 
-        # Append each segment
-        for segment_uuids in segments:
-            # Use batching transcription for tool consolidation
-            combined_text = transcribe_uuids_from_map(segment_uuids, records_by_uuid)
+                # Record the final span_end from the batch append result
+                new_span_end = getattr(result, "span_end", 0)
 
-            if combined_text:
-                # Extract timestamps from the segment for temporal indexing
-                segment_timestamp = _extract_segment_timestamps(
-                    segment_uuids, records_by_uuid
-                )
-                result = append_method(
-                    document_id, combined_text, timestamp=segment_timestamp
-                )
-                # Track the last uuid that produced content
-                segment_appended_uuids = [
-                    u
-                    for u in segment_uuids
-                    if u in records_by_uuid
-                    and not (
-                        records_by_uuid[u].get("type") == "user"
-                        and "toolUseResult" in records_by_uuid[u]
-                    )
-                ]
-
-                if segment_appended_uuids:
-                    # Use the actual span_end from the append result
-                    current_span_end = getattr(result, "span_end", 0)
-
-                    # Record entry for this segment with last UUID
+                # Record a single entry for the batch with the last UUID
+                # (appended_uuids is non-empty because each turn starts with a
+                # user message, and only tool result messages are filtered out)
+                if appended_uuids:
                     append_log.append(
                         AppendEntry(
-                            last_uuid=segment_appended_uuids[-1],
-                            span_end=current_span_end,
+                            last_uuid=appended_uuids[-1],
+                            span_end=new_span_end,
                         )
                     )
 
-                    appended_uuids.extend(segment_appended_uuids)
-                    new_span_end = current_span_end
-
-        if not appended_uuids:
-            last_entry = append_log.last_entry()
-            new_span_end = last_entry.span_end if last_entry else 0
-    else:
+    # Fall back to existing span_end if nothing was appended
+    if not appended_uuids:
         last_entry = append_log.last_entry()
         new_span_end = last_entry.span_end if last_entry else 0
 
