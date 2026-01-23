@@ -1,0 +1,51 @@
+# Memzoom Plugin Configuration Template
+# ======================================
+#
+# Copy this file to your project's .claude/memzoom.local.yaml to customize
+# the memzoom plugin behavior. All settings are optional - defaults shown below.
+#
+# To use: cp memzoom.local.yaml.template .claude/memzoom.local.yaml
+
+# Auto-sync Settings
+# ------------------
+# Controls automatic transcript syncing to RagZoom for memory indexing.
+
+# Enable automatic sync on session start (default: true)
+# When enabled, syncs session transcript when Claude Code starts.
+auto_sync: true
+
+# Background sync interval in minutes (default: 5)
+# Set to 0 to disable background syncing (manual sync only via /memory-sync).
+# Lower values provide more current memory but consume more resources.
+sync_interval_minutes: 5
+
+# Server Settings
+# ---------------
+# Configure connection to the RagZoom daemon.
+
+# gRPC server address (default: null, uses localhost:50051)
+# The daemon auto-starts when needed, so this rarely requires changes.
+# Can be overridden via RAGZOOM_SERVER_ADDRESS environment variable.
+server_address: null
+
+# Query Settings
+# --------------
+# Customize memory retrieval behavior.
+
+# Default token budget for memory queries (default: 2000)
+# Higher values return more context but increase query time.
+token_budget: 2000
+
+# Enable BM25 hybrid search for improved retrieval (default: true)
+# Combines semantic and lexical search for better recall.
+use_bm25: true
+
+# Environment Variable Overrides
+# ------------------------------
+# These environment variables override the settings above:
+#
+#   RAGZOOM_SERVER_ADDRESS   - Override server_address
+#   MEMZOOM_AUTO_SYNC        - Override auto_sync (true/false)
+#
+# Example:
+#   export MEMZOOM_AUTO_SYNC=false  # Disable auto-sync for current session
