@@ -403,11 +403,12 @@ Complete the Claude Code plugin with commands, skills, and proper structure.
   - Location: `.mcp.json` (repo root)
   - Note: Uses `bash scripts/start-mcp-server` to ensure proper environment setup (gRPC address discovery, user ID). Direct `python -m` would miss environment configuration.
 
-- [ ] Create config file template
+- [x] Create config file template
   - Spec: specs/memzoom-plugin.md § Configuration > Plugin Settings
   - Success: `.claude/memzoom.local.yaml` template with documented options
   - Test: Manual verification of config template
   - Location: `ragzoom/plugin/memzoom.local.yaml.template`
+  - Note: Template includes all spec settings plus additional query settings (token_budget, use_bm25) from other features. Extensive inline documentation.
 
 ### Phase 27: Commands
 
