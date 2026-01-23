@@ -670,3 +670,101 @@ def test_server_start_without_daemon_flag(runner: CliRunner) -> None:
 
         # Server should still be started
         mock_run_server.assert_called_once()
+
+
+def test_server_stop_command(runner: CliRunner) -> None:
+    """Test that `server stop` sends SIGTERM and cleans up state.
+
+    Spec: specs/daemon-lifecycle.md § CLI Commands > ragzoom server stop
+    Success: Sends SIGTERM, waits for graceful shutdown, cleans up state files
+    """
+    with (
+        patch("ragzoom.cli.read_pid_file", return_value=12345),
+        patch(
+            "ragzoom.cli.is_pid_stale", side_effect=[False, False, True]
+        ) as mock_stale,
+        patch("ragzoom.cli.os.kill") as mock_kill,
+        patch("ragzoom.cli.cleanup_stale_state") as mock_cleanup,
+        patch("ragzoom.cli.time.sleep"),
+    ):
+        result = runner.invoke(cli, ["server", "stop"])
+
+        # Command should succeed
+        assert result.exit_code == 0
+
+        # Should send SIGTERM to the process
+        import signal
+
+        mock_kill.assert_called_once_with(12345, signal.SIGTERM)
+
+        # Should check if process is dead (stale) repeatedly
+        assert mock_stale.call_count >= 2
+
+        # Should clean up state files
+        mock_cleanup.assert_called_once()
+
+        # Should print success message
+        assert "Stopped" in result.output or "stopped" in result.output
+
+
+def test_server_stop_no_daemon_running(runner: CliRunner) -> None:
+    """Test that `server stop` handles no daemon running gracefully."""
+    with patch("ragzoom.cli.read_pid_file", return_value=None):
+        result = runner.invoke(cli, ["server", "stop"])
+
+        # Command should still succeed (no-op)
+        assert result.exit_code == 0
+
+        # Should indicate no daemon is running
+        assert (
+            "not running" in result.output.lower()
+            or "no daemon" in result.output.lower()
+        )
+
+
+def test_server_stop_stale_pid(runner: CliRunner) -> None:
+    """Test that `server stop` handles stale PID (process already dead)."""
+    with (
+        patch("ragzoom.cli.read_pid_file", return_value=12345),
+        patch("ragzoom.cli.is_pid_stale", return_value=True),
+        patch("ragzoom.cli.cleanup_stale_state") as mock_cleanup,
+    ):
+        result = runner.invoke(cli, ["server", "stop"])
+
+        # Command should succeed (cleanup only)
+        assert result.exit_code == 0
+
+        # Should clean up stale state files
+        mock_cleanup.assert_called_once()
+
+        # Should indicate process was already dead
+        assert (
+            "not running" in result.output.lower() or "stale" in result.output.lower()
+        )
+
+
+def test_server_stop_timeout(runner: CliRunner) -> None:
+    """Test that `server stop` handles timeout waiting for process to die."""
+    with (
+        patch("ragzoom.cli.read_pid_file", return_value=12345),
+        patch("ragzoom.cli.is_pid_stale", return_value=False),  # Never dies
+        patch("ragzoom.cli.os.kill") as mock_kill,
+        patch("ragzoom.cli.cleanup_stale_state") as mock_cleanup,
+        patch("ragzoom.cli.time.sleep"),
+        patch(
+            "ragzoom.cli.time.monotonic",
+            side_effect=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+        ),
+    ):
+        result = runner.invoke(cli, ["server", "stop"])
+
+        # Should send SIGTERM
+        import signal
+
+        mock_kill.assert_called_with(12345, signal.SIGTERM)
+
+        # Should still clean up state files even on timeout
+        mock_cleanup.assert_called_once()
+
+        # Should indicate timeout
+        assert "timeout" in result.output.lower() or "force" in result.output.lower()
