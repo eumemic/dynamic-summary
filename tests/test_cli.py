@@ -410,3 +410,13 @@ def test_status_succeeds_without_api_key(runner: CliRunner) -> None:
     with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=True):
         result = runner.invoke(cli, ["status"])
     assert result.exit_code == 0
+
+
+def test_set_session_pid_command(runner: CliRunner) -> None:
+    """Test that set-session-pid CLI command calls the underlying function."""
+    with patch("ragzoom.cli.set_session_pid") as mock_set_pid:
+        result = runner.invoke(cli, ["set-session-pid", "my-session-123", "42"])
+        assert result.exit_code == 0
+        mock_set_pid.assert_called_once_with("my-session-123", 42)
+        assert "my-session-123" in result.output
+        assert "42" in result.output
