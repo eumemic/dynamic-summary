@@ -64,11 +64,21 @@ Time windows map to span windows:
 
 **Rationale**: This design reuses ALL existing span query logic (coverage builder, edge-max calculations, vector filtering). Time is metadata that guides span selection, not a parallel query system.
 
-### 5. Validation Rules
+### 5. Client-Controlled Chunking Requirement
+
+Temporal documents REQUIRE client-controlled chunking (`target_chunk_tokens=None`).
+
+**Rationale**: Timestamps are semantic metadata the client controls. If the server splits a chunk, it cannot meaningfully assign timestamps to the fragments—the client provided one timestamp for one semantic unit, not timestamps for arbitrary byte ranges within it.
+
+**Validation**: On first append with timestamps, if `target_chunk_tokens` is set (not None), reject with error:
+> "Temporal documents require client-controlled chunking (target_chunk_tokens=None)"
+
+### 6. Validation Rules
 
 **At index time:**
 - Temporal document + missing timestamps → Error
 - Non-temporal document + provided timestamps → Error
+- Timestamps provided + `target_chunk_tokens` set → Error (see §5)
 - `time_end < time_start` on any leaf → Error
 - Inner node timestamps MUST match children (enforced by tree builder)
 
@@ -83,6 +93,8 @@ Time windows map to span windows:
 ### Python Client API
 
 ```python
+from ragzoom import AppendUnit
+
 # Single append with timestamp
 ragzoom.append(
     document_id="session_abc",
@@ -90,18 +102,19 @@ ragzoom.append(
     timestamp="2024-01-21T14:30:00Z",  # Optional, single timestamp or (start, end) tuple
 )
 
-# Batch append with timestamps (ISO 8601 - any valid format with timezone)
+# Batch append with AppendUnit (self-contained text + timestamps)
 ragzoom.batch_append(
     document_id="session_abc",
     units=[
-        "User said hello",
-        "Assistant responded",
-    ],
-    timestamps=[
-        "2024-01-21T14:30:00Z",           # Single timestamp (start = end)
-        ("2024-01-21T14:30:05Z", "2024-01-21T14:30:12Z"),  # Range (start, end)
+        AppendUnit(text="User said hello", time_start="2024-01-21T14:30:00Z", time_end="2024-01-21T14:30:00Z"),
+        AppendUnit(text="Assistant responded", time_start="2024-01-21T14:30:05Z", time_end="2024-01-21T14:30:12Z"),
     ],
 )
+
+# AppendUnit validation: both time_start and time_end must be provided, or neither
+# - AppendUnit(text="hello")  # OK: non-temporal
+# - AppendUnit(text="hello", time_start="...", time_end="...")  # OK: temporal
+# - AppendUnit(text="hello", time_start="...")  # ERROR: must provide both or neither
 
 # Document temporality is INFERRED from first append:
 # - First append WITH timestamps → document becomes temporal (requires timestamps on all future appends)
@@ -114,6 +127,21 @@ ragzoom.query(
     time_start="2024-01-21T14:00:00Z",
     time_end="2024-01-21T15:00:00Z",
 )
+```
+
+**AppendUnit dataclass:**
+```python
+@dataclass
+class AppendUnit:
+    text: str
+    time_start: str | None = None  # ISO 8601 with timezone
+    time_end: str | None = None    # ISO 8601 with timezone
+
+    def __post_init__(self):
+        has_start = self.time_start is not None
+        has_end = self.time_end is not None
+        if has_start != has_end:
+            raise ValueError("AppendUnit: must provide both time_start and time_end, or neither")
 ```
 
 ### gRPC Protocol
@@ -133,9 +161,14 @@ Extend `BatchAppendTextRequest`:
 ```protobuf
 message BatchAppendTextRequest {
   string document_id = 1;
-  repeated bytes units = 2;
+  repeated AppendUnit units = 2;  // Self-contained units with optional timestamps
   bool collect_telemetry = 3;
-  repeated Timestamp timestamps = 4;  // Optional, parallel to units (must match length if provided)
+}
+
+message AppendUnit {
+  bytes content = 1;  // Text content
+  optional string time_start = 2;  // ISO 8601 with timezone, both or neither must be set
+  optional string time_end = 3;    // ISO 8601 with timezone, both or neither must be set
 }
 
 message Timestamp {
@@ -143,6 +176,8 @@ message Timestamp {
   optional string time_end = 2;  // If omitted, time_end = time_start
 }
 ```
+
+**Note:** `Timestamp` message retained for single `append()` requests. `AppendUnit` used for `batch_append()`.
 
 Extend `ExecuteQueryRequest`:
 ```protobuf
@@ -273,6 +308,7 @@ def normalize_metadata_from_dict(meta: dict[str, object]) -> MetaDict:
    - Time query on non-temporal document
    - Temporal append without timestamps
    - Non-temporal append with timestamps
+   - Timestamps with fixed chunking (`target_chunk_tokens` set)
 
 ## Open Questions
 
@@ -292,6 +328,10 @@ None. All design decisions resolved.
 8. ✅ Attempting time query on non-temporal document raises clear error
 9. ✅ Vector metadata includes `time_start` and `time_end` fields
 10. ✅ Accept any valid ISO 8601 format with timezone, reject timestamps without timezone
+11. ✅ Temporal documents require client-controlled chunking (`target_chunk_tokens=None`)
+12. ⬚ `batch_append()` accepts `AppendUnit` objects (text + optional timestamps bundled together)
+13. ⬚ `AppendUnit` validation: must provide both `time_start` and `time_end`, or neither
+14. ⬚ CLI `query` command exposes `--time-start` and `--time-end` parameters
 
 ## Non-Goals
 
