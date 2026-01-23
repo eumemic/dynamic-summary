@@ -381,12 +381,12 @@ Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunk
 
 ### AppendUnit API (Medium Priority)
 
-- [ ] Implement `AppendUnit` dataclass
+- [x] Implement `AppendUnit` dataclass
   - Spec: specs/temporal-metadata.md § API Changes
   - Success: `AppendUnit(text="...", time_start="...", time_end="...")` bundles text with timestamps
-  - Test: `test_append_unit_dataclass`, `test_append_unit_validates_timestamps`
-  - Location: New in `ragzoom/wrapper.py`, export from `ragzoom/__init__.py`
-  - Note: Validation rule - both timestamps or neither (not just one)
+  - Test: `tests/test_append_unit.py` (8 tests covering dataclass fields, validation, is_temporal property)
+  - Location: `ragzoom/wrapper.py:36-57`, exported from `ragzoom/__init__.py`
+  - Note: Validation rule - both timestamps or neither (not just one); includes `is_temporal` property
 
 - [ ] Add `AppendUnit` proto message to gRPC protocol
   - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol

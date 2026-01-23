@@ -12,7 +12,7 @@ from ragzoom.exceptions import (
 )
 from ragzoom.retrieve import Retriever
 from ragzoom.store import create_store, create_store_with_docker
-from ragzoom.wrapper import AsyncRagZoom, QueryResponse, RagZoom
+from ragzoom.wrapper import AppendUnit, AsyncRagZoom, QueryResponse, RagZoom
 
 __all__ = [
     "IndexConfig",
@@ -24,6 +24,7 @@ __all__ = [
     "create_store_with_docker",
     "RagZoom",
     "AsyncRagZoom",
+    "AppendUnit",
     "QueryResponse",
     "NodeNotFoundError",
     "DocumentNotFoundError",
