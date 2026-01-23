@@ -426,11 +426,12 @@ Complete the Claude Code plugin with commands, skills, and proper structure.
   - Location: `ragzoom/plugin/.claude-plugin/commands/memory-sync.md`
   - Note: Command provides step-by-step instructions for locating session transcript and calling `ragzoom sync-claude-code-transcript`
 
-- [ ] Implement /memory-zoom command
+- [x] Implement /memory-zoom command
   - Spec: specs/memzoom-plugin.md § Commands > /memory-zoom
   - Success: `/memory-zoom 2` zooms into tiling span from previous results
   - Test: Manual testing of /memory-zoom command
   - Location: `ragzoom/plugin/.claude-plugin/commands/memory-zoom.md`
+  - Note: Command supports numeric index (zoom into span [N]), dotted notation for nested zoom (N.M), explicit time ranges, and handles non-temporal documents with span-based zoom.
 
 ### Phase 28: Skill
 
