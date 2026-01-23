@@ -1,5 +1,5 @@
 ---
-status: READY
+status: COMPLETE
 ---
 
 # BM25 Hybrid Search (Contextual Retrieval)
