@@ -177,6 +177,7 @@ class Retriever:
         query_embedding: list[float] | None = None,
         time_start: str | None = None,
         time_end: str | None = None,
+        use_bm25: bool | None = None,
     ) -> RetrievalResult:
         """Async retrieval method with MMR diversity.
 
@@ -195,6 +196,9 @@ class Retriever:
                 documents only. Will be mapped to span_start via leaf lookup.
             time_end: End of time window (ISO 8601 with timezone). For temporal
                 documents only. Will be mapped to span_end via leaf lookup.
+            use_bm25: Enable BM25 hybrid search. If None (default), uses the value
+                from QueryConfig.use_bm25. When True, combines vector and BM25
+                rankings via Reciprocal Rank Fusion.
 
         Supports three modes:
         1. Budget only: Calculate conservative num_seeds to guarantee no overflow
@@ -618,6 +622,7 @@ class Retriever:
         span_end: int | None = None,
         time_start: str | None = None,
         time_end: str | None = None,
+        use_bm25: bool | None = None,
     ) -> RetrievalResult:
         """Synchronous wrapper for retrieve_async.
 
@@ -631,6 +636,7 @@ class Retriever:
             span_end: End of document window (default: document end)
             time_start: Start of time window (ISO 8601 with timezone)
             time_end: End of time window (ISO 8601 with timezone)
+            use_bm25: Enable BM25 hybrid search. If None, uses QueryConfig.use_bm25.
 
         Creates a new event loop if needed to run the async version.
         For async contexts, use retrieve_async directly.
@@ -638,15 +644,16 @@ class Retriever:
         # jscpd:ignore-end
         return asyncio.run(
             self.retrieve_async(
-                query,
-                num_seeds,
-                budget_tokens,
-                document_id,
-                recent_verbatim_budget,
+                query=query,
+                num_seeds=num_seeds,
+                budget_tokens=budget_tokens,
+                document_id=document_id,
+                recent_verbatim_budget=recent_verbatim_budget,
                 span_start=span_start,
                 span_end=span_end,
                 time_start=time_start,
                 time_end=time_end,
+                use_bm25=use_bm25,
             )
         )
 
@@ -713,6 +720,7 @@ class Retriever:
         span_end: int | None = None,
         time_start: str | None = None,
         time_end: str | None = None,
+        use_bm25: bool | None = None,
     ) -> tuple[RetrievalResult, QueryTelemetry]:
         """Async retrieval with detailed telemetry collection.
 
@@ -726,6 +734,7 @@ class Retriever:
             span_end: End of document window (default: document end)
             time_start: Start of time window (ISO 8601 with timezone)
             time_end: End of time window (ISO 8601 with timezone)
+            use_bm25: Enable BM25 hybrid search. If None, uses QueryConfig.use_bm25.
 
         Returns:
             Tuple of (RetrievalResult, QueryTelemetry) with detailed timing info
@@ -744,6 +753,7 @@ class Retriever:
             span_end=span_end,
             time_start=time_start,
             time_end=time_end,
+            use_bm25=use_bm25,
         )
         telemetry = collector.finalize()
         if telemetry is None:
