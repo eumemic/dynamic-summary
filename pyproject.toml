@@ -30,6 +30,7 @@ dependencies = [
     "protobuf>=4.25.0",
     "mcp>=1.0.0",
     "claude-transcriber==0.2.1",
+    "rank_bm25>=0.2.2",
 ]
 license = "MIT"
 classifiers = [
@@ -137,6 +138,11 @@ ignore_missing_imports = true
 # claude-transcriber doesn't have type stubs
 [[tool.mypy.overrides]]
 module = "claude_transcriber"
+ignore_missing_imports = true
+
+# rank_bm25 doesn't have type stubs
+[[tool.mypy.overrides]]
+module = "rank_bm25"
 ignore_missing_imports = true
 
 

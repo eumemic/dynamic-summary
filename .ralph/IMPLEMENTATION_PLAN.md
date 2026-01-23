@@ -205,11 +205,12 @@ Add BM25 lexical search alongside vector search with Reciprocal Rank Fusion.
 
 ### Phase 18: Dependencies & Core Classes
 
-- [ ] Add `rank_bm25>=0.2.2` dependency
+- [x] Add `rank_bm25>=0.2.2` dependency
   - Spec: specs/bm25-hybrid-search.md § Dependencies
   - Success: `rank_bm25` listed in pyproject.toml, import succeeds
   - Test: `tests/test_bm25_dependency.py::test_rank_bm25_import`
   - Location: `pyproject.toml` (dependencies)
+  - Note: Also added mypy override since rank_bm25 doesn't ship type stubs
 
 - [ ] Implement BM25Index class
   - Spec: specs/bm25-hybrid-search.md § Architecture > BM25 Index
