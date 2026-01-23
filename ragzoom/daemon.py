@@ -483,6 +483,49 @@ def wait_for_healthy(timeout: float = DEFAULT_STARTUP_TIMEOUT) -> bool:
     return False
 
 
+def get_process_uptime(pid: int) -> str:
+    """Get human-readable uptime for a process.
+
+    Uses psutil to get the process start time and calculates the
+    duration from then to now.
+
+    Args:
+        pid: Process ID to check.
+
+    Returns:
+        Human-readable uptime string like "2h 15m" or "5m" or "30s".
+        Returns "unknown" if the process doesn't exist or uptime can't be determined.
+    """
+    import psutil
+
+    try:
+        process = psutil.Process(pid)
+        create_time = process.create_time()
+        uptime_seconds = int(time.time() - create_time)
+
+        # Handle clock skew or other anomalies
+        if uptime_seconds < 0:
+            return "unknown"
+
+        # Less than a minute
+        if uptime_seconds < 60:
+            return f"{uptime_seconds}s"
+
+        # Less than an hour
+        if uptime_seconds < 3600:
+            minutes = uptime_seconds // 60
+            return f"{minutes}m"
+
+        # An hour or more
+        hours = uptime_seconds // 3600
+        minutes = (uptime_seconds % 3600) // 60
+        if minutes > 0:
+            return f"{hours}h {minutes}m"
+        return f"{hours}h"
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return "unknown"
+
+
 def ensure_server_running(timeout: float = DEFAULT_STARTUP_TIMEOUT) -> str:
     """Ensure the daemon is running and return its address.
 

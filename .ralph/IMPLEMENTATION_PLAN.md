@@ -365,11 +365,12 @@ Auto-start daemon, crash recovery, and proper lifecycle management.
   - Location: `ragzoom/cli.py:1810-1855`
   - Note: Added imports (signal, time, is_pid_stale, read_pid_file, cleanup_stale_state). Command is idempotent, handles stale PIDs, timeouts gracefully. 4 tests: normal stop, no daemon running, stale PID cleanup, timeout handling.
 
-- [ ] Implement `ragzoom server status` command
+- [x] Implement `ragzoom server status` command
   - Spec: specs/daemon-lifecycle.md § CLI Commands > ragzoom server status
   - Success: Shows "Running: PID X, port Y, uptime Z" or "Not running"
   - Test: `tests/test_cli.py::test_server_status_command`
-  - Location: `ragzoom/cli.py`
+  - Location: `ragzoom/cli.py:1858-1890`, `ragzoom/daemon.py:486-525`
+  - Note: Added `get_process_uptime(pid)` helper to daemon.py using psutil to calculate human-readable uptime. Added `server_status()` command that shows PID, port, and uptime when running. Handles edge cases: no PID file, stale PID, missing port file, negative uptime (clock skew). 4 CLI tests + 3 daemon utility tests.
 
 - [ ] Implement `ragzoom server logs` command
   - Spec: specs/daemon-lifecycle.md § CLI Commands > ragzoom server logs
