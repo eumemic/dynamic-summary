@@ -146,6 +146,7 @@ def prepare_summary_inputs(
     prev_context: str | None = None,
     text_tokens: int | None = None,
     use_anti_verbatim_vaccine: bool = False,
+    system_prompt: str | None = None,
 ) -> SummaryPreparation:
     """Return prepared prompt messages and token counts for summarization."""
 
@@ -190,12 +191,16 @@ def prepare_summary_inputs(
 
     full_prompt = "\n".join(prompt_parts)
 
+    default_system_prompt = (
+        "You are a text compressor. You compress sections of documents while "
+        "preserving their meaning. You output ONLY the compressed text, nothing else."
+    )
+
     messages: list[dict[str, str]] = [
         {
             "role": "system",
             "content": (
-                "You are a text compressor. You compress sections of documents while "
-                "preserving their meaning. You output ONLY the compressed text, nothing else."
+                system_prompt if system_prompt is not None else default_system_prompt
             ),
         },
         {"role": "user", "content": full_prompt},
