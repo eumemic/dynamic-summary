@@ -78,12 +78,13 @@ Fix critical bugs discovered during implementation verification that prevent bas
   - Location: `ragzoom/server/app.py:179`
   - **DONE**: The atexit handler already covers this case. Python's atexit handlers run for sys.exit(), not just normal returns. Test added to verify: `tests/test_daemon_lease_cleanup.py`
 
-- [ ] Add try/finally wrapper around run_server for daemon mode
+- [x] Add try/finally wrapper around run_server for daemon mode
   - Spec: specs/daemon-lifecycle.md § Exit Cleanup
   - Success: All exit paths (normal, exception, lease failure) clean up state files
   - Test: `tests/test_daemon_cleanup.py::test_all_exit_paths_cleanup`
   - Location: `ragzoom/cli.py` (start_server function)
   - Note: Belt-and-suspenders approach: atexit + try/finally ensures cleanup
+  - **DONE**: Added try/finally wrapper around run_server() in daemon mode. Cleanup is now idempotent and called from both atexit (for normal exits) and finally (for exceptions)
 
 ### Phase 30: Database Schema Migration (Issue #4)
 
