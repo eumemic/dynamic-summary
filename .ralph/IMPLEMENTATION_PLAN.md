@@ -182,11 +182,12 @@ Add `--json` flag to query command for machine-readable output with temporal spa
   - Location: `ragzoom/output_formatters.py` (build_json_output)
   - Note: Implemented as part of build_json_output() - temporal fields pass through as-is from NodeSummary (None when not set)
 
-- [ ] Update servicer to populate temporal fields in Node response
+- [x] Update servicer to populate temporal fields in Node response
   - Spec: specs/json-output-mode.md § JSON Schema > Temporal Fields
   - Success: Servicer sets time_start/time_end on Node when available in summary
-  - Test: `tests/test_servicer.py::test_servicer_populates_temporal_fields`
-  - Location: `ragzoom/server/servicers.py:176-186`
+  - Test: `tests/test_temporal_servicer.py::TestServicerPopulatesTemporalFieldsInNode`
+  - Location: `ragzoom/server/servicers.py:191-212`
+  - Note: Added `_unix_to_iso8601()` helper to convert Unix timestamps to ISO 8601 format. Modified `_retrieval_to_proto()` to populate temporal fields on Node proto when present.
 
 - [x] Add actual_start/actual_end to ExecuteQueryResponse
   - Spec: specs/json-output-mode.md § Response Schema
