@@ -1,0 +1,11 @@
+{
+  "name": "memzoom",
+  "version": "0.1.0",
+  "description": "Memory augmentation for Claude Code sessions via RagZoom indexing and retrieval",
+  "author": {
+    "name": "eumemic",
+    "email": "tom@eumemic.com"
+  },
+  "license": "MIT",
+  "keywords": ["memory", "rag", "retrieval", "transcript", "zoom"]
+}
