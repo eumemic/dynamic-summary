@@ -94,45 +94,51 @@ class TestAppendTextRequestTimestamp:
         assert field.number == 5
 
 
-class TestBatchAppendTextRequestTimestamps:
-    """Test that BatchAppendTextRequest has repeated Timestamp field."""
+class TestBatchAppendTextRequestUsesAppendUnit:
+    """Test that BatchAppendTextRequest uses repeated AppendUnit field."""
 
-    def test_batch_append_request_has_timestamps_field(self) -> None:
-        """BatchAppendTextRequest should have a timestamps repeated field."""
+    def test_batch_append_request_uses_append_unit(self) -> None:
+        """BatchAppendTextRequest should use AppendUnit for units field."""
+        unit1 = dynamic_summary_pb2.AppendUnit(content=b"chunk 1")
+        unit2 = dynamic_summary_pb2.AppendUnit(content=b"chunk 2")
         req = dynamic_summary_pb2.BatchAppendTextRequest(
             document_id="test_doc",
-            units=[b"chunk 1", b"chunk 2"],
+            units=[unit1, unit2],
         )
-        # timestamps field should exist and be empty by default
-        assert hasattr(req, "timestamps")
-        assert len(req.timestamps) == 0
+        assert len(req.units) == 2
+        assert req.units[0].content == b"chunk 1"
+        assert req.units[1].content == b"chunk 2"
 
-    def test_batch_append_request_accepts_timestamps(self) -> None:
-        """BatchAppendTextRequest can accept Timestamp values parallel to units."""
-        ts1 = dynamic_summary_pb2.Timestamp(time_start="2024-01-21T14:30:00Z")
-        ts2 = dynamic_summary_pb2.Timestamp(
+    def test_batch_append_request_with_timestamps_in_units(self) -> None:
+        """BatchAppendTextRequest AppendUnits can have timestamps bundled."""
+        unit1 = dynamic_summary_pb2.AppendUnit(
+            content=b"chunk 1",
+            time_start="2024-01-21T14:30:00Z",
+            time_end="2024-01-21T14:30:00Z",
+        )
+        unit2 = dynamic_summary_pb2.AppendUnit(
+            content=b"chunk 2",
             time_start="2024-01-21T14:30:05Z",
             time_end="2024-01-21T14:30:12Z",
         )
         req = dynamic_summary_pb2.BatchAppendTextRequest(
             document_id="test_doc",
-            units=[b"chunk 1", b"chunk 2"],
-            timestamps=[ts1, ts2],
+            units=[unit1, unit2],
         )
-        assert len(req.timestamps) == 2
-        assert req.timestamps[0].time_start == "2024-01-21T14:30:00Z"
-        assert req.timestamps[1].time_start == "2024-01-21T14:30:05Z"
-        assert req.timestamps[1].time_end == "2024-01-21T14:30:12Z"
+        assert len(req.units) == 2
+        assert req.units[0].time_start == "2024-01-21T14:30:00Z"
+        assert req.units[1].time_start == "2024-01-21T14:30:05Z"
+        assert req.units[1].time_end == "2024-01-21T14:30:12Z"
 
-    def test_batch_append_request_timestamps_is_field_number_4(self) -> None:
-        """timestamps field should be field number 4 per the spec."""
+    def test_batch_append_request_units_is_field_number_2(self) -> None:
+        """units field should be field number 2."""
         field = (
             dynamic_summary_pb2.BatchAppendTextRequest.DESCRIPTOR.fields_by_name.get(
-                "timestamps"
+                "units"
             )
         )
         assert field is not None
-        assert field.number == 4
+        assert field.number == 2
 
 
 class TestExecuteQueryRequestTimeFields:

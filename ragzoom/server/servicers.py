@@ -342,11 +342,15 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
                 message="BatchAppendText requires `document_id`.",
             )
 
-        # Decode each unit from bytes to string
+        # Extract content and timestamps from AppendUnit protos
         units: list[str] = []
-        for i, unit_bytes in enumerate(request.units):
+        timestamps: list[str | tuple[str, str]] = []
+        has_any_timestamp = False
+
+        for i, append_unit in enumerate(request.units):
+            # Decode content from bytes to string
             try:
-                units.append(unit_bytes.decode("utf-8"))
+                units.append(append_unit.content.decode("utf-8"))
             except UnicodeDecodeError as exc:
                 await _abort(
                     context,
@@ -354,24 +358,34 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
                     message=f"Invalid UTF-8 in unit {i}: {exc}",
                 )
 
-        # Extract timestamps from proto if present
-        timestamps: list[str | tuple[str, str]] | None = None
-        if request.timestamps:
-            # Validate length matches units
-            if len(request.timestamps) != len(units):
+            # Extract timestamps
+            has_start = append_unit.HasField("time_start")
+            has_end = append_unit.HasField("time_end")
+
+            if has_end and not has_start:
+                # Only time_end without time_start is invalid
                 await _abort(
                     context,
                     code=grpc.StatusCode.INVALID_ARGUMENT,
-                    message=f"timestamps length ({len(request.timestamps)}) must match "
-                    f"units length ({len(units)})",
+                    message=f"Unit {i}: time_end provided without time_start",
                 )
-            timestamps = [_extract_timestamp(ts) for ts in request.timestamps]
+
+            if has_start:
+                has_any_timestamp = True
+                if has_end:
+                    timestamps.append((append_unit.time_start, append_unit.time_end))
+                else:
+                    # Only time_start provided: use for both
+                    timestamps.append(append_unit.time_start)
+            else:
+                # No timestamps on this unit
+                timestamps.append(None)  # type: ignore[arg-type]
 
         session = self._runtime.get_session(request.document_id)
         result = await session.batch_append_text(
             units,
             collect_telemetry=request.collect_telemetry,
-            timestamps=timestamps,
+            timestamps=timestamps if has_any_timestamp else None,
         )
 
         response = pb2.BatchAppendTextResponse(

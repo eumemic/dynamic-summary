@@ -165,9 +165,11 @@ class TestServicerBatchAppendExtractsTimestamps:
     ) -> None:
         """BatchAppendText without timestamps passes None to batch_append_text."""
         servicer = IndexerServicer(mock_state)
+        unit1 = pb2.AppendUnit(content=b"chunk 1")
+        unit2 = pb2.AppendUnit(content=b"chunk 2")
         request = pb2.BatchAppendTextRequest(
             document_id="test_doc",
-            units=[b"chunk 1", b"chunk 2"],
+            units=[unit1, unit2],
         )
         context = MockServicerContext()
 
@@ -181,17 +183,22 @@ class TestServicerBatchAppendExtractsTimestamps:
     async def test_batch_append_with_timestamps(
         self, mock_state: MagicMock, mock_session: MagicMock
     ) -> None:
-        """BatchAppendText with timestamps passes them through."""
+        """BatchAppendText with timestamps in AppendUnits passes them through."""
         servicer = IndexerServicer(mock_state)
-        ts1 = pb2.Timestamp(time_start="2024-01-21T14:30:00Z")
-        ts2 = pb2.Timestamp(
+        # Unit with only time_start (uses same value for both)
+        unit1 = pb2.AppendUnit(
+            content=b"chunk 1",
+            time_start="2024-01-21T14:30:00Z",
+        )
+        # Unit with both time_start and time_end
+        unit2 = pb2.AppendUnit(
+            content=b"chunk 2",
             time_start="2024-01-21T14:30:05Z",
             time_end="2024-01-21T14:30:12Z",
         )
         request = pb2.BatchAppendTextRequest(
             document_id="test_doc",
-            units=[b"chunk 1", b"chunk 2"],
-            timestamps=[ts1, ts2],
+            units=[unit1, unit2],
         )
         context = MockServicerContext()
 
@@ -202,26 +209,58 @@ class TestServicerBatchAppendExtractsTimestamps:
         timestamps = call_kwargs.get("timestamps")
         assert timestamps is not None
         assert len(timestamps) == 2
-        # ts1 has only time_start, so it's a single string
+        # unit1 has only time_start, so it's a single string
         assert timestamps[0] == "2024-01-21T14:30:00Z"
-        # ts2 has both, so it's a tuple
+        # unit2 has both, so it's a tuple
         assert timestamps[1] == ("2024-01-21T14:30:05Z", "2024-01-21T14:30:12Z")
 
     @pytest.mark.asyncio
-    async def test_batch_append_timestamps_length_mismatch_is_rejected(
+    async def test_batch_append_mixed_timestamps(
         self, mock_state: MagicMock, mock_session: MagicMock
     ) -> None:
-        """BatchAppendText with mismatched timestamps length raises error."""
+        """BatchAppendText with some timestamped, some non-timestamped units."""
         servicer = IndexerServicer(mock_state)
-        ts1 = pb2.Timestamp(time_start="2024-01-21T14:30:00Z")
+        unit1 = pb2.AppendUnit(content=b"chunk 1")  # No timestamp
+        unit2 = pb2.AppendUnit(
+            content=b"chunk 2",
+            time_start="2024-01-21T14:30:05Z",
+        )
+        unit3 = pb2.AppendUnit(content=b"chunk 3")  # No timestamp
         request = pb2.BatchAppendTextRequest(
             document_id="test_doc",
-            units=[b"chunk 1", b"chunk 2"],
-            timestamps=[ts1],  # Only 1 timestamp for 2 units
+            units=[unit1, unit2, unit3],
         )
         context = MockServicerContext()
 
-        with pytest.raises(ValueError, match="timestamps length"):
+        await servicer.BatchAppendText(request, context)
+
+        call_kwargs = mock_session.batch_append_text.call_args.kwargs
+        timestamps = call_kwargs.get("timestamps")
+        assert timestamps is not None
+        assert len(timestamps) == 3
+        assert timestamps[0] is None
+        assert timestamps[1] == "2024-01-21T14:30:05Z"
+        assert timestamps[2] is None
+
+    @pytest.mark.asyncio
+    async def test_batch_append_time_end_without_time_start_rejected(
+        self, mock_state: MagicMock, mock_session: MagicMock
+    ) -> None:
+        """BatchAppendText with time_end but no time_start raises error."""
+        servicer = IndexerServicer(mock_state)
+        # Unit with only time_end is invalid
+        unit1 = pb2.AppendUnit(content=b"chunk 1")
+        unit2 = pb2.AppendUnit(
+            content=b"chunk 2",
+            time_end="2024-01-21T14:30:12Z",  # No time_start
+        )
+        request = pb2.BatchAppendTextRequest(
+            document_id="test_doc",
+            units=[unit1, unit2],
+        )
+        context = MockServicerContext()
+
+        with pytest.raises(ValueError, match="time_end provided without time_start"):
             await servicer.BatchAppendText(request, context)
 
         # batch_append_text should not be called

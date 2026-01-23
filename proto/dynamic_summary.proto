@@ -12,11 +12,12 @@ message Timestamp {
 }
 
 // Self-contained unit for batch_append with bundled text and optional timestamps.
-// Both time_start and time_end must be provided together, or neither.
+// Valid: neither timestamp, only time_start (used for both), or both.
+// Invalid: time_end without time_start.
 message AppendUnit {
   bytes content = 1;  // Text content
   optional string time_start = 2;  // ISO 8601 with timezone
-  optional string time_end = 3;    // ISO 8601 with timezone
+  optional string time_end = 3;    // ISO 8601 with timezone (defaults to time_start if omitted)
 }
 
 message DocumentStats {
@@ -60,9 +61,8 @@ message AppendTextResponse {
 
 message BatchAppendTextRequest {
   string document_id = 1;
-  repeated bytes units = 2;
+  repeated AppendUnit units = 2;  // Self-contained units with bundled text and optional timestamps
   bool collect_telemetry = 3;
-  repeated Timestamp timestamps = 4;  // Optional, parallel to units (must match length if provided)
 }
 
 message BatchAppendTextResponse {
