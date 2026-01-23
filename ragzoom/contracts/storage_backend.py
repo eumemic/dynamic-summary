@@ -5,6 +5,8 @@ from __future__ import annotations
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from sqlalchemy.engine import Engine
+
 from ragzoom.document_store import DocumentStore
 from ragzoom.models import Document
 
@@ -14,6 +16,14 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class StorageBackend(Protocol):
+    @property
+    def engine(self) -> Engine:
+        """Return the SQLAlchemy engine for this backend.
+
+        Used for migrations and other database-level operations.
+        """
+        ...
+
     def for_document(self, doc_id: str | None) -> DocumentStore: ...
 
     def lock_document(self, doc_id: str | None) -> AbstractContextManager[None]: ...
