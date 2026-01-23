@@ -311,6 +311,48 @@ def test_query_with_options(
     assert call.kwargs["budget_tokens"] == 1000
 
 
+def test_query_with_time_window(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that --time-start and --time-end CLI options are passed to the gRPC client."""
+    result = runner.invoke(
+        cli,
+        [
+            "query",
+            "Tell me about cats",
+            "-d",
+            "doc-123",
+            "--time-start",
+            "2024-01-21T14:00:00Z",
+            "--time-end",
+            "2024-01-21T15:00:00Z",
+        ],
+    )
+    assert result.exit_code == 0
+    call = cli_mocks["grpc_client"].execute_query.call_args
+    assert call.kwargs["time_start"] == "2024-01-21T14:00:00Z"
+    assert call.kwargs["time_end"] == "2024-01-21T15:00:00Z"
+
+
+def test_query_time_window_defaults_to_none(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that time window parameters default to None when not provided."""
+    result = runner.invoke(
+        cli,
+        [
+            "query",
+            "Tell me about cats",
+            "-d",
+            "doc-123",
+        ],
+    )
+    assert result.exit_code == 0
+    call = cli_mocks["grpc_client"].execute_query.call_args
+    assert call.kwargs["time_start"] is None
+    assert call.kwargs["time_end"] is None
+
+
 def test_pin_command(runner: CliRunner, cli_mocks: CliMocks, api_key: None) -> None:
     result = runner.invoke(cli, ["pin", "node-123"])
     assert result.exit_code == 0
