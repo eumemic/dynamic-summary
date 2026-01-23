@@ -84,3 +84,94 @@ class TestStateDirectoryCreation:
             result = ensure_daemon_state_dir()
             assert result == test_dir
             assert test_dir.exists()
+
+
+class TestPidFileManagement:
+    """Test PID file read/write/cleanup operations."""
+
+    def test_write_pid_file(self, tmp_path: Path) -> None:
+        """write_pid_file() creates daemon.pid with correct content."""
+        from ragzoom.daemon import write_pid_file
+
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
+            write_pid_file(12345)
+            pid_file = tmp_path / "daemon.pid"
+            assert pid_file.exists()
+            assert pid_file.read_text().strip() == "12345"
+
+    def test_read_pid_file_returns_pid(self, tmp_path: Path) -> None:
+        """read_pid_file() returns PID when file exists."""
+        from ragzoom.daemon import read_pid_file
+
+        pid_file = tmp_path / "daemon.pid"
+        pid_file.write_text("54321\n")
+
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
+            result = read_pid_file()
+            assert result == 54321
+
+    def test_read_pid_file_returns_none_when_missing(self, tmp_path: Path) -> None:
+        """read_pid_file() returns None when file doesn't exist."""
+        from ragzoom.daemon import read_pid_file
+
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
+            result = read_pid_file()
+            assert result is None
+
+    def test_read_pid_file_returns_none_for_invalid_content(
+        self, tmp_path: Path
+    ) -> None:
+        """read_pid_file() returns None for non-integer content."""
+        from ragzoom.daemon import read_pid_file
+
+        pid_file = tmp_path / "daemon.pid"
+        pid_file.write_text("not-a-pid\n")
+
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
+            result = read_pid_file()
+            assert result is None
+
+    def test_remove_pid_file_deletes_file(self, tmp_path: Path) -> None:
+        """remove_pid_file() deletes the PID file."""
+        from ragzoom.daemon import remove_pid_file
+
+        pid_file = tmp_path / "daemon.pid"
+        pid_file.write_text("12345\n")
+
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
+            remove_pid_file()
+            assert not pid_file.exists()
+
+    def test_remove_pid_file_idempotent(self, tmp_path: Path) -> None:
+        """remove_pid_file() succeeds even if file doesn't exist."""
+        from ragzoom.daemon import remove_pid_file
+
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
+            # Should not raise
+            remove_pid_file()
+
+    def test_is_pid_stale_returns_false_for_running_process(self) -> None:
+        """is_pid_stale() returns False for our own PID (known running)."""
+        from ragzoom.daemon import is_pid_stale
+
+        # Our own process is definitely running
+        result = is_pid_stale(os.getpid())
+        assert result is False
+
+    def test_is_pid_stale_returns_true_for_nonexistent_process(self) -> None:
+        """is_pid_stale() returns True for a PID that doesn't exist."""
+        from ragzoom.daemon import is_pid_stale
+
+        # PID 99999999 is unlikely to exist
+        result = is_pid_stale(99999999)
+        assert result is True
+
+    def test_write_pid_file_creates_state_directory(self, tmp_path: Path) -> None:
+        """write_pid_file() creates state directory if needed."""
+        from ragzoom.daemon import write_pid_file
+
+        state_dir = tmp_path / "nested" / "state"
+        with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(state_dir)}):
+            write_pid_file(12345)
+            assert state_dir.exists()
+            assert (state_dir / "daemon.pid").exists()
