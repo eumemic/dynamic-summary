@@ -25,5 +25,5 @@ SESSION_ID=$(echo "$JSON" | jq -r '.session_id // ""')
 
 if [[ -n "$SESSION_ID" ]]; then
     # Register the PID (PPID is Claude Code's PID)
-    ragzoom set-session-pid "$SESSION_ID" "$PPID"
+    ragzoom-claude-code set-pid "$SESSION_ID" "$PPID"
 fi

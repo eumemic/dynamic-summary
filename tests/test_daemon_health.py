@@ -15,6 +15,13 @@ from ragzoom.daemon import (
 )
 
 
+def make_rpc_error(status_code: object) -> object:
+    """Create a grpc.RpcError with a configurable status code for testing."""
+    error = grpc.RpcError()
+    error.code = MagicMock(return_value=status_code)  # type: ignore[method-assign,unused-ignore]
+    return error
+
+
 class TestGetServerAddress:
     """Tests for get_server_address() function."""
 
@@ -69,10 +76,7 @@ class TestGrpcHealthCheck:
         mock_stub = MagicMock()
 
         # Create a mock RpcError with NOT_FOUND status
-        # RpcError is a base class; we need to mock the code() method
-        error = grpc.RpcError()
-        # Override the code method on the instance
-        error.code = MagicMock(return_value=grpc.StatusCode.NOT_FOUND)  # type: ignore[method-assign]
+        error = make_rpc_error(grpc.StatusCode.NOT_FOUND)
         mock_stub.GetDocument = MagicMock(side_effect=error)
 
         with patch("grpc.insecure_channel", return_value=mock_channel):
@@ -89,8 +93,7 @@ class TestGrpcHealthCheck:
         mock_channel = MagicMock()
         mock_stub = MagicMock()
 
-        error = grpc.RpcError()
-        error.code = MagicMock(return_value=grpc.StatusCode.UNAVAILABLE)  # type: ignore[method-assign]
+        error = make_rpc_error(grpc.StatusCode.UNAVAILABLE)
         mock_stub.GetDocument = MagicMock(side_effect=error)
 
         with patch("grpc.insecure_channel", return_value=mock_channel):
@@ -107,8 +110,7 @@ class TestGrpcHealthCheck:
         mock_channel = MagicMock()
         mock_stub = MagicMock()
 
-        error = grpc.RpcError()
-        error.code = MagicMock(return_value=grpc.StatusCode.DEADLINE_EXCEEDED)  # type: ignore[method-assign]
+        error = make_rpc_error(grpc.StatusCode.DEADLINE_EXCEEDED)
         mock_stub.GetDocument = MagicMock(side_effect=error)
 
         with patch("grpc.insecure_channel", return_value=mock_channel):

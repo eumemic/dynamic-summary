@@ -5,10 +5,10 @@ from pathlib import Path
 
 
 def test_session_start_hook_uses_correct_module() -> None:
-    """Verify session-start.sh calls ragzoom CLI, not memory_service module.
+    """Verify session-start.sh calls ragzoom-claude-code CLI, not old paths.
 
-    The hook should use `ragzoom set-session-pid` CLI command rather than
-    the incorrect `python -m memory_service.ingestion.claude` module path.
+    The hook should use `ragzoom-claude-code set-pid` CLI command from the
+    integration package, not the old module paths or ragzoom core CLI.
     """
     hook_path = Path(__file__).parent.parent / ".claude" / "hooks" / "session-start.sh"
     assert hook_path.exists(), f"Hook script not found at {hook_path}"
@@ -18,13 +18,19 @@ def test_session_start_hook_uses_correct_module() -> None:
     # Should NOT contain the old incorrect module path
     assert "memory_service.ingestion.claude" not in content, (
         "Hook still uses incorrect module path 'memory_service.ingestion.claude'. "
-        "Should use 'ragzoom set-session-pid' CLI command instead."
+        "Should use 'ragzoom-claude-code set-pid' CLI command instead."
     )
 
-    # Should use the ragzoom CLI command
+    # Should NOT use the old ragzoom core CLI (moved to integration package)
+    assert "ragzoom set-session-pid" not in content, (
+        "Hook uses old 'ragzoom set-session-pid' command. "
+        "Should use 'ragzoom-claude-code set-pid' from the integration package."
+    )
+
+    # Should use the ragzoom-claude-code integration CLI command
     assert (
-        "ragzoom set-session-pid" in content
-    ), "Hook should call 'ragzoom set-session-pid' CLI command"
+        "ragzoom-claude-code set-pid" in content
+    ), "Hook should call 'ragzoom-claude-code set-pid' CLI command"
 
 
 def test_session_start_hook_is_executable() -> None:

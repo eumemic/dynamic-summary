@@ -289,20 +289,27 @@ def transcribe_turn(turn: Turn) -> str:
     return "\n\n".join(chunks)
 
 
-def turns_to_append_units(turns: list[Turn]) -> list[AppendUnit]:
-    """Convert turns to AppendUnits for ragzoom ingestion."""
-    units = []
+def turns_to_append_units(turns: list[Turn]) -> list[tuple[AppendUnit, Turn]]:
+    """Convert turns to AppendUnits for ragzoom ingestion.
+
+    Returns pairs of (unit, turn) to maintain alignment when some turns
+    are filtered out (e.g., turns with empty transcriptions).
+    """
+    results: list[tuple[AppendUnit, Turn]] = []
     for turn in turns:
         text = transcribe_turn(turn)
         if text.strip():
-            units.append(
-                AppendUnit(
-                    text=text,
-                    time_start=turn.time_start,
-                    time_end=turn.time_end,
+            results.append(
+                (
+                    AppendUnit(
+                        text=text,
+                        time_start=turn.time_start,
+                        time_end=turn.time_end,
+                    ),
+                    turn,
                 )
             )
-    return units
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -419,17 +426,20 @@ def sync_transcript(
             new_span_end=state.span_end,
         )
 
-    # Convert to append units
-    units = turns_to_append_units(new_turns)
+    # Convert to append units (paired with their source turns)
+    units_with_turns = turns_to_append_units(new_turns)
 
-    if units:
+    if units_with_turns:
+        # Extract just the units for batch append
+        units = [unit for unit, _ in units_with_turns]
+
         # Batch append to ragzoom
         batch_append_method = getattr(client, "batch_append")
         batch_append_method(state.document_id, units)
 
-        # Update state
+        # Update state - iterate over paired data to maintain alignment
         cumulative_span = state.span_end
-        for unit, turn in zip(units, new_turns):
+        for unit, turn in units_with_turns:
             cumulative_span += len(unit.text)
             state.entries.append(
                 {
