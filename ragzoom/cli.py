@@ -77,7 +77,7 @@ class AppendTextCallable(Protocol):
         content: bytes,
         collect_telemetry: bool,
         replace_existing: bool = ...,  # optional keyword for rebuilds
-        summary_system_prompt: str | None = ...,  # optional custom prompt
+        summarization_guidance: str | None = ...,  # optional custom prompt
     ) -> IndexingResult: ...
 
 
@@ -405,14 +405,14 @@ def index(
                     content=content_bytes,
                     collect_telemetry=collect_requested,
                     replace_existing=not append,
-                    summary_system_prompt=summarization_guidance,
+                    summarization_guidance=summarization_guidance,
                 )
             else:
                 result = append_method(
                     document_id=target_document_id,
                     content=content_bytes,
                     collect_telemetry=collect_requested,
-                    summary_system_prompt=summarization_guidance,
+                    summarization_guidance=summarization_guidance,
                 )
             telemetry_run_id = result.telemetry_run_id
             if await_workers:

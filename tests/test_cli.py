@@ -301,8 +301,7 @@ def test_index_with_summarization_guidance(
     )
     assert result.exit_code == 0
     call = cli_mocks["grpc_client"].append_text.call_args
-    # Note: gRPC still uses summary_system_prompt until protobuf field is renamed
-    assert call.kwargs["summary_system_prompt"] == custom_guidance
+    assert call.kwargs["summarization_guidance"] == custom_guidance
 
 
 def test_query_command(runner: CliRunner, cli_mocks: CliMocks, api_key: None) -> None:
