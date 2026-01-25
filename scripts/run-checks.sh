@@ -511,10 +511,14 @@ fi
 if [ "$RUN_TESTS" = true ]; then
     if command -v pytest &> /dev/null; then
         # Marker expression: always exclude benchmarks; include integration only when requested
+        # In CI, also exclude skip_ci tests (subprocess forking/signal tests that are flaky in containers)
         if [ "$INCLUDE_INTEGRATION" = true ] || [ "$TEST_SCOPE" = "all" ]; then
             marker_expr="not benchmark"
         else
             marker_expr="not benchmark and not integration"
+        fi
+        if [ -n "${CI:-}" ]; then
+            marker_expr="$marker_expr and not skip_ci"
         fi
 
         # Paths that always require integration tests when impacted-only is used
