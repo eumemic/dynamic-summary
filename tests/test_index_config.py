@@ -392,3 +392,32 @@ def test_from_dict_uses_default_target_embedding_tokens() -> None:
     config = IndexConfig.from_dict(config_dict)
 
     assert config.target_embedding_tokens == 500
+
+
+def test_replace_target_embedding_tokens() -> None:
+    """Test that IndexConfig.replace can update target_embedding_tokens.
+
+    Spec: specs/embedding-text-optimization.md § Configuration > IndexConfig Changes
+    Success: config.replace(target_embedding_tokens=600) returns new config
+    """
+    config = IndexConfig(
+        target_chunk_tokens=200,
+        target_embedding_context_tokens=200,
+        target_embedding_tokens=500,
+        max_parallelism=4,
+        summary_model="gpt-4o-mini",
+        embedding_model="text-embedding-3-small",
+        retry_threshold=0.5,
+        max_retries=3,
+        embedding_batch_size=100,
+        use_anti_verbatim_vaccine=True,
+        processing_strategy="bottom_to_top",
+    )
+
+    assert config.target_embedding_tokens == 500
+
+    new_config = config.replace(target_embedding_tokens=600)
+
+    assert new_config.target_embedding_tokens == 600
+    # Original config unchanged
+    assert config.target_embedding_tokens == 500
