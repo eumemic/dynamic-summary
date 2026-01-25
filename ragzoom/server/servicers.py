@@ -7,6 +7,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import suppress
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Protocol, TypeVar, cast
 
@@ -150,6 +151,20 @@ def _extract_timestamp(
 T = TypeVar("T")
 
 
+def _unix_to_iso8601(ts: float) -> str:
+    """Convert Unix timestamp (float seconds) to ISO 8601 string with Z suffix.
+
+    Args:
+        ts: Unix timestamp as float seconds since epoch.
+
+    Returns:
+        ISO 8601 formatted string with Z timezone (e.g., "2024-01-21T14:00:00Z").
+    """
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    # Format as ISO 8601 with Z suffix (replace +00:00 with Z for consistency)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _require(value: T | None, *, field: str, node_id: str) -> T:
     if value is None:
         raise ValueError(f"Node '{node_id}' is missing required field `{field}`")
@@ -173,7 +188,17 @@ def _retrieval_to_proto(retrieval_result: Retrievable) -> pb2.RetrieveResponse:
         span_end = int(_require(node.span_end, field="span_end", node_id=node_id))
         height = int(_require(node.height, field="height", node_id=node_id))
 
-        nodes[node_id] = pb2.Node(
+        # Populate temporal fields if present (Unix timestamp → ISO 8601)
+        time_start_attr = getattr(node, "time_start", None)
+        time_end_attr = getattr(node, "time_end", None)
+        time_start_iso = (
+            _unix_to_iso8601(time_start_attr) if time_start_attr is not None else None
+        )
+        time_end_iso = (
+            _unix_to_iso8601(time_end_attr) if time_end_attr is not None else None
+        )
+
+        node_proto = pb2.Node(
             node_id=node_id,
             text=text,
             token_count=token_count,
@@ -184,6 +209,12 @@ def _retrieval_to_proto(retrieval_result: Retrievable) -> pb2.RetrieveResponse:
             right_child_id=node.right_child_id or "",
             height=height,
         )
+        if time_start_iso is not None:
+            node_proto.time_start = time_start_iso
+        if time_end_iso is not None:
+            node_proto.time_end = time_end_iso
+
+        nodes[node_id] = node_proto
 
     return pb2.RetrieveResponse(
         selected_ids=list(retrieval_result.node_ids),
@@ -314,12 +345,20 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
         if request.HasField("timestamp"):
             timestamp = _extract_timestamp(request.timestamp)
 
+        # Extract custom guidance if present (see specs/custom-prompt-config.md)
+        summarization_guidance = (
+            request.summarization_guidance
+            if request.HasField("summarization_guidance")
+            else None
+        )
+
         session = self._runtime.get_session(request.document_id)
         result = await session.append_text(
             text,
             replace_existing=bool(getattr(request, "replace_existing", False)),
             collect_telemetry=request.collect_telemetry,
             timestamp=timestamp,
+            summarization_guidance=summarization_guidance,
         )
 
         response = pb2.AppendTextResponse(
@@ -950,12 +989,6 @@ async def shutdown_gracefully(server: GrpcServerProto) -> None:
 
 
 async def serve(state: ServerState, *, host: str, port: int) -> None:
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session, sessionmaker
-
-    from memory_service.grpc_servicer import SessionIngestionServicer
-    from ragzoom.wrapper import AsyncRagZoom
-
     # 100MB max message size for large transcript uploads
     max_message_size = 100 * 1024 * 1024
     server = cast(
@@ -970,32 +1003,6 @@ async def serve(state: ServerState, *, host: str, port: int) -> None:
     pb2_grpc.add_IndexerServiceServicer_to_server(IndexerServicer(state), server)
     pb2_grpc.add_RetrievalServiceServicer_to_server(RetrievalServicer(state), server)
     pb2_grpc.add_WorkerServiceServicer_to_server(WorkerServicer(state), server)
-
-    # Add session ingestion service for Claude Code memory sync
-    database_url = state.operational_config.database_url
-    if database_url:
-        # Ensure psycopg3-compatible URL
-        if database_url.startswith("postgresql://"):
-            database_url = database_url.replace(
-                "postgresql://", "postgresql+psycopg://", 1
-            )
-        engine = create_engine(database_url, pool_pre_ping=True)
-        db_session_factory: sessionmaker[Session] = sessionmaker(bind=engine)
-
-        def get_db_session() -> Session:
-            return db_session_factory()
-
-        def get_async_ragzoom_client(user_id: str) -> AsyncRagZoom:
-            # For now, all users share the same runtime (no per-user isolation)
-            # Document IDs should include user_id prefix for isolation
-            return AsyncRagZoom(runtime=state.index_runtime)
-
-        session_servicer = SessionIngestionServicer(
-            get_db_session=get_db_session,
-            get_async_ragzoom_client=get_async_ragzoom_client,
-        )
-        pb2_grpc.add_SessionIngestionServiceServicer_to_server(session_servicer, server)
-        logger.info("Session ingestion service enabled")
 
     listen_addr = f"{host}:{port}"
     server.add_insecure_port(listen_addr)

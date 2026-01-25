@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from ragzoom.bm25 import BM25IndexCache, reciprocal_rank_fusion
 from ragzoom.config import QueryConfig
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.contracts.vector_filter import (
@@ -100,6 +101,7 @@ class Retriever:
         self.budget_planner = budget_planner
         self.vector_index = vector_index
         self.tiling_generator = GreedyTilingGenerator(query_config)
+        self._bm25_cache = BM25IndexCache(max_size=10)
 
     # ------------------------------------------------------------------
     # Helper methods for shared retrieval logic
@@ -177,6 +179,7 @@ class Retriever:
         query_embedding: list[float] | None = None,
         time_start: str | None = None,
         time_end: str | None = None,
+        use_bm25: bool | None = None,
     ) -> RetrievalResult:
         """Async retrieval method with MMR diversity.
 
@@ -195,6 +198,9 @@ class Retriever:
                 documents only. Will be mapped to span_start via leaf lookup.
             time_end: End of time window (ISO 8601 with timezone). For temporal
                 documents only. Will be mapped to span_end via leaf lookup.
+            use_bm25: Enable BM25 hybrid search. If None (default), uses the value
+                from QueryConfig.use_bm25. When True, combines vector and BM25
+                rankings via Reciprocal Rank Fusion.
 
         Supports three modes:
         1. Budget only: Calculate conservative num_seeds to guarantee no overflow
@@ -465,6 +471,51 @@ class Retriever:
                     "candidates_retrieved", len(vec_candidates)
                 )
 
+            # Phase 2b: BM25 hybrid search (if enabled)
+            # Determine effective use_bm25 setting
+            effective_use_bm25 = (
+                use_bm25 if use_bm25 is not None else self.query_config.use_bm25
+            )
+
+            if effective_use_bm25 and effective_doc_id and vec_candidates:
+                # Get all nodes for BM25 indexing
+                # We need the full document nodes, not just vector candidates
+                all_doc_nodes = self.document_store.nodes.get_all()
+                nodes_dict: dict[str, TreeNode] = {n.id: n for n in all_doc_nodes}
+
+                if nodes_dict:
+                    # Build or get cached BM25 index
+                    bm25_index = self._bm25_cache.get_or_build(
+                        effective_doc_id, nodes_dict
+                    )
+
+                    # Run BM25 search
+                    bm25_results = bm25_index.search(query, k_candidates)
+                    bm25_ranking = [node_id for node_id, _ in bm25_results]
+
+                    # Get vector ranking (order of vec_candidates)
+                    vector_ranking = [v.id for v in vec_candidates]
+
+                    # Fuse rankings using RRF
+                    fused = reciprocal_rank_fusion(vector_ranking, bm25_ranking)
+
+                    # Reorder vec_candidates based on fused ranking
+                    vec_by_id = {v.id: v for v in vec_candidates}
+                    reordered: list[Vector] = []
+                    for node_id, _ in fused:
+                        if node_id in vec_by_id:
+                            reordered.append(vec_by_id[node_id])
+
+                    # Add any BM25-only results that weren't in vector candidates
+                    # These need vectors, so we can only include items already in vec_candidates
+                    vec_candidates = reordered if reordered else vec_candidates
+
+                    if telemetry_collector:
+                        telemetry_collector.record_metric("bm25_enabled", 1)
+                        telemetry_collector.record_metric(
+                            "bm25_candidates", len(bm25_ranking)
+                        )
+
             # Phase 3: Apply MMR selection using generic math over canonical vectors
             selected_ids = mmr.select_diverse(
                 effective_query_embedding,
@@ -618,6 +669,7 @@ class Retriever:
         span_end: int | None = None,
         time_start: str | None = None,
         time_end: str | None = None,
+        use_bm25: bool | None = None,
     ) -> RetrievalResult:
         """Synchronous wrapper for retrieve_async.
 
@@ -631,6 +683,7 @@ class Retriever:
             span_end: End of document window (default: document end)
             time_start: Start of time window (ISO 8601 with timezone)
             time_end: End of time window (ISO 8601 with timezone)
+            use_bm25: Enable BM25 hybrid search. If None, uses QueryConfig.use_bm25.
 
         Creates a new event loop if needed to run the async version.
         For async contexts, use retrieve_async directly.
@@ -638,15 +691,16 @@ class Retriever:
         # jscpd:ignore-end
         return asyncio.run(
             self.retrieve_async(
-                query,
-                num_seeds,
-                budget_tokens,
-                document_id,
-                recent_verbatim_budget,
+                query=query,
+                num_seeds=num_seeds,
+                budget_tokens=budget_tokens,
+                document_id=document_id,
+                recent_verbatim_budget=recent_verbatim_budget,
                 span_start=span_start,
                 span_end=span_end,
                 time_start=time_start,
                 time_end=time_end,
+                use_bm25=use_bm25,
             )
         )
 
@@ -713,6 +767,7 @@ class Retriever:
         span_end: int | None = None,
         time_start: str | None = None,
         time_end: str | None = None,
+        use_bm25: bool | None = None,
     ) -> tuple[RetrievalResult, QueryTelemetry]:
         """Async retrieval with detailed telemetry collection.
 
@@ -726,6 +781,7 @@ class Retriever:
             span_end: End of document window (default: document end)
             time_start: Start of time window (ISO 8601 with timezone)
             time_end: End of time window (ISO 8601 with timezone)
+            use_bm25: Enable BM25 hybrid search. If None, uses QueryConfig.use_bm25.
 
         Returns:
             Tuple of (RetrievalResult, QueryTelemetry) with detailed timing info
@@ -744,6 +800,7 @@ class Retriever:
             span_end=span_end,
             time_start=time_start,
             time_end=time_end,
+            use_bm25=use_bm25,
         )
         telemetry = collector.finalize()
         if telemetry is None:

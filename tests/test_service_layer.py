@@ -492,6 +492,8 @@ class TestQueryService:
                 recent_verbatim_budget=None,
                 span_start=0,
                 span_end=None,
+                time_start=None,
+                time_end=None,
             )
             mock_assembler.assemble.assert_called_once_with(mock_retrieval_result)
 

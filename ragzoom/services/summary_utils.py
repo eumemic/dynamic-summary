@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Final, TypedDict
 
 from ragzoom.config import IndexConfig
+from ragzoom.constants import DEFAULT_SUMMARY_SYSTEM_PROMPT
 from ragzoom.contracts.chat_model import UsageInfo
 from ragzoom.telemetry_collection import TelemetryCollector
 from ragzoom.utils.tokenization import tokenizer
@@ -87,6 +88,7 @@ class SummaryWorkflowConfig:
     use_anti_verbatim_vaccine: bool
     max_retries: int
     retry_threshold: float
+    summarization_guidance: str | None = None
 
 
 def tokens_to_words(target_tokens: int) -> int:
@@ -146,8 +148,15 @@ def prepare_summary_inputs(
     prev_context: str | None = None,
     text_tokens: int | None = None,
     use_anti_verbatim_vaccine: bool = False,
+    summarization_guidance: str | None = None,
 ) -> SummaryPreparation:
-    """Return prepared prompt messages and token counts for summarization."""
+    """Return prepared prompt messages and token counts for summarization.
+
+    Args:
+        summarization_guidance: Domain-specific guidance to append to the default
+            system prompt. This is ADDITIVE - it gets appended under a
+            "# Summarization Guidance" section, never replacing the base prompt.
+    """
 
     combined_text = text.strip()
 
@@ -190,14 +199,17 @@ def prepare_summary_inputs(
 
     full_prompt = "\n".join(prompt_parts)
 
+    # Build system prompt with optional guidance section (additive, not replacement)
+    if summarization_guidance and summarization_guidance.strip():
+        system_prompt = (
+            f"{DEFAULT_SUMMARY_SYSTEM_PROMPT}\n\n"
+            f"# Summarization Guidance\n{summarization_guidance}"
+        )
+    else:
+        system_prompt = DEFAULT_SUMMARY_SYSTEM_PROMPT
+
     messages: list[dict[str, str]] = [
-        {
-            "role": "system",
-            "content": (
-                "You are a text compressor. You compress sections of documents while "
-                "preserving their meaning. You output ONLY the compressed text, nothing else."
-            ),
-        },
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": full_prompt},
     ]
 
@@ -465,6 +477,7 @@ async def run_summary_workflow(
         prev_context=prev_context,
         text_tokens=text_tokens,
         use_anti_verbatim_vaccine=config.use_anti_verbatim_vaccine,
+        summarization_guidance=config.summarization_guidance,
     )
 
     # Passthrough when: (1) target <= 0 (signal from dynamic targets), OR
@@ -578,14 +591,23 @@ async def run_summary_from_config(
     parent_id: str | None = None,
     reporter: TelemetryCollector | None = None,
     call_summary: SummaryCall,
+    summarization_guidance: str | None = None,
 ) -> SummaryResult:
-    """Convenience wrapper building workflow config from IndexConfig."""
+    """Convenience wrapper building workflow config from IndexConfig.
 
+    If summarization_guidance is provided, it overrides index_config.summarization_guidance.
+    Used when documents have per-document custom guidance.
+    """
     config_snapshot = SummaryWorkflowConfig(
         summary_model=index_config.summary_model,
         use_anti_verbatim_vaccine=index_config.use_anti_verbatim_vaccine,
         max_retries=index_config.max_retries,
         retry_threshold=index_config.retry_threshold,
+        summarization_guidance=(
+            summarization_guidance
+            if summarization_guidance is not None
+            else index_config.summarization_guidance
+        ),
     )
 
     return await run_summary_workflow(
@@ -605,9 +627,12 @@ async def run_summary_request(
     index_config: IndexConfig,
     request: SummaryRequest,
     call_summary: SummaryCall,
+    summarization_guidance: str | None = None,
 ) -> SummaryResult:
-    """Execute the summary workflow using a packaged request payload."""
+    """Execute the summary workflow using a packaged request payload.
 
+    If summarization_guidance is provided, it overrides index_config.summarization_guidance.
+    """
     return await run_summary_from_config(
         index_config=index_config,
         text=request["text"],
@@ -617,6 +642,7 @@ async def run_summary_request(
         parent_id=request["parent_id"],
         reporter=request["reporter"],
         call_summary=call_summary,
+        summarization_guidance=summarization_guidance,
     )
 
 
@@ -776,6 +802,7 @@ async def run_contextualization_from_config(
         use_anti_verbatim_vaccine=index_config.use_anti_verbatim_vaccine,
         max_retries=index_config.max_retries,
         retry_threshold=index_config.retry_threshold,
+        summarization_guidance=index_config.summarization_guidance,
     )
 
     return await run_contextualization_workflow(

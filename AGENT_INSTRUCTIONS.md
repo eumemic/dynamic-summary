@@ -66,3 +66,12 @@ When in a worktree, the current working directory IS the project root. Run comma
 ## Memory Tool
 
 When the `remember` memory tool is available, use it proactively to recall details from earlier in the conversation - especially after compaction, when resuming sessions, or when details feel fuzzy. See the `memory-tool-usage` skill for effective retrieval patterns.
+
+## Integration Packages
+
+Client-specific integrations live in `integrations/`. Each is an independent pip-installable package:
+
+- `integrations/claude-code/` - Claude Code transcript sync and MCP server
+- `integrations/clawdbot/` - Clawdbot transcript sync
+
+See `integrations/CLAUDE.md` for architecture and development instructions.

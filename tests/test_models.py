@@ -122,6 +122,43 @@ class TestDocumentModel:
         """Test that Document uses correct table name."""
         assert Document.__tablename__ == "documents"
 
+    def test_document_has_summarization_guidance(self) -> None:
+        """Test that Document has summarization_guidance field.
+
+        Per specs/custom-prompt-config.md § IndexConfig Field and § Migration > Field Rename:
+        The field was renamed from summary_system_prompt to summarization_guidance.
+        """
+        from sqlalchemy import String
+
+        # Verify the column exists with correct name
+        assert hasattr(Document, "summarization_guidance")
+        summarization_guidance_col = Document.__table__.columns[
+            "summarization_guidance"
+        ]
+
+        # Column should be nullable String with default None
+        assert summarization_guidance_col.nullable is True
+        assert isinstance(summarization_guidance_col.type, String)
+
+    def test_summarization_guidance_instantiation(self) -> None:
+        """Test that summarization_guidance can be set on Document instances."""
+        # With guidance
+        doc_with_guidance = Document(
+            id="doc_with_guidance",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+            summarization_guidance="Preserve legal terminology.",
+        )
+        assert doc_with_guidance.summarization_guidance == "Preserve legal terminology."
+
+        # Without guidance (default None)
+        doc_without_guidance = Document(
+            id="doc_without_guidance",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        assert doc_without_guidance.summarization_guidance is None
+
     def test_required_fields(self) -> None:
         """Test that Document has all required fields."""
         assert hasattr(Document, "id")
@@ -398,6 +435,47 @@ class TestSqliteDocumentModel:
             assert "is_temporal" in column_names, "is_temporal column should exist"
 
         db.close()
+
+    def test_sqlite_document_has_summarization_guidance(self) -> None:
+        """Test that SqliteDocument has summarization_guidance field.
+
+        Per specs/custom-prompt-config.md § IndexConfig Field and § Migration > Field Rename:
+        The field was renamed from summary_system_prompt to summarization_guidance.
+        """
+        from sqlalchemy import String
+
+        from ragzoom.backends.sqlite_db import SqliteDocument
+
+        # Verify the column exists with correct name
+        assert hasattr(SqliteDocument, "summarization_guidance")
+        summarization_guidance_col = SqliteDocument.__table__.columns[
+            "summarization_guidance"
+        ]
+
+        # Column should be nullable String with default None
+        assert summarization_guidance_col.nullable is True
+        assert isinstance(summarization_guidance_col.type, String)
+
+    def test_sqlite_summarization_guidance_instantiation(self) -> None:
+        """Test that summarization_guidance can be set on SqliteDocument instances."""
+        from ragzoom.backends.sqlite_db import SqliteDocument
+
+        # With guidance
+        doc_with_guidance = SqliteDocument(
+            id="doc_with_guidance",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+            summarization_guidance="Preserve legal terminology.",
+        )
+        assert doc_with_guidance.summarization_guidance == "Preserve legal terminology."
+
+        # Without guidance (default None)
+        doc_without_guidance = SqliteDocument(
+            id="doc_without_guidance",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        assert doc_without_guidance.summarization_guidance is None
 
 
 class TestModelValidation:
