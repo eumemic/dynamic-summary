@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 import psutil
 
 from ragzoom.config import IndexConfig
+from ragzoom.constants import DEFAULT_SUMMARY_SYSTEM_PROMPT
 from ragzoom.telemetry_types import (
     ModelMetadataDict,
     NodeTelemetryDict,
@@ -830,12 +831,14 @@ class TelemetryCollector:
         """Get system prompts used during indexing for reproducibility.
 
         Returns:
-            Dictionary containing the system prompts used
+            Dictionary containing the actual system prompt used (custom or default)
         """
-        # The hardcoded system prompt from index.py _summarize_text method
-        # This ensures exact reproducibility of summary generation
         return {
-            "summary_system_prompt": "You are a precise summarizer who ONLY uses information explicitly provided in the input text. You NEVER add context or details from outside the given text."
+            "summary_system_prompt": (
+                self.config.summary_system_prompt
+                if self.config.summary_system_prompt is not None
+                else DEFAULT_SUMMARY_SYSTEM_PROMPT
+            )
         }
 
     def _get_runtime_info(self) -> RuntimeInfoDict:
@@ -877,28 +880,8 @@ class TelemetryCollector:
             Version string or 'unknown' if not available
         """
         try:
-            # Try to get version from package metadata
-            import importlib.metadata
+            from importlib.metadata import version
 
-            return importlib.metadata.version("ragzoom")
+            return version("ragzoom")
         except Exception:
-            try:
-                # Fallback: try to read from pyproject.toml in development
-                from pathlib import Path
-
-                try:
-                    import tomllib  # Python 3.11+
-                except ImportError:
-                    import tomli as tomllib  # Python 3.10 fallback
-
-                pyproject_path = Path(__file__).parent.parent / "pyproject.toml"
-                if pyproject_path.exists():
-                    with open(pyproject_path, "rb") as f:
-                        data = tomllib.load(f)
-                        version = data.get("project", {}).get("version", "unknown")
-                        return str(version) if version else "unknown"
-            except Exception as e:
-                logger.debug(f"Failed to read version from {pyproject_path}: {e}")
-                # Version detection failed, continue with unknown
-
-        return "unknown"
+            return "unknown"

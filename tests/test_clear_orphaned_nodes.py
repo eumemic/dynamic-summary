@@ -137,7 +137,12 @@ class TestAutomaticClearing:
             temp_file = f.name
 
         try:
-            with patch("ragzoom.cli.GrpcRagzoomClient") as mock_client_cls:
+            with (
+                patch(
+                    "ragzoom.cli.ensure_server_running", return_value="127.0.0.1:50051"
+                ),
+                patch("ragzoom.cli.GrpcRagzoomClient") as mock_client_cls,
+            ):
                 client = MagicMock()
                 client.__enter__.return_value = client
                 client.__exit__.return_value = None
@@ -147,6 +152,7 @@ class TestAutomaticClearing:
                     document_id: str,
                     content: bytes,
                     collect_telemetry: bool,
+                    summarization_guidance: str | None = None,
                 ) -> IndexingResult:
                     storage_backend.clear_document(document_id)
                     doc_store = storage_backend.for_document(document_id)
@@ -220,7 +226,12 @@ class TestAutomaticClearing:
             temp_file = f.name
 
         try:
-            with patch("ragzoom.cli.GrpcRagzoomClient") as mock_client_cls:
+            with (
+                patch(
+                    "ragzoom.cli.ensure_server_running", return_value="127.0.0.1:50051"
+                ),
+                patch("ragzoom.cli.GrpcRagzoomClient") as mock_client_cls,
+            ):
                 client = MagicMock()
                 client.__enter__.return_value = client
                 client.__exit__.return_value = None
@@ -230,6 +241,7 @@ class TestAutomaticClearing:
                     document_id: str,
                     content: bytes,
                     collect_telemetry: bool,
+                    summarization_guidance: str | None = None,
                 ) -> IndexingResult:
                     storage_backend.clear_document(document_id)
                     refreshed_store = storage_backend.for_document(document_id)

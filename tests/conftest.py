@@ -115,12 +115,14 @@ class IndexerRuntimeHarness:
         collect_telemetry: bool = False,
         file_path: str | None = None,
         await_idle: bool = True,
+        summarization_guidance: str | None = None,
     ) -> IndexingResult:
         session = self.runtime.get_session(document_id, file_path=file_path)
         result = await session.append_text(
             text,
             replace_existing=replace_existing,
             collect_telemetry=collect_telemetry,
+            summarization_guidance=summarization_guidance,
         )
         if await_idle:
             await self.indexing_engine.wait_until_idle(document_id)

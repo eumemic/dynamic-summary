@@ -295,6 +295,7 @@ class DocumentIndexSession:
         replace_existing: bool,
         collect_telemetry: bool = False,
         timestamp: str | tuple[str, str] | None = None,
+        summarization_guidance: str | None = None,
     ) -> IndexingResult:
         # Allow empty text only when target_chunk_tokens=None (client-managed mode)
         if not text and self._runtime._index_config.target_chunk_tokens is not None:
@@ -336,6 +337,7 @@ class DocumentIndexSession:
                         file_path=resolved_path,
                         embedding_model=embedding_model,
                         summary_model=summary_model,
+                        summarization_guidance=summarization_guidance,
                     )
                     doc_record = store.get_document_by_id(self._document_id)
 

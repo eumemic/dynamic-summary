@@ -163,6 +163,13 @@ class Document(Base):
     # Inferred from first append (with timestamps → 1, without → 0)
     is_temporal: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
+    # Additional guidance for summary generation (appended to default prompt)
+    # See specs/custom-prompt-config.md § IndexConfig Field
+    # If None, uses only the default prompt from IndexConfig
+    summarization_guidance: Mapped[str | None] = mapped_column(
+        String, nullable=True, default=None
+    )
+
 
 class User(Base):
     """Database model for authenticated users."""

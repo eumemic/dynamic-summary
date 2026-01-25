@@ -482,3 +482,115 @@ class TestDocumentStatusIncludesIsTemporal:
 
         # None from repository should be treated as False
         assert response.status.is_temporal is False
+
+
+class TestServicerPopulatesTemporalFieldsInNode:
+    """Test that _retrieval_to_proto populates time_start/time_end on Node messages.
+
+    Per specs/json-output-mode.md § JSON Schema > Temporal Fields, the servicer
+    must populate time_start and time_end (ISO 8601) on Node proto messages when
+    the underlying TreeNode has temporal metadata.
+    """
+
+    def test_node_has_temporal_fields_when_present(self) -> None:
+        """Node proto includes time_start/time_end when TreeNode has temporal data."""
+        from unittest.mock import MagicMock
+
+        from ragzoom.server.servicers import _retrieval_to_proto
+
+        # Unix timestamps: 2024-01-21 14:00:00 UTC and 14:30:00 UTC
+        ts_start = 1705845600.0  # 2024-01-21T14:00:00Z
+        ts_end = 1705847400.0  # 2024-01-21T14:30:00Z
+
+        mock_node = MagicMock()
+        mock_node.text = "test content"
+        mock_node.token_count = 10
+        mock_node.span_start = 0
+        mock_node.span_end = 100
+        mock_node.parent_id = None
+        mock_node.left_child_id = None
+        mock_node.right_child_id = None
+        mock_node.height = 0
+        mock_node.time_start = ts_start
+        mock_node.time_end = ts_end
+
+        mock_retrieval = MagicMock()
+        mock_retrieval.tiling = ["node1"]
+        mock_retrieval.nodes = {"node1": mock_node}
+        mock_retrieval.node_ids = ["node1"]
+        mock_retrieval.scores = {"node1": 0.5}
+        mock_retrieval.coverage_map = {"node1": True}
+
+        response = _retrieval_to_proto(mock_retrieval)
+
+        assert "node1" in response.nodes
+        node_proto = response.nodes["node1"]
+        assert node_proto.time_start == "2024-01-21T14:00:00Z"
+        assert node_proto.time_end == "2024-01-21T14:30:00Z"
+
+    def test_node_omits_temporal_fields_when_absent(self) -> None:
+        """Node proto has empty time_start/time_end when TreeNode lacks temporal data."""
+        from unittest.mock import MagicMock
+
+        from ragzoom.server.servicers import _retrieval_to_proto
+
+        mock_node = MagicMock()
+        mock_node.text = "test content"
+        mock_node.token_count = 10
+        mock_node.span_start = 0
+        mock_node.span_end = 100
+        mock_node.parent_id = None
+        mock_node.left_child_id = None
+        mock_node.right_child_id = None
+        mock_node.height = 0
+        mock_node.time_start = None
+        mock_node.time_end = None
+
+        mock_retrieval = MagicMock()
+        mock_retrieval.tiling = ["node1"]
+        mock_retrieval.nodes = {"node1": mock_node}
+        mock_retrieval.node_ids = ["node1"]
+        mock_retrieval.scores = {"node1": 0.5}
+        mock_retrieval.coverage_map = {"node1": True}
+
+        response = _retrieval_to_proto(mock_retrieval)
+
+        assert "node1" in response.nodes
+        node_proto = response.nodes["node1"]
+        # Optional proto fields should not be set (empty string or not present)
+        assert not node_proto.HasField("time_start")
+        assert not node_proto.HasField("time_end")
+
+    def test_node_with_partial_temporal_fields(self) -> None:
+        """Node proto handles case where only time_start is present."""
+        from unittest.mock import MagicMock
+
+        from ragzoom.server.servicers import _retrieval_to_proto
+
+        ts_start = 1705845600.0  # 2024-01-21T14:00:00Z
+
+        mock_node = MagicMock()
+        mock_node.text = "test content"
+        mock_node.token_count = 10
+        mock_node.span_start = 0
+        mock_node.span_end = 100
+        mock_node.parent_id = None
+        mock_node.left_child_id = None
+        mock_node.right_child_id = None
+        mock_node.height = 0
+        mock_node.time_start = ts_start
+        mock_node.time_end = None
+
+        mock_retrieval = MagicMock()
+        mock_retrieval.tiling = ["node1"]
+        mock_retrieval.nodes = {"node1": mock_node}
+        mock_retrieval.node_ids = ["node1"]
+        mock_retrieval.scores = {"node1": 0.5}
+        mock_retrieval.coverage_map = {"node1": True}
+
+        response = _retrieval_to_proto(mock_retrieval)
+
+        assert "node1" in response.nodes
+        node_proto = response.nodes["node1"]
+        assert node_proto.time_start == "2024-01-21T14:00:00Z"
+        assert not node_proto.HasField("time_end")

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ragzoom.config import IndexConfig
+from ragzoom.constants import DEFAULT_SUMMARY_SYSTEM_PROMPT
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.telemetry_collection import (
     NodeTelemetry,
@@ -647,3 +648,59 @@ class TestTelemetryIntegration:
             > loaded["node-1"]["embedding"]["start_time"]
         )
         assert loaded["node-1"]["fidelity"] == 0.77
+
+
+class TestTelemetryCapturesCustomSummaryPrompt:
+    """Test that telemetry captures the actual summary system prompt used."""
+
+    def test_telemetry_captures_default_prompt_when_none_configured(self) -> None:
+        """When no custom prompt is configured, telemetry captures the default prompt."""
+        config = IndexConfig.load()
+        assert config.summarization_guidance is None
+
+        collector = TelemetryCollector(
+            document_id="test-doc",
+            source_tokens=1000,
+            config=config,
+        )
+
+        system_prompts = collector._get_system_prompts()
+
+        assert system_prompts["summary_system_prompt"] == DEFAULT_SUMMARY_SYSTEM_PROMPT
+
+    def test_telemetry_captures_custom_prompt_when_configured(self) -> None:
+        """When a custom prompt is configured, telemetry captures it."""
+        custom_guidance = (
+            "You are a legal document summarizer. Preserve exact legal terminology."
+        )
+        config = IndexConfig.load(summarization_guidance=custom_guidance)
+        assert config.summarization_guidance == custom_guidance
+
+        collector = TelemetryCollector(
+            document_id="test-doc",
+            source_tokens=1000,
+            config=config,
+        )
+
+        system_prompts = collector._get_system_prompts()
+
+        # Should capture the custom guidance, not the default
+        assert system_prompts["summary_system_prompt"] == custom_guidance
+
+    def test_telemetry_data_includes_custom_prompt(self) -> None:
+        """The full telemetry data dict should include custom prompt in system_prompts."""
+        custom_guidance = "You are a medical note summarizer."
+        config = IndexConfig.load(summarization_guidance=custom_guidance)
+
+        collector = TelemetryCollector(
+            document_id="test-doc",
+            source_tokens=1000,
+            config=config,
+        )
+
+        telemetry_data = collector.get_telemetry_data("test-doc", chunk_size=100)
+
+        assert "system_prompts" in telemetry_data
+        assert (
+            telemetry_data["system_prompts"]["summary_system_prompt"] == custom_guidance
+        )

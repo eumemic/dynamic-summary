@@ -1,3 +1,7 @@
+---
+status: COMPLETE
+---
+
 # Client-Managed Chunking with Dynamic Summary Targets
 
 ## Job to Be Done

@@ -17,6 +17,7 @@ Incremental, hierarchical RAG (Retrieval-Augmented Generation) memory system tha
   - Node pinning for always-included content
   - Sliding queue eviction with freshness decay
   - Smoothing pass for enhanced coherence
+  - **Temporal documents** with timestamp queries (see [docs/temporal-documents.md](docs/temporal-documents.md))
 
 ## Incremental Append (Beta)
 

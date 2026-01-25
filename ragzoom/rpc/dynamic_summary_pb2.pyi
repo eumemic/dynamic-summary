@@ -89,6 +89,7 @@ class AppendTextRequest:
     collect_telemetry: bool
     replace_existing: bool
     timestamp: Timestamp
+    summarization_guidance: str
 
     def __init__(
         self,
@@ -98,6 +99,7 @@ class AppendTextRequest:
         collect_telemetry: bool = ...,
         replace_existing: bool = ...,
         timestamp: Timestamp = ...,
+        summarization_guidance: str = ...,
     ) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
 
@@ -161,6 +163,7 @@ class RetrieveRequest:
     ) -> None: ...
 
 class Node:
+    DESCRIPTOR: ClassVar[Descriptor]
     node_id: str
     text: str
     token_count: int
@@ -170,20 +173,25 @@ class Node:
     left_child_id: str
     right_child_id: str
     height: int
+    time_start: str
+    time_end: str
 
     def __init__(
         self,
         *,
-        node_id: str,
-        text: str,
-        token_count: int,
-        span_start: int,
-        span_end: int,
-        parent_id: str,
-        left_child_id: str,
-        right_child_id: str,
-        height: int,
+        node_id: str = ...,
+        text: str = ...,
+        token_count: int = ...,
+        span_start: int = ...,
+        span_end: int = ...,
+        parent_id: str = ...,
+        left_child_id: str = ...,
+        right_child_id: str = ...,
+        height: int = ...,
+        time_start: str = ...,
+        time_end: str = ...,
     ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
 
 class RetrieveResponse:
     selected_ids: Sequence[str]

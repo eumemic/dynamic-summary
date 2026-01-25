@@ -96,6 +96,8 @@ class NodeSummary:
     left_child_id: str
     right_child_id: str
     height: int
+    time_start: str | None = None
+    time_end: str | None = None
 
 
 @dataclass
@@ -293,6 +295,7 @@ class GrpcRagzoomClient:
         collect_telemetry: bool,
         replace_existing: bool,
         timestamp: str | tuple[str, str] | None = None,
+        summarization_guidance: str | None = None,
     ) -> IndexingResult:
         request = pb2.AppendTextRequest(
             document_id=document_id,
@@ -305,6 +308,8 @@ class GrpcRagzoomClient:
             request.timestamp.time_start = ts_proto.time_start
             if ts_proto.HasField("time_end"):
                 request.timestamp.time_end = ts_proto.time_end
+        if summarization_guidance is not None:
+            request.summarization_guidance = summarization_guidance
         try:
             response = self._indexer.AppendText(request, timeout=self._timeout)
         except grpc.RpcError as error:  # pragma: no cover
@@ -438,6 +443,9 @@ class GrpcRagzoomClient:
 
         nodes_payload: dict[str, NodeSummary] = {}
         for node_id, node in response.retrieval.nodes.items():
+            # Extract optional temporal fields (None if not set in proto)
+            time_start = node.time_start if node.HasField("time_start") else None
+            time_end = node.time_end if node.HasField("time_end") else None
             nodes_payload[node_id] = NodeSummary(
                 node_id=node.node_id,
                 text=node.text,
@@ -448,6 +456,8 @@ class GrpcRagzoomClient:
                 left_child_id=node.left_child_id,
                 right_child_id=node.right_child_id,
                 height=node.height,
+                time_start=time_start,
+                time_end=time_end,
             )
 
         retrieval_view = RetrievalView(

@@ -27,16 +27,25 @@ dependencies = [
     "httpx==0.28.1",
     "psutil==7.0.0",
     "grpcio==1.75.0",
+    "protobuf>=4.25.0",
     "mcp>=1.0.0",
     "claude-transcriber==0.2.1",
+    "rank_bm25>=0.2.2",
 ]
+license = "MIT"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
 ]
+
+[project.urls]
+Homepage = "https://github.com/eumemic/dynamic-summary"
+Repository = "https://github.com/eumemic/dynamic-summary"
 
 [project.optional-dependencies]
 telemetry = [
@@ -67,7 +76,10 @@ ragzoom = "ragzoom.cli:cli"
 ragzoom-telemetry = "ragzoom.telemetry_cli:cli"
 
 [tool.setuptools.packages.find]
-include = ["ragzoom*", "memory_service*"]
+include = ["ragzoom*"]
+
+[tool.setuptools.package-data]
+ragzoom = ["*.json", "py.typed"]
 
 [tool.black]
 line-length = 88
@@ -126,6 +138,11 @@ ignore_missing_imports = true
 # claude-transcriber doesn't have type stubs
 [[tool.mypy.overrides]]
 module = "claude_transcriber"
+ignore_missing_imports = true
+
+# rank_bm25 doesn't have type stubs
+[[tool.mypy.overrides]]
+module = "rank_bm25"
 ignore_missing_imports = true
 
 
