@@ -450,14 +450,17 @@ def sync_transcript(
             )
 
         state.span_end = cumulative_span
-        state.last_message_id = new_turns[-1].last_id
+        # Use the last actually-synced turn, not the last new turn
+        # (some turns may be filtered for having empty content)
+        state.last_message_id = units_with_turns[-1][1].last_id
 
     state.turns_synced = len(all_turns)
     state.save(state_path)
 
     return SyncResult(
         document_id=state.document_id,
-        new_turns=len(new_turns),
+        # Report actually indexed turns, not all new turns found
+        new_turns=len(units_with_turns) if units_with_turns else 0,
         total_turns=len(all_turns),
         new_span_end=state.span_end,
     )
