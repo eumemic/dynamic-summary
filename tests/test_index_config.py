@@ -167,7 +167,7 @@ def test_from_dict_accepts_summarization_guidance() -> None:
 
     config_dict: dict[str, ConfigValue] = {
         "target_chunk_tokens": 200,
-        "target_embedding_context_tokens": 200,
+        "target_embedding_tokens": 500,
         "max_parallelism": 4,
         "summary_model": "gpt-4o-mini",
         "embedding_model": "text-embedding-3-small",
@@ -195,7 +195,7 @@ def test_from_dict_accepts_old_name_with_warning() -> None:
 
     config_dict: dict[str, ConfigValue] = {
         "target_chunk_tokens": 200,
-        "target_embedding_context_tokens": 200,
+        "target_embedding_tokens": 500,
         "max_parallelism": 4,
         "summary_model": "gpt-4o-mini",
         "embedding_model": "text-embedding-3-small",
@@ -231,7 +231,7 @@ def test_from_dict_new_name_takes_precedence() -> None:
 
     config_dict: dict[str, ConfigValue] = {
         "target_chunk_tokens": 200,
-        "target_embedding_context_tokens": 200,
+        "target_embedding_tokens": 500,
         "max_parallelism": 4,
         "summary_model": "gpt-4o-mini",
         "embedding_model": "text-embedding-3-small",
@@ -250,7 +250,7 @@ def test_from_dict_new_name_takes_precedence() -> None:
     assert config.summarization_guidance == "New name value"
 
 
-# Tests for embedding text optimization (Phase 34)
+# Tests for target_embedding_tokens field (embedding text optimization)
 
 
 def test_target_embedding_tokens_field() -> None:
@@ -349,7 +349,6 @@ def test_from_dict_with_target_embedding_tokens() -> None:
 
     config_dict: dict[str, ConfigValue] = {
         "target_chunk_tokens": 200,
-        "target_embedding_context_tokens": 200,
         "target_embedding_tokens": 600,
         "max_parallelism": 4,
         "summary_model": "gpt-4o-mini",
@@ -377,7 +376,6 @@ def test_from_dict_uses_default_target_embedding_tokens() -> None:
 
     config_dict: dict[str, ConfigValue] = {
         "target_chunk_tokens": 200,
-        "target_embedding_context_tokens": 200,
         "max_parallelism": 4,
         "summary_model": "gpt-4o-mini",
         "embedding_model": "text-embedding-3-small",
@@ -421,3 +419,37 @@ def test_replace_target_embedding_tokens() -> None:
     assert new_config.target_embedding_tokens == 600
     # Original config unchanged
     assert config.target_embedding_tokens == 500
+
+
+def test_deprecated_target_embedding_context_tokens_error() -> None:
+    """Test that from_dict raises clear error for deprecated config field.
+
+    Spec: specs/embedding-text-optimization.md § Migration
+    Success: Config with target_embedding_context_tokens raises ValueError with helpful message
+    """
+    import pytest
+
+    config_dict = {
+        "target_chunk_tokens": 200,
+        "target_embedding_context_tokens": 200,  # Deprecated field
+        "max_parallelism": 4,
+        "summary_model": "gpt-4o-mini",
+        "embedding_model": "text-embedding-3-small",
+        "retry_threshold": 0.5,
+        "max_retries": 3,
+        "embedding_batch_size": 100,
+        "use_anti_verbatim_vaccine": True,
+        "processing_strategy": "bottom_to_top",
+        "preceding_context": {"leaf": {}, "inner": {}},
+    }
+
+    with pytest.raises(ValueError) as exc_info:
+        IndexConfig.from_dict(config_dict)  # type: ignore[arg-type]
+
+    error_message = str(exc_info.value)
+    # Error should mention the deprecated field
+    assert "target_embedding_context_tokens" in error_message
+    # Error should mention what to use instead
+    assert "target_embedding_tokens" in error_message
+    # Error should be helpful - explain it was removed
+    assert "removed" in error_message.lower() or "deprecated" in error_message.lower()

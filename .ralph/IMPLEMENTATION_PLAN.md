@@ -254,11 +254,12 @@ Replace the two-step embedding process (summarize context, concatenate with leaf
 
 Remove the old config field and update all references atomically to prevent type errors.
 
-- [ ] Add deprecation error for `target_embedding_context_tokens` in from_dict
+- [x] Add deprecation error for `target_embedding_context_tokens` in from_dict
   - Spec: specs/embedding-text-optimization.md § Migration
   - Success: Config with `target_embedding_context_tokens` raises ValueError with helpful message
   - Test: `tests/test_index_config.py::test_deprecated_target_embedding_context_tokens_error`
-  - Location: `ragzoom/config.py:366` (from_dict method)
+  - Location: `ragzoom/config.py:398` (from_dict method)
+  - **DONE**: Added check in from_dict that raises ValueError with helpful message when deprecated field is present. Error explains to use `target_embedding_tokens` instead and references spec.
 
 - [ ] Remove `target_embedding_context_tokens` from IndexConfig fields
   - Spec: specs/embedding-text-optimization.md § Configuration > Removed Parameter
@@ -272,11 +273,12 @@ Remove the old config field and update all references atomically to prevent type
   - Test: (type checking)
   - Location: `ragzoom/config.py:29` (IndexConfigDict)
 
-- [ ] Remove `target_embedding_context_tokens` from default_config.json
+- [x] Remove `target_embedding_context_tokens` from default_config.json
   - Spec: specs/embedding-text-optimization.md § Migration
   - Success: File no longer contains `target_embedding_context_tokens`
   - Test: `tests/test_config.py::test_default_config_no_deprecated_fields`
   - Location: `ragzoom/default_config.json`
+  - **DONE**: Removed field from default_config.json. This was necessary alongside the from_dict deprecation error since load() uses from_dict internally.
 
 - [ ] Update `ragzoom/services/query_service.py` to use new config field
   - Spec: specs/embedding-text-optimization.md § Migration
