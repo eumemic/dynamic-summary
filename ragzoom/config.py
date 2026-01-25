@@ -31,6 +31,7 @@ class IndexConfigDict(TypedDict, total=False):
 
     target_chunk_tokens: int | None
     target_embedding_context_tokens: int
+    target_embedding_tokens: int
     max_parallelism: int
     summary_model: str
     embedding_model: str
