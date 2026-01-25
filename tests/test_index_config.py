@@ -337,3 +337,58 @@ def test_target_embedding_tokens_validation() -> None:
             use_anti_verbatim_vaccine=True,
             processing_strategy="bottom_to_top",
         )
+
+
+def test_from_dict_with_target_embedding_tokens() -> None:
+    """Test that from_dict parses target_embedding_tokens field.
+
+    Spec: specs/embedding-text-optimization.md § Configuration > IndexConfig Changes
+    Success: IndexConfig.from_dict({"target_embedding_tokens": 500, ...}) works
+    """
+    from ragzoom.config import ConfigValue
+
+    config_dict: dict[str, ConfigValue] = {
+        "target_chunk_tokens": 200,
+        "target_embedding_context_tokens": 200,
+        "target_embedding_tokens": 600,
+        "max_parallelism": 4,
+        "summary_model": "gpt-4o-mini",
+        "embedding_model": "text-embedding-3-small",
+        "retry_threshold": 0.5,
+        "max_retries": 3,
+        "embedding_batch_size": 100,
+        "use_anti_verbatim_vaccine": True,
+        "processing_strategy": "bottom_to_top",
+        "preceding_context": {"leaf": {}, "inner": {}},  # type: ignore[dict-item]
+    }
+
+    config = IndexConfig.from_dict(config_dict)
+
+    assert config.target_embedding_tokens == 600
+
+
+def test_from_dict_uses_default_target_embedding_tokens() -> None:
+    """Test that from_dict uses default value when field not provided.
+
+    Spec: specs/embedding-text-optimization.md § Configuration > IndexConfig Changes
+    Success: from_dict without target_embedding_tokens uses default of 500
+    """
+    from ragzoom.config import ConfigValue
+
+    config_dict: dict[str, ConfigValue] = {
+        "target_chunk_tokens": 200,
+        "target_embedding_context_tokens": 200,
+        "max_parallelism": 4,
+        "summary_model": "gpt-4o-mini",
+        "embedding_model": "text-embedding-3-small",
+        "retry_threshold": 0.5,
+        "max_retries": 3,
+        "embedding_batch_size": 100,
+        "use_anti_verbatim_vaccine": True,
+        "processing_strategy": "bottom_to_top",
+        "preceding_context": {"leaf": {}, "inner": {}},  # type: ignore[dict-item]
+    }
+
+    config = IndexConfig.from_dict(config_dict)
+
+    assert config.target_embedding_tokens == 500

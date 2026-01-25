@@ -449,6 +449,9 @@ class IndexConfig:
             preceding_context=preceding_context,
             summary_reasoning_level=summary_reasoning_level,
             summarization_guidance=summarization_guidance,
+            target_embedding_tokens=int(
+                config_dict.get("target_embedding_tokens", 500)
+            ),
         )
 
     @classmethod
