@@ -295,7 +295,7 @@ class GrpcRagzoomClient:
         collect_telemetry: bool,
         replace_existing: bool,
         timestamp: str | tuple[str, str] | None = None,
-        summary_system_prompt: str | None = None,
+        summarization_guidance: str | None = None,
     ) -> IndexingResult:
         request = pb2.AppendTextRequest(
             document_id=document_id,
@@ -308,8 +308,8 @@ class GrpcRagzoomClient:
             request.timestamp.time_start = ts_proto.time_start
             if ts_proto.HasField("time_end"):
                 request.timestamp.time_end = ts_proto.time_end
-        if summary_system_prompt is not None:
-            request.summary_system_prompt = summary_system_prompt
+        if summarization_guidance is not None:
+            request.summarization_guidance = summarization_guidance
         try:
             response = self._indexer.AppendText(request, timeout=self._timeout)
         except grpc.RpcError as error:  # pragma: no cover

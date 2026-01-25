@@ -286,13 +286,13 @@ async def test_worker_uses_document_custom_prompt(
         ),
     ):
         await indexer_runtime_harness.clear(document_id)
-        # Append with custom prompt - this stores the prompt with the document
+        # Append with custom guidance - this stores the guidance with the document
         await indexer_runtime_harness.append(
             document_id,
             _document_text(6),  # Enough chunks to trigger summarization
             replace_existing=True,
             file_path="legal-doc.txt",
-            summary_system_prompt=custom_prompt,
+            summarization_guidance=custom_prompt,
         )
         await indexer_runtime_harness.wait_for_idle(document_id)
 
