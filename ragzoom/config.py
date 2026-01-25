@@ -311,6 +311,15 @@ class IndexConfig:
     Use this to provide domain context that improves summary quality
     for specific content types (legal, medical, code, etc.).
     """
+    target_embedding_tokens: int = 500
+    """Target token count for text sent to embedding.
+
+    When combined input (preceding context + leaf text) exceeds this target,
+    an LLM generates retrieval-optimized text to fit within the budget.
+    When input fits within target, it passes through unchanged.
+
+    Default: 500 tokens (optimal for focused, high-quality embeddings).
+    """
 
     @property
     def summary_system_prompt(self) -> str | None:
@@ -345,6 +354,10 @@ class IndexConfig:
         if self.target_chunk_tokens is not None and self.target_chunk_tokens <= 0:
             raise ValueError(
                 f"target_chunk_tokens must be positive when set, got {self.target_chunk_tokens}"
+            )
+        if self.target_embedding_tokens <= 0:
+            raise ValueError(
+                f"target_embedding_tokens must be positive, got {self.target_embedding_tokens}"
             )
         if not 0.0 <= self.retry_threshold <= 1.0:
             raise ValueError(

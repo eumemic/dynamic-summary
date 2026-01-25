@@ -248,3 +248,92 @@ def test_from_dict_new_name_takes_precedence() -> None:
     config = IndexConfig.from_dict(config_dict)
 
     assert config.summarization_guidance == "New name value"
+
+
+# Tests for embedding text optimization (Phase 34)
+
+
+def test_target_embedding_tokens_field() -> None:
+    """Test that IndexConfig accepts target_embedding_tokens field.
+
+    Spec: specs/embedding-text-optimization.md § Configuration > New Parameter
+    Success: IndexConfig(target_embedding_tokens=500) instantiates without error
+    """
+    config = IndexConfig(
+        target_chunk_tokens=200,
+        target_embedding_context_tokens=200,
+        target_embedding_tokens=500,
+        max_parallelism=4,
+        summary_model="gpt-4o-mini",
+        embedding_model="text-embedding-3-small",
+        retry_threshold=0.5,
+        max_retries=3,
+        embedding_batch_size=100,
+        use_anti_verbatim_vaccine=True,
+        processing_strategy="bottom_to_top",
+    )
+
+    assert config.target_embedding_tokens == 500
+
+
+def test_target_embedding_tokens_default_value() -> None:
+    """Test that target_embedding_tokens defaults to 500.
+
+    Spec: specs/embedding-text-optimization.md § Configuration > New Parameter
+    Success: IndexConfig without target_embedding_tokens has default value of 500
+    """
+    config = IndexConfig(
+        target_chunk_tokens=200,
+        target_embedding_context_tokens=200,
+        max_parallelism=4,
+        summary_model="gpt-4o-mini",
+        embedding_model="text-embedding-3-small",
+        retry_threshold=0.5,
+        max_retries=3,
+        embedding_batch_size=100,
+        use_anti_verbatim_vaccine=True,
+        processing_strategy="bottom_to_top",
+    )
+
+    assert config.target_embedding_tokens == 500
+
+
+def test_target_embedding_tokens_validation() -> None:
+    """Test that target_embedding_tokens rejects invalid values.
+
+    Spec: specs/embedding-text-optimization.md § Configuration > New Parameter
+    Success: ValueError raised for non-positive values
+    """
+    import pytest
+
+    # Zero is invalid - must be positive
+    with pytest.raises(ValueError, match="target_embedding_tokens must be positive"):
+        IndexConfig(
+            target_chunk_tokens=200,
+            target_embedding_context_tokens=200,
+            target_embedding_tokens=0,
+            max_parallelism=4,
+            summary_model="gpt-4o-mini",
+            embedding_model="text-embedding-3-small",
+            retry_threshold=0.5,
+            max_retries=3,
+            embedding_batch_size=100,
+            use_anti_verbatim_vaccine=True,
+            processing_strategy="bottom_to_top",
+        )
+
+    # Negative is invalid
+    with pytest.raises(ValueError, match="target_embedding_tokens must be positive"):
+        IndexConfig(
+            target_chunk_tokens=200,
+            target_embedding_context_tokens=200,
+            target_embedding_tokens=-100,
+            max_parallelism=4,
+            summary_model="gpt-4o-mini",
+            embedding_model="text-embedding-3-small",
+            retry_threshold=0.5,
+            max_retries=3,
+            embedding_batch_size=100,
+            use_anti_verbatim_vaccine=True,
+            processing_strategy="bottom_to_top",
+        )
