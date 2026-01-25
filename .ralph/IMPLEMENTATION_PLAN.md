@@ -222,11 +222,12 @@ Replace the two-step embedding process (summarize context, concatenate with leaf
   - Location: `ragzoom/config.py:291` (IndexConfig dataclass)
   - **DONE**: Added field with default=500 and validation in __post_init__. Tests verify field access, default value, and rejection of non-positive values.
 
-- [ ] Update IndexConfigDict TypedDict with new field
+- [x] Update IndexConfigDict TypedDict with new field
   - Spec: specs/embedding-text-optimization.md § Configuration > New Parameter
   - Success: Type checker accepts `target_embedding_tokens` in config dicts
   - Test: (type checking)
   - Location: `ragzoom/config.py:29` (IndexConfigDict)
+  - **DONE**: Added `target_embedding_tokens: int` to IndexConfigDict TypedDict. Type checker validates successfully.
 
 - [ ] Update IndexConfig.from_dict to parse new field
   - Spec: specs/embedding-text-optimization.md § Configuration > IndexConfig Changes
