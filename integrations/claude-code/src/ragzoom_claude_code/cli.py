@@ -87,6 +87,74 @@ def set_pid_cmd(document_id: str, pid: int) -> None:
         raise SystemExit(1) from e
 
 
+@cli.command("reset")
+@click.argument("jsonl_path", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--server-address",
+    "-s",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default="localhost:50051",
+    show_default=True,
+    help="RagZoom gRPC server address",
+)
+@click.option(
+    "--resync/--no-resync",
+    default=True,
+    help="Re-sync after reset (default: yes)",
+)
+def reset_cmd(jsonl_path: Path, server_address: str, resync: bool) -> None:
+    """Reset a session by clearing both state file and document.
+
+    Deletes the local sync state file and clears the document from RagZoom,
+    then optionally re-syncs from scratch.
+
+    Example:
+      ragzoom-claude-code reset ~/.claude/projects/.../session.jsonl
+      ragzoom-claude-code reset session.jsonl --no-resync
+    """
+    from ragzoom.client import GrpcRagzoomClient
+    from ragzoom.wrapper import RagZoom
+
+    document_id = jsonl_path.stem
+    state_path = get_state_path(document_id)
+
+    # Step 1: Delete state file
+    if state_path.exists():
+        state_path.unlink()
+        click.echo(f"Deleted state file: {state_path}")
+    else:
+        click.echo(f"No state file found at: {state_path}")
+
+    # Step 2: Clear document from RagZoom
+    try:
+        with GrpcRagzoomClient(server_address) as grpc_client:
+            clear_result = grpc_client.clear_document(document_id)
+            if clear_result.document_existed:
+                click.echo(
+                    f"Cleared document '{document_id}' ({clear_result.deleted_nodes} nodes)"
+                )
+            else:
+                click.echo(f"Document '{document_id}' did not exist")
+    except Exception as e:
+        click.echo(f"Warning: Could not clear document: {e}", err=True)
+
+    # Step 3: Re-sync if requested
+    if resync:
+        click.echo("Re-syncing from scratch...")
+        ragzoom_client = RagZoom(server_address=server_address)
+        try:
+            sync_result = execute_sync(jsonl_path, state_path, ragzoom_client)
+            if sync_result.appended_uuids:
+                click.echo(
+                    f"Synced {len(sync_result.appended_uuids)} messages to '{sync_result.document_id}'"
+                )
+            else:
+                click.echo(f"No content to sync for '{sync_result.document_id}'")
+        except Exception as e:
+            click.echo(f"Error during re-sync: {e}", err=True)
+            raise SystemExit(1) from e
+
+
 @cli.command("mcp-server")
 def mcp_server_cmd() -> None:
     """Start the MCP server for the 'remember' tool.
