@@ -229,11 +229,12 @@ Replace the two-step embedding process (summarize context, concatenate with leaf
   - Location: `ragzoom/config.py:29` (IndexConfigDict)
   - **DONE**: Added `target_embedding_tokens: int` to IndexConfigDict TypedDict. Type checker validates successfully.
 
-- [ ] Update IndexConfig.from_dict to parse new field
+- [x] Update IndexConfig.from_dict to parse new field
   - Spec: specs/embedding-text-optimization.md § Configuration > IndexConfig Changes
   - Success: `IndexConfig.from_dict({"target_embedding_tokens": 500, ...})` works
   - Test: `tests/test_index_config.py::test_from_dict_with_target_embedding_tokens`
   - Location: `ragzoom/config.py:366` (from_dict method)
+  - **DONE**: Added `target_embedding_tokens=int(config_dict.get("target_embedding_tokens", 500))` to from_dict return statement. Tests verify parsing custom values and default fallback.
 
 - [ ] Update IndexConfig.replace with new field
   - Spec: specs/embedding-text-optimization.md § Configuration > IndexConfig Changes
