@@ -236,11 +236,12 @@ Replace the two-step embedding process (summarize context, concatenate with leaf
   - Location: `ragzoom/config.py:366` (from_dict method)
   - **DONE**: Added `target_embedding_tokens=int(config_dict.get("target_embedding_tokens", 500))` to from_dict return statement. Tests verify parsing custom values and default fallback.
 
-- [ ] Update IndexConfig.replace with new field
+- [x] Update IndexConfig.replace with new field
   - Spec: specs/embedding-text-optimization.md § Configuration > IndexConfig Changes
   - Success: `config.replace(target_embedding_tokens=600)` returns new config
   - Test: `tests/test_index_config.py::test_replace_target_embedding_tokens`
   - Location: `ragzoom/config.py:460` (replace method)
+  - **DONE**: Added `target_embedding_tokens` parameter to replace() method signature and included it in the dataclasses.replace() call.
 
 - [ ] Update default_config.json with new field
   - Spec: specs/embedding-text-optimization.md § default_config.json

@@ -489,6 +489,7 @@ class IndexConfig:
         preceding_context: PrecedingContextSettings | None = None,
         summary_reasoning_level: str | None = None,
         summarization_guidance: str | None = None,
+        target_embedding_tokens: int | None = None,
     ) -> "IndexConfig":
         """Create a new IndexConfig with some fields changed."""
         from dataclasses import replace
@@ -547,6 +548,11 @@ class IndexConfig:
                 summarization_guidance
                 if summarization_guidance is not None
                 else self.summarization_guidance
+            ),
+            target_embedding_tokens=(
+                target_embedding_tokens
+                if target_embedding_tokens is not None
+                else self.target_embedding_tokens
             ),
         )
 
