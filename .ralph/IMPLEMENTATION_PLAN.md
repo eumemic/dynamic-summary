@@ -8,572 +8,208 @@ The client-managed chunking feature specified in `specs/client-managed-chunking.
 
 ---
 
-## Current Feature: Temporal Metadata
+## Previous Feature: Temporal Metadata (Complete)
 
-**Spec**: `specs/temporal-metadata.md` (status: READY)
-
-Add optional temporal metadata (`time_start` and `time_end` timestamps) to chunks in client-controlled chunking mode, enabling time-windowed queries.
+The temporal metadata feature specified in `specs/temporal-metadata.md` is **fully implemented**. All 5 phases complete with comprehensive test coverage.
 
 ---
 
-## Phase 1: Storage & Tree Building
+## Previous Feature: Timestamped Transcript Sync (Complete)
 
-### Database Schema
-
-- [x] Add `time_start` and `time_end` columns to PostgresTreeNode
-  - Spec: specs/temporal-metadata.md § Data Model Changes > Database Schema
-  - Success: `tree_nodes` table has `time_start FLOAT` and `time_end FLOAT` nullable columns
-  - Test: `test_postgres_tree_node_has_temporal_columns`
-  - Location: `ragzoom/models.py` (TreeNodeColumnsMixin)
-
-- [x] Add `time_start` and `time_end` columns to SQLite tree_nodes table
-  - Spec: specs/temporal-metadata.md § Data Model Changes > Database Schema
-  - Success: SQLite `tree_nodes` table has temporal columns
-  - Test: `test_sqlite_tree_node_has_temporal_columns`
-  - Location: `ragzoom/backends/sqlite_db.py` (migration in SqliteDatabaseManager.__post_init__)
-
-- [x] Add `is_temporal` column to Document model
-  - Spec: specs/temporal-metadata.md § Data Model Changes > Database Schema
-  - Success: `documents` table has `is_temporal INTEGER NOT NULL DEFAULT 0` column (Integer for SQLite compatibility)
-  - Test: `test_document_has_is_temporal_column`
-  - Location: `ragzoom/models.py` (Document class), `ragzoom/backends/sqlite_db.py` (SqliteDocument class)
-  - Note: Uses Integer with 0/1 pattern (not Boolean) for cross-database compatibility
-
-### TypedDict / Protocols
-
-- [x] Extend NodeDataDict with temporal fields
-  - Spec: specs/temporal-metadata.md § Data Model Changes > TypedDict / Protocols
-  - Success: NodeDataDict includes `time_start: float | None` and `time_end: float | None`
-  - Test: Type-check code using NodeDataDict with temporal fields
-  - Location: `ragzoom/contracts/node_repository.py:26-56`
-
-- [x] Extend TreeNode protocol with temporal fields
-  - Spec: specs/temporal-metadata.md § Data Model Changes > TypedDict / Protocols
-  - Success: TreeNode protocol includes `time_start: float | None` and `time_end: float | None`
-  - Test: Type-check implementations conforming to TreeNode protocol
-  - Location: `ragzoom/contracts/tree_node.py:16-53`
-
-- [x] Add timestamp fields to LeafSpec dataclass
-  - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 1
-  - Success: LeafSpec includes `time_start: float | None` and `time_end: float | None`
-  - Test: `test_leaf_spec_accepts_timestamps`
-  - Location: `ragzoom/server/append_executor.py:31-43`
-
-### Vector Metadata
-
-- [x] Add `coerce_float` helper function
-  - Spec: specs/temporal-metadata.md § Data Model Changes > Vector Metadata
-  - Success: `coerce_float(value)` returns `float | None` handling various input types
-  - Test: `tests/test_vector_common.py::TestCoerceFloat` (13 tests)
-  - Location: `ragzoom/backends/vector_common.py:29-50`
-
-- [x] Extend `normalize_metadata_from_dict()` with temporal fields
-  - Spec: specs/temporal-metadata.md § Data Model Changes > Vector Metadata
-  - Success: MetaDict includes `time_start` and `time_end` coerced to float
-  - Test: `test_normalize_metadata_includes_timestamps`
-  - Location: `ragzoom/backends/vector_common.py:70-91`
-
-### Tree Building
-
-- [x] Propagate timestamps for inner nodes during summarization
-  - Spec: specs/temporal-metadata.md § Requirements > 3. Tree Propagation
-  - Success: Parent node has `time_start = left_child.time_start` and `time_end = right_child.time_end`
-  - Test: `test_inner_node_timestamp_propagation` in `tests/test_temporal_tree.py`
-  - Location: `ragzoom/server/indexing_engine.py:1694-1700` (extraction), `ragzoom/server/indexing_engine.py:1858-1859` (node_payload)
-  - Note: Also fixed SQLite and Postgres repositories to persist temporal fields in `add_nodes_batch` and `upsert_nodes_batch`
+The timestamped transcript sync feature specified in `specs/timestamped-transcript-sync.md` is **fully implemented**. Phases 6-10 complete with turn-level tracking, revert detection, and claude-transcriber integration.
 
 ---
 
-## Phase 2: Indexing API
+## Previous Feature: BM25 Hybrid Search (Complete)
 
-### gRPC Protocol
-
-- [x] Add `Timestamp` message to proto
-  - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
-  - Success: Proto defines `message Timestamp { string time_start = 1; optional string time_end = 2; }`
-  - Test: `tests/test_temporal_proto.py::TestTimestampMessage` (5 tests)
-  - Location: `proto/dynamic_summary.proto:7-12`
-
-- [x] Add `optional Timestamp timestamp` to AppendTextRequest
-  - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
-  - Success: AppendTextRequest has timestamp field (field number 5)
-  - Test: `test_append_request_has_timestamp_field`
-  - Location: `proto/dynamic_summary.proto:38-44`
-
-- [x] Add `repeated Timestamp timestamps` to BatchAppendTextRequest
-  - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
-  - Success: BatchAppendTextRequest has timestamps repeated field (field number 4)
-  - Test: `test_batch_append_request_has_timestamps_field`
-  - Location: `proto/dynamic_summary.proto:53-58`
-
-- [x] Add `time_start` and `time_end` to ExecuteQueryRequest
-  - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
-  - Success: ExecuteQueryRequest has `optional string time_start` and `optional string time_end`
-  - Test: `test_query_request_has_time_fields`
-  - Location: `proto/dynamic_summary.proto:94-111`
-
-- [x] Add `is_temporal` to DocumentStatus
-  - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
-  - Success: DocumentStatus has `bool is_temporal = 5;`
-  - Test: `test_document_status_has_is_temporal`
-  - Location: `proto/dynamic_summary.proto:183-189`
-
-- [x] Regenerate gRPC stubs
-  - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 2
-  - Success: `ragzoom/rpc/` contains updated Python stubs with new messages/fields
-  - Test: Import succeeds and new types available (verified via test_temporal_proto.py)
-  - Location: `ragzoom/rpc/` (run `scripts/compile-proto.sh` to regenerate)
-
-### Timestamp Parsing
-
-- [x] Implement ISO 8601 timestamp parser
-  - Spec: specs/temporal-metadata.md § Requirements > 2. Timestamp Format
-  - Success: `parse_timestamp("2024-01-21T14:30:00Z")` returns Unix float; no-TZ rejected
-  - Test: `tests/test_temporal_parsing.py` (14 tests covering formats, edge cases, rejections)
-  - Location: `ragzoom/server/append_executor.py:27-51`
-
-- [x] Validate `time_end >= time_start`
-  - Spec: specs/temporal-metadata.md § Requirements > 5. Validation Rules
-  - Success: `time_end < time_start` raises ValueError with clear message
-  - Test: `tests/test_temporal_parsing.py::TestTimestampRangeValidation` (5 tests)
-  - Location: `ragzoom/server/append_executor.py:53-65` (validate_timestamp_range function)
-
-### AppendExecutor Updates
-
-- [x] Add `timestamp` parameter to `append()` method
-  - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 2
-  - Success: `append(text, timestamp="2024-01-21T14:30:00Z")` accepts ISO 8601 string or tuple
-  - Test: `tests/test_temporal_append_sqlite.py::TestAppendWithTimestamp` (7 tests)
-  - Location: `ragzoom/server/append_executor.py:114-147` (parameter + parsing), `ragzoom/server/append_executor.py:247-267` (payload)
-
-- [x] Add `timestamps` parameter to `append_batch()` method
-  - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 2
-  - Success: `append_batch(units, timestamps=[...])` accepts parallel list of timestamps
-  - Test: `tests/test_temporal_append_sqlite.py::TestAppendBatchWithTimestamps` (7 tests)
-  - Location: `ragzoom/server/append_executor.py:339-425`
-
-- [x] Update `_build_leaf_specs()` to accept timestamps
-  - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 1
-  - Success: `_build_leaf_specs()` accepts `timestamps: Sequence[tuple[float, float] | None]`
-  - Test: `tests/test_build_leaf_specs_sqlite.py::TestBuildLeafSpecsWithTimestamps` (5 tests)
-  - Location: `ragzoom/server/append_executor.py:676-735`
-
-- [x] Store timestamps in leaf NodeDataDict payload
-  - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 1
-  - Success: Database leaf nodes have `time_start` and `time_end` values from input
-  - Test: `test_leaf_stores_timestamps_in_database`
-  - Location: `ragzoom/server/append_executor.py:277-297` (payload build), `ragzoom/backends/sqlite_repositories.py:94-95` (persistence)
-
-### Document Temporality
-
-- [x] Add `get_document_is_temporal()` to repository
-  - Spec: specs/temporal-metadata.md § Requirements > 1. Temporal Documents
-  - Success: Query returns `is_temporal` flag for document
-  - Test: `tests/test_document_is_temporal_sqlite.py::test_get_document_is_temporal_*`
-  - Location: `ragzoom/backends/sqlite_repositories.py:1684-1698`, `ragzoom/repositories/document_repository.py:71-84`
-  - Note: Also added to `ragzoom/contracts/document_repository.py` protocol
-
-- [x] Add `set_document_is_temporal()` to repository
-  - Spec: specs/temporal-metadata.md § Requirements > 1. Temporal Documents
-  - Success: Can set `is_temporal=True` on first temporal append
-  - Test: `tests/test_document_is_temporal_sqlite.py::test_get_document_is_temporal_returns_true_for_temporal_document`
-  - Location: `ragzoom/backends/sqlite_repositories.py:1700-1718`, `ragzoom/repositories/document_repository.py:86-105`
-  - Note: Also added to `ragzoom/contracts/document_repository.py` protocol
-
-- [x] Infer `is_temporal` from first append
-  - Spec: specs/temporal-metadata.md § Requirements > 1. Temporal Documents
-  - Success: First append WITH timestamps sets `is_temporal=True`; WITHOUT sets `is_temporal=False`
-  - Test: `tests/test_temporal_inference_sqlite.py::TestIsTemporalInference` (5 tests)
-  - Location: `ragzoom/server/append_executor.py:192-197` (append), `ragzoom/server/append_executor.py:461-466` (append_batch)
-
-- [x] Validate timestamp presence on subsequent appends
-  - Spec: specs/temporal-metadata.md § Requirements > 5. Validation Rules
-  - Success: Temporal doc + missing timestamps → Error; Non-temporal + timestamps → Error
-  - Test: `tests/test_temporal_validation_sqlite.py::TestTemporalValidationOnSubsequentAppends` (10 tests)
-  - Location: `ragzoom/server/append_executor.py:193-209` (append), `ragzoom/server/append_executor.py:471-487` (append_batch)
-
-### gRPC Servicers
-
-- [x] Extract timestamps from AppendTextRequest in servicer
-  - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 2
-  - Success: Servicer parses Timestamp message and passes to AppendExecutor
-  - Test: `tests/test_temporal_servicer.py::TestServicerAppendExtractsTimestamp` (3 tests)
-  - Location: `ragzoom/server/servicers.py:135-150` (_extract_timestamp helper), `ragzoom/server/servicers.py:305-322` (AppendText method)
-
-- [x] Extract timestamps from BatchAppendTextRequest in servicer
-  - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 2
-  - Success: Servicer validates timestamps length matches units, passes to AppendExecutor
-  - Test: `tests/test_temporal_servicer.py::TestServicerBatchAppendExtractsTimestamps` (3 tests)
-  - Location: `ragzoom/server/servicers.py:340-371` (BatchAppendText method)
+The BM25 hybrid search feature specified in `specs/bm25-hybrid-search.md` is **fully implemented**. All phases (18-21) complete with BM25Index, caching, RRF fusion, and retriever integration.
 
 ---
 
-## Phase 3: Query API & Time→Span Mapping
+## Previous Feature: JSON Output Mode (Complete)
 
-### Repository Queries
-
-- [x] Add `get_leaf_at_time_position()` to NodeRepository protocol
-  - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 3
-  - Success: Protocol defines method signature for leaf lookup by time
-  - Test: Type-check implementations
-  - Location: `ragzoom/contracts/node_repository.py:319-347`
-
-- [x] Implement `get_leaf_at_time_position()` in SQLite repository
-  - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 3
-  - Success: SQL returns earliest/latest leaves overlapping time window
-  - Test: `tests/test_leaf_at_time_position.py::TestSqliteGetLeafAtTimePosition` (9 tests)
-  - Location: `ragzoom/backends/sqlite_repositories.py:1587-1647`
-
-- [x] Implement `get_leaf_at_time_position()` in Postgres repository
-  - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 3
-  - Success: SQL returns earliest/latest leaves overlapping time window
-  - Test: Postgres uses same query pattern as SQLite (both use ORM filters)
-  - Location: `ragzoom/repositories/postgres_node_repository.py:1686-1745`
-
-### Query API Updates
-
-- [x] Add `time_start`/`time_end` parameters to Retriever
-  - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 3
-  - Success: `retrieve_async()` accepts `time_start` and `time_end` parameters
-  - Test: `tests/test_retriever_time_window_sqlite.py::TestRetrieverAcceptsTimeWindow` (4 tests)
-  - Location: `ragzoom/retrieve.py:141-154` (retrieve_async), `ragzoom/retrieve.py:511-522` (retrieve)
-
-- [x] Implement time→span mapping logic
-  - Spec: specs/temporal-metadata.md § Requirements > 4. Time-Windowed Queries
-  - Success: Time window converted to span window via leaf lookup
-  - Test: `tests/test_time_to_span_mapping.py::TestTimeToSpanMapping` (4 tests)
-  - Location: `ragzoom/retrieve.py:224-269` (time→span mapping block in retrieve_async)
-
-- [x] Validate time query on temporal document only
-  - Spec: specs/temporal-metadata.md § Requirements > 5. Validation Rules
-  - Success: Time query on non-temporal document raises clear error
-  - Test: `tests/test_time_to_span_mapping.py::TestTimeQueryValidation::test_time_query_on_non_temporal_raises_error`
-  - Location: `ragzoom/retrieve.py:231-238` (is_temporal validation)
-
-- [x] Extract time window from ExecuteQueryRequest in servicer
-  - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 3
-  - Success: Servicer passes time_start/time_end to retrieval logic
-  - Test: `tests/test_temporal_servicer.py::TestServicerQueryExtractsTimeWindow` (3 tests)
-  - Location: `ragzoom/server/servicers.py:484-490` (extraction), `ragzoom/server/servicers.py:507-509` (passing to retrieve_async)
-
-- [x] Populate is_temporal in DocumentStatus response
-  - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
-  - Success: GetDocument response includes document.is_temporal value
-  - Test: `tests/test_temporal_servicer.py::TestDocumentStatusIncludesIsTemporal` (3 tests)
-  - Location: `ragzoom/server/servicers.py:741-747` (GetDocument method)
-
-### Python Client API
-
-- [x] Add `timestamp` parameter to `RagZoom.append()`
-  - Spec: specs/temporal-metadata.md § API Changes > Python Client API
-  - Success: `append(text, timestamp="2024-01-21T14:30:00Z")` or `timestamp=("start", "end")`
-  - Test: `test_ragzoom_append_passes_timestamp_to_runtime`, `test_ragzoom_append_passes_timestamp_tuple_to_runtime`
-  - Location: `ragzoom/wrapper.py:131-155`
-
-- [x] Add `timestamps` parameter to `RagZoom.batch_append()`
-  - Spec: specs/temporal-metadata.md § API Changes > Python Client API
-  - Success: `batch_append(units, timestamps=[...])` with parallel list
-  - Test: `test_ragzoom_batch_append_passes_timestamps_to_runtime`, `test_ragzoom_batch_append_without_timestamps`
-  - Location: `ragzoom/wrapper.py:157-197` (sync), `ragzoom/wrapper.py:437-468` (async)
-
-- [x] Add `time_start`/`time_end` to `RagZoom.query()`
-  - Spec: specs/temporal-metadata.md § API Changes > Python Client API
-  - Success: `query(text, time_start="...", time_end="...")` accepts ISO 8601 strings
-  - Test: `test_ragzoom_query_passes_time_window_to_grpc_client`
-  - Location: `ragzoom/wrapper.py:275-320` (sync), `ragzoom/wrapper.py:530-557` (async)
-
-### gRPC Client
-
-- [x] Serialize timestamps to proto in GrpcRagzoomClient
-  - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 2
-  - Success: Client builds Timestamp proto from ISO 8601 strings
-  - Test: `_build_timestamp_proto` helper used in `append_text` and `batch_append_text`
-  - Location: `ragzoom/client/grpc_client.py:32-45` (helper), `ragzoom/client/grpc_client.py:303-307` (append), `ragzoom/client/grpc_client.py:349-352` (batch)
-
-- [x] Pass time window to ExecuteQueryRequest in GrpcRagzoomClient
-  - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 3
-  - Success: Client sets time_start and time_end on query request
-  - Test: `test_ragzoom_query_passes_time_window_to_grpc_client` (tests full path through wrapper)
-  - Location: `ragzoom/client/grpc_client.py:372-410`
+The JSON output mode feature specified in `specs/json-output-mode.md` is **fully implemented**. All phases (15-17) complete with temporal fields, JSON error format, and CLI integration.
 
 ---
 
-## Phase 4: Testing
+## Previous Feature: Daemon Lifecycle (Complete)
 
-### Unit Tests
-
-- [x] Test ISO 8601 parsing with various formats
-  - Spec: specs/temporal-metadata.md § Implementation Outline > Phase 4
-  - Success: Validates Z suffix, +HH:MM offset, microseconds; rejects no-TZ
-  - Test: `tests/test_temporal_parsing.py::TestParseTimestampFormats` (7 tests), `TestRejectTimestampWithoutTimezone` (3 tests)
-  - Location: `tests/test_temporal_parsing.py`
-
-- [x] Test is_temporal inference from first append
-  - Spec: specs/temporal-metadata.md § Acceptance Criteria > 2
-  - Success: First append with timestamps → is_temporal=True; without → False
-  - Test: `tests/test_temporal_inference_sqlite.py::TestIsTemporalInference` (5 tests)
-  - Location: `tests/test_temporal_inference_sqlite.py`
-
-- [x] Test timestamp validation enforcement
-  - Spec: specs/temporal-metadata.md § Acceptance Criteria > 6
-  - Success: Temporal doc + missing timestamps → Error; Non-temporal + timestamps → Error
-  - Test: `tests/test_temporal_validation_sqlite.py::TestTemporalValidationOnSubsequentAppends` (10 tests)
-  - Location: `tests/test_temporal_validation_sqlite.py`
-
-- [x] Test inner node timestamp propagation
-  - Spec: specs/temporal-metadata.md § Acceptance Criteria > 3
-  - Success: Parent.time_start == left.time_start; parent.time_end == right.time_end
-  - Test: `tests/test_temporal_tree.py::TestInnerNodeTimestampPropagation` (3 tests), `TestRuntimeTimestampPropagation` (2 tests)
-  - Location: `tests/test_temporal_tree.py`
-
-### Integration Tests
-
-- [x] Test end-to-end temporal indexing and query
-  - Spec: specs/temporal-metadata.md § Acceptance Criteria > 1, 4, 7
-  - Success: Append with timestamps, query with time window, verify correct results
-  - Test: `tests/test_time_to_span_mapping.py::TestTimeToSpanMapping` (4 tests covering full retrieval flow)
-  - Location: `tests/test_time_to_span_mapping.py`
-
-- [x] Test get_leaf_at_time_position overlap semantics
-  - Spec: specs/temporal-metadata.md § Acceptance Criteria > 5
-  - Success: Query window correctly includes overlapping leaves
-  - Test: `tests/test_leaf_at_time_position.py::TestSqliteGetLeafAtTimePosition` (9 tests)
-  - Location: `tests/test_leaf_at_time_position.py`
-
-- [x] Test time→span mapping accuracy
-  - Spec: specs/temporal-metadata.md § Acceptance Criteria > 5
-  - Success: Time window maps to correct span window for retrieval
-  - Test: `tests/test_time_to_span_mapping.py::TestTimeToSpanMapping::test_time_window_maps_to_span_window`
-  - Location: `tests/test_time_to_span_mapping.py`
-
-- [x] Test vector metadata includes timestamps
-  - Spec: specs/temporal-metadata.md § Acceptance Criteria > 9
-  - Success: Leaf vectors have time_start and time_end metadata
-  - Test: `tests/test_vector_common.py::TestNormalizeMetadata::test_normalize_metadata_includes_timestamps` (4 tests)
-  - Location: `tests/test_vector_common.py`
-
-### Error Case Tests
-
-- [x] Test time query on non-temporal document raises error
-  - Spec: specs/temporal-metadata.md § Acceptance Criteria > 8
-  - Success: Clear error message explaining time queries require temporal documents
-  - Test: `tests/test_time_to_span_mapping.py::TestTimeQueryValidation::test_time_query_on_non_temporal_raises_error`
-  - Location: `tests/test_time_to_span_mapping.py`
-
-- [x] Test timestamps without timezone rejected
-  - Spec: specs/temporal-metadata.md § Acceptance Criteria > 10
-  - Success: `2024-01-21T14:30:00` (no TZ) raises clear validation error
-  - Test: `tests/test_temporal_parsing.py::TestRejectTimestampWithoutTimezone` (3 tests)
-  - Location: `tests/test_temporal_parsing.py`
+The daemon lifecycle feature specified in `specs/daemon-lifecycle.md` is **fully implemented**. All phases (22-25) complete with state directory, daemonization, health checks, and CLI commands.
 
 ---
 
-## Phase 5: Remaining Gaps (Temporal Metadata)
+## Previous Feature: Custom Prompt Config (Partial - Needs Migration)
 
-### Client-Controlled Chunking Validation (High Priority)
-
-- [x] Validate temporal documents require client-controlled chunking
-  - Spec: specs/temporal-metadata.md § Client-Controlled Chunking Requirement
-  - Success: First append with timestamps on document with `target_chunk_tokens` set → reject with clear error
-  - Test: `tests/test_temporal_validation_sqlite.py::TestTemporalRequiresClientControlledChunking` (4 tests)
-  - Location: `ragzoom/server/append_executor.py:200-204` (append), `ragzoom/server/append_executor.py:484-488` (append_batch)
-  - Note: Temporal documents MUST have `target_chunk_tokens=None` because client controls chunk boundaries
-
-### AppendUnit API (Medium Priority)
-
-- [x] Implement `AppendUnit` dataclass
-  - Spec: specs/temporal-metadata.md § API Changes
-  - Success: `AppendUnit(text="...", time_start="...", time_end="...")` bundles text with timestamps
-  - Test: `tests/test_append_unit.py` (8 tests covering dataclass fields, validation, is_temporal property)
-  - Location: `ragzoom/wrapper.py:36-57`, exported from `ragzoom/__init__.py`
-  - Note: Validation rule - both timestamps or neither (not just one); includes `is_temporal` property
-
-- [x] Add `AppendUnit` proto message to gRPC protocol
-  - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
-  - Success: Proto defines `message AppendUnit { bytes content = 1; optional string time_start = 2; optional string time_end = 3; }`
-  - Test: `tests/test_temporal_proto.py::TestAppendUnitProtoMessage` (6 tests)
-  - Location: `proto/dynamic_summary.proto:14-19`
-  - Note: Implemented self-contained AppendUnit message with content bytes and optional timestamps
-
-- [x] Update `BatchAppendTextRequest` to use `repeated AppendUnit`
-  - Spec: specs/temporal-metadata.md § API Changes > gRPC Protocol
-  - Success: BatchAppendTextRequest uses `repeated AppendUnit units` instead of parallel arrays
-  - Test: `tests/test_temporal_proto.py::TestBatchAppendTextRequestUsesAppendUnit` (3 tests)
-  - Location: `proto/dynamic_summary.proto:61-65`
-  - Note: Updated proto, stub types, gRPC client (batch_append_text), and servicer (BatchAppendText)
-
-- [x] Update `batch_append()` to accept `list[AppendUnit]`
-  - Spec: specs/temporal-metadata.md § API Changes
-  - Success: `batch_append(units=[AppendUnit(...), ...])` replaces parallel arrays API
-  - Test: `tests/test_batch_append_with_append_units_sqlite.py` (8 tests)
-  - Location: `ragzoom/wrapper.py` (RagZoom.batch_append at line 242, AsyncRagZoom.batch_append at line 548)
-  - Note: Both sync and async wrappers now accept `list[str] | list[AppendUnit]` via `_normalize_units_for_client()` helper. Also fixed bug in `append_executor.py:476` where `has_timestamps` checked raw `timestamps` parameter instead of `parsed_timestamps`.
-
-### CLI Time Query Parameters (Medium Priority)
-
-- [x] Add `--time-start` and `--time-end` to CLI `query` command
-  - Spec: specs/temporal-metadata.md § Acceptance Criteria 14
-  - Success: `ragzoom query --time-start "2024-01-21T14:30:00Z" --time-end "..."` works
-  - Test: `tests/test_cli.py::test_query_with_time_window`, `tests/test_cli.py::test_query_time_window_defaults_to_none`
-  - Location: `ragzoom/cli.py:831-841` (option definitions), `ragzoom/cli.py:880-882` (function parameters), `ragzoom/cli.py:941-942` (passed to gRPC client)
-  - Note: Backend already supports time-windowed queries; CLI now exposes it with ISO 8601 format help text
+The custom prompt config feature specified in `specs/custom-prompt-config.md` was implemented with incorrect semantics. Phases 12-14c completed but implementation doesn't match spec:
+- Uses `summary_system_prompt` instead of `summarization_guidance`
+- Replaces entire prompt instead of appending under "# Summarization Guidance"
+- Missing database migration for field rename
 
 ---
 
-## Next Feature: Timestamped Transcript Sync
+## Previous Feature: Memzoom Plugin (Complete)
 
-**Spec**: `specs/timestamped-transcript-sync.md` (status: READY)
-
-**Partial Blocker**: Phase 8's AppendUnit conversion depends on Temporal Metadata Phase 5 (AppendUnit API). However, Phases 6-7 and 9-11 can proceed now, and Phase 8's turn-level tracking and revert detection can use the current parallel arrays API as a workaround.
-
-Extend the local-first transcript sync to use temporal metadata, with each conversation turn becoming exactly one leaf node with timestamps from the turn's first/last messages.
+The memzoom plugin specified in `specs/memzoom-plugin.md` is **fully implemented**. All phases (26-28) complete with plugin infrastructure, commands, and skills.
 
 ---
 
-## Phase 6: Turn Dataclass & Grouping
+# Active Features
 
-### Turn Dataclass
+## Feature: Bug Fixes from Verification (Priority: CRITICAL)
 
-- [x] Implement `Turn` dataclass
-  - Spec: specs/timestamped-transcript-sync.md § API Changes > transcript_sync.py
-  - Success: `Turn(uuids=[...], time_start="ISO8601", time_end="ISO8601")` exists
-  - Test: `tests/test_turn_dataclass.py::TestTurnDataclass` (8 tests)
-  - Location: `ragzoom/claude_memory/transcript_sync.py:35-52`
-  - Note: Contains list of message UUIDs in the turn, plus ISO 8601 timestamps
+**Spec**: `.ralph/ISSUES_DISCOVERED.md`, `specs/daemon-lifecycle.md`, `specs/custom-prompt-config.md`
 
-### Turn Grouping Algorithm
+Fix critical bugs discovered during implementation verification that prevent basic functionality.
 
-- [x] Implement `group_into_turns()` function
-  - Spec: specs/timestamped-transcript-sync.md § Turn Grouping Algorithm
-  - Success: Messages grouped by UserMessage boundaries; each Turn spans user→assistant cycle
-  - Test: `tests/test_group_into_turns.py::TestGroupIntoTurnsBasic` (4 tests), `TestGroupIntoTurnsFiltering` (3 tests)
-  - Location: `ragzoom/claude_memory/transcript_sync.py:67-121`
-  - Note: Filters compaction summaries and queue operations; UserMessage = user without toolUseResult
+### Phase 29: Daemon Exit Cleanup (Issues #1 & #6)
 
-- [x] Tool-only assistant messages batched within turn
-  - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 5
-  - Success: Assistant message with only tool calls (no text) stays in current turn
-  - Test: `tests/test_group_into_turns.py::TestGroupIntoTurnsToolOnly::test_tool_only_assistant_batched_within_turn`
-  - Location: `ragzoom/claude_memory/transcript_sync.py` (within `group_into_turns`)
+- [x] Add atexit cleanup for normal daemon exits
+  - Spec: specs/daemon-lifecycle.md § Exit Cleanup
+  - Success: When `run_server()` returns normally (not via signal), PID and port files are removed
+  - Test: `tests/test_daemon_atexit.py::test_normal_exit_cleans_up_state_files`
+  - Location: `ragzoom/cli.py` (start_server function)
+  - Note: Signal handlers only catch SIGTERM/SIGINT. Normal exit (e.g., when `server.wait_for_termination()` returns) needs `atexit.register(cleanup_stale_state)`
+  - **DONE**: Added `atexit.register(cleanup_stale_state)` in daemon mode after `install_shutdown_handlers()`
 
-- [x] Standalone user messages create valid turns
-  - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 6
-  - Success: Single user message with no response creates valid Turn
-  - Test: `tests/test_group_into_turns.py::TestGroupIntoTurnsStandalone` (2 tests)
-  - Location: `ragzoom/claude_memory/transcript_sync.py` (within `group_into_turns`)
+- [x] Add cleanup before lease failure sys.exit()
+  - Spec: specs/daemon-lifecycle.md § Exit Cleanup
+  - Success: When lease acquisition fails, state files are cleaned up before `sys.exit(1)`
+  - Test: `tests/test_daemon_lease_cleanup.py::test_lease_failure_cleans_up_state_files`
+  - Location: `ragzoom/server/app.py:179`
+  - **DONE**: The atexit handler already covers this case. Python's atexit handlers run for sys.exit(), not just normal returns. Test added to verify: `tests/test_daemon_lease_cleanup.py`
+
+- [x] Add try/finally wrapper around run_server for daemon mode
+  - Spec: specs/daemon-lifecycle.md § Exit Cleanup
+  - Success: All exit paths (normal, exception, lease failure) clean up state files
+  - Test: `tests/test_daemon_cleanup.py::test_all_exit_paths_cleanup`
+  - Location: `ragzoom/cli.py` (start_server function)
+  - Note: Belt-and-suspenders approach: atexit + try/finally ensures cleanup
+  - **DONE**: Added try/finally wrapper around run_server() in daemon mode. Cleanup is now idempotent and called from both atexit (for normal exits) and finally (for exceptions)
+
+### Phase 30: Database Schema Migration (Issue #4)
+
+- [x] Implement schema detection for Document table
+  - Spec: specs/custom-prompt-config.md § Migration > Schema Migration
+  - Success: `detect_schema_version()` identifies if column is `summary_system_prompt` or `summarization_guidance`
+  - Test: `tests/test_schema_migration_sqlite.py::TestDetectSchemaVersion`
+  - Location: `ragzoom/migrations.py`
+  - Note: Query PRAGMA table_info (SQLite) or information_schema (PostgreSQL)
+  - **DONE**: Implemented `detect_schema_version()` with `SchemaVersion` enum. Supports both SQLite and PostgreSQL via dialect-specific introspection.
+
+- [x] Implement column rename migration
+  - Spec: specs/custom-prompt-config.md § Migration > Required Migration
+  - Success: `migrate_summary_prompt_column()` renames column from old to new name
+  - Test: `tests/test_schema_migration_sqlite.py::TestMigrateSummaryPromptColumn`, `tests/test_schema_migration_postgres.py::TestMigrateSummaryPromptColumnPostgres`
+  - Location: `ragzoom/migrations.py`
+  - Note: Must be idempotent - skip if already migrated
+  - **DONE**: Implemented `migrate_summary_prompt_column()` using SQLite RENAME COLUMN and PostgreSQL conditional DO block. Includes tests for data preservation, NULL handling, and idempotency.
+
+- [x] Add startup migration hook
+  - Spec: specs/custom-prompt-config.md § Migration > Schema Migration
+  - Success: On server start, migration runs automatically if needed
+  - Test: `tests/test_startup_migration_sqlite.py::TestStartupMigration`
+  - Location: `ragzoom/server/app.py` (run_server or build_state)
+  - Note: Run migration after store creation, before serving requests
+  - **DONE**: Added `_run_startup_migrations()` function called from `run_server()`. Migration runs after store creation, detects schema version, and migrates if needed. Also added `engine` property to `StorageBackend` protocol for migration access.
+
+### Phase 31: Custom Prompt Semantic Fix (Issue #5)
+
+- [x] Rename field from `summary_system_prompt` to `summarization_guidance` in IndexConfig
+  - Spec: specs/custom-prompt-config.md § IndexConfig Field
+  - Success: `IndexConfig(summarization_guidance="...")` works, old name logs deprecation warning
+  - Test: `tests/test_index_config.py::test_summarization_guidance_field`
+  - Location: `ragzoom/config.py` (IndexConfig dataclass)
+  - Note: Add property for backward compat that forwards to new name with warning
+  - **DONE**: Field already renamed in IndexConfig with deprecated property. Fixed `default_config.json` to use new field name so `IndexConfig.load(summarization_guidance="...")` works correctly.
+
+- [x] Rename field in Document model
+  - Spec: specs/custom-prompt-config.md § Migration > Field Rename
+  - Success: Document.summarization_guidance stores the value
+  - Test: `tests/test_models.py::test_document_has_summarization_guidance`
+  - Location: `ragzoom/models.py`
+  - Note: Coordinate with schema migration (Phase 30)
+  - **DONE**: Renamed field in both `Document` (ragzoom/models.py) and `SqliteDocument` (ragzoom/backends/sqlite_db.py). Added column rename migration in `SqliteDatabaseManager.__post_init__`. Updated `sqlite_repositories.py` to pass `summarization_guidance` when creating documents. Updated `indexing_engine.py` to read `summarization_guidance` from documents. Tests added: `test_sqlite_document_has_summarization_guidance`, `test_sqlite_summarization_guidance_instantiation`. Updated migration tests to use V1 schema fixtures since SQLite backend now creates V2 schema directly.
+
+- [x] Update prepare_summary_inputs to append instead of replace
+  - Spec: specs/custom-prompt-config.md § System Prompt Structure
+  - Success: Custom guidance appended under "# Summarization Guidance" section, not replacing
+  - Test: `tests/test_summary_utils.py::test_guidance_appends_to_default_prompt`
+  - Location: `ragzoom/services/summary_utils.py`
+  - Note: This is the core fix - change from replacement to additive semantics
+  - **DONE**: Renamed `system_prompt` parameter to `summarization_guidance` in `prepare_summary_inputs` and updated the implementation to append guidance under "# Summarization Guidance" section. Updated all callers (`SummaryWorkflowConfig`, `run_summary_workflow`, `run_summary_from_config`, `run_summary_request`, `Summarizer.summarize`, `LLMService._summarize_text`, `IndexingEngine`). Comprehensive tests verify additive semantics.
+
+- [x] Update CLI flag from --summary-system-prompt to --summarization-guidance
+  - Spec: specs/custom-prompt-config.md § CLI Override
+  - Success: `ragzoom index --summarization-guidance "..."` works
+  - Test: `tests/test_cli.py::test_index_with_summarization_guidance`
+  - Location: `ragzoom/cli.py` (index command)
+  - Note: Remove old flag, add new one
+  - **DONE**: Renamed flag and parameter from `summary_system_prompt` to `summarization_guidance`. Updated help text to reflect additive semantics. CLI parameter is passed to gRPC client as `summary_system_prompt` (protobuf field rename is a separate work item).
+
+- [x] Update protobuf field name
+  - Spec: specs/custom-prompt-config.md § Migration > Field Rename
+  - Success: AppendTextRequest uses `summarization_guidance` field
+  - Test: `tests/test_grpc_client.py::test_append_text_with_summarization_guidance`
+  - Location: `proto/dynamic_summary.proto`, regenerate stubs
+  - Note: Requires regenerating Python stubs
+  - **DONE**: The proto file already had `summarization_guidance` field. Updated storage backend APIs (`SQLiteStorageBackend.add_document`, `PostgresStorageBackend.add_document`, `SqliteDocumentRepository.add_document`, `DocumentRepository.add_document`) to use `summarization_guidance` parameter instead of `summary_system_prompt`. All tests pass.
+
+### Phase 32: Config Persistence for Auto-Start (Issue #3)
+
+- [x] Implement config persistence to daemon.config.json
+  - Spec: specs/daemon-lifecycle.md § Config Persistence
+  - Success: When starting with `--config`, relevant settings saved to `daemon.config.json`
+  - Test: `tests/test_daemon_config_persistence.py::test_config_saved_on_daemon_start`
+  - Location: `ragzoom/daemon.py` (new functions)
+  - Note: Only persist fields that affect daemon behavior (target_chunk_tokens, summarization_guidance, db settings)
+  - **DONE**: Added config file functions (get_config_file_path, write_config_file, read_config_file, remove_config_file) to daemon.py. Added _persist_daemon_config() to cli.py that extracts target_chunk_tokens and summarization_guidance from IndexConfig and persists them. File permissions set to 0o600 for security. Comprehensive tests in test_daemon_config_persistence.py (17 tests).
+
+- [x] Load persisted config in auto-start
+  - Spec: specs/daemon-lifecycle.md § Config Persistence
+  - Success: `ensure_server_running()` passes persisted config to `start_daemon()`
+  - Test: `tests/test_daemon_config_persistence.py::test_autostart_uses_persisted_config`
+  - Location: `ragzoom/daemon.py` (start_daemon, ensure_server_running)
+  - Note: Pass config path to spawned subprocess if config file exists
+  - **DONE**: Added `config_path` parameter to `start_daemon()` that includes `--config <path>` in the subprocess command. Updated `ensure_server_running()` to check for persisted config via `read_config_file()` and pass it to `start_daemon()`. Added 4 tests: `test_autostart_uses_persisted_config`, `test_autostart_without_config_file`, `test_start_daemon_includes_config_in_command`, `test_start_daemon_without_config_path`.
+
+- [x] Add RAGZOOM_DAEMON_CONFIG env var support
+  - Spec: specs/daemon-lifecycle.md § Config Persistence
+  - Success: Setting env var overrides default config file location
+  - Test: `tests/test_daemon_config_persistence.py::test_env_var_overrides_config_path`
+  - Location: `ragzoom/daemon.py`
+  - **DONE**: Implemented as part of get_config_file_path() - checks RAGZOOM_DAEMON_CONFIG env var first, falls back to daemon.config.json in state directory. Test coverage verifies behavior.
+
+### Phase 33: Temporal Document UX Improvement (Issue #2)
+
+- [x] Add clear error message for temporal document config mismatch
+  - Spec: New - improving user experience for temporal documents
+  - Success: Error message includes exact fix: "Temporal documents require target_chunk_tokens=null in config"
+  - Test: `tests/test_temporal_config_error_sqlite.py::test_helpful_error_for_temporal_without_null_chunks`
+  - Location: `ragzoom/server/append_executor.py` (lines 203-210 and 489-496)
+  - **DONE**: Updated error message to follow What-Why-Fix pattern. New message explains: what is wrong (temporal documents need null), why (preserves one-to-one mapping for timestamp queries), and how to fix (set in config file or use CLI flag). Tests verify message includes "temporal", "target_chunk_tokens", "null/none", "config", and explains the reason.
+
+- [x] Document temporal document configuration requirement
+  - Spec: New - documentation improvement
+  - Success: README or docs explain when and how to use `target_chunk_tokens: null`
+  - Test: Manual verification
+  - Location: `README.md` or `docs/temporal-documents.md`
+  - Note: Include example config file for temporal documents
+  - **DONE**: Created comprehensive `docs/temporal-documents.md` covering: when to use temporal documents, config requirements (`target_chunk_tokens: null`), quick start guide, timestamp format, Python API examples, common patterns (conversations, log files), and validation errors. Updated `docs/README.md` with reference. Added temporal documents to main README.md features list.
 
 ---
 
-## Phase 7: Timestamp Extraction
+## Dependencies
 
-### JSONL Timestamp Extraction
-
-- [x] Extract timestamps from JSONL transcript records
-  - Spec: specs/timestamped-transcript-sync.md § Turn Timestamp Assignment
-  - Success: Extract `timestamp` field (already ISO 8601) from each JSONL record
-  - Test: `tests/test_group_into_turns.py::TestGroupIntoTurnsMissingTimestamp::test_record_without_timestamp_raises_error`
-  - Location: `ragzoom/claude_memory/transcript_sync.py:124-133` (`_get_record_timestamp` function)
-  - Note: Timestamps are ISO 8601 strings, not converted to float until AppendUnit
-
-- [x] Turn timestamps from first/last message
-  - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 2
-  - Success: `Turn.time_start` = first message timestamp, `Turn.time_end` = last message timestamp
-  - Test: `tests/test_group_into_turns.py::TestGroupIntoTurnsBasic` (multiple tests verify this)
-  - Location: `ragzoom/claude_memory/transcript_sync.py:136-169` (`_build_turn` function)
-
----
-
-## Phase 8: Sync Integration
-
-### Temporal Document Setup
-
-- [x] Synced documents are temporal (`is_temporal=True`)
-  - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 3
-  - Success: `execute_sync()` passes timestamps to `append()` calls; server auto-sets `is_temporal=True` on first append
-  - Test: `tests/test_synced_document_temporal_sqlite.py::TestSyncedDocumentIsTemporal` (3 tests)
-  - Location: `ragzoom/claude_memory/transcript_sync.py:136-168` (`_extract_segment_timestamps` helper), `ragzoom/claude_memory/transcript_sync.py:1190-1200` (passing timestamps to append)
-  - Note: Document temporality is inferred from first append with timestamps (per temporal-metadata.md spec)
-
-### AppendUnit Integration
-
-- [x] Convert Turns to AppendUnits for indexing
-  - Spec: specs/timestamped-transcript-sync.md § Batch Append with AppendUnit
-  - Success: Each Turn becomes one AppendUnit with text and timestamps
-  - Test: `tests/test_turn_to_append_unit.py::TestTurnsToAppendUnits` (6 tests)
-  - Location: `ragzoom/claude_memory/transcript_sync.py:209-238` (`turns_to_append_units` function)
-
-- [x] Use `batch_append()` instead of individual `append()` calls
-  - Spec: specs/timestamped-transcript-sync.md § Batch Append with AppendUnit
-  - Success: `execute_sync()` calls `batch_append()` with turn texts and timestamps
-  - Test: `tests/test_execute_sync_batch_append.py::TestExecuteSyncUsesBatchAppend` (7 tests)
-  - Location: `ragzoom/claude_memory/transcript_sync.py:1184-1241` (execute_sync function)
-  - Note: Refactored from segment-based to turn-based processing with single batch_append call
-
-### Turn-Level Tracking
-
-- [x] Track AppendEntries at turn granularity
-  - Spec: specs/timestamped-transcript-sync.md § AppendEntry Tracking
-  - Success: Each conversation turn maps to exactly one leaf node; `AppendEntry.last_uuid` = last UUID in turn
-  - Test: `tests/test_turn_level_tracking.py::TestTurnLevelAppendEntryTracking` (4 tests)
-  - Location: `ragzoom/claude_memory/transcript_sync.py:1228-1291` (execute_sync turn-level entry tracking)
-  - Note: Refactored to record one AppendEntry per turn instead of one for entire batch; span_end calculated cumulatively per turn
-
-- [x] Revert detection at turn granularity
-  - Spec: specs/timestamped-transcript-sync.md § AppendEntry Tracking
-  - Success: Common ancestor in middle of turn → truncate to before that turn, re-index from turn boundary
-  - Test: `tests/test_revert_turn_granularity.py::TestRevertDetectionAtTurnGranularity` (4 tests)
-  - Location: `ragzoom/claude_memory/transcript_sync.py:403-463` (find_valid_prefix with turn awareness)
-  - Note: Added `first_uuid` field to `AppendEntry` to track turn boundaries. When common ancestor is within a turn (not at its boundary), the algorithm returns the previous turn's entry, ensuring proper truncation.
-
----
-
-## Phase 9: Query & Filtering
-
-### Time-Windowed Queries
-
-- [x] Time-windowed queries work on synced transcripts
-  - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 4
-  - Success: `query(time_start="...", time_end="...")` returns turns in window
-  - Test: `tests/test_transcript_temporal_queries_sqlite.py::TestTimeWindowedQueryOnSyncedTranscript` (3 tests)
-  - Location: `ragzoom/retrieve.py:224-288` (time→span mapping), tests verify full sync + query flow
-  - Note: Tests verify: (1) time-windowed query on synced transcript returns correct turns, (2) non-temporal document raises clear error, (3) partial time overlap includes turn per overlap semantics
-
-### Compaction Summary Filtering
-
-- [x] Compaction summaries not indexed
-  - Spec: specs/timestamped-transcript-sync.md § Acceptance Criteria 8
-  - Success: `isCompactSummary: true` messages excluded from turn grouping and indexing
-  - Test: `tests/test_transcript_temporal_queries_sqlite.py::TestTimeWindowedQueryOnSyncedTranscript::test_compaction_summaries_not_indexed`, `tests/test_group_into_turns.py::TestGroupIntoTurnsFiltering::test_filters_compaction_summaries`
-  - Location: `ragzoom/claude_memory/transcript_sync.py:103-109` (`_should_skip_record` helper), line 148 (applied in `group_into_turns`), line 839 (applied in `build_records_map`)
-  - Note: Filtering is comprehensive: `_should_skip_record()` is the core filter, applied in `group_into_turns()`. Also filtered in `build_records_map()`, `get_current_head()`, and `get_compaction_uuid()`. Integration test verifies end-to-end: synced transcripts with compaction summaries do not include them in indexed leaf content.
-
----
-
-## Phase 10: External Integration
-
-### claude-transcriber Library
-
-- [x] Add claude-transcriber dependency
-  - Spec: specs/timestamped-transcript-sync.md § Transcription with claude-transcriber
-  - Success: `claude-transcriber` package listed in `pyproject.toml` dependencies
-  - Test: `tests/test_claude_transcriber_dependency.py` (2 tests: import and transcribe method)
-  - Location: `pyproject.toml` (dependencies section), mypy override for untyped module
-  - Note: Added `claude-transcriber==0.2.1` to dependencies and mypy ignore for missing stubs
-
-- [x] Replace custom transcription with claude-transcriber
-  - Spec: specs/timestamped-transcript-sync.md § Transcription with claude-transcriber
-  - Success: Uses `Transcriber` class from `claude-transcriber` instead of custom `transcribe_uuid_from_map()`
-  - Test: `tests/test_uses_claude_transcriber.py::TestUsesClaudeTranscriber` (5 tests)
-  - Location: `ragzoom/claude_memory/transcript_sync.py:12` (import), `ragzoom/claude_memory/transcript_sync.py:920-950` (transcribe_uuids_from_map)
-  - Note: Replaced custom transcription with claude-transcriber delegation. Removed ~200 lines of dead code (legacy `transcribe_uuids`, `transcribe_uuid_from_map`, and 7 helper functions). Output format now matches Claude Code `/export` (❯ for user, ⏺ for assistant). Updated tests to match new format.
+- **Phase 30** (schema migration) must complete before **Phase 31** (field rename) to ensure DB column exists
+- **Phase 29** (exit cleanup) can run in parallel with other phases
+- **Phase 32** (config persistence) can run after Phase 31 since it uses the new field names
+- **Phase 33** (temporal UX) is independent
 
 ---
 
 ## Notes
 
-- The temporal metadata feature builds on top of client-managed chunking
-- All timestamps are stored as Unix float seconds internally for efficient comparison
-- Time queries reuse existing span query infrastructure via time→span mapping
-- Document temporality is all-or-nothing: either all chunks have timestamps or none do
-- No database migration needed - existing databases can be blown away and recreated with new schema
-- **Both features complete**: Temporal Metadata and Timestamped Transcript Sync fully implemented and tested
+- All phases include test requirements - no code should merge without passing tests
+- Schema migration must be idempotent and safe to run multiple times
+- Backward compatibility is important - old configs/databases should continue working
+- These fixes are blocking for production use of the memzoom plugin

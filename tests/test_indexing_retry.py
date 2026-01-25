@@ -49,6 +49,7 @@ class TestImplicitRetry:
             reporter: object = None,
             prev_context: str | None = None,
             text_tokens: int | None = None,
+            summarization_guidance: str | None = None,
         ) -> SummaryResult:
             nonlocal call_count
             call_count += 1
@@ -143,6 +144,7 @@ class TestImplicitRetry:
             reporter: object = None,
             prev_context: str | None = None,
             text_tokens: int | None = None,
+            summarization_guidance: str | None = None,
         ) -> SummaryResult:
             nonlocal call_count
             call_count += 1

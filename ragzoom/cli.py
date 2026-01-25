@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import inspect
 import json
 import logging
 import os
 import random
 import shutil
+import signal
 import sys
+import time
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Protocol, cast
@@ -32,6 +35,19 @@ from ragzoom.constants import (
     DEFAULT_GRPC_HOST,
     DEFAULT_GRPC_PORT,
 )
+from ragzoom.daemon import (
+    cleanup_stale_state,
+    daemonize,
+    ensure_server_running,
+    get_log_file_path,
+    get_process_uptime,
+    install_shutdown_handlers,
+    is_pid_stale,
+    read_pid_file,
+    read_port_file,
+    write_config_file,
+    write_port_file,
+)
 from ragzoom.error_handling import handle_graceful_error
 from ragzoom.exceptions import (
     ConfigurationError,
@@ -42,6 +58,7 @@ from ragzoom.exceptions import (
     ResourceError,
     ValidationError,
 )
+from ragzoom.output_formatters import build_json_error_from_exception, build_json_output
 from ragzoom.progress_display import DocumentProgressTotals, WorkerProgressDisplay
 from ragzoom.server.app import ServerOptions, run_server
 from ragzoom.services.document_service import DocumentService
@@ -60,6 +77,7 @@ class AppendTextCallable(Protocol):
         content: bytes,
         collect_telemetry: bool,
         replace_existing: bool = ...,  # optional keyword for rebuilds
+        summarization_guidance: str | None = ...,  # optional custom prompt
     ) -> IndexingResult: ...
 
 
@@ -86,14 +104,20 @@ logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.ERROR)
 GRPC_ADDRESS_HELP = f"gRPC server address (defaults to {DEFAULT_GRPC_ADDRESS})"
 
 
-def _resolve_server_address(value: str | None) -> str:
-    """Resolve the gRPC server address with sensible defaults."""
+def _resolve_server_address_with_autostart(value: str | None) -> str:
+    """Resolve server address, auto-starting daemon if using default.
+
+    When the user provides an explicit address (CLI arg or env var), use it
+    directly without auto-starting. When using the default address, ensure
+    the daemon is running first.
+    """
     if value:
         return value
     env_value = os.environ.get("RAGZOOM_SERVER_ADDRESS")
     if env_value:
         return env_value
-    return DEFAULT_GRPC_ADDRESS
+    # Using default address - ensure daemon is running
+    return ensure_server_running()
 
 
 def _display_worker_snapshots(
@@ -289,6 +313,12 @@ def cli(ctx: click.Context) -> None:
         "Disable to exit once leaf ingestion has been scheduled."
     ),
 )
+@click.option(
+    "--summarization-guidance",
+    "summarization_guidance",
+    default=None,
+    help="Custom guidance for summarization (appended to default prompt).",
+)
 @click.pass_context
 def index(
     ctx: click.Context,
@@ -301,6 +331,7 @@ def index(
     server_address: str | None,
     await_workers: bool,
     collect_telemetry: bool,
+    summarization_guidance: str | None,
 ) -> None:
     """Index a document from file.
 
@@ -328,7 +359,7 @@ def index(
             )
 
         result: IndexingResult
-        resolved_address = _resolve_server_address(server_address)
+        resolved_address = _resolve_server_address_with_autostart(server_address)
         final_snapshot: WorkerRunSnapshot | None = None
         refreshed_status: DocumentStatusView | None = None
         refresh_error: str | None = None
@@ -374,12 +405,14 @@ def index(
                     content=content_bytes,
                     collect_telemetry=collect_requested,
                     replace_existing=not append,
+                    summarization_guidance=summarization_guidance,
                 )
             else:
                 result = append_method(
                     document_id=target_document_id,
                     content=content_bytes,
                     collect_telemetry=collect_requested,
+                    summarization_guidance=summarization_guidance,
                 )
             telemetry_run_id = result.telemetry_run_id
             if await_workers:
@@ -588,7 +621,7 @@ def telemetry(
 ) -> None:
     """Fetch telemetry for a previous indexing run."""
 
-    resolved_address = _resolve_server_address(server_address)
+    resolved_address = _resolve_server_address_with_autostart(server_address)
 
     try:
         with GrpcRagzoomClient(resolved_address) as client:
@@ -650,7 +683,7 @@ def telemetry(
 def telemetry_export(document_id: str, output: str, server_address: str | None) -> None:
     """Synthesize document-level telemetry from server logs."""
 
-    resolved_address = _resolve_server_address(server_address)
+    resolved_address = _resolve_server_address_with_autostart(server_address)
     try:
         with GrpcRagzoomClient(resolved_address) as client:
             result = client.export_document_telemetry(document_id=document_id)
@@ -870,6 +903,17 @@ def validate(
     is_flag=True,
     help="Show detailed timing breakdown for each pipeline phase",
 )
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Output results as JSON for programmatic consumption",
+)
+@click.option(
+    "--no-bm25",
+    is_flag=True,
+    help="Disable BM25 hybrid search (use pure vector search)",
+)
 @click.pass_context
 def query(
     ctx: click.Context,
@@ -888,6 +932,8 @@ def query(
     viz_coords: str,
     server_address: str | None,
     profile: bool,
+    json_output: bool,
+    no_bm25: bool,
 ) -> None:
     """Query the system and get a summary."""
     # Handle query/num_seeds defaults
@@ -909,20 +955,22 @@ def query(
             query_config = query_config.replace(budget_tokens=token_budget)
         if embedding_model is not None:
             query_config = query_config.replace(embedding_model=embedding_model)
+        if no_bm25:
+            query_config = query_config.replace(use_bm25=False)
 
         ctx.obj["query_config"] = query_config
 
         effective_budget = token_budget or query_config.budget_tokens
-        resolved_address = _resolve_server_address(server_address)
+        resolved_address = _resolve_server_address_with_autostart(server_address)
 
-        if debug:
-            if viz_width:
-                actual_viz_width = viz_width
-            else:
-                terminal_width = shutil.get_terminal_size(fallback=(120, 24)).columns
-                actual_viz_width = max(80, terminal_width - 1)
-        else:
+        # Calculate visualization width
+        if not debug:
             actual_viz_width = viz_width or 0
+        elif viz_width:
+            actual_viz_width = viz_width
+        else:
+            terminal_width = shutil.get_terminal_size(fallback=(120, 24)).columns
+            actual_viz_width = max(80, terminal_width - 1)
 
         use_token_coords = viz_coords == "output-tokens"
 
@@ -946,6 +994,16 @@ def query(
 
         query_result = response.query_result
         retrieval = response.retrieval
+
+        # JSON output mode: output structured JSON and return
+        if json_output:
+            json_data = build_json_output(
+                response=response,
+                query_text=query_text,
+                document_id=document_id,
+            )
+            click.echo(json.dumps(json_data, indent=2))
+            return
 
         click.echo("\n" + "=" * 60)
         click.echo("SUMMARY")
@@ -1023,6 +1081,10 @@ def query(
                 click.echo(f"  model:         {p.embedding_model}")
 
     except Exception as e:
+        if json_output:
+            error_data = build_json_error_from_exception(e)
+            click.echo(json.dumps(error_data, indent=2))
+            sys.exit(1)
         handle_cli_error(e, "processing query")
 
 
@@ -1196,7 +1258,9 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
     """Clear data from the database via the gRPC server."""
 
     try:
-        resolved_address = _resolve_server_address(ctx.obj.get("server_address"))
+        resolved_address = _resolve_server_address_with_autostart(
+            ctx.obj.get("server_address")
+        )
 
         with GrpcRagzoomClient(resolved_address) as client:
             if document_id:
@@ -1604,6 +1668,34 @@ def server() -> None:
     """Manage the RagZoom gRPC server."""
 
 
+def _persist_daemon_config(config_path: Path) -> None:
+    """Persist relevant config fields for auto-start.
+
+    Reads the config file and extracts fields that affect daemon behavior,
+    saving them to daemon.config.json for use by ensure_server_running().
+
+    Args:
+        config_path: Path to the config file to read.
+    """
+    from ragzoom.config import IndexConfig
+
+    # Load the config to get resolved values
+    index_cfg = IndexConfig.load(config_path=config_path)
+
+    # Extract fields that affect daemon behavior
+    daemon_config: dict[str, str | int | float | bool | None] = {}
+
+    # target_chunk_tokens is critical for temporal documents
+    daemon_config["target_chunk_tokens"] = index_cfg.target_chunk_tokens
+
+    # summarization_guidance affects summary quality
+    if index_cfg.summarization_guidance is not None:
+        daemon_config["summarization_guidance"] = index_cfg.summarization_guidance
+
+    # Persist the config
+    write_config_file(daemon_config)
+
+
 @server.command("start")
 @click.option(
     "--host",
@@ -1688,6 +1780,11 @@ def server() -> None:
     type=int,
     help="Token cap for inner node preceding context (select rightmost N tokens)",
 )
+@click.option(
+    "--daemon",
+    is_flag=True,
+    help="Run as background daemon (fork to background, redirect output to log file)",
+)
 def start_server(
     host: str,
     port: int,
@@ -1704,10 +1801,28 @@ def start_server(
     preceding_context_inner_verbatim_tokens: int | None,
     preceding_context_inner_min_forest_completeness: float | None,
     preceding_context_inner_token_cap: int | None,
+    daemon: bool,
 ) -> None:
     """Start the RagZoom gRPC server."""
 
+    # If daemon mode, fork to background before starting server
+    if daemon:
+        daemonize()
+        # Write port file so clients can find us
+        write_port_file(port)
+        # Persist config for auto-start if a config file is provided
+        if config_path:
+            _persist_daemon_config(config_path)
+        # Install signal handlers for graceful shutdown (SIGTERM/SIGINT)
+        install_shutdown_handlers()
+        # Register atexit cleanup for normal exits (when run_server returns)
+        # This ensures state files are cleaned up even without signals
+        atexit.register(cleanup_stale_state)
+
+    # Configure logging AFTER daemonization (if any) so log output
+    # goes to the daemon process, not the parent that exits
     setup_command_environment(None, debug)
+
     options = ServerOptions(
         host=host,
         port=port,
@@ -1724,7 +1839,155 @@ def start_server(
         preceding_context_inner_min_forest_completeness=preceding_context_inner_min_forest_completeness,
         preceding_context_inner_token_cap=preceding_context_inner_token_cap,
     )
-    run_server(options)
+
+    # In daemon mode, wrap run_server in try/finally for belt-and-suspenders cleanup.
+    # This ensures state files are cleaned up when run_server raises an exception,
+    # complementing the atexit handler which covers normal exits.
+    # cleanup_stale_state is idempotent, so calling it from both paths is safe.
+    if daemon:
+        try:
+            run_server(options)
+        finally:
+            cleanup_stale_state()
+    else:
+        run_server(options)
+
+
+# Constants for stop command
+STOP_TIMEOUT_SECONDS = 10.0
+STOP_POLL_INTERVAL = 0.2
+
+
+@server.command("stop")
+def stop_server() -> None:
+    """Stop the RagZoom daemon.
+
+    Sends SIGTERM to the daemon process for graceful shutdown,
+    then waits for the process to terminate. Cleans up state files
+    (PID and port files) after shutdown.
+
+    If no daemon is running, this command does nothing (idempotent).
+    """
+    pid = read_pid_file()
+
+    # No PID file means no daemon
+    if pid is None:
+        click.echo("Daemon is not running")
+        return
+
+    # Check if process is already dead (stale PID file)
+    if is_pid_stale(pid):
+        click.echo("Daemon is not running (cleaning up stale state)")
+        cleanup_stale_state()
+        return
+
+    # Send SIGTERM for graceful shutdown
+    click.echo(f"Stopping daemon (PID {pid})...")
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        # Process died between check and kill - that's fine
+        pass
+
+    # Wait for process to terminate
+    deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if is_pid_stale(pid):
+            # Process terminated
+            cleanup_stale_state()
+            click.echo("Stopped")
+            return
+        time.sleep(STOP_POLL_INTERVAL)
+
+    # Timeout - process didn't terminate gracefully
+    click.echo("Timeout waiting for daemon to stop (forcing cleanup)")
+    cleanup_stale_state()
+
+
+@server.command("status")
+def server_status() -> None:
+    """Show daemon status.
+
+    Displays whether the daemon is running, and if so, shows:
+    - PID (process ID)
+    - Port (if known)
+    - Uptime (how long the daemon has been running)
+
+    Does NOT auto-start the daemon - just reports current state.
+    """
+    pid = read_pid_file()
+    if pid is None or is_pid_stale(pid):
+        click.echo("Not running")
+        return
+
+    # Daemon is running - get details
+    port = read_port_file()
+    uptime = get_process_uptime(pid)
+
+    # Build status line
+    parts = [f"Running: PID {pid}"]
+    if port is not None:
+        parts.append(f"port {port}")
+    parts.append(f"uptime {uptime}")
+
+    click.echo(", ".join(parts))
+
+
+# Constants for logs command
+DEFAULT_LOG_LINES = 50
+
+
+@server.command("logs")
+@click.option(
+    "-n",
+    "--lines",
+    "num_lines",
+    default=DEFAULT_LOG_LINES,
+    type=int,
+    help=f"Number of lines to show (default: {DEFAULT_LOG_LINES})",
+)
+@click.option(
+    "-f",
+    "--follow",
+    is_flag=True,
+    help="Follow log output (like tail -f)",
+)
+def server_logs(num_lines: int, follow: bool) -> None:
+    """Show daemon logs.
+
+    Displays contents of the daemon log file. By default shows the
+    last 50 lines. Use -n to change the number of lines, or -f to
+    continuously follow new output.
+    """
+    log_file = get_log_file_path()
+
+    if not log_file.exists():
+        click.echo("No log file found (daemon may not have run yet)")
+        return
+
+    if follow:
+        import subprocess
+
+        try:
+            subprocess.run(
+                ["tail", "-n", str(num_lines), "-f", str(log_file)],
+                check=False,
+            )
+        except KeyboardInterrupt:
+            pass
+        return
+
+    try:
+        content = log_file.read_text()
+    except OSError as e:
+        click.echo(f"Error reading log file: {e}")
+        return
+
+    if not content:
+        return
+
+    for line in content.splitlines()[-num_lines:]:
+        click.echo(line)
 
 
 @cli.command()
@@ -2184,57 +2447,6 @@ def report(
         sys.exit(1)
     except Exception as e:
         handle_cli_error(e, "generating report")
-
-
-@cli.command("sync-claude-code-transcript")
-@click.argument("jsonl_path", type=click.Path(exists=True, path_type=Path))
-@click.option(
-    "--server-address",
-    "-s",
-    envvar="RAGZOOM_SERVER_ADDRESS",
-    default=DEFAULT_GRPC_ADDRESS,
-    show_default=True,
-    help=GRPC_ADDRESS_HELP,
-)
-def sync_claude_code_transcript(
-    jsonl_path: Path,
-    server_address: str,
-) -> None:
-    """Sync a Claude Code JSONL log to a RagZoom document.
-
-    Incrementally transcribes new conversation records and indexes them.
-    Uses UUID-based ancestry tracking to detect and handle reverts.
-    Uses the session ID (JSONL filename without extension) as the document ID.
-    Tracks progress via state files (configurable via RAGZOOM_STATE_DIR env var).
-
-    The JSONL files are typically found in:
-    ~/.claude/projects/<project-path>/<session-id>.jsonl
-
-    Example:
-      ragzoom sync-claude-code-transcript ~/.claude/projects/.../session.jsonl
-    """
-    from ragzoom.claude_memory.transcript_sync import execute_sync, get_state_path
-    from ragzoom.wrapper import RagZoom
-
-    # State file uses same naming convention but with .jsonl extension
-    state_path = get_state_path(jsonl_path.stem)
-
-    client = RagZoom(server_address=server_address)
-
-    try:
-        result = execute_sync(jsonl_path, state_path, client)
-        if result.truncated:
-            click.echo(
-                f"🔄 Reverted document '{result.document_id}' to span {result.truncate_span}"
-            )
-        if result.appended_uuids:
-            click.echo(
-                f"✅ Synced {len(result.appended_uuids)} messages to '{result.document_id}'"
-            )
-        else:
-            click.echo(f"✅ No new content to sync for '{result.document_id}'")
-    except Exception as e:
-        handle_cli_error(e, "syncing Claude Code transcript")
 
 
 @cli.command("reset-session")

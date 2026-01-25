@@ -238,3 +238,41 @@ ragzoom index doc.txt \
   --max-retries 2 \
   --embedding-model text-embedding-3-large
 ```
+
+## Integration Packages
+
+Client-specific integrations are separate packages in `integrations/`:
+
+### Claude Code Integration
+
+```bash
+# Install
+pip install -e integrations/claude-code
+
+# Sync a transcript
+ragzoom-claude-code sync ~/.claude/projects/.../session.jsonl
+
+# Reset (clears both state file AND document, then re-syncs)
+ragzoom-claude-code reset session.jsonl
+
+# Reset without re-sync
+ragzoom-claude-code reset session.jsonl --no-resync
+
+# Start MCP server
+ragzoom-claude-code mcp-server
+```
+
+**Important:** The `reset` command clears both:
+1. Local state file (`data/transcript-state/<session>.jsonl`)
+2. RagZoom document
+
+This is necessary because sync state is tracked separately from document data. Using `ragzoom clear -d <doc>` alone leaves the state file, so subsequent syncs show "No new content".
+
+### Clawdbot Integration
+
+```bash
+pip install -e integrations/clawdbot
+ragzoom-clawdbot sync <transcript-file>
+```
+
+See `integrations/CLAUDE.md` for architecture details.

@@ -37,6 +37,26 @@ class QueryResult:
     actual_end: int | None = None
 
 
+@dataclass
+class TilingNode:
+    """A node in the tiling with metadata for display."""
+
+    node_id: str
+    text: str
+    time_start: float | None
+    time_end: float | None
+    height: int
+    is_seed: bool
+
+
+@dataclass
+class QueryResultWithTiling:
+    """Query result including tiling nodes for time-aware formatting."""
+
+    result: QueryResult
+    tiling: list[TilingNode]
+
+
 class QueryService:
     """Service for query processing operations."""
 
@@ -146,6 +166,8 @@ class QueryService:
         recent_verbatim_budget: int | None = None,
         span_start: int = 0,
         span_end: int | None = None,
+        time_start: str | None = None,
+        time_end: str | None = None,
     ) -> QueryResult:
         """Execute a query and return assembled result.
 
@@ -157,6 +179,8 @@ class QueryService:
             recent_verbatim_budget: Token budget for recent leaves to include verbatim
             span_start: Start of document window (character position, default: 0)
             span_end: End of document window (default: document end)
+            time_start: Optional ISO 8601 start time for temporal filtering
+            time_end: Optional ISO 8601 end time for temporal filtering
 
         Returns:
             QueryResult with summary and statistics
@@ -171,6 +195,8 @@ class QueryService:
             recent_verbatim_budget=recent_verbatim_budget,
             span_start=span_start,
             span_end=span_end,
+            time_start=time_start,
+            time_end=time_end,
         )
 
         return self._build_query_result(
@@ -191,6 +217,8 @@ class QueryService:
         recent_verbatim_budget: int | None = None,
         span_start: int = 0,
         span_end: int | None = None,
+        time_start: str | None = None,
+        time_end: str | None = None,
     ) -> QueryResult:
         """Execute a query asynchronously.
 
@@ -202,6 +230,8 @@ class QueryService:
             recent_verbatim_budget: Token budget for recent leaves to include verbatim
             span_start: Start of document window (character position, default: 0)
             span_end: End of document window (default: document end)
+            time_start: Optional ISO 8601 start time for temporal filtering
+            time_end: Optional ISO 8601 end time for temporal filtering
 
         Returns:
             QueryResult with summary and statistics
@@ -216,6 +246,8 @@ class QueryService:
             recent_verbatim_budget=recent_verbatim_budget,
             span_start=span_start,
             span_end=span_end,
+            time_start=time_start,
+            time_end=time_end,
         )
 
         return self._build_query_result(
@@ -228,6 +260,83 @@ class QueryService:
         )
 
     # jscpd:ignore-end
+
+    async def execute_query_with_tiling_async(
+        self,
+        query_text: str,
+        document_id: str,
+        num_seeds: int | None = None,
+        token_budget: int | None = None,
+        recent_verbatim_budget: int | None = None,
+        span_start: int = 0,
+        span_end: int | None = None,
+        time_start: str | None = None,
+        time_end: str | None = None,
+    ) -> QueryResultWithTiling:
+        """Execute a query and return result with tiling nodes.
+
+        Like execute_query_async but preserves the tiling nodes for
+        downstream formatting (e.g., displaying timestamps per tile).
+
+        Args:
+            query_text: Query text
+            document_id: Document ID to query within
+            num_seeds: Optional override for number of seed nodes
+            token_budget: Optional override for token budget
+            recent_verbatim_budget: Token budget for recent leaves to include verbatim
+            span_start: Start of document window (character position, default: 0)
+            span_end: End of document window (default: document end)
+            time_start: Optional ISO 8601 start time for temporal filtering
+            time_end: Optional ISO 8601 end time for temporal filtering
+
+        Returns:
+            QueryResultWithTiling containing both the query result and tiling nodes
+        """
+        components = self._create_query_components(document_id, token_budget)
+
+        retrieval_result = await components.retriever.retrieve_async(
+            query_text,
+            num_seeds=num_seeds,
+            budget_tokens=components.budget,
+            document_id=document_id,
+            recent_verbatim_budget=recent_verbatim_budget,
+            span_start=span_start,
+            span_end=span_end,
+            time_start=time_start,
+            time_end=time_end,
+        )
+
+        query_result = self._build_query_result(
+            query_text,
+            document_id,
+            retrieval_result,
+            components.assembler,
+            components.budget,
+            num_seeds,
+        )
+
+        # Build tiling nodes with metadata
+        tiling_nodes: list[TilingNode] = []
+        tiling_ids = retrieval_result.tiling or []
+        nodes = retrieval_result.nodes or {}
+        seed_ids = set(retrieval_result.node_ids)
+
+        for node_id in tiling_ids:
+            node = nodes.get(node_id)
+            if node is None:
+                continue
+            tiling_nodes.append(
+                TilingNode(
+                    node_id=node_id,
+                    text=node.text,
+                    time_start=node.time_start,
+                    time_end=node.time_end,
+                    height=node.height,
+                    is_seed=node_id in seed_ids,
+                )
+            )
+
+        return QueryResultWithTiling(result=query_result, tiling=tiling_nodes)
 
     def update_config(
         self,

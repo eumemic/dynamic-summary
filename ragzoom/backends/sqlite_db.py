@@ -80,6 +80,13 @@ class SqliteDocument(SqliteBase):
     # See specs/temporal-metadata.md § Requirements > 1. Temporal Documents
     is_temporal: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
+    # Additional guidance for summary generation (appended to default prompt)
+    # See specs/custom-prompt-config.md § IndexConfig Field
+    # If None, uses only the default prompt from IndexConfig
+    summarization_guidance: Mapped[str | None] = mapped_column(
+        String, nullable=True, default=None
+    )
+
 
 @dataclass
 class SqliteDatabaseManager:
@@ -240,6 +247,15 @@ class SqliteDatabaseManager:
                 try:
                     conn.exec_driver_sql(
                         "ALTER TABLE documents ADD COLUMN is_temporal INTEGER NOT NULL DEFAULT 0"
+                    )
+                except Exception:
+                    pass
+                # Rename summary_system_prompt to summarization_guidance
+                # See specs/custom-prompt-config.md § Migration > Required Migration
+                try:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE documents "
+                        "RENAME COLUMN summary_system_prompt TO summarization_guidance"
                     )
                 except Exception:
                     pass

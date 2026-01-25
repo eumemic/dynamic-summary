@@ -371,8 +371,12 @@ class LLMService:
         reporter: TelemetryCollector | None = None,
         prev_context: str | None = None,
         text_tokens: int | None = None,
+        summarization_guidance: str | None = None,
     ) -> SummaryResult:
-        """Summarize text to approximately the target token count."""
+        """Summarize text to approximately the target token count.
+
+        If summarization_guidance is provided, appends custom guidance to the system prompt.
+        """
         return await self._summarizer.summarize(
             text,
             target_tokens,
@@ -380,6 +384,7 @@ class LLMService:
             parent_id=parent_id,
             reporter=reporter,
             text_tokens=text_tokens,
+            summarization_guidance=summarization_guidance,
         )
 
     async def _contextualize_text(

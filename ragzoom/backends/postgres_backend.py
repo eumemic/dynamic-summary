@@ -105,6 +105,11 @@ class PostgresStorageBackend(StorageBackend):
         self.doc_repo = PostgresDocumentRepository(self.db_manager, self.cache_manager)
         self.tree_navigator = TreeNavigator(self.node_repo)
 
+    @property
+    def engine(self) -> Engine:
+        """Return the SQLAlchemy engine for this backend."""
+        return self.db_manager.engine
+
     # Document-scoped API
     def for_document(self, doc_id: str | None) -> DocumentStore:
         return DocumentStore(
@@ -132,12 +137,14 @@ class PostgresStorageBackend(StorageBackend):
         file_path: str | None,
         embedding_model: str,
         summary_model: str,
+        summarization_guidance: str | None = None,
     ) -> DocumentStore:
         self.doc_repo.add_document(
             document_id,
             file_path,
             embedding_model,
             summary_model,
+            summarization_guidance=summarization_guidance,
         )
         return self.for_document(document_id)
 

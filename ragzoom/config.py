@@ -41,6 +41,9 @@ class IndexConfigDict(TypedDict, total=False):
     processing_strategy: str
     preceding_context: PrecedingContextSettingsDict
     summary_reasoning_level: str | None
+    summarization_guidance: str | None
+    # Deprecated alias for summarization_guidance
+    summary_system_prompt: str | None
 
 
 # Sentinel value to distinguish "not provided" from "explicitly None"
@@ -298,6 +301,44 @@ class IndexConfig:
         default_factory=PrecedingContextSettings
     )
     summary_reasoning_level: str | None = None
+    summarization_guidance: str | None = None
+    """Additional guidance for summary generation.
+
+    If provided, this guidance is appended to the default system prompt
+    under a "# Summarization Guidance" section. The default prompt's
+    essential instructions (output only compressed text) are preserved.
+
+    Use this to provide domain context that improves summary quality
+    for specific content types (legal, medical, code, etc.).
+    """
+
+    @property
+    def summary_system_prompt(self) -> str | None:
+        """Deprecated alias for summarization_guidance.
+
+        Use summarization_guidance instead. This property will be removed
+        in a future version.
+        """
+        import warnings
+
+        warnings.warn(
+            "summary_system_prompt is deprecated, use summarization_guidance instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.summarization_guidance
+
+    @summary_system_prompt.setter
+    def summary_system_prompt(self, value: str | None) -> None:
+        """Deprecated setter for summarization_guidance."""
+        import warnings
+
+        warnings.warn(
+            "summary_system_prompt is deprecated, use summarization_guidance instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        object.__setattr__(self, "summarization_guidance", value)
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -347,6 +388,27 @@ class IndexConfig:
             str(raw_reasoning) if raw_reasoning is not None else None
         )
 
+        # Get optional summarization_guidance (may be str or None)
+        # Support both new name and deprecated old name (summary_system_prompt)
+        import warnings
+
+        raw_guidance = config_dict.get("summarization_guidance")
+        raw_old_prompt = config_dict.get("summary_system_prompt")
+
+        summarization_guidance: str | None = None
+        if raw_guidance is not None:
+            # New name takes precedence
+            summarization_guidance = str(raw_guidance)
+        elif raw_old_prompt is not None:
+            # Fall back to deprecated name with warning
+            warnings.warn(
+                "summary_system_prompt in config is deprecated, "
+                "use summarization_guidance instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            summarization_guidance = str(raw_old_prompt)
+
         # Handle target_chunk_tokens which can be int or None
         raw_target_chunk = config_dict.get("target_chunk_tokens")
         target_chunk_tokens_value: int | None = (
@@ -372,6 +434,7 @@ class IndexConfig:
             ),
             preceding_context=preceding_context,
             summary_reasoning_level=summary_reasoning_level,
+            summarization_guidance=summarization_guidance,
         )
 
     @classmethod
@@ -408,6 +471,7 @@ class IndexConfig:
         processing_strategy: str | None = None,
         preceding_context: PrecedingContextSettings | None = None,
         summary_reasoning_level: str | None = None,
+        summarization_guidance: str | None = None,
     ) -> "IndexConfig":
         """Create a new IndexConfig with some fields changed."""
         from dataclasses import replace
@@ -462,6 +526,11 @@ class IndexConfig:
                 if summary_reasoning_level is not None
                 else self.summary_reasoning_level
             ),
+            summarization_guidance=(
+                summarization_guidance
+                if summarization_guidance is not None
+                else self.summarization_guidance
+            ),
         )
 
     # Maximum budget for preceding context retrieval.
@@ -510,6 +579,10 @@ class QueryConfig:
     mmr_lambda: float = 0.7
     mmr_k_multiplier: float = 2.0
     embedding_model: str = "text-embedding-3-small"
+    use_bm25: bool = True
+    """Enable BM25 hybrid search. Default True."""
+    bm25_weight: float = 1.0
+    """Weight for BM25 in RRF. 1.0 = equal weight with vector."""
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
@@ -525,6 +598,8 @@ class QueryConfig:
             raise ValueError(
                 f"mmr_k_multiplier must be positive, got {self.mmr_k_multiplier}"
             )
+        if self.bm25_weight <= 0:
+            raise ValueError(f"bm25_weight must be positive, got {self.bm25_weight}")
 
     def replace(
         self,
@@ -532,6 +607,8 @@ class QueryConfig:
         mmr_lambda: float | None = None,
         mmr_k_multiplier: float | None = None,
         embedding_model: str | None = None,
+        use_bm25: bool | None = None,
+        bm25_weight: float | None = None,
     ) -> "QueryConfig":
         """Create a new QueryConfig with some fields changed."""
         from dataclasses import replace
@@ -550,6 +627,8 @@ class QueryConfig:
             embedding_model=(
                 embedding_model if embedding_model is not None else self.embedding_model
             ),
+            use_bm25=use_bm25 if use_bm25 is not None else self.use_bm25,
+            bm25_weight=bm25_weight if bm25_weight is not None else self.bm25_weight,
         )
 
 
