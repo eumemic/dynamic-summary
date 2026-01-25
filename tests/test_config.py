@@ -1,5 +1,8 @@
 """Tests for IndexConfig configuration management."""
 
+import json
+from pathlib import Path
+
 import pytest
 
 from ragzoom.config import IndexConfig
@@ -104,3 +107,19 @@ def test_config_validates_positive_chunk_tokens() -> None:
         processing_strategy="bottom_to_top",
     )
     assert config.target_chunk_tokens is None
+
+
+def test_default_config_has_target_embedding_tokens() -> None:
+    """Test that default_config.json contains target_embedding_tokens field.
+
+    Spec: specs/embedding-text-optimization.md § default_config.json
+    Success: default_config.json contains "target_embedding_tokens": 500
+    """
+    module_dir = Path(__file__).parent.parent / "ragzoom"
+    default_config_path = module_dir / "default_config.json"
+
+    with open(default_config_path) as f:
+        config = json.load(f)
+
+    assert "target_embedding_tokens" in config
+    assert config["target_embedding_tokens"] == 500

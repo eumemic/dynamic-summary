@@ -243,11 +243,12 @@ Replace the two-step embedding process (summarize context, concatenate with leaf
   - Location: `ragzoom/config.py:460` (replace method)
   - **DONE**: Added `target_embedding_tokens` parameter to replace() method signature and included it in the dataclasses.replace() call.
 
-- [ ] Update default_config.json with new field
+- [x] Update default_config.json with new field
   - Spec: specs/embedding-text-optimization.md § default_config.json
   - Success: default_config.json contains `"target_embedding_tokens": 500`
   - Test: `tests/test_config.py::test_default_config_has_target_embedding_tokens`
   - Location: `ragzoom/default_config.json`
+  - **DONE**: Added `"target_embedding_tokens": 500` to default_config.json. Test `test_default_config_has_target_embedding_tokens` verifies the field exists with the correct default value.
 
 ### Phase 35: Deprecation Handling and Codebase-Wide Migration
 
