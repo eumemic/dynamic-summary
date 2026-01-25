@@ -435,9 +435,10 @@ def grpc_health_check(address: str, timeout: float = 2.0) -> bool:
         try:
             stub.GetDocument(request, timeout=timeout)
         except grpc.RpcError as rpc_error:
-            # NOT_FOUND means server is responding - that's healthy!
+            # NOT_FOUND or INVALID_ARGUMENT means server is responding - healthy!
+            # (Empty document_id triggers INVALID_ARGUMENT validation)
             code = rpc_error.code()
-            if code == grpc.StatusCode.NOT_FOUND:
+            if code in (grpc.StatusCode.NOT_FOUND, grpc.StatusCode.INVALID_ARGUMENT):
                 return True
             # UNAVAILABLE or DEADLINE_EXCEEDED means server is not healthy
             return False
