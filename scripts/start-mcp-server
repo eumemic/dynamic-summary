@@ -23,4 +23,4 @@ export RAGZOOM_SERVER_ADDRESS=$("$SCRIPT_DIR/get-grpc-address" "$MEMORY_ENV")
 export RAGZOOM_USER_ID="$MEMORY_USER_ID"
 
 # Launch MCP server
-exec python -m ragzoom.claude_memory.mcp_server "$@"
+exec python -m ragzoom_claude_code.mcp_server "$@"
