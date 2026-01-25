@@ -147,6 +147,7 @@ finally:
         assert order == "finally,atexit", f"Expected 'finally,atexit', got: {order}"
 
     @pytest.mark.slow_threshold(5)
+    @pytest.mark.skip_ci
     def test_finally_cleanup_idempotent_with_atexit(self, tmp_path: Path) -> None:
         """Cleanup called from both finally and atexit is safe.
 

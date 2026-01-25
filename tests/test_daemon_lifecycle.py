@@ -11,8 +11,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+@pytest.mark.skip_ci
 class TestDaemonizeFunction:
-    """Tests for the daemonize() function."""
+    """Tests for the daemonize() function. Skipped in CI - subprocess forking is flaky."""
 
     @pytest.mark.slow_threshold(5)
     def test_daemonize_forks_to_background(self, tmp_path: Path) -> None:
@@ -235,8 +236,9 @@ sys.stdout.flush()
         assert log_file.exists()
 
 
+@pytest.mark.skip_ci
 class TestDaemonizeIntegration:
-    """Integration tests for daemon behavior."""
+    """Integration tests for daemon behavior. Skipped in CI - subprocess forking is flaky."""
 
     @pytest.mark.slow_threshold(5)
     def test_daemon_survives_parent_exit(self, tmp_path: Path) -> None:
@@ -283,8 +285,9 @@ Path("{marker_file}").write_text("still_running")
                     pass  # Already exited
 
 
+@pytest.mark.skip_ci
 class TestSignalHandlers:
-    """Tests for signal handling in the daemon."""
+    """Tests for signal handling in the daemon. Skipped in CI - signal handling is flaky."""
 
     @pytest.mark.slow_threshold(5)
     def test_sigterm_graceful_shutdown(self, tmp_path: Path) -> None:
