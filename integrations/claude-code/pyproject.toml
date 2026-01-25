@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ragzoom-claude-code"
+version = "0.1.0"
+description = "Claude Code integration for RagZoom memory"
+requires-python = ">=3.10"
+dependencies = [
+    "ragzoom>=0.1.0",
+    "claude-transcriber>=0.2.1",
+    "mcp>=1.0.0",
+    "click>=8.0.0",
+]
+
+[project.scripts]
+ragzoom-claude-code = "ragzoom_claude_code.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
