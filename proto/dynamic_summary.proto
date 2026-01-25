@@ -50,7 +50,7 @@ message AppendTextRequest {
   bool collect_telemetry = 3;
   bool replace_existing = 4;
   optional Timestamp timestamp = 5;  // Optional timestamp for this chunk
-  optional string summary_system_prompt = 6;  // Custom system prompt for summarization
+  optional string summarization_guidance = 6;  // Additional guidance for summary generation (appended to default prompt)
 }
 
 message AppendTextResponse {

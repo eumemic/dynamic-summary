@@ -345,10 +345,10 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
         if request.HasField("timestamp"):
             timestamp = _extract_timestamp(request.timestamp)
 
-        # Extract custom system prompt if present (see specs/custom-prompt-config.md)
-        summary_system_prompt = (
-            request.summary_system_prompt
-            if request.HasField("summary_system_prompt")
+        # Extract custom guidance if present (see specs/custom-prompt-config.md)
+        summarization_guidance = (
+            request.summarization_guidance
+            if request.HasField("summarization_guidance")
             else None
         )
 
@@ -358,7 +358,7 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
             replace_existing=bool(getattr(request, "replace_existing", False)),
             collect_telemetry=request.collect_telemetry,
             timestamp=timestamp,
-            summary_system_prompt=summary_system_prompt,
+            summarization_guidance=summarization_guidance,
         )
 
         response = pb2.AppendTextResponse(

@@ -531,12 +531,12 @@ async def test_servicer_stores_summary_system_prompt() -> None:
 
         servicer = IndexerServicer(state)
 
-        # Create request with custom system prompt
+        # Create request with custom summarization guidance
         request = pb2.AppendTextRequest(
             document_id=document_id,
             content=b"Legal contract text here.",
             collect_telemetry=False,
-            summary_system_prompt=custom_prompt,
+            summarization_guidance=custom_prompt,
         )
 
         await servicer.AppendText(request, StubContext())

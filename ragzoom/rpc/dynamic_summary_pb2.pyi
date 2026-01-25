@@ -89,7 +89,7 @@ class AppendTextRequest:
     collect_telemetry: bool
     replace_existing: bool
     timestamp: Timestamp
-    summary_system_prompt: str
+    summarization_guidance: str
 
     def __init__(
         self,
@@ -99,7 +99,7 @@ class AppendTextRequest:
         collect_telemetry: bool = ...,
         replace_existing: bool = ...,
         timestamp: Timestamp = ...,
-        summary_system_prompt: str = ...,
+        summarization_guidance: str = ...,
     ) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
 
