@@ -18,9 +18,11 @@ fi
 MEMORY_ENV="${MEMORY_ENV:-production}"
 MEMORY_USER_ID="${MEMORY_USER_ID:-$USER}"
 
-# Export for MCP server
-export RAGZOOM_SERVER_ADDRESS=$("$SCRIPT_DIR/get-grpc-address" "$MEMORY_ENV")
-export RAGZOOM_USER_ID="$MEMORY_USER_ID"
+# Export for MCP server (respect pre-configured RAGZOOM_SERVER_ADDRESS from .memory-env)
+if [[ -z "${RAGZOOM_SERVER_ADDRESS:-}" ]]; then
+    export RAGZOOM_SERVER_ADDRESS=$("$SCRIPT_DIR/get-grpc-address" "$MEMORY_ENV")
+fi
+export RAGZOOM_USER_ID="${RAGZOOM_USER_ID:-$MEMORY_USER_ID}"
 
 # Launch MCP server
 exec python -m ragzoom_claude_code.mcp_server "$@"

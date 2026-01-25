@@ -18,5 +18,5 @@ if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
 
     # Run sync synchronously so errors are visible
     cd "$GIT_ROOT"
-    python -m ragzoom.cli sync-claude-code-transcript "$TRANSCRIPT_PATH"
+    ragzoom-claude-code sync "$TRANSCRIPT_PATH"
 fi

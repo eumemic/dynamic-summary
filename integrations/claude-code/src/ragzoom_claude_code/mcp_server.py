@@ -1,15 +1,13 @@
-"""MCP server exposing the 'remember' tool for querying pre-compaction history."""
+"""MCP server exposing the 'remember' tool for querying conversation history."""
 
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
-from ragzoom_claude_code.jsonl_reader import iter_jsonl_reversed
-from ragzoom_claude_code.transcript_sync import SessionState, _get_state_dir
 
 from ragzoom.client.grpc_client import GrpcRagzoomClient
+from ragzoom_claude_code.transcript_sync import SessionState, _get_state_dir
 
 mcp = FastMCP(name="RagZoom Memory")
 
@@ -45,81 +43,27 @@ def _get_session_id() -> tuple[str, SessionState]:
     )
 
 
-def _get_transcript_path(document_id: str) -> Path:
-    """Get the transcript path for a session."""
-    projects_dir = Path.home() / ".claude" / "projects"
-    # The project path is encoded in the document_id filename convention
-    # For now, scan for the matching transcript
-    for project_dir in projects_dir.iterdir():
-        if not project_dir.is_dir():
-            continue
-        transcript_path = project_dir / f"{document_id}.jsonl"
-        if transcript_path.exists():
-            return transcript_path
-    raise ValueError(f"Transcript not found for document {document_id}")
-
-
-def _get_compaction_span_end(state: SessionState) -> int | None:
-    """Compute the compaction boundary span_end on-demand.
-
-    Scans the transcript to find UUIDs that appear after compaction,
-    then finds the first segment containing post-compaction content.
-    Returns the previous segment's span_end as the compaction boundary.
-
-    Returns:
-        span_end of the last pre-compaction segment, or None if no compaction.
-    """
-    transcript_path = _get_transcript_path(state.header.document_id)
-
-    # Collect all UUIDs that appear after compaction
-    post_compaction_uuids: set[str] = set()
-    found_compaction = False
-
-    for record in iter_jsonl_reversed(transcript_path):
-        if record.get("isCompactSummary"):
-            found_compaction = True
-            break
-
-        uuid = record.get("uuid")
-        if isinstance(uuid, str):
-            post_compaction_uuids.add(uuid)
-
-    if not found_compaction:
-        return None
-
-    # Find the first segment whose last_uuid is post-compaction
-    # Return the previous segment's span_end
-    prev_span_end = 0
-    for entry in state.entries:
-        if entry.last_uuid in post_compaction_uuids:
-            # This segment contains post-compaction content
-            # Return the boundary before this segment
-            return prev_span_end
-        prev_span_end = entry.span_end
-
-    # All segments are pre-compaction (shouldn't happen normally)
-    return None
-
-
 def _format_response(
     summary: str,
-    nodes: list[tuple[int, int, int]],
+    nodes: list[tuple[str | None, str | None, int]],
 ) -> str:
     """Format query response with node metadata for follow-up queries.
 
     Args:
         summary: The summary text from the query
-        nodes: List of (span_start, span_end, height) tuples
+        nodes: List of (time_start, time_end, height) tuples
 
     Returns:
-        Formatted string with summary and node spans
+        Formatted string with summary and time ranges
     """
     result = summary
 
     if nodes:
-        result += "\n\n---\nNode spans (for zooming):\n"
-        for span_start, span_end, height in nodes:
-            result += f"  [{span_start}-{span_end}] height={height}\n"
+        result += "\n\n---\nTime ranges (for zooming):\n"
+        for time_start, time_end, height in nodes:
+            start = time_start or "?"
+            end = time_end or "?"
+            result += f"  [{start} to {end}] height={height}\n"
 
     return result
 
@@ -128,22 +72,22 @@ def _format_response(
 def remember(
     query: str,
     token_budget: int = 2000,
-    span_start: int = 0,
-    span_end: int | None = None,
+    time_start: str | None = None,
+    time_end: str | None = None,
 ) -> str:
-    """Search pre-compaction conversation history.
+    """Search conversation history.
 
     Use keyword/phrase queries that match content semantically.
-    For follow-up queries, use span_start/span_end to zoom into specific regions.
+    For follow-up queries, use time_start/time_end to zoom into specific periods.
 
     Args:
         query: Keywords/phrases to search for (semantic search)
         token_budget: Max tokens for returned context (default 2000)
-        span_start: Start of span range for zooming (default 0)
-        span_end: End of span range (defaults to compaction boundary)
+        time_start: ISO timestamp to start from (e.g., "2024-01-15T10:00:00")
+        time_end: ISO timestamp to end at (e.g., "2024-01-15T18:00:00")
 
     Returns:
-        Summary text with node spans for follow-up zoom queries
+        Summary text with time ranges for follow-up zoom queries
 
     ## How It Works
 
@@ -152,7 +96,7 @@ def remember(
     higher heights are progressively more compressed summaries.
 
     With a small budget, you get high-level summaries. With a larger budget
-    or constrained span, you get more verbatim content.
+    or constrained time range, you get more verbatim content.
 
     ## Iterative Zoom Workflow
 
@@ -162,44 +106,34 @@ def remember(
 
         remember(query="authentication bug", token_budget=2000)
 
-        # Returns summaries + node spans like:
-        # [0-45000] height=5
-        # [45000-72000] height=4
-        # [72000-89000] height=3  <-- mentions auth bug here
-        # [89000-95000] height=1
+        # Returns summaries + time ranges like:
+        # [2024-01-10T09:00:00 to 2024-01-10T12:00:00] height=3
+        # [2024-01-10T14:00:00 to 2024-01-10T16:30:00] height=2  <-- mentions auth bug
+        # [2024-01-10T16:30:00 to 2024-01-10T18:00:00] height=1
 
-    **Step 2 - Zoom:** Drill into the relevant span for more detail:
+    **Step 2 - Zoom:** Drill into the relevant time range for more detail:
 
         remember(query="authentication bug", token_budget=2000,
-                 span_start=72000, span_end=89000)
+                 time_start="2024-01-10T14:00:00", time_end="2024-01-10T16:30:00")
 
-        # Same budget, smaller region = more verbatim content
-        # Returns nodes like:
-        # [72000-75000] height=1
-        # [75000-78500] height=0  <-- verbatim leaf!
-        # [78500-82000] height=0
-        # [82000-89000] height=2
+        # Same budget, smaller time range = more verbatim content
 
     **Step 3 - Repeat:** Continue zooming for full detail if needed.
 
     ## Tips
 
     - **Same results for different queries?** Budget is too small to expand
-      past root summaries. Either increase token_budget or constrain the span.
+      past root summaries. Either increase token_budget or constrain the time range.
 
     - **Query drives seed selection:** Keywords mark relevant leaves as
       important; seeds expand first, pulling in matching detail.
 
-    - **Maximum detail:** Use token_budget=5000+ with tight span constraints.
+    - **Maximum detail:** Use token_budget=5000+ with tight time constraints.
 
-    - **Recent content:** Spans near the compaction boundary are often
-      already height=0 (verbatim) since they haven't been summarized yet.
+    - **Recent content:** Recent time ranges often return height=0 (verbatim)
+      since they haven't been summarized yet.
     """
-    doc_id, state = _get_session_id()
-
-    # Compute compaction boundary on-demand if span_end not specified
-    if span_end is None:
-        span_end = _get_compaction_span_end(state)
+    doc_id, _ = _get_session_id()
 
     # Query RagZoom via gRPC
     server_address = os.environ.get("RAGZOOM_SERVER_ADDRESS", "localhost:50051")
@@ -213,20 +147,20 @@ def remember(
             debug=False,
             viz_width=80,
             use_token_coords=False,
-            span_start=span_start,
-            span_end=span_end,
+            time_start=time_start,
+            time_end=time_end,
         )
 
     # Extract summary from tiling
     retrieval = output.retrieval
     summary_parts = []
-    node_info = []
+    node_info: list[tuple[str | None, str | None, int]] = []
 
     for node_id in retrieval.tiling_ids:
         node = retrieval.nodes.get(node_id)
         if node and node.text:
             summary_parts.append(node.text)
-            node_info.append((node.span_start, node.span_end, node.height))
+            node_info.append((node.time_start, node.time_end, node.height))
 
     summary = "\n\n".join(summary_parts)
     return _format_response(summary, node_info)
