@@ -20,7 +20,6 @@ from typing import Protocol, cast
 import click
 from dotenv import load_dotenv
 
-from ragzoom.claude_memory import set_session_pid
 from ragzoom.client import (
     DocumentStatusView,
     GrpcRagzoomClient,
@@ -2450,57 +2449,6 @@ def report(
         handle_cli_error(e, "generating report")
 
 
-@cli.command("sync-claude-code-transcript")
-@click.argument("jsonl_path", type=click.Path(exists=True, path_type=Path))
-@click.option(
-    "--server-address",
-    "-s",
-    envvar="RAGZOOM_SERVER_ADDRESS",
-    default=DEFAULT_GRPC_ADDRESS,
-    show_default=True,
-    help=GRPC_ADDRESS_HELP,
-)
-def sync_claude_code_transcript(
-    jsonl_path: Path,
-    server_address: str,
-) -> None:
-    """Sync a Claude Code JSONL log to a RagZoom document.
-
-    Incrementally transcribes new conversation records and indexes them.
-    Uses UUID-based ancestry tracking to detect and handle reverts.
-    Uses the session ID (JSONL filename without extension) as the document ID.
-    Tracks progress via state files (configurable via RAGZOOM_STATE_DIR env var).
-
-    The JSONL files are typically found in:
-    ~/.claude/projects/<project-path>/<session-id>.jsonl
-
-    Example:
-      ragzoom sync-claude-code-transcript ~/.claude/projects/.../session.jsonl
-    """
-    from ragzoom.claude_memory.transcript_sync import execute_sync, get_state_path
-    from ragzoom.wrapper import RagZoom
-
-    # State file uses same naming convention but with .jsonl extension
-    state_path = get_state_path(jsonl_path.stem)
-
-    client = RagZoom(server_address=server_address)
-
-    try:
-        result = execute_sync(jsonl_path, state_path, client)
-        if result.truncated:
-            click.echo(
-                f"🔄 Reverted document '{result.document_id}' to span {result.truncate_span}"
-            )
-        if result.appended_uuids:
-            click.echo(
-                f"✅ Synced {len(result.appended_uuids)} messages to '{result.document_id}'"
-            )
-        else:
-            click.echo(f"✅ No new content to sync for '{result.document_id}'")
-    except Exception as e:
-        handle_cli_error(e, "syncing Claude Code transcript")
-
-
 @cli.command("reset-session")
 @click.argument("session_id")
 @click.option(
@@ -2536,25 +2484,6 @@ def reset_session_cmd(session_id: str, user_id: str, server: str) -> None:
                 raise SystemExit(1)
     except Exception as e:
         handle_cli_error(e, "resetting session")
-
-
-@cli.command("set-session-pid")
-@click.argument("document_id")
-@click.argument("pid", type=int)
-def set_session_pid_cmd(document_id: str, pid: int) -> None:
-    """Set the PID for a session's state file.
-
-    Called by the SessionStart hook to register the Claude Code PID
-    before any tool calls. Creates the state file if needed.
-
-    Example:
-      ragzoom set-session-pid my-session-123 12345
-    """
-    try:
-        set_session_pid(document_id, pid)
-        click.echo(f"Set PID {pid} for session '{document_id}'")
-    except Exception as e:
-        handle_cli_error(e, "setting session PID")
 
 
 if __name__ == "__main__":
