@@ -57,7 +57,7 @@
     ],
     "SessionStart": [
       {
-        "matcher": "startup|resume",
+        "matcher": "startup|resume|clear",
         "hooks": [
           {
             "type": "command",
@@ -71,6 +71,16 @@
           {
             "type": "command",
             "command": "$(git rev-parse --show-toplevel)/.claude/hooks/session-start-compact.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$(git rev-parse --show-toplevel)/.claude/hooks/sync-transcript.sh"
           }
         ]
       }
