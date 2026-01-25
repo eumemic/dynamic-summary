@@ -215,11 +215,12 @@ Replace the two-step embedding process (summarize context, concatenate with leaf
 
 ### Phase 34: Configuration Changes
 
-- [ ] Add `target_embedding_tokens` field to IndexConfig dataclass
+- [x] Add `target_embedding_tokens` field to IndexConfig dataclass
   - Spec: specs/embedding-text-optimization.md § Configuration > New Parameter
   - Success: `IndexConfig(target_embedding_tokens=500)` instantiates without error
   - Test: `tests/test_index_config.py::test_target_embedding_tokens_field`
   - Location: `ragzoom/config.py:291` (IndexConfig dataclass)
+  - **DONE**: Added field with default=500 and validation in __post_init__. Tests verify field access, default value, and rejection of non-positive values.
 
 - [ ] Update IndexConfigDict TypedDict with new field
   - Spec: specs/embedding-text-optimization.md § Configuration > New Parameter
