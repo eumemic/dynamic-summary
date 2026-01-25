@@ -396,6 +396,14 @@ class IndexConfig:
         nested_dict: PrecedingContextSettingsDict = raw_nested
         preceding_context = PrecedingContextSettings.from_dict(nested_dict)
 
+        # Reject deprecated field with helpful error
+        if "target_embedding_context_tokens" in config_dict:
+            raise ValueError(
+                "target_embedding_context_tokens has been removed. "
+                "Use target_embedding_tokens instead. "
+                "See specs/embedding-text-optimization.md for migration details."
+            )
+
         # Get optional summary_reasoning_level (may be str or None)
         raw_reasoning = config_dict.get("summary_reasoning_level")
         summary_reasoning_level: str | None = (
@@ -431,9 +439,9 @@ class IndexConfig:
 
         return cls(
             target_chunk_tokens=target_chunk_tokens_value,
-            target_embedding_context_tokens=int(
-                config_dict.get("target_embedding_context_tokens", 200)
-            ),
+            # Internal field - no longer configurable via config files
+            # (deprecated in favor of target_embedding_tokens)
+            target_embedding_context_tokens=200,
             max_parallelism=int(config_dict.get("max_parallelism", 30)),
             summary_model=str(config_dict["summary_model"]),
             embedding_model=str(config_dict["embedding_model"]),

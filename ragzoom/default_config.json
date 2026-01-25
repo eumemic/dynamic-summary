@@ -1,7 +1,6 @@
 {
   "target_chunk_tokens": 200,
   "target_embedding_tokens": 500,
-  "target_embedding_context_tokens": 200,
   "max_parallelism": 30,
   "summary_model": "gpt-5-nano",
   "summary_reasoning_level": "minimal",
