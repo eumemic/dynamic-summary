@@ -595,11 +595,12 @@ Eliminates sleep-based synchronization in daemon tests by using the ready-pipe p
 
 Add the ready_fd parameter to daemonize() and create test utilities.
 
-- [ ] Add `ready_fd` parameter to `daemonize()` function
+- [x] Add `ready_fd` parameter to `daemonize()` function
   - Spec: specs/event-driven-daemon-tests.md § API Addition
   - Success: `daemonize(log_file, ready_fd=None)` accepts optional file descriptor; writes `b"R"` and closes fd after daemonization completes
   - Test: `test_daemonize_ready_fd_signals`
   - Location: ragzoom/daemon.py:300
+  - Implementation: Added `ready_fd: int | None = None` parameter. After writing PID file, writes `b"R"` to ready_fd and closes it if provided. Backward compatible - all existing tests pass with ready_fd=None.
 
 - [ ] Implement `daemon_ready_pipe()` context manager
   - Spec: specs/event-driven-daemon-tests.md § Test Utility
