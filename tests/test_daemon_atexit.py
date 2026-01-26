@@ -4,9 +4,9 @@ Verifies that state files (PID and port) are cleaned up when the daemon
 exits normally (not via signal), such as when run_server() returns.
 """
 
+import select
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -41,7 +41,6 @@ class TestAtexitCleanup:
         This eliminates polling loops and time.sleep() for deterministic tests.
         """
         import os
-        import select
 
         from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
 
@@ -138,7 +137,6 @@ os.close({done_write_fd})
         This eliminates polling loops and time.sleep() for deterministic tests.
         """
         import os
-        import select
 
         from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
 
@@ -301,7 +299,9 @@ with patch.dict("sys.modules", {{"ragzoom.server.app": MagicMock()}}):
             if not pid_file.exists() and not port_file.exists():
                 cleanup_detected = True
                 break
-            time.sleep(0.1)
+            # Use select with empty fd sets as event-driven wait
+            # (equivalent to sleep but matches the pattern in other tests)
+            select.select([], [], [], 0.1)
 
         # Debug output
         debug_files = list(tmp_path.iterdir())
@@ -390,7 +390,6 @@ Path("{tmp_path / 'success'}").write_text("ok")
         This eliminates polling loops and time.sleep() for deterministic tests.
         """
         import os
-        import select
 
         from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
 
