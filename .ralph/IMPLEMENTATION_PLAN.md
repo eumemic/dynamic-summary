@@ -269,29 +269,33 @@ Implement time-based truncation in storage backend.
 
 Implement gRPC servicer and client methods.
 
-- [ ] Implement `TruncateFromTime` servicer method
+- [x] Implement `TruncateFromTime` servicer method
   - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API
   - Success: Method validates temporal document, performs truncation, returns deleted node IDs
   - Test: `test_truncate_from_time_servicer`
-  - Location: ragzoom/server/servicers.py (IndexerServicer)
+  - Location: ragzoom/server/servicers.py:493-560 (IndexerServicer)
+  - Implementation: Added TruncateFromTime method with full validation chain (document_id, cutoff_time parsing, existence, temporal check) before delegating to runtime.truncate_from_time(). Also updated proto stubs (.pyi files) with TruncateFromTimeRequest/Response types.
 
-- [ ] Add validation: error if document doesn't exist
+- [x] Add validation: error if document doesn't exist
   - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API > Validation
   - Success: Returns gRPC NOT_FOUND if document doesn't exist
   - Test: `test_truncate_from_time_not_found`
-  - Location: ragzoom/server/servicers.py
+  - Location: ragzoom/server/servicers.py:528-533
+  - Implementation: Checks node_count == 0 to determine non-existence
 
-- [ ] Add validation: error if document is not temporal
+- [x] Add validation: error if document is not temporal
   - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API > Validation
   - Success: Returns gRPC INVALID_ARGUMENT if `is_temporal = false`
   - Test: `test_truncate_from_time_non_temporal`
-  - Location: ragzoom/server/servicers.py
+  - Location: ragzoom/server/servicers.py:535-545
+  - Implementation: Queries document repository for is_temporal flag
 
-- [ ] Add validation: error if cutoff_time is malformed
+- [x] Add validation: error if cutoff_time is malformed
   - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API > Validation
   - Success: Returns gRPC INVALID_ARGUMENT if timestamp is not valid ISO 8601
   - Test: `test_truncate_from_time_invalid_timestamp`
-  - Location: ragzoom/server/servicers.py
+  - Location: ragzoom/server/servicers.py:517-525
+  - Implementation: Uses datetime.fromisoformat() with Z->+00:00 replacement for parsing
 
 - [ ] Add `TruncateFromTimeResult` dataclass to client
   - Spec: specs/temporal-document-apis.md § API Changes > Python Client

@@ -488,6 +488,82 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
             span_start=result.span_start,
         )
 
+    async def TruncateFromTime(  # noqa: N802
+        self,
+        request: object,
+        context: ServicerContextProto,
+    ) -> object:
+        """Truncate a temporal document from a given cutoff time.
+
+        Removes all nodes where time_end > cutoff_time, including both
+        leaf nodes and inner (summary) nodes. Vectors for deleted nodes
+        are also removed from the vector index.
+
+        See specs/temporal-document-apis.md for full specification.
+        """
+        document_id = getattr(request, "document_id", "")
+        cutoff_time_str = getattr(request, "cutoff_time", "")
+
+        if not document_id:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="TruncateFromTime requires `document_id`.",
+            )
+
+        if not cutoff_time_str:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="TruncateFromTime requires `cutoff_time`.",
+            )
+
+        # Parse and validate the ISO 8601 timestamp
+        try:
+            cutoff_dt = datetime.fromisoformat(cutoff_time_str.replace("Z", "+00:00"))
+            cutoff_unix = cutoff_dt.timestamp()
+        except ValueError:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message=f"Invalid ISO 8601 timestamp: {cutoff_time_str}",
+            )
+
+        # Check if document exists
+        document_store = self._state.store.for_document(document_id)
+        node_count = document_store.get_node_count()
+        if node_count == 0:
+            await _abort(
+                context,
+                code=grpc.StatusCode.NOT_FOUND,
+                message=f"Document '{document_id}' not found.",
+            )
+
+        # Check if document is temporal
+        is_temporal_result = document_store._doc_repo.get_document_is_temporal(
+            document_id
+        )
+        is_temporal = (
+            bool(is_temporal_result) if is_temporal_result is not None else False
+        )
+        if not is_temporal:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message=f"Document '{document_id}' is not a temporal document.",
+            )
+
+        # Delegate to runtime for actual truncation
+        session = self._runtime.get_session(document_id)
+        result = await session.truncate_from_time(cutoff_unix)
+
+        response_cls = getattr(pb2, "TruncateFromTimeResponse")
+        return response_cls(
+            document_id=result.document_id,
+            deleted_node_ids=result.deleted_node_ids,
+            cutoff_time=cutoff_time_str,
+        )
+
 
 class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
     def __init__(self, state: ServerState) -> None:
