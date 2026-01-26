@@ -673,11 +673,12 @@ Convert the 6 tests in TestDaemonizeFunction to use ready-pipe pattern.
 
 Convert the integration test to use ready-pipe pattern.
 
-- [ ] Migrate `test_daemon_survives_parent_exit` to ready-pipe
+- [x] Migrate `test_daemon_survives_parent_exit` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeIntegration
   - Success: Test uses ready-pipe instead of `time.sleep(0.3)` in script and `time.sleep(0.8)` after
   - Test: `test_daemon_survives_parent_exit`
-  - Location: tests/test_daemon_lifecycle.py
+  - Location: tests/test_daemon_lifecycle.py:317
+  - Implementation: Replaced `time.sleep(0.3)` in script and `time.sleep(0.8)` after with ready-pipe pattern. Script now uses `ready_fd` parameter; test uses `daemon_ready_pipe()` and `wait_for_daemon_ready()` for synchronization. Added small poll loop (0.01s intervals) as fallback for marker file verification. Test time reduced from ~1.6s to ~0.9s.
 
 ### Phase 57: Migrate TestSignalHandlers Tests
 
