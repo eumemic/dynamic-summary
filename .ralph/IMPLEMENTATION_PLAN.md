@@ -479,6 +479,14 @@ Replace append log logic with stateless algorithm.
 
 Remove deprecated append log classes and functions.
 
+**SPEC INCONSISTENCY NOTE:** The spec (stateless-transcript-sync.md) says "MCP Server: No changes needed" but also says to remove state file handling. However, `mcp_server.py` uses `SessionState` to find the session via PID matching (lines 34-37). Resolution: Keep `SessionStateHeader`, simplified `SessionState`, `get_state_path()`, `set_session_pid()`, and `_get_state_dir()` - these are needed for MCP server session discovery (document_id ↔ PID mapping). Only remove the append log *entries* and related machinery.
+
+**REMOVAL ORDER:** Items must be removed from outer consumers inward:
+1. `compute_sync_plan()` - outermost, only used in tests
+2. `_SessionAppendLog` - used by compute_sync_plan
+3. `AppendEntry` - used by _SessionAppendLog and SessionState.entries
+4. Simplify `SessionState` - remove entries field, keep header
+
 - [x] Remove `AppendLog` class
   - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
   - Success: Class no longer exists in codebase
@@ -486,39 +494,35 @@ Remove deprecated append log classes and functions.
   - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (removed)
   - Implementation: Removed file-based AppendLog class. Made _SessionAppendLog a standalone class (no longer inherits from AppendLog). Added find_valid_prefix() method to _SessionAppendLog since compute_sync_plan() still uses it. Removed AppendLog from exports and updated tests to use SessionState().append_log() instead.
 
-- [ ] Remove `AppendEntry` dataclass
+- [x] Remove `compute_sync_plan()` function and its tests
   - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
-  - Success: Dataclass no longer exists in codebase
-  - Test: N/A (removal)
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:307
-
-- [ ] Remove `SessionState` and `SessionStateHeader` classes
-  - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
-  - Success: Classes no longer exist in codebase
-  - Test: N/A (removal)
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:472
+  - Success: Function no longer exists (replaced by stateless algorithm)
+  - Test: N/A (removal) - Remove TestComputeSyncPlan class
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (removed)
+  - Implementation: Removed `SyncPlan` dataclass and `compute_sync_plan()` function. Removed `SyncPlan` and `compute_sync_plan` exports from __init__.py. Removed `TestComputeSyncPlan` test class (5 tests).
 
 - [ ] Remove `_SessionAppendLog` class
   - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
   - Success: Class no longer exists in codebase
   - Test: N/A (removal)
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:539
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:623
 
-- [ ] Remove `compute_sync_plan()` function
+- [ ] Remove `AppendEntry` dataclass and its tests
   - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
-  - Success: Function no longer exists (replaced by stateless algorithm)
-  - Test: N/A (removal)
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:714
+  - Success: Dataclass no longer exists in codebase
+  - Test: N/A (removal) - Remove TestAppendEntry class
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:507
 
-- [ ] Remove `get_state_path()` and `set_session_pid()` functions
+- [ ] Simplify `SessionState` class (remove entries field, keep header)
   - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
-  - Success: Functions no longer needed for sync (may keep PID for MCP server if needed)
-  - Test: N/A (removal)
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:518
+  - Success: SessionState only stores header (document_id, last_pid), no entries
+  - Test: Update TestSessionState to reflect simplified structure
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:557
+  - Note: Keep SessionStateHeader, SessionState, get_state_path(), set_session_pid() for MCP server
 
 - [ ] Update imports and exports in `__init__.py`
   - Spec: specs/stateless-transcript-sync.md § API Changes
-  - Success: Module exports updated to reflect removed classes
+  - Success: Remove AppendEntry, compute_sync_plan exports; keep SessionState, SessionStateHeader
   - Test: N/A (cleanup)
   - Location: integrations/claude-code/src/ragzoom_claude_code/__init__.py
 
