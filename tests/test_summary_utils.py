@@ -650,6 +650,125 @@ class TestRunEmbeddingTextWorkflow:
 
         assert result.summary == "optimized leaf"
 
+    @pytest.mark.asyncio
+    async def test_embedding_text_empty_leaf(self) -> None:
+        """When leaf is empty, returns empty string without LLM call.
+
+        Spec: "Empty leaf: Embed empty string (existing behavior)"
+        """
+        llm_called = False
+
+        async def mock_llm(
+            messages: MutableSequence[dict[str, str]],
+            target_tokens: int,
+            node_id: str,
+            reporter: TelemetryCollector | None,
+        ) -> tuple[str, UsageInfo]:
+            nonlocal llm_called
+            llm_called = True
+            return "should not be called", {"prompt_tokens": 10, "completion_tokens": 5}
+
+        config = SummaryWorkflowConfig(
+            summary_model="gpt-4o-mini",
+            use_anti_verbatim_vaccine=False,
+            max_retries=0,
+            retry_threshold=0.2,
+        )
+
+        # Empty leaf - should passthrough empty string
+        result = await run_embedding_text_workflow(
+            preceding_context="Some context",
+            leaf_text="",  # Empty leaf
+            target_tokens=100,
+            config=config,
+            call_llm=mock_llm,
+        )
+
+        assert not llm_called, "LLM should not be called for empty leaf"
+        # When leaf is empty, combined_text is "context\n" (context + newline + empty)
+        assert result.summary.strip() == "Some context"
+        assert result.retry_count == 0
+
+    @pytest.mark.asyncio
+    async def test_embedding_text_empty_leaf_and_context(self) -> None:
+        """When both leaf and context are empty, returns empty string."""
+        llm_called = False
+
+        async def mock_llm(
+            messages: MutableSequence[dict[str, str]],
+            target_tokens: int,
+            node_id: str,
+            reporter: TelemetryCollector | None,
+        ) -> tuple[str, UsageInfo]:
+            nonlocal llm_called
+            llm_called = True
+            return "should not be called", {"prompt_tokens": 10, "completion_tokens": 5}
+
+        config = SummaryWorkflowConfig(
+            summary_model="gpt-4o-mini",
+            use_anti_verbatim_vaccine=False,
+            max_retries=0,
+            retry_threshold=0.2,
+        )
+
+        result = await run_embedding_text_workflow(
+            preceding_context="",
+            leaf_text="",  # Both empty
+            target_tokens=100,
+            config=config,
+            call_llm=mock_llm,
+        )
+
+        assert not llm_called
+        assert result.summary == ""
+
+    @pytest.mark.asyncio
+    async def test_embedding_text_leaf_exceeds_target(self) -> None:
+        """When leaf alone exceeds target, LLM compresses the leaf.
+
+        Spec: "Leaf alone > target: Compress leaf text to fit"
+        """
+        llm_called = False
+        received_messages: list[dict[str, str]] = []
+
+        async def mock_llm(
+            messages: MutableSequence[dict[str, str]],
+            target_tokens: int,
+            node_id: str,
+            reporter: TelemetryCollector | None,
+        ) -> tuple[str, UsageInfo]:
+            nonlocal llm_called, received_messages
+            llm_called = True
+            received_messages = list(messages)
+            return "compressed leaf content", {
+                "prompt_tokens": 200,
+                "completion_tokens": 10,
+            }
+
+        config = SummaryWorkflowConfig(
+            summary_model="gpt-4o-mini",
+            use_anti_verbatim_vaccine=False,
+            max_retries=0,
+            retry_threshold=0.2,
+        )
+
+        # Large leaf that exceeds target, no context
+        large_leaf = "Important authentication details. " * 50
+
+        result = await run_embedding_text_workflow(
+            preceding_context="",  # No context
+            leaf_text=large_leaf,
+            target_tokens=50,  # Small target forces compression
+            config=config,
+            call_llm=mock_llm,
+        )
+
+        assert llm_called, "LLM should be called to compress large leaf"
+        assert result.summary == "compressed leaf content"
+        # Verify the prompt contains the leaf text
+        user_message = next(m for m in received_messages if m["role"] == "user")
+        assert "authentication" in user_message["content"]
+
 
 class TestRunEmbeddingTextFromConfig:
     """Tests for run_embedding_text_from_config convenience wrapper."""
