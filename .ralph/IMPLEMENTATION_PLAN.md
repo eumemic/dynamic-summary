@@ -61,9 +61,7 @@ Critical bugs discovered during implementation verification have been **fully fi
 
 ---
 
-# Active Features
-
-## Timestamped Transcript Sync (Complete)
+## Previous Feature: Timestamped Transcript Sync (Complete)
 
 The timestamped transcript sync feature specified in `specs/timestamped-transcript-sync.md` is **fully implemented**. All 10 acceptance criteria met.
 
@@ -78,8 +76,473 @@ The timestamped transcript sync feature specified in `specs/timestamped-transcri
 
 ---
 
+# Active Features
+
+## Feature: Temporal Document APIs (specs/temporal-document-apis.md)
+
+Adds document status and temporal truncation APIs to enable stateless synchronization workflows.
+
+**Dependencies:** None (temporal-metadata.md already complete)
+
+### Phase 40: Document Status Proto Messages and RPC (Complete)
+
+Add new proto messages and RPC for document status (separate from existing GetDocument).
+
+- [x] Add `DocumentStatusRequest` proto message
+  - Spec: specs/temporal-document-apis.md § 4. gRPC Service Definition
+  - Success: Proto defines message with `string document_id = 1;`
+  - Test: N/A (proto change)
+  - Location: proto/dynamic_summary.proto:248-250
+
+- [x] Add `DocumentStatusResponse` proto message
+  - Spec: specs/temporal-document-apis.md § 4. gRPC Service Definition
+  - Success: Proto defines message with all 9 fields: document_id, exists, is_temporal, leaf_count, node_count, complete_forest_size, completion_pct, time_start, time_end
+  - Test: N/A (proto change)
+  - Location: proto/dynamic_summary.proto:252-262
+
+- [x] Add `GetDocumentStatus` RPC to appropriate service
+  - Spec: specs/temporal-document-apis.md § 4. gRPC Service Definition
+  - Success: Service defines `rpc GetDocumentStatus(DocumentStatusRequest) returns (DocumentStatusResponse);`
+  - Test: N/A (proto change)
+  - Location: proto/dynamic_summary.proto:302 (WorkerService)
+
+- [x] Regenerate Python proto bindings
+  - Spec: specs/temporal-document-apis.md § 4. gRPC Service Definition
+  - Success: `scripts/compile-proto.sh` completes, pb2.py and pb2_grpc.py files updated
+  - Test: N/A (build step)
+  - Location: ragzoom/rpc/dynamic_summary_pb2.py
+
+### Phase 41: Complete Forest Size Helper
+
+Implement the binary forest formula for calculating expected node count.
+
+- [ ] Implement `complete_forest_size()` function
+  - Spec: specs/temporal-document-apis.md § 2. Complete Forest Size Formula
+  - Success: Function returns `2N - popcount(N)` for N leaves
+  - Test: `test_complete_forest_size_powers_of_two`, `test_complete_forest_size_mixed`, `test_complete_forest_size_zero`
+  - Location: ragzoom/server/servicers.py (new function)
+
+### Phase 42: Document Status Servicer Implementation
+
+Implement the new GetDocumentStatus servicer method.
+
+- [ ] Add `get_node_count()` method to document store
+  - Spec: specs/temporal-document-apis.md § Implementation Outline > Phase 1
+  - Success: Method returns total node count (leaves + inner nodes)
+  - Test: `test_document_store_node_count`
+  - Location: ragzoom/document_store.py
+
+- [ ] Add `get_temporal_range()` method to document store
+  - Spec: specs/temporal-document-apis.md § Implementation Outline > Phase 1
+  - Success: Method returns (time_start, time_end) tuple from leaf nodes
+  - Test: `test_document_store_temporal_range`
+  - Location: ragzoom/document_store.py
+
+- [ ] Implement `GetDocumentStatus` servicer method
+  - Spec: specs/temporal-document-apis.md § 1. Document Status API
+  - Success: Returns DocumentStatusResponse with all fields populated correctly
+  - Test: `test_get_document_status_servicer`
+  - Location: ragzoom/server/servicers.py (WorkerServicer or new service)
+
+- [ ] Handle non-existent documents in GetDocumentStatus
+  - Spec: specs/temporal-document-apis.md § 1. Document Status API
+  - Success: Returns `exists=False` with zeroed fields for unknown documents
+  - Test: `test_get_document_status_not_found`
+  - Location: ragzoom/server/servicers.py
+
+- [ ] Populate `complete_forest_size` and `completion_pct` fields
+  - Spec: specs/temporal-document-apis.md § 1. Document Status API
+  - Success: Uses `2N - popcount(N)` formula for forest size, calculates percentage
+  - Test: `test_get_document_status_completion`
+  - Location: ragzoom/server/servicers.py
+
+- [ ] Populate `time_start` and `time_end` fields for temporal documents
+  - Spec: specs/temporal-document-apis.md § 1. Document Status API
+  - Success: Returns temporal range from leaf nodes, null for non-temporal
+  - Test: `test_get_document_status_temporal_range`
+  - Location: ragzoom/server/servicers.py
+
+### Phase 43: Document Status Client Implementation
+
+Add client method for the new GetDocumentStatus RPC.
+
+- [ ] Create `DocumentStatusView` dataclass with all spec fields
+  - Spec: specs/temporal-document-apis.md § API Changes > Python Client
+  - Success: Dataclass includes `document_id`, `exists`, `is_temporal`, `leaf_count`, `node_count`, `complete_forest_size`, `completion_pct`, `time_start`, `time_end`
+  - Test: N/A (type definition)
+  - Location: ragzoom/client/grpc_client.py
+
+- [ ] Implement `get_document_status()` client method calling new RPC
+  - Spec: specs/temporal-document-apis.md § API Changes > Python Client
+  - Success: Method calls GetDocumentStatus RPC and returns DocumentStatusView
+  - Test: `test_grpc_client_get_document_status`
+  - Location: ragzoom/client/grpc_client.py
+
+### Phase 44: Document Status CLI Command
+
+Add `ragzoom document-status` CLI command.
+
+- [ ] Implement `ragzoom document-status <doc-id>` command
+  - Spec: specs/temporal-document-apis.md § CLI
+  - Success: Command outputs human-readable status format
+  - Test: `test_cli_document_status_human`
+  - Location: ragzoom/cli.py (new command)
+
+- [ ] Add `--json` flag to document-status command
+  - Spec: specs/temporal-document-apis.md § CLI
+  - Success: `--json` outputs JSON format matching spec example
+  - Test: `test_cli_document_status_json`
+  - Location: ragzoom/cli.py (new command)
+
+### Phase 45: TruncateFromTime Proto and Messages (Complete)
+
+Add proto messages and service method for time-based truncation.
+
+- [x] Add `TruncateFromTimeRequest` proto message
+  - Spec: specs/temporal-document-apis.md § 4. gRPC Service Definition
+  - Success: Proto defines message with `document_id` and `cutoff_time` fields
+  - Test: N/A (proto change)
+  - Location: proto/dynamic_summary.proto:266-269
+
+- [x] Add `TruncateFromTimeResponse` proto message
+  - Spec: specs/temporal-document-apis.md § 4. gRPC Service Definition
+  - Success: Proto defines message with `document_id`, `deleted_node_ids`, `cutoff_time`
+  - Test: N/A (proto change)
+  - Location: proto/dynamic_summary.proto:271-275
+
+- [x] Add `TruncateFromTime` RPC to IndexerService
+  - Spec: specs/temporal-document-apis.md § 4. gRPC Service Definition
+  - Success: Service defines `rpc TruncateFromTime(TruncateFromTimeRequest) returns (TruncateFromTimeResponse);`
+  - Test: N/A (proto change)
+  - Location: proto/dynamic_summary.proto:291
+
+- [x] Regenerate Python proto bindings
+  - Spec: specs/temporal-document-apis.md § 4. gRPC Service Definition
+  - Success: `scripts/compile-proto.sh` completes, pb2.py and pb2_grpc.py files updated
+  - Test: N/A (build step)
+  - Location: ragzoom/rpc/
+
+### Phase 46: TruncateFromTime Storage Implementation
+
+Implement time-based truncation in storage backend.
+
+- [ ] Add `delete_nodes_from_time()` method to storage backend contract
+  - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API
+  - Success: Contract defines method signature with document_id and cutoff_time parameters
+  - Test: N/A (contract definition)
+  - Location: ragzoom/contracts/storage_backend.py
+
+- [ ] Implement `delete_nodes_from_time()` in SQLite backend
+  - Spec: specs/temporal-document-apis.md § Implementation Outline > Phase 2
+  - Success: Deletes nodes where `time_end > cutoff`, NULLs parent_id on kept children
+  - Test: `test_sqlite_delete_nodes_from_time`
+  - Location: ragzoom/backends/sqlite_backend.py
+
+- [ ] Implement `delete_nodes_from_time()` in Postgres backend
+  - Spec: specs/temporal-document-apis.md § Implementation Outline > Phase 2
+  - Success: Deletes nodes where `time_end > cutoff`, NULLs parent_id on kept children
+  - Test: `test_postgres_delete_nodes_from_time`
+  - Location: ragzoom/backends/postgres_backend.py
+
+- [ ] Delete vectors for removed nodes in truncation
+  - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API
+  - Success: Vector index entries for deleted nodes are removed
+  - Test: `test_truncate_from_time_removes_vectors`
+  - Location: ragzoom/backends/sqlite_backend.py, ragzoom/backends/postgres_backend.py
+
+### Phase 47: TruncateFromTime Servicer and Client
+
+Implement gRPC servicer and client methods.
+
+- [ ] Implement `TruncateFromTime` servicer method
+  - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API
+  - Success: Method validates temporal document, performs truncation, returns deleted node IDs
+  - Test: `test_truncate_from_time_servicer`
+  - Location: ragzoom/server/servicers.py (IndexerServicer)
+
+- [ ] Add validation: error if document doesn't exist
+  - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API > Validation
+  - Success: Returns gRPC NOT_FOUND if document doesn't exist
+  - Test: `test_truncate_from_time_not_found`
+  - Location: ragzoom/server/servicers.py
+
+- [ ] Add validation: error if document is not temporal
+  - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API > Validation
+  - Success: Returns gRPC INVALID_ARGUMENT if `is_temporal = false`
+  - Test: `test_truncate_from_time_non_temporal`
+  - Location: ragzoom/server/servicers.py
+
+- [ ] Add validation: error if cutoff_time is malformed
+  - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API > Validation
+  - Success: Returns gRPC INVALID_ARGUMENT if timestamp is not valid ISO 8601
+  - Test: `test_truncate_from_time_invalid_timestamp`
+  - Location: ragzoom/server/servicers.py
+
+- [ ] Add `TruncateFromTimeResult` dataclass to client
+  - Spec: specs/temporal-document-apis.md § API Changes > Python Client
+  - Success: Dataclass with `document_id`, `deleted_node_ids`, `cutoff_time` fields
+  - Test: N/A (type definition)
+  - Location: ragzoom/client/grpc_client.py
+
+- [ ] Implement `truncate_from_time()` client method
+  - Spec: specs/temporal-document-apis.md § API Changes > Python Client
+  - Success: Method calls RPC and returns TruncateFromTimeResult
+  - Test: `test_grpc_client_truncate_from_time`
+  - Location: ragzoom/client/grpc_client.py
+
+### Phase 48: Temporal Document APIs Acceptance Tests
+
+Integration tests verifying all acceptance criteria.
+
+- [ ] Test: document-status returns accurate metadata for existing documents
+  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #1
+  - Success: All fields populated correctly for existing doc
+  - Test: `test_document_status_existing_document`
+  - Location: tests/test_temporal_document_apis.py
+
+- [ ] Test: document-status returns exists=false for non-existent documents
+  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #2
+  - Success: `exists=false` for unknown document ID
+  - Test: `test_document_status_nonexistent`
+  - Location: tests/test_temporal_document_apis.py
+
+- [ ] Test: document-status includes correct time range for temporal documents
+  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #3
+  - Success: `time_start` and `time_end` match actual leaf node timestamps
+  - Test: `test_document_status_temporal_range`
+  - Location: tests/test_temporal_document_apis.py
+
+- [ ] Test: completion_pct uses 2N - popcount(N) formula
+  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #4
+  - Success: Percentage correctly reflects formula
+  - Test: `test_document_status_completion_formula`
+  - Location: tests/test_temporal_document_apis.py
+
+- [ ] Test: truncate_from_time removes all nodes where time_end > cutoff
+  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #5
+  - Success: Only nodes with time_end <= cutoff remain
+  - Test: `test_truncate_from_time_removes_nodes`
+  - Location: tests/test_temporal_document_apis.py
+
+- [ ] Test: truncate_from_time correctly orphans kept children
+  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #6
+  - Success: Kept nodes have parent_id = NULL if parent was deleted
+  - Test: `test_truncate_from_time_orphans_children`
+  - Location: tests/test_temporal_document_apis.py
+
+- [ ] Test: truncate_from_time removes vectors for deleted nodes
+  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #7
+  - Success: Vector index entries removed for deleted nodes
+  - Test: `test_truncate_from_time_removes_vectors`
+  - Location: tests/test_temporal_document_apis.py
+
+- [ ] Test: truncate_from_time errors on non-temporal documents
+  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #8
+  - Success: Returns appropriate error for non-temporal doc
+  - Test: `test_truncate_from_time_non_temporal_error`
+  - Location: tests/test_temporal_document_apis.py
+
+- [ ] Test: both APIs accessible via gRPC and Python client
+  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #9
+  - Success: End-to-end test using GrpcRagzoomClient
+  - Test: `test_temporal_apis_client_integration`
+  - Location: tests/test_temporal_document_apis.py
+
+---
+
+## Feature: Stateless Transcript Sync (specs/stateless-transcript-sync.md)
+
+Refactors transcript sync to eliminate external state tracking, deriving all state from the document itself.
+
+**Dependencies:** Temporal Document APIs (Phase 40-48) must be complete first - this feature depends on `get_document_status()` and `truncate_from_time()`.
+
+### Phase 49: Core Stateless Functions
+
+Implement the core functions for stateless sync algorithm.
+
+- [ ] Implement `find_truncation_point()` function
+  - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
+  - Success: Returns (R, S) tuple using sliding window algorithm
+  - Test: `test_find_truncation_point_normal_append`, `test_find_truncation_point_revert`, `test_find_truncation_point_first_sync`
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py
+
+- [ ] Implement `is_user_message()` helper
+  - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
+  - Success: Returns True for user messages that are not tool results
+  - Test: `test_is_user_message`
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py
+
+- [ ] Implement `build_ancestry_chain()` function
+  - Spec: specs/stateless-transcript-sync.md § 5. Build Ancestry Chain
+  - Success: Returns UUIDs from stop_uuid to head_uuid in chronological order
+  - Test: `test_build_ancestry_chain_normal`, `test_build_ancestry_chain_from_root`
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py
+
+### Phase 50: Stateless Algorithm Unit Tests
+
+Unit tests for the core stateless sync functions.
+
+- [ ] Test: normal append case (no revert)
+  - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
+  - Success: find_truncation_point returns correct connection when R.timestamp == indexed_time_end
+  - Test: `test_find_truncation_point_normal_append`
+  - Location: integrations/claude-code/tests/test_stateless_sync.py
+
+- [ ] Test: revert to turn boundary
+  - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
+  - Success: Returns connection at the revert point, detecting gap
+  - Test: `test_find_truncation_point_revert_turn_boundary`
+  - Location: integrations/claude-code/tests/test_stateless_sync.py
+
+- [ ] Test: revert mid-turn (rounds down)
+  - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
+  - Success: Sliding window continues to turn boundary when revert is mid-turn
+  - Test: `test_find_truncation_point_revert_mid_turn`
+  - Location: integrations/claude-code/tests/test_stateless_sync.py
+
+- [ ] Test: first sync (empty document)
+  - Spec: specs/stateless-transcript-sync.md § 7. First Sync Case
+  - Success: Returns (None, head_uuid) when indexed_time_end is None
+  - Test: `test_find_truncation_point_first_sync`
+  - Location: integrations/claude-code/tests/test_stateless_sync.py
+
+- [ ] Test: complete reindex (no common ancestor)
+  - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
+  - Success: Returns (None, head_uuid) when entire chain is newer than indexed content
+  - Test: `test_find_truncation_point_complete_reindex`
+  - Location: integrations/claude-code/tests/test_stateless_sync.py
+
+### Phase 51: Refactor execute_sync
+
+Replace append log logic with stateless algorithm.
+
+- [ ] Refactor `execute_sync()` to use document status for indexed state
+  - Spec: specs/stateless-transcript-sync.md § 2. Use Document Status for Indexed State
+  - Success: Function calls `client.get_document_status()` instead of reading append log
+  - Test: `test_execute_sync_stateless`
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:923
+
+- [ ] Refactor `execute_sync()` to use `find_truncation_point()`
+  - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
+  - Success: Function uses new algorithm instead of `compute_sync_plan()`
+  - Test: `test_execute_sync_stateless`
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:923
+
+- [ ] Refactor `execute_sync()` to use `truncate_from_time()` for reverts
+  - Spec: specs/stateless-transcript-sync.md § 4. Revert Detection and Truncation
+  - Success: Function calls time-based truncation instead of span-based
+  - Test: `test_execute_sync_revert_truncation`
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:923
+
+- [ ] Remove state file creation/reading from `execute_sync()`
+  - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
+  - Success: Function no longer uses `state_path` parameter for sync state
+  - Test: `test_execute_sync_no_state_file`
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:923
+
+- [ ] Update `SyncResult` to reflect stateless approach
+  - Spec: specs/stateless-transcript-sync.md § API Changes
+  - Success: SyncResult no longer includes UUID-based tracking
+  - Test: N/A (type change)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:912
+
+### Phase 52: Cleanup Append Log Machinery
+
+Remove deprecated append log classes and functions.
+
+- [ ] Remove `AppendLog` class
+  - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
+  - Success: Class no longer exists in codebase
+  - Test: N/A (removal)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:357
+
+- [ ] Remove `AppendEntry` dataclass
+  - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
+  - Success: Dataclass no longer exists in codebase
+  - Test: N/A (removal)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:307
+
+- [ ] Remove `SessionState` and `SessionStateHeader` classes
+  - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
+  - Success: Classes no longer exist in codebase
+  - Test: N/A (removal)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:472
+
+- [ ] Remove `_SessionAppendLog` class
+  - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
+  - Success: Class no longer exists in codebase
+  - Test: N/A (removal)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:539
+
+- [ ] Remove `compute_sync_plan()` function
+  - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
+  - Success: Function no longer exists (replaced by stateless algorithm)
+  - Test: N/A (removal)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:714
+
+- [ ] Remove `get_state_path()` and `set_session_pid()` functions
+  - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
+  - Success: Functions no longer needed for sync (may keep PID for MCP server if needed)
+  - Test: N/A (removal)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:518
+
+- [ ] Update imports and exports in `__init__.py`
+  - Spec: specs/stateless-transcript-sync.md § API Changes
+  - Success: Module exports updated to reflect removed classes
+  - Test: N/A (cleanup)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/__init__.py
+
+### Phase 53: Stateless Sync Integration Tests
+
+Integration tests verifying acceptance criteria.
+
+- [ ] Test: sync works without any local state files
+  - Spec: specs/stateless-transcript-sync.md § Acceptance Criteria #1
+  - Success: Sync completes successfully without creating/reading state files
+  - Test: `test_sync_no_state_files`
+  - Location: integrations/claude-code/tests/test_stateless_sync_integration.py
+
+- [ ] Test: normal append case - new turns appended correctly
+  - Spec: specs/stateless-transcript-sync.md § Acceptance Criteria #2
+  - Success: New content indexed after existing content
+  - Test: `test_sync_normal_append`
+  - Location: integrations/claude-code/tests/test_stateless_sync_integration.py
+
+- [ ] Test: revert case - orphaned content removed, new content appended
+  - Spec: specs/stateless-transcript-sync.md § Acceptance Criteria #3
+  - Success: Truncation followed by append produces correct state
+  - Test: `test_sync_revert_detection`
+  - Location: integrations/claude-code/tests/test_stateless_sync_integration.py
+
+- [ ] Test: mid-turn revert - correctly rounds down to turn boundary
+  - Spec: specs/stateless-transcript-sync.md § Acceptance Criteria #4
+  - Success: Partial turn is fully removed, not partially kept
+  - Test: `test_sync_mid_turn_revert`
+  - Location: integrations/claude-code/tests/test_stateless_sync_integration.py
+
+- [ ] Test: first sync - entire transcript indexed
+  - Spec: specs/stateless-transcript-sync.md § Acceptance Criteria #5
+  - Success: Empty document gets all content from transcript
+  - Test: `test_sync_first_sync`
+  - Location: integrations/claude-code/tests/test_stateless_sync_integration.py
+
+- [ ] Test: idempotent - running sync twice is safe
+  - Spec: specs/stateless-transcript-sync.md § Acceptance Criteria #6
+  - Success: Second sync produces no changes or duplicates
+  - Test: `test_sync_idempotent`
+  - Location: integrations/claude-code/tests/test_stateless_sync_integration.py
+
+- [ ] Test: crash-safe - sync can be interrupted and resumed
+  - Spec: specs/stateless-transcript-sync.md § Acceptance Criteria #7
+  - Success: Simulated crash and restart produces correct state
+  - Test: `test_sync_crash_recovery`
+  - Location: integrations/claude-code/tests/test_stateless_sync_integration.py
+
+---
+
 ## Notes
 
 - All phases include test requirements - no code should merge without passing tests
 - Schema migration must be idempotent and safe to run multiple times
 - Backward compatibility is important - old configs/databases should continue working
+- Stateless Transcript Sync (Phase 49-53) MUST wait for Temporal Document APIs (Phase 40-48) to complete
