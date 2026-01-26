@@ -112,15 +112,16 @@ Add new proto messages and RPC for document status (separate from existing GetDo
   - Test: N/A (build step)
   - Location: ragzoom/rpc/dynamic_summary_pb2.py
 
-### Phase 41: Complete Forest Size Helper
+### Phase 41: Complete Forest Size Helper (Complete)
 
 Implement the binary forest formula for calculating expected node count.
 
-- [ ] Implement `complete_forest_size()` function
+- [x] Implement `complete_forest_size()` function
   - Spec: specs/temporal-document-apis.md § 2. Complete Forest Size Formula
   - Success: Function returns `2N - popcount(N)` for N leaves
   - Test: `test_complete_forest_size_powers_of_two`, `test_complete_forest_size_mixed`, `test_complete_forest_size_zero`
-  - Location: ragzoom/server/servicers.py (new function)
+  - Location: ragzoom/server/servicers.py:67-96
+  - Implementation: Public function with comprehensive docstring, reuses same formula as `_expected_total_jobs()` in indexing_engine.py
 
 ### Phase 42: Document Status Servicer Implementation
 
@@ -540,9 +541,178 @@ Integration tests verifying acceptance criteria.
 
 ---
 
+## Feature: Event-Driven Daemon Tests (specs/event-driven-daemon-tests.md)
+
+Eliminates sleep-based synchronization in daemon tests by using the ready-pipe pattern for instant, deterministic daemon readiness detection.
+
+**Dependencies:** None (test infrastructure only, no production code dependencies)
+
+### Phase 54: Ready-Pipe Infrastructure
+
+Add the ready_fd parameter to daemonize() and create test utilities.
+
+- [ ] Add `ready_fd` parameter to `daemonize()` function
+  - Spec: specs/event-driven-daemon-tests.md § API Addition
+  - Success: `daemonize(log_file, ready_fd=None)` accepts optional file descriptor; writes `b"R"` and closes fd after daemonization completes
+  - Test: `test_daemonize_ready_fd_signals`
+  - Location: ragzoom/daemon.py:300
+
+- [ ] Implement `daemon_ready_pipe()` context manager
+  - Spec: specs/event-driven-daemon-tests.md § Test Utility
+  - Success: Creates pipe, yields `(read_fd, write_fd)`, cleans up fds on exit
+  - Test: `test_daemon_ready_pipe_cleanup`
+  - Location: tests/conftest.py or tests/daemon_test_utils.py
+
+- [ ] Implement `wait_for_daemon_ready()` helper function
+  - Spec: specs/event-driven-daemon-tests.md § Test Utility
+  - Success: Blocks on read_fd with timeout, raises `TimeoutError` on timeout, raises `AssertionError` on EOF (crash)
+  - Test: `test_wait_for_daemon_ready_timeout`, `test_wait_for_daemon_ready_crash_detection`
+  - Location: tests/conftest.py or tests/daemon_test_utils.py
+
+- [ ] Verify backward compatibility (ready_fd=None works)
+  - Spec: specs/event-driven-daemon-tests.md § Phase 1
+  - Success: Existing tests pass without modification when ready_fd not provided
+  - Test: All existing daemon tests still pass
+  - Location: ragzoom/daemon.py
+
+### Phase 55: Migrate TestDaemonizeFunction Tests
+
+Convert the 6 tests in TestDaemonizeFunction to use ready-pipe pattern.
+
+- [ ] Migrate `test_daemonize_forks_to_background` to ready-pipe
+  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction
+  - Success: Test uses `daemon_ready_pipe()` instead of `time.sleep(0.5)`
+  - Test: `test_daemonize_forks_to_background`
+  - Location: tests/test_daemon_lifecycle.py
+
+- [ ] Migrate `test_daemonize_writes_pid_file` to ready-pipe
+  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction
+  - Success: Test uses ready-pipe, removes `time.sleep(0.5)` after proc.wait()
+  - Test: `test_daemonize_writes_pid_file`
+  - Location: tests/test_daemon_lifecycle.py
+
+- [ ] Migrate `test_daemonize_redirects_output` to ready-pipe
+  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction
+  - Success: Test uses ready-pipe, removes `time.sleep(0.5)`
+  - Test: `test_daemonize_redirects_output`
+  - Location: tests/test_daemon_lifecycle.py
+
+- [ ] Migrate `test_daemonize_creates_new_session` to ready-pipe
+  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction
+  - Success: Test uses ready-pipe, removes sleep-based synchronization
+  - Test: `test_daemonize_creates_new_session`
+  - Location: tests/test_daemon_lifecycle.py
+
+- [ ] Migrate `test_daemonize_closes_stdin` to ready-pipe
+  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction
+  - Success: Test uses ready-pipe, removes sleep-based synchronization
+  - Test: `test_daemonize_closes_stdin`
+  - Location: tests/test_daemon_lifecycle.py
+
+- [ ] Migrate `test_daemonize_with_custom_log_file` to ready-pipe
+  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction
+  - Success: Test uses ready-pipe, removes sleep-based synchronization
+  - Test: `test_daemonize_with_custom_log_file`
+  - Location: tests/test_daemon_lifecycle.py
+
+### Phase 56: Migrate TestDaemonizeIntegration Test
+
+Convert the integration test to use ready-pipe pattern.
+
+- [ ] Migrate `test_daemon_survives_parent_exit` to ready-pipe
+  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeIntegration
+  - Success: Test uses ready-pipe instead of `time.sleep(0.3)` in script and `time.sleep(0.8)` after
+  - Test: `test_daemon_survives_parent_exit`
+  - Location: tests/test_daemon_lifecycle.py
+
+### Phase 57: Migrate TestSignalHandlers Tests
+
+Convert signal handler tests to use ready-pipe with appropriate signal handling.
+
+- [ ] Migrate `test_sigterm_triggers_graceful_shutdown` to ready-pipe
+  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestSignalHandlers
+  - Success: Test uses ready-pipe for daemon startup, uses `os.waitpid()` for signal processing instead of polling loop
+  - Test: `test_sigterm_triggers_graceful_shutdown`
+  - Location: tests/test_daemon_lifecycle.py
+
+- [ ] Migrate `test_sigint_triggers_graceful_shutdown` to ready-pipe
+  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestSignalHandlers
+  - Success: Test uses ready-pipe for daemon startup, uses `os.waitpid()` for signal processing
+  - Test: `test_sigint_triggers_graceful_shutdown`
+  - Location: tests/test_daemon_lifecycle.py
+
+### Phase 58: Migrate TestAtexitCleanup Tests
+
+Convert atexit cleanup tests to use ready-pipe pattern.
+
+- [ ] Migrate `test_atexit_cleanup_on_normal_exit` to ready-pipe
+  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestAtexitCleanup
+  - Success: Test uses ready-pipe, removes polling loop with `time.sleep(0.1)` and final `time.sleep(0.5)`
+  - Test: `test_atexit_cleanup_on_normal_exit`
+  - Location: tests/test_daemon_atexit.py
+
+- [ ] Migrate `test_atexit_cleanup_on_exception` to ready-pipe
+  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestAtexitCleanup
+  - Success: Test uses ready-pipe, removes sleep-based synchronization
+  - Test: `test_atexit_cleanup_on_exception`
+  - Location: tests/test_daemon_atexit.py
+
+### Phase 59: Migrate TestStartServerAtexitIntegration Tests
+
+Convert server atexit integration tests to use ready-pipe pattern.
+
+- [ ] Migrate `test_start_server_registers_atexit` to ready-pipe
+  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestStartServerAtexitIntegration
+  - Success: Test uses ready-pipe instead of `time.sleep(1.5)` for daemon startup
+  - Test: `test_start_server_registers_atexit`
+  - Location: tests/test_daemon_atexit.py
+
+- [ ] Migrate `test_start_server_atexit_cleans_pid_file` to ready-pipe
+  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestStartServerAtexitIntegration
+  - Success: Test uses ready-pipe instead of `time.sleep(1.5)`
+  - Test: `test_start_server_atexit_cleans_pid_file`
+  - Location: tests/test_daemon_atexit.py
+
+- [ ] Migrate `test_start_server_atexit_releases_lock` to ready-pipe
+  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestStartServerAtexitIntegration
+  - Success: Test uses ready-pipe instead of `time.sleep(1.5)`
+  - Test: `test_start_server_atexit_releases_lock`
+  - Location: tests/test_daemon_atexit.py
+
+### Phase 60: Remove Remaining Sleeps and Verify
+
+Final cleanup and verification.
+
+- [ ] Remove all `time.sleep()` calls from `test_daemon_lifecycle.py`
+  - Spec: specs/event-driven-daemon-tests.md § Phase 3
+  - Success: `grep -c "time.sleep" tests/test_daemon_lifecycle.py` returns 0
+  - Test: N/A (cleanup verification)
+  - Location: tests/test_daemon_lifecycle.py
+
+- [ ] Remove all `time.sleep()` calls from `test_daemon_atexit.py`
+  - Spec: specs/event-driven-daemon-tests.md § Phase 3
+  - Success: `grep -c "time.sleep" tests/test_daemon_atexit.py` returns 0
+  - Test: N/A (cleanup verification)
+  - Location: tests/test_daemon_atexit.py
+
+- [ ] Verify daemon test suite runs in <5s total
+  - Spec: specs/event-driven-daemon-tests.md § Acceptance Criteria
+  - Success: `pytest --durations=10 tests/test_daemon*.py` shows total time <5s
+  - Test: N/A (performance verification)
+  - Location: tests/test_daemon_lifecycle.py, tests/test_daemon_atexit.py
+
+- [ ] Verify crash detection works (daemon crash → immediate test failure)
+  - Spec: specs/event-driven-daemon-tests.md § Testing the Tests
+  - Success: Modified test with early crash fails immediately (not after timeout)
+  - Test: Manual verification
+  - Location: tests/test_daemon_lifecycle.py
+
+---
+
 ## Notes
 
 - All phases include test requirements - no code should merge without passing tests
 - Schema migration must be idempotent and safe to run multiple times
 - Backward compatibility is important - old configs/databases should continue working
 - Stateless Transcript Sync (Phase 49-53) MUST wait for Temporal Document APIs (Phase 40-48) to complete
+- Event-Driven Daemon Tests (Phase 54-60) has no dependencies and can be implemented in parallel with other features
