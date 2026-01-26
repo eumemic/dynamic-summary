@@ -16,6 +16,67 @@ class TestDaemonizeFunction:
     """Tests for the daemonize() function. Skipped in CI - subprocess forking is flaky."""
 
     @pytest.mark.slow_threshold(5)
+    def test_daemonize_ready_fd_signals(self, tmp_path: Path) -> None:
+        """daemonize() should write b'R' to ready_fd after completing daemonization."""
+        log_file = tmp_path / "daemon.log"
+        flag_file = tmp_path / "daemon_ran"
+
+        # Create a pipe - parent reads, child writes
+        read_fd, write_fd = os.pipe()
+
+        script = f"""
+import os
+import sys
+sys.path.insert(0, "{Path.cwd()}")
+os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
+from ragzoom.daemon import daemonize
+from pathlib import Path
+
+# The write_fd is passed via pass_fds
+daemonize(Path("{log_file}"), ready_fd={write_fd})
+# If we get here, we're in the daemon process and have signaled ready
+Path("{flag_file}").write_text(f"daemon pid: {{os.getpid()}}")
+"""
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            # Close our copy of write_fd - only the child should have it
+            os.close(write_fd)
+            write_fd = -1  # Mark as closed
+
+            # Parent process should exit quickly
+            proc.wait(timeout=5)
+
+            # Read from pipe - should get b"R" when daemon is ready
+            import select
+
+            ready, _, _ = select.select([read_fd], [], [], 5.0)
+            assert ready, "Pipe should be readable within timeout"
+
+            data = os.read(read_fd, 1)
+            assert data == b"R", f"Expected b'R' but got {data!r}"
+
+            # Daemon should have written the flag file
+            assert flag_file.exists(), "Daemon process should have run"
+            content = flag_file.read_text()
+            assert content.startswith("daemon pid:")
+        finally:
+            # Clean up file descriptors
+            if write_fd != -1:
+                try:
+                    os.close(write_fd)
+                except OSError:
+                    pass
+            try:
+                os.close(read_fd)
+            except OSError:
+                pass
+
+    @pytest.mark.slow_threshold(5)
     def test_daemonize_forks_to_background(self, tmp_path: Path) -> None:
         """daemonize() should fork process to background and write flag."""
         log_file = tmp_path / "daemon.log"

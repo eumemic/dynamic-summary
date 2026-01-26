@@ -297,7 +297,7 @@ def remove_config_file() -> None:
         pass
 
 
-def daemonize(log_file: Path | None = None) -> None:
+def daemonize(log_file: Path | None = None, ready_fd: int | None = None) -> None:
     """Fork the current process into a background daemon.
 
     Implements the standard Unix double-fork daemonization pattern:
@@ -307,11 +307,16 @@ def daemonize(log_file: Path | None = None) -> None:
        (prevents acquiring controlling terminal)
     4. Redirect stdin to /dev/null, stdout/stderr to log file
     5. Write daemon PID to state file
+    6. Signal readiness via ready_fd (if provided)
 
     Args:
         log_file: Path to redirect stdout/stderr. If None, uses default
                   location in state directory. Parent directories will
                   be created if they don't exist.
+        ready_fd: If provided, write b"R" to this file descriptor after
+                  daemonization completes, then close it. Used for
+                  synchronization in tests to detect daemon readiness
+                  without sleep-based polling.
 
     Note:
         This function only returns in the final daemon process.
@@ -358,6 +363,11 @@ def daemonize(log_file: Path | None = None) -> None:
 
     # Write daemon PID to state file
     write_pid_file(os.getpid())
+
+    # Signal readiness to parent process if ready_fd was provided
+    if ready_fd is not None:
+        os.write(ready_fd, b"R")
+        os.close(ready_fd)
 
 
 def install_shutdown_handlers(
