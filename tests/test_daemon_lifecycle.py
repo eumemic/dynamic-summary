@@ -277,9 +277,12 @@ except Exception as e:
     @pytest.mark.slow_threshold(5)
     def test_daemonize_log_file_created_if_missing(self, tmp_path: Path) -> None:
         """daemonize() should create log file and parent dirs if they don't exist."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
         log_file = tmp_path / "subdir" / "daemon.log"
 
-        script = f"""
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            script = f"""
 import os
 import sys
 sys.path.insert(0, "{Path.cwd()}")
@@ -287,18 +290,19 @@ os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
 from ragzoom.daemon import daemonize
 from pathlib import Path
 
-daemonize(Path("{log_file}"))
+daemonize(Path("{log_file}"), ready_fd={write_fd})
 print("log message")
 sys.stdout.flush()
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        proc.wait(timeout=5)
-
-        time.sleep(0.5)
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            proc.wait(timeout=5)
+            wait_for_daemon_ready(read_fd)
 
         # Log file and parent directory should be created
         assert log_file.parent.exists()
