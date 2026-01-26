@@ -65,7 +65,11 @@ When in a worktree, the current working directory IS the project root. Run comma
 
 ## Memory Tool
 
-When the `remember` memory tool is available, use it proactively to recall details from earlier in the conversation - especially after compaction, when resuming sessions, or when details feel fuzzy. See the `memory-tool-usage` skill for effective retrieval patterns.
+When the `remember` memory tool is available:
+
+1. **Load the skill first**: Before your first memory query, load the `memory-tool-usage` skill to get effective retrieval patterns
+2. **Use it proactively**: Query whenever you need to recall details - after compaction, when resuming sessions, when details feel fuzzy, or when specifics matter
+3. **Zoom aggressively**: For specific recall, use tight time windows (minutes, not hours) to get verbatim content instead of summaries
 
 ## Integration Packages
 
