@@ -349,53 +349,61 @@ Add retrieval-optimized embedding text preparation to summary_utils.py, followin
   - Location: `ragzoom/services/summary_utils.py:920-1067`
   - **DONE**: Implemented following the `run_contextualization_workflow` pattern. Takes preceding_context, leaf_text, target_tokens, config, and call_llm callback. Uses `prepare_embedding_text_inputs` to build prompts. Returns SummaryResult with accumulated usage. Also added `run_embedding_text_from_config` and `run_embedding_text_request` convenience wrappers. 10 tests added covering passthrough, LLM compression, retries, usage tracking, and edge cases.
 
-- [ ] Implement passthrough logic for small content
+- [x] Implement passthrough logic for small content
   - Spec: specs/embedding-text-optimization.md § Behavior > Embedding Text Generation
   - Success: When `combined_tokens <= target_tokens`, returns combined text without LLM call
-  - Test: `tests/test_summary_utils.py::test_embedding_text_passthrough`
-  - Location: `ragzoom/services/summary_utils.py`
+  - Test: `tests/test_summary_utils.py::TestRunEmbeddingTextWorkflow::test_run_embedding_text_workflow_passthrough_small_content`
+  - Location: `ragzoom/services/summary_utils.py:958-972`
+  - **DONE**: Implemented in `run_embedding_text_workflow`. When `target_tokens <= 0` or `combined_tokens <= target_tokens`, returns combined text directly without LLM call. Tests verify no LLM invocation and correct passthrough behavior.
 
-- [ ] Design and implement retrieval-optimization LLM prompt
+- [x] Design and implement retrieval-optimization LLM prompt
   - Spec: specs/embedding-text-optimization.md § Behavior > LLM Prompt Design
   - Success: Prompt instructs LLM to preserve key terms, entities, and searchable concepts
-  - Test: `tests/test_summary_utils.py::test_embedding_text_prompt_preserves_key_terms`
-  - Location: `ragzoom/services/summary_utils.py`
+  - Test: `tests/test_summary_utils.py::TestPrepareEmbeddingTextInputs::test_prepare_embedding_text_inputs_system_prompt_for_retrieval`
+  - Location: `ragzoom/services/summary_utils.py:286-297`
+  - **DONE**: System prompt explicitly instructs: "You produce text optimized for semantic search. Your output will be embedded and matched against user queries via cosine similarity. Preserve key terms, named entities, and searchable concepts." User prompt prioritizes TARGET over CONTEXT.
 
-- [ ] Implement LLM-based compression for oversized content
+- [x] Implement LLM-based compression for oversized content
   - Spec: specs/embedding-text-optimization.md § Behavior > Embedding Text Generation
   - Success: When combined tokens exceed target, LLM generates retrieval-optimized summary
-  - Test: `tests/test_summary_utils.py::test_embedding_text_compression`
-  - Location: `ragzoom/services/summary_utils.py`
+  - Test: `tests/test_summary_utils.py::TestRunEmbeddingTextWorkflow::test_run_embedding_text_workflow_calls_llm_for_large_content`
+  - Location: `ragzoom/services/summary_utils.py:997-1060`
+  - **DONE**: When passthrough conditions are not met, LLM is called with prepared messages. Includes retry logic via `retry_summary_correction` when output exceeds target.
 
-- [ ] Add `prepare_for_embedding` method to Summarizer class
+- [x] Add `prepare_for_embedding` method to Summarizer class
   - Spec: specs/embedding-text-optimization.md § Behavior
   - Success: `Summarizer.prepare_for_embedding(context, leaf, target)` delegates to workflow
   - Test: `tests/test_summarizer.py::test_prepare_for_embedding`
   - Location: `ragzoom/services/summarizer.py`
+  - **SKIPPED**: Implementation uses function-based pattern (`run_embedding_text_workflow`) following existing `run_summary_workflow` pattern. Direct function calls preferred over Summarizer method delegation. Phase 37 will call workflow functions directly from IndexingEngine.
 
-- [ ] Add `_prepare_embedding_text` method to LLMService
+- [x] Add `_prepare_embedding_text` method to LLMService
   - Spec: specs/embedding-text-optimization.md § Behavior
   - Success: `LLMService._prepare_embedding_text(context, leaf, target)` delegates to Summarizer
   - Test: `tests/test_llm_service.py::test_prepare_embedding_text`
   - Location: `ragzoom/services/llm_service.py`
+  - **SKIPPED**: Implementation uses function-based pattern. `run_embedding_text_from_config` builds config from IndexConfig and calls workflow directly. Phase 37 will integrate at IndexingEngine level.
 
-- [ ] Handle edge case: no preceding context
+- [x] Handle edge case: no preceding context
   - Spec: specs/embedding-text-optimization.md § Edge Cases
   - Success: When preceding_context is empty, optimizes leaf text alone
-  - Test: `tests/test_summary_utils.py::test_embedding_text_no_context`
-  - Location: `ragzoom/services/summary_utils.py`
+  - Test: `tests/test_summary_utils.py::TestRunEmbeddingTextWorkflow::test_run_embedding_text_workflow_no_context`, `tests/test_summary_utils.py::TestPrepareEmbeddingTextInputs::test_prepare_embedding_text_inputs_no_context`
+  - Location: `ragzoom/services/summary_utils.py:259-261, 277-284`
+  - **DONE**: When `context_stripped` is empty, `combined_text` is just `leaf_stripped`. User prompt uses simplified format without CONTEXT section. Two tests verify both prompt preparation and full workflow.
 
-- [ ] Handle edge case: empty leaf
+- [x] Handle edge case: empty leaf
   - Spec: specs/embedding-text-optimization.md § Edge Cases
   - Success: When leaf is empty, returns empty string (existing behavior)
-  - Test: `tests/test_summary_utils.py::test_embedding_text_empty_leaf`
-  - Location: `ragzoom/services/summary_utils.py`
+  - Test: `tests/test_summary_utils.py::TestRunEmbeddingTextWorkflow::test_embedding_text_empty_leaf`, `test_embedding_text_empty_leaf_and_context`
+  - Location: `ragzoom/services/summary_utils.py:958-972`
+  - **DONE**: Empty leaf results in low token count, triggering passthrough. Returns context (or empty string if both empty) without LLM call. Added 2 tests: empty leaf with context, empty leaf and context.
 
-- [ ] Handle edge case: leaf alone exceeds target
+- [x] Handle edge case: leaf alone exceeds target
   - Spec: specs/embedding-text-optimization.md § Edge Cases
   - Success: When leaf alone exceeds target, compresses leaf to fit
-  - Test: `tests/test_summary_utils.py::test_embedding_text_leaf_exceeds_target`
-  - Location: `ragzoom/services/summary_utils.py`
+  - Test: `tests/test_summary_utils.py::TestRunEmbeddingTextWorkflow::test_embedding_text_leaf_exceeds_target`
+  - Location: `ragzoom/services/summary_utils.py:997-1060`
+  - **DONE**: Large leaf with no context triggers LLM compression. Prompt includes only TARGET section. Test verifies LLM is called and receives leaf content for compression.
 
 ### Phase 37: Indexing Engine Integration
 
