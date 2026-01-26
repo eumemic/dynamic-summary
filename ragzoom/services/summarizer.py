@@ -89,36 +89,3 @@ class Summarizer:
             call_summary=self._make_summary_call,
             summarization_guidance=summarization_guidance,
         )
-
-    async def contextualize(
-        self,
-        preceding_context: str,
-        target_text: str,
-        target_tokens: int,
-        *,
-        parent_id: str | None = None,
-        reporter: TelemetryCollector | None = None,
-    ) -> summary_utils.SummaryResult:
-        """Generate contextualizing summary of preceding context for target text.
-
-        Unlike summarize() which compresses text preserving all information,
-        contextualize() extracts only the background information relevant to
-        understanding the target text.
-
-        Returns:
-            SummaryResult containing the context summary, retry count, token count,
-            and accumulated usage across all LLM attempts for cost calculation.
-        """
-        request_kwargs: summary_utils.ContextualizationRequest = {
-            "preceding_context": preceding_context,
-            "target_text": target_text,
-            "target_tokens": target_tokens,
-            "parent_id": parent_id,
-            "reporter": reporter,
-        }
-
-        return await summary_utils.run_contextualization_request(
-            index_config=self.config,
-            request=request_kwargs,
-            call_llm=self._make_summary_call,
-        )

@@ -19,7 +19,7 @@ def test_summarization_guidance_field() -> None:
 
     config = IndexConfig(
         target_chunk_tokens=200,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
         max_parallelism=4,
         summary_model="gpt-4o-mini",
         embedding_model="text-embedding-3-small",
@@ -42,7 +42,7 @@ def test_summarization_guidance_defaults_to_none() -> None:
     """
     config = IndexConfig(
         target_chunk_tokens=200,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
         max_parallelism=4,
         summary_model="gpt-4o-mini",
         embedding_model="text-embedding-3-small",
@@ -77,7 +77,7 @@ def test_index_config_replace_with_summarization_guidance() -> None:
     """
     config = IndexConfig(
         target_chunk_tokens=200,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
         max_parallelism=4,
         summary_model="gpt-4o-mini",
         embedding_model="text-embedding-3-small",
@@ -105,7 +105,7 @@ def test_deprecated_summary_system_prompt_property_get() -> None:
     """
     config = IndexConfig(
         target_chunk_tokens=200,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
         max_parallelism=4,
         summary_model="gpt-4o-mini",
         embedding_model="text-embedding-3-small",
@@ -136,7 +136,7 @@ def test_deprecated_summary_system_prompt_property_set() -> None:
     """
     config = IndexConfig(
         target_chunk_tokens=200,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
         max_parallelism=4,
         summary_model="gpt-4o-mini",
         embedding_model="text-embedding-3-small",
@@ -167,7 +167,7 @@ def test_from_dict_accepts_summarization_guidance() -> None:
 
     config_dict: dict[str, ConfigValue] = {
         "target_chunk_tokens": 200,
-        "target_embedding_context_tokens": 200,
+        "target_embedding_tokens": 500,
         "max_parallelism": 4,
         "summary_model": "gpt-4o-mini",
         "embedding_model": "text-embedding-3-small",
@@ -195,7 +195,7 @@ def test_from_dict_accepts_old_name_with_warning() -> None:
 
     config_dict: dict[str, ConfigValue] = {
         "target_chunk_tokens": 200,
-        "target_embedding_context_tokens": 200,
+        "target_embedding_tokens": 500,
         "max_parallelism": 4,
         "summary_model": "gpt-4o-mini",
         "embedding_model": "text-embedding-3-small",
@@ -231,7 +231,7 @@ def test_from_dict_new_name_takes_precedence() -> None:
 
     config_dict: dict[str, ConfigValue] = {
         "target_chunk_tokens": 200,
-        "target_embedding_context_tokens": 200,
+        "target_embedding_tokens": 500,
         "max_parallelism": 4,
         "summary_model": "gpt-4o-mini",
         "embedding_model": "text-embedding-3-small",
@@ -248,3 +248,282 @@ def test_from_dict_new_name_takes_precedence() -> None:
     config = IndexConfig.from_dict(config_dict)
 
     assert config.summarization_guidance == "New name value"
+
+
+# Tests for target_embedding_tokens field (embedding text optimization)
+
+
+def test_target_embedding_tokens_field() -> None:
+    """Test that IndexConfig accepts target_embedding_tokens field.
+
+    Spec: specs/embedding-text-optimization.md § Configuration > New Parameter
+    Success: IndexConfig(target_embedding_tokens=500) instantiates without error
+    """
+    config = IndexConfig(
+        target_chunk_tokens=200,
+        target_embedding_tokens=500,
+        max_parallelism=4,
+        summary_model="gpt-4o-mini",
+        embedding_model="text-embedding-3-small",
+        retry_threshold=0.5,
+        max_retries=3,
+        embedding_batch_size=100,
+        use_anti_verbatim_vaccine=True,
+        processing_strategy="bottom_to_top",
+    )
+
+    assert config.target_embedding_tokens == 500
+
+
+def test_target_embedding_tokens_default_value() -> None:
+    """Test that target_embedding_tokens defaults to 500.
+
+    Spec: specs/embedding-text-optimization.md § Configuration > New Parameter
+    Success: IndexConfig without target_embedding_tokens has default value of 500
+    """
+    config = IndexConfig(
+        target_chunk_tokens=200,
+        max_parallelism=4,
+        summary_model="gpt-4o-mini",
+        embedding_model="text-embedding-3-small",
+        retry_threshold=0.5,
+        max_retries=3,
+        embedding_batch_size=100,
+        use_anti_verbatim_vaccine=True,
+        processing_strategy="bottom_to_top",
+    )
+
+    assert config.target_embedding_tokens == 500
+
+
+def test_target_embedding_tokens_validation() -> None:
+    """Test that target_embedding_tokens rejects invalid values.
+
+    Spec: specs/embedding-text-optimization.md § Configuration > New Parameter
+    Success: ValueError raised for non-positive values
+    """
+    import pytest
+
+    # Zero is invalid - must be positive
+    with pytest.raises(ValueError, match="target_embedding_tokens must be positive"):
+        IndexConfig(
+            target_chunk_tokens=200,
+            target_embedding_tokens=0,
+            max_parallelism=4,
+            summary_model="gpt-4o-mini",
+            embedding_model="text-embedding-3-small",
+            retry_threshold=0.5,
+            max_retries=3,
+            embedding_batch_size=100,
+            use_anti_verbatim_vaccine=True,
+            processing_strategy="bottom_to_top",
+        )
+
+    # Negative is invalid
+    with pytest.raises(ValueError, match="target_embedding_tokens must be positive"):
+        IndexConfig(
+            target_chunk_tokens=200,
+            target_embedding_tokens=-100,
+            max_parallelism=4,
+            summary_model="gpt-4o-mini",
+            embedding_model="text-embedding-3-small",
+            retry_threshold=0.5,
+            max_retries=3,
+            embedding_batch_size=100,
+            use_anti_verbatim_vaccine=True,
+            processing_strategy="bottom_to_top",
+        )
+
+
+def test_from_dict_with_target_embedding_tokens() -> None:
+    """Test that from_dict parses target_embedding_tokens field.
+
+    Spec: specs/embedding-text-optimization.md § Configuration > IndexConfig Changes
+    Success: IndexConfig.from_dict({"target_embedding_tokens": 500, ...}) works
+    """
+    from ragzoom.config import ConfigValue
+
+    config_dict: dict[str, ConfigValue] = {
+        "target_chunk_tokens": 200,
+        "target_embedding_tokens": 600,
+        "max_parallelism": 4,
+        "summary_model": "gpt-4o-mini",
+        "embedding_model": "text-embedding-3-small",
+        "retry_threshold": 0.5,
+        "max_retries": 3,
+        "embedding_batch_size": 100,
+        "use_anti_verbatim_vaccine": True,
+        "processing_strategy": "bottom_to_top",
+        "preceding_context": {"leaf": {}, "inner": {}},  # type: ignore[dict-item]
+    }
+
+    config = IndexConfig.from_dict(config_dict)
+
+    assert config.target_embedding_tokens == 600
+
+
+def test_from_dict_uses_default_target_embedding_tokens() -> None:
+    """Test that from_dict uses default value when field not provided.
+
+    Spec: specs/embedding-text-optimization.md § Configuration > IndexConfig Changes
+    Success: from_dict without target_embedding_tokens uses default of 500
+    """
+    from ragzoom.config import ConfigValue
+
+    config_dict: dict[str, ConfigValue] = {
+        "target_chunk_tokens": 200,
+        "max_parallelism": 4,
+        "summary_model": "gpt-4o-mini",
+        "embedding_model": "text-embedding-3-small",
+        "retry_threshold": 0.5,
+        "max_retries": 3,
+        "embedding_batch_size": 100,
+        "use_anti_verbatim_vaccine": True,
+        "processing_strategy": "bottom_to_top",
+        "preceding_context": {"leaf": {}, "inner": {}},  # type: ignore[dict-item]
+    }
+
+    config = IndexConfig.from_dict(config_dict)
+
+    assert config.target_embedding_tokens == 500
+
+
+def test_replace_target_embedding_tokens() -> None:
+    """Test that IndexConfig.replace can update target_embedding_tokens.
+
+    Spec: specs/embedding-text-optimization.md § Configuration > IndexConfig Changes
+    Success: config.replace(target_embedding_tokens=600) returns new config
+    """
+    config = IndexConfig(
+        target_chunk_tokens=200,
+        target_embedding_tokens=500,
+        max_parallelism=4,
+        summary_model="gpt-4o-mini",
+        embedding_model="text-embedding-3-small",
+        retry_threshold=0.5,
+        max_retries=3,
+        embedding_batch_size=100,
+        use_anti_verbatim_vaccine=True,
+        processing_strategy="bottom_to_top",
+    )
+
+    assert config.target_embedding_tokens == 500
+
+    new_config = config.replace(target_embedding_tokens=600)
+
+    assert new_config.target_embedding_tokens == 600
+    # Original config unchanged
+    assert config.target_embedding_tokens == 500
+
+
+def test_deprecated_target_embedding_context_tokens_error() -> None:
+    """Test that from_dict raises clear error for deprecated config field.
+
+    Spec: specs/embedding-text-optimization.md § Migration
+    Success: Config with target_embedding_context_tokens raises ValueError with helpful message
+    """
+    import pytest
+
+    config_dict = {
+        "target_chunk_tokens": 200,
+        "target_embedding_context_tokens": 200,  # Deprecated field
+        "max_parallelism": 4,
+        "summary_model": "gpt-4o-mini",
+        "embedding_model": "text-embedding-3-small",
+        "retry_threshold": 0.5,
+        "max_retries": 3,
+        "embedding_batch_size": 100,
+        "use_anti_verbatim_vaccine": True,
+        "processing_strategy": "bottom_to_top",
+        "preceding_context": {"leaf": {}, "inner": {}},
+    }
+
+    with pytest.raises(ValueError) as exc_info:
+        IndexConfig.from_dict(config_dict)  # type: ignore[arg-type]
+
+    error_message = str(exc_info.value)
+    # Error should mention the deprecated field
+    assert "target_embedding_context_tokens" in error_message
+    # Error should mention what to use instead
+    assert "target_embedding_tokens" in error_message
+    # Error should be helpful - explain it was removed
+    assert "removed" in error_message.lower() or "deprecated" in error_message.lower()
+
+
+def test_no_target_embedding_context_tokens_field() -> None:
+    """Test that IndexConfig no longer has target_embedding_context_tokens attribute.
+
+    Spec: specs/embedding-text-optimization.md § Configuration > Removed Parameter
+    Success: IndexConfig no longer has target_embedding_context_tokens attribute
+    """
+    config = IndexConfig(
+        target_chunk_tokens=200,
+        max_parallelism=4,
+        summary_model="gpt-4o-mini",
+        embedding_model="text-embedding-3-small",
+        retry_threshold=0.5,
+        max_retries=3,
+        embedding_batch_size=100,
+        use_anti_verbatim_vaccine=True,
+        processing_strategy="bottom_to_top",
+    )
+
+    # The old field should not exist on the config object
+    assert not hasattr(config, "target_embedding_context_tokens")
+    # But the new field should exist
+    assert hasattr(config, "target_embedding_tokens")
+
+
+def test_deprecation_error_message_helpful() -> None:
+    """Test that deprecation error message explains what to use instead.
+
+    Acceptance test for specs/embedding-text-optimization.md § Acceptance Criteria > 4:
+    "Config migration: Old configs with target_embedding_context_tokens get clear
+    deprecation error"
+
+    This test verifies the error message provides actionable guidance:
+    1. Identifies the problematic field by name
+    2. Explains that the field was removed (not just deprecated)
+    3. Tells the user exactly which field to use instead
+    4. Optionally points to documentation for more details
+    """
+    import pytest
+
+    config_dict = {
+        "target_chunk_tokens": 200,
+        "target_embedding_context_tokens": 200,
+        "max_parallelism": 4,
+        "summary_model": "gpt-4o-mini",
+        "embedding_model": "text-embedding-3-small",
+        "retry_threshold": 0.5,
+        "max_retries": 3,
+        "embedding_batch_size": 100,
+        "use_anti_verbatim_vaccine": True,
+        "processing_strategy": "bottom_to_top",
+        "preceding_context": {"leaf": {}, "inner": {}},
+    }
+
+    with pytest.raises(ValueError) as exc_info:
+        IndexConfig.from_dict(config_dict)  # type: ignore[arg-type]
+
+    error_message = str(exc_info.value)
+
+    # 1. Identifies the problematic field by name
+    assert (
+        "target_embedding_context_tokens" in error_message
+    ), "Error message should name the problematic field"
+
+    # 2. Explains that the field was removed
+    assert (
+        "removed" in error_message.lower()
+    ), "Error message should explain the field was removed"
+
+    # 3. Tells the user exactly which field to use instead
+    assert (
+        "target_embedding_tokens" in error_message
+    ), "Error message should tell user which field to use instead"
+
+    # 4. Message is a complete sentence with actionable guidance
+    assert (
+        "Use" in error_message
+    ), "Error message should provide actionable guidance (e.g., 'Use X instead')"

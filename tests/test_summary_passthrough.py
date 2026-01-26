@@ -9,10 +9,7 @@ import pytest
 
 from ragzoom.config import IndexConfig
 from ragzoom.contracts.chat_model import UsageInfo
-from ragzoom.services.summary_utils import (
-    run_contextualization_from_config,
-    run_summary_from_config,
-)
+from ragzoom.services.summary_utils import run_summary_from_config
 from ragzoom.telemetry_collection import TelemetryCollector
 
 
@@ -52,44 +49,6 @@ async def test_passthrough_when_target_is_zero() -> None:
 
     # Verify passthrough behavior
     assert result.summary == text, "Should return original text unchanged"
-    assert result.retry_count == 0, "Should have zero retries"
-    assert result.usage.prompt_tokens == 0, "Should have no LLM usage"
-    assert result.usage.completion_tokens == 0, "Should have no LLM usage"
-
-    # Success: LLM was not called (would have raised AssertionError)
-
-
-@pytest.mark.asyncio
-async def test_contextualization_passthrough_when_target_is_zero() -> None:
-    """Test that contextualization also respects target_tokens=0 for passthrough."""
-    config = IndexConfig.load()
-    preceding_context = "Some preceding context"
-    target_text = "Target text"
-    target_tokens = 0  # Signal: passthrough
-
-    # Mock call_llm function - should NOT be called
-    async def mock_call_llm(
-        messages: MutableSequence[dict[str, str]],
-        target_tokens: int,
-        node_id: str,
-        reporter: TelemetryCollector | None,
-    ) -> tuple[str, UsageInfo]:
-        raise AssertionError("LLM should not be called when target_tokens=0")
-
-    # Run contextualization with target_tokens=0
-    reporter = MagicMock()
-    result = await run_contextualization_from_config(
-        index_config=config,
-        preceding_context=preceding_context,
-        target_text=target_text,
-        target_tokens=target_tokens,
-        call_llm=mock_call_llm,
-        reporter=reporter,
-        parent_id="test-node",
-    )
-
-    # Verify passthrough behavior
-    # Should return the combined text (context + target) unchanged
     assert result.retry_count == 0, "Should have zero retries"
     assert result.usage.prompt_tokens == 0, "Should have no LLM usage"
     assert result.usage.completion_tokens == 0, "Should have no LLM usage"

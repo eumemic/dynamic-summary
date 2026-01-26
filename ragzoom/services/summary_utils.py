@@ -233,62 +233,73 @@ def prepare_summary_inputs(
     )
 
 
-def prepare_contextualization_inputs(
+def prepare_embedding_text_inputs(
     *,
     preceding_context: str,
-    target_text: str,
+    leaf_text: str,
     target_tokens: int,
 ) -> SummaryPreparation:
-    """Return prepared prompt messages for contextualizing target_text.
+    """Prepare prompt messages for retrieval-optimized embedding text generation.
 
-    Unlike compression which preserves all information, contextualization
-    extracts only the background information relevant to understanding
-    the target text.
+    Per specs/embedding-text-optimization.md: produces text optimized for semantic
+    search matching via cosine similarity. Preserves key terms, named entities,
+    and searchable concepts rather than just compressing.
+
+    Args:
+        preceding_context: Background text that provides context for the leaf
+        leaf_text: The target content to be embedded
+        target_tokens: Maximum tokens for the output text
+
+    Returns:
+        SummaryPreparation with messages for LLM-based retrieval optimization
     """
     context_stripped = preceding_context.strip()
-    target_stripped = target_text.strip()
+    leaf_stripped = leaf_text.strip()
 
-    # Token count is for the preceding context (what we're summarizing)
-    context_tokens = tokenizer.count_tokens(context_stripped)
-
+    combined_text = (
+        f"{context_stripped}\n{leaf_stripped}" if context_stripped else leaf_stripped
+    )
+    combined_tokens = tokenizer.count_tokens(combined_text)
     target_words = tokens_to_words(target_tokens)
 
-    # Structure prompt for optimal LLM token caching: static content first,
-    # then dynamic content. The word limit comes last since it's the only
-    # dynamic value in the instructions.
-    prompt_parts: list[str] = [
-        "Write a concise summary of the background information that is specifically "
-        "relevant to understanding the target text below. Include only details that "
-        "help explain what's happening in the target text - what led to this point, "
-        "relevant definitions, or other necessary context. Omit background "
-        "information that isn't relevant to understanding this particular text.",
-        f"\nYour summary must be AT MOST {target_words} words.",
-        "\n<BACKGROUND>",
-        context_stripped,
-        "</BACKGROUND>",
-        "\n<TARGET_TEXT>",
-        target_stripped,
-        "</TARGET_TEXT>",
-    ]
-
-    full_prompt = "\n".join(prompt_parts)
+    # Build prompt: prioritize leaf content over context when space is limited
+    if context_stripped:
+        prompt_parts: list[str] = [
+            f"Summarize the following into a retrieval-optimized text of at most "
+            f"{target_words} words. Prioritize content from TARGET over CONTEXT.",
+            "\n<CONTEXT>",
+            context_stripped,
+            "</CONTEXT>",
+            "\n<TARGET>",
+            leaf_stripped,
+            "</TARGET>",
+        ]
+    else:
+        prompt_parts = [
+            f"Summarize the following into a retrieval-optimized text of at most "
+            f"{target_words} words.",
+            "\n<TARGET>",
+            leaf_stripped,
+            "</TARGET>",
+        ]
 
     messages: list[dict[str, str]] = [
         {
             "role": "system",
             "content": (
-                "You provide concise background context to help readers understand "
-                "specific text. You output ONLY the contextualizing summary, "
-                "nothing else."
+                "You produce text optimized for semantic search. Your output will be "
+                "embedded and matched against user queries via cosine similarity. "
+                "Preserve key terms, named entities, and searchable concepts. "
+                "Output ONLY the optimized text - nothing else."
             ),
         },
-        {"role": "user", "content": full_prompt},
+        {"role": "user", "content": "\n".join(prompt_parts)},
     ]
 
     return SummaryPreparation(
-        combined_text=context_stripped,
-        combined_tokens=context_tokens,
-        input_text_tokens=context_tokens,
+        combined_text=combined_text,
+        combined_tokens=combined_tokens,
+        input_text_tokens=combined_tokens,
         messages=messages,
     )
 
@@ -646,37 +657,52 @@ async def run_summary_request(
     )
 
 
-class ContextualizationRequest(TypedDict):
+class EmbeddingTextRequest(TypedDict):
+    """Request for embedding text optimization workflow."""
+
     preceding_context: str
-    target_text: str
+    leaf_text: str
     target_tokens: int
     parent_id: str | None
     reporter: TelemetryCollector | None
 
 
-async def run_contextualization_workflow(
+async def run_embedding_text_workflow(
     *,
     preceding_context: str,
-    target_text: str,
+    leaf_text: str,
     target_tokens: int,
     parent_id: str | None = None,
     reporter: TelemetryCollector | None = None,
     config: SummaryWorkflowConfig,
     call_llm: SummaryCall,
 ) -> SummaryResult:
-    """Execute contextualization workflow: extract relevant background for target text.
+    """Execute embedding text workflow: generate retrieval-optimized text.
 
-    Unlike summarization which preserves all information, contextualization
-    filters the preceding context to include only information relevant to
-    understanding the target text.
+    Per specs/embedding-text-optimization.md: produces text optimized for semantic
+    search matching. When combined input exceeds target_tokens, LLM generates a
+    retrieval-optimized summary preserving key terms, entities, and concepts.
+
+    Unlike summarization which preserves all information, this focuses on
+    creating text that will produce effective embeddings for cosine similarity
+    search against user queries.
+
+    Args:
+        preceding_context: Background text providing context for the leaf
+        leaf_text: The target content to be embedded
+        target_tokens: Maximum tokens for the output text
+        parent_id: Node ID for telemetry tracking
+        reporter: Optional telemetry collector
+        config: Workflow configuration (retries, model, etc.)
+        call_llm: Callback for LLM invocation
 
     Returns:
-        SummaryResult containing the context summary, retry count, token count,
+        SummaryResult containing the optimized text, retry count, token count,
         and accumulated usage across all LLM attempts for cost calculation.
     """
-    preparation = prepare_contextualization_inputs(
+    preparation = prepare_embedding_text_inputs(
         preceding_context=preceding_context,
-        target_text=target_text,
+        leaf_text=leaf_text,
         target_tokens=target_tokens,
     )
 
@@ -720,13 +746,13 @@ async def run_contextualization_workflow(
     # jscpd:ignore-end
 
     start_time = time.time()
-    context_summary, usage = await call_llm(
+    optimized_text, usage = await call_llm(
         preparation.messages,
         target_tokens,
         node_id,
         reporter,
     )
-    summary_tokens = tokenizer.count_tokens(context_summary)
+    optimized_tokens = tokenizer.count_tokens(optimized_text)
 
     # Accumulate initial attempt usage
     accumulated_usage.add_llm_usage(usage)
@@ -734,30 +760,30 @@ async def run_contextualization_workflow(
     await telemetry_recorder(
         usage,
         preparation.input_text_tokens,
-        summary_tokens,
+        optimized_tokens,
         start_time,
     )
 
     if not should_retry_summary(
-        context_summary,
-        summary_tokens,
+        optimized_text,
+        optimized_tokens,
         target_tokens,
         config.retry_threshold,
     ):
         mark_accepted_attempt(reporter, parent_id, 0)
         return SummaryResult(
-            summary=context_summary,
+            summary=optimized_text,
             retry_count=0,
-            summary_tokens=summary_tokens,
+            summary_tokens=optimized_tokens,
             usage=accumulated_usage,
         )
 
     # jscpd:ignore-start - Parallel structure to run_summary_workflow intentional
     if config.max_retries > 0:
-        final_summary, retry_count, best_attempt_index = await retry_summary_correction(
+        final_text, retry_count, best_attempt_index = await retry_summary_correction(
             base_messages=preparation.messages,
-            initial_summary=context_summary,
-            initial_tokens=summary_tokens,
+            initial_summary=optimized_text,
+            initial_tokens=optimized_tokens,
             target_tokens=target_tokens,
             max_retries=config.max_retries,
             retry_threshold=config.retry_threshold,
@@ -769,27 +795,27 @@ async def run_contextualization_workflow(
         )
         mark_accepted_attempt(reporter, parent_id, best_attempt_index)
         return SummaryResult(
-            summary=final_summary,
+            summary=final_text,
             retry_count=retry_count,
-            summary_tokens=tokenizer.count_tokens(final_summary),
+            summary_tokens=tokenizer.count_tokens(final_text),
             usage=accumulated_usage,
         )
 
     mark_accepted_attempt(reporter, parent_id, 0)
     return SummaryResult(
-        summary=context_summary,
+        summary=optimized_text,
         retry_count=0,
-        summary_tokens=summary_tokens,
+        summary_tokens=optimized_tokens,
         usage=accumulated_usage,
     )
     # jscpd:ignore-end
 
 
-async def run_contextualization_from_config(
+async def run_embedding_text_from_config(
     *,
     index_config: IndexConfig,
     preceding_context: str,
-    target_text: str,
+    leaf_text: str,
     target_tokens: int,
     parent_id: str | None = None,
     reporter: TelemetryCollector | None = None,
@@ -805,9 +831,9 @@ async def run_contextualization_from_config(
         summarization_guidance=index_config.summarization_guidance,
     )
 
-    return await run_contextualization_workflow(
+    return await run_embedding_text_workflow(
         preceding_context=preceding_context,
-        target_text=target_text,
+        leaf_text=leaf_text,
         target_tokens=target_tokens,
         parent_id=parent_id,
         reporter=reporter,
@@ -816,18 +842,18 @@ async def run_contextualization_from_config(
     )
 
 
-async def run_contextualization_request(
+async def run_embedding_text_request(
     *,
     index_config: IndexConfig,
-    request: ContextualizationRequest,
+    request: EmbeddingTextRequest,
     call_llm: SummaryCall,
 ) -> SummaryResult:
-    """Execute contextualization workflow using a packaged request payload."""
+    """Execute embedding text workflow using a packaged request payload."""
 
-    return await run_contextualization_from_config(
+    return await run_embedding_text_from_config(
         index_config=index_config,
         preceding_context=request["preceding_context"],
-        target_text=request["target_text"],
+        leaf_text=request["leaf_text"],
         target_tokens=request["target_tokens"],
         parent_id=request["parent_id"],
         reporter=request["reporter"],
