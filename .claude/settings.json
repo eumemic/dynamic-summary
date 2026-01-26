@@ -75,6 +75,16 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$(git rev-parse --show-toplevel)/.claude/hooks/memory-status.sh"
+          }
+        ]
+      }
     ]
   },
   "extraKnownMarketplaces": {
