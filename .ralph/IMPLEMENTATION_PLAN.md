@@ -684,11 +684,12 @@ Convert the integration test to use ready-pipe pattern.
 
 Convert signal handler tests to use ready-pipe with appropriate signal handling.
 
-- [ ] Migrate `test_sigterm_graceful_shutdown` to ready-pipe
+- [x] Migrate `test_sigterm_graceful_shutdown` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestSignalHandlers
   - Success: Test uses ready-pipe for daemon startup, uses `os.waitpid()` for signal processing instead of polling loop
   - Test: `test_sigterm_graceful_shutdown`
-  - Location: tests/test_daemon_lifecycle.py
+  - Location: tests/test_daemon_lifecycle.py:376
+  - Implementation: Replaced file-based ready marker with daemon_ready_pipe()/wait_for_daemon_ready(). Replaced time.sleep(0.5) for cleanup wait with os.waitpid(WNOHANG) polling (falls back to os.kill(pid, 0) for double-forked daemon). Test time reduced from ~2.5s to ~0.95s.
 
 - [ ] Migrate `test_sigint_graceful_shutdown` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestSignalHandlers

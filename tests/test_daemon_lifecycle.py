@@ -376,22 +376,24 @@ class TestSignalHandlers:
     def test_sigterm_graceful_shutdown(self, tmp_path: Path) -> None:
         """SIGTERM should trigger graceful shutdown and cleanup state files."""
         from ragzoom.daemon import read_pid_file
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
 
         log_file = tmp_path / "daemon.log"
         pid_file = tmp_path / "daemon.pid"
         cleanup_marker = tmp_path / "cleanup_ran"
 
-        # Script starts daemon with signal handlers and waits for signal
-        script = f"""
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            # Script starts daemon with signal handlers and waits for signal
+            script = f"""
 import os
 import sys
 import time
 sys.path.insert(0, "{Path.cwd()}")
 os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
-from ragzoom.daemon import daemonize, install_shutdown_handlers, remove_pid_file
+from ragzoom.daemon import daemonize, install_shutdown_handlers
 from pathlib import Path
 
-daemonize(Path("{log_file}"))
+daemonize(Path("{log_file}"), ready_fd={write_fd})
 
 # Install signal handlers with a cleanup callback
 def on_shutdown():
@@ -399,26 +401,18 @@ def on_shutdown():
 
 install_shutdown_handlers(cleanup_callback=on_shutdown)
 
-# Write marker indicating daemon is ready
-Path("{tmp_path / 'ready'}").write_text("ready")
-
 # Wait for signal (up to 10 seconds)
 time.sleep(10)
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        proc.wait(timeout=5)  # Parent exits
-
-        # Wait for daemon to be ready
-        ready_file = tmp_path / "ready"
-        for _ in range(20):
-            if ready_file.exists():
-                break
-            time.sleep(0.1)
-        assert ready_file.exists(), "Daemon should signal ready"
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            proc.wait(timeout=5)  # Parent exits
+            wait_for_daemon_ready(read_fd)
 
         # Get daemon PID and verify it's running
         with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
@@ -428,8 +422,20 @@ time.sleep(10)
         # Send SIGTERM
         os.kill(pid, signal.SIGTERM)
 
-        # Wait for cleanup
-        time.sleep(0.5)
+        # Wait for daemon to exit using os.waitpid with polling
+        # This is more deterministic than time.sleep()
+        for _ in range(50):
+            try:
+                result, _ = os.waitpid(pid, os.WNOHANG)
+                if result != 0:
+                    break
+            except ChildProcessError:
+                # Not our child - use kill(pid, 0) to check if process exists
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    break  # Process exited
+            time.sleep(0.01)
 
         # Cleanup callback should have run
         assert cleanup_marker.exists(), "Cleanup callback should have run"
