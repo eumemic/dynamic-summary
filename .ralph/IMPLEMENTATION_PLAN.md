@@ -421,11 +421,12 @@ Add retrieval-optimized embedding text preparation to summary_utils.py, followin
   - Location: `ragzoom/server/indexing_engine.py`
   - **DONE**: The embedding path now uses `_prepare_embedding_text` which is a single-step process. No `_contextualize_text` calls remain in the embedding path.
 
-- [ ] Remove `_contextualize_text` method from LLMService (now unused)
+- [x] Remove `_contextualize_text` method from LLMService (now unused)
   - Spec: specs/embedding-text-optimization.md § Solution
   - Success: Method no longer exists, grep returns no matches
   - Test: (code inspection)
   - Location: `ragzoom/services/llm_service.py`
+  - **DONE**: Removed the `_contextualize_text` method from LLMService. The method was previously used for the two-step embedding process (contextualize + concatenate) but is now replaced by `_prepare_embedding_text` which handles the unified embedding text optimization workflow.
 
 - [ ] Remove `contextualize` method from Summarizer (now unused)
   - Spec: specs/embedding-text-optimization.md § Solution

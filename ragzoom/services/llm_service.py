@@ -387,33 +387,6 @@ class LLMService:
             summarization_guidance=summarization_guidance,
         )
 
-    async def _contextualize_text(
-        self,
-        preceding_context: str,
-        target_text: str,
-        target_tokens: int,
-        *,
-        parent_id: str | None = None,
-        reporter: TelemetryCollector | None = None,
-    ) -> SummaryResult:
-        """Generate contextualizing summary of preceding context for target text.
-
-        Unlike _summarize_text which compresses preserving all information,
-        this extracts only background information relevant to understanding
-        the target text.
-
-        Returns:
-            SummaryResult containing the context summary, retry count, token count,
-            and accumulated usage across all LLM attempts for cost calculation.
-        """
-        return await self._summarizer.contextualize(
-            preceding_context,
-            target_text,
-            target_tokens,
-            parent_id=parent_id,
-            reporter=reporter,
-        )
-
     async def _prepare_embedding_text(
         self,
         preceding_context: str,
@@ -429,9 +402,6 @@ class LLMService:
         semantic search matching. When combined input exceeds target_tokens,
         LLM generates a retrieval-optimized summary preserving key terms,
         entities, and searchable concepts.
-
-        Unlike _contextualize_text which only summarizes context, this returns
-        the complete text ready for embedding (either passthrough or optimized).
 
         Returns:
             SummaryResult containing the embedding text, retry count, token count,
