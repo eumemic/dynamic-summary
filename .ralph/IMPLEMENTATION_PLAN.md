@@ -602,23 +602,26 @@ Add the ready_fd parameter to daemonize() and create test utilities.
   - Location: ragzoom/daemon.py:300
   - Implementation: Added `ready_fd: int | None = None` parameter. After writing PID file, writes `b"R"` to ready_fd and closes it if provided. Backward compatible - all existing tests pass with ready_fd=None.
 
-- [ ] Implement `daemon_ready_pipe()` context manager
+- [x] Implement `daemon_ready_pipe()` context manager
   - Spec: specs/event-driven-daemon-tests.md § Test Utility
   - Success: Creates pipe, yields `(read_fd, write_fd)`, cleans up fds on exit
-  - Test: `test_daemon_ready_pipe_cleanup`
-  - Location: tests/conftest.py or tests/daemon_test_utils.py
+  - Test: `test_daemon_ready_pipe_cleanup`, `test_daemon_ready_pipe_cleanup_with_early_close`
+  - Location: tests/conftest.py:1221
+  - Implementation: Context manager using try/finally to ensure fd cleanup. Yields (read_fd, write_fd) tuple. Gracefully handles already-closed fds.
 
-- [ ] Implement `wait_for_daemon_ready()` helper function
+- [x] Implement `wait_for_daemon_ready()` helper function
   - Spec: specs/event-driven-daemon-tests.md § Test Utility
   - Success: Blocks on read_fd with timeout, raises `TimeoutError` on timeout, raises `AssertionError` on EOF (crash)
-  - Test: `test_wait_for_daemon_ready_timeout`, `test_wait_for_daemon_ready_crash_detection`
-  - Location: tests/conftest.py or tests/daemon_test_utils.py
+  - Test: `test_wait_for_daemon_ready_success`, `test_wait_for_daemon_ready_timeout`, `test_wait_for_daemon_ready_crash_detection`
+  - Location: tests/conftest.py:1255
+  - Implementation: Uses select.select() for efficient I/O multiplexing with timeout. Returns when daemon writes b"R", raises TimeoutError on timeout, raises AssertionError on EOF (crash detection).
 
-- [ ] Verify backward compatibility (ready_fd=None works)
+- [x] Verify backward compatibility (ready_fd=None works)
   - Spec: specs/event-driven-daemon-tests.md § Phase 1
   - Success: Existing tests pass without modification when ready_fd not provided
-  - Test: All existing daemon tests still pass
+  - Test: All 14 existing daemon tests still pass (TestDaemonizeFunction, TestDaemonizeIntegration, TestSignalHandlers)
   - Location: ragzoom/daemon.py
+  - Implementation: All existing daemon tests verified passing - backward compatible via ready_fd=None default.
 
 ### Phase 55: Migrate TestDaemonizeFunction Tests
 

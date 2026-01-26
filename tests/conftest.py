@@ -4,8 +4,10 @@ import asyncio
 import logging
 import math
 import os
+import select
 import signal
-from collections.abc import AsyncIterator, Callable, Generator, Sequence
+from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -1206,3 +1208,72 @@ class FakeTranscriptClient:
 def fake_transcript_client() -> FakeTranscriptClient:
     """Create a fake client for transcript sync tests."""
     return FakeTranscriptClient()
+
+
+# ============================================================================
+# Daemon Test Utilities
+# ============================================================================
+# These utilities implement the ready-pipe pattern for event-driven daemon
+# synchronization in tests, eliminating sleep-based polling.
+# ============================================================================
+
+
+@contextmanager
+def daemon_ready_pipe() -> Iterator[tuple[int, int]]:
+    """Context manager that creates a ready-signal pipe for daemon synchronization.
+
+    Implements the ready-pipe pattern for event-driven daemon startup detection.
+    The write_fd should be passed to the daemon process via subprocess.Popen's
+    pass_fds parameter. The daemon writes b"R" to signal readiness.
+
+    Yields:
+        tuple[int, int]: (read_fd, write_fd) file descriptors.
+            - read_fd: Use with wait_for_daemon_ready() to block until ready
+            - write_fd: Pass to daemon via pass_fds, daemon writes b"R" when ready
+
+    Example:
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)  # Close our copy after child inherits it
+            wait_for_daemon_ready(read_fd)
+            # Daemon is now guaranteed ready - no sleep needed
+    """
+    read_fd, write_fd = os.pipe()
+    try:
+        yield read_fd, write_fd
+    finally:
+        # Clean up any unclosed file descriptors
+        for fd in (read_fd, write_fd):
+            try:
+                os.close(fd)
+            except OSError:
+                pass  # Already closed
+
+
+def wait_for_daemon_ready(read_fd: int, timeout: float = 5.0) -> None:
+    """Block until daemon signals ready or timeout/crash.
+
+    Uses select() to efficiently wait for the daemon to write b"R" to the
+    ready pipe. Detects daemon crashes immediately via EOF (pipe closes
+    when daemon dies without writing).
+
+    Args:
+        read_fd: Read end of the ready pipe from daemon_ready_pipe().
+        timeout: Maximum seconds to wait for daemon ready signal.
+
+    Raises:
+        TimeoutError: If daemon doesn't signal ready within timeout.
+        AssertionError: If daemon crashes before signaling ready (EOF on pipe).
+    """
+    ready, _, _ = select.select([read_fd], [], [], timeout)
+    if not ready:
+        raise TimeoutError(f"Daemon did not signal ready within {timeout}s")
+
+    data = os.read(read_fd, 1)
+    if data != b"R":
+        raise AssertionError(
+            f"Daemon crashed before signaling ready (got {data!r} instead of b'R')"
+        )
