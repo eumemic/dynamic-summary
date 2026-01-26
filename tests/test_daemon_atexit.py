@@ -41,6 +41,7 @@ class TestAtexitCleanup:
         This eliminates polling loops and time.sleep() for deterministic tests.
         """
         import os
+        import select
 
         from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
 
@@ -49,13 +50,10 @@ class TestAtexitCleanup:
         port_file = tmp_path / "daemon.port"
         log_file = tmp_path / "daemon.log"
 
-        # Create two pipes: one for ready signal, one for done signal
         done_read_fd, done_write_fd = os.pipe()
 
         try:
             with daemon_ready_pipe() as (read_fd, write_fd):
-                # Script simulates what start_server does in daemon mode
-                # WITH atexit cleanup registered (the fix we're testing)
                 script = f"""
 import atexit
 import os
@@ -74,7 +72,7 @@ daemon.install_shutdown_handlers()
 # THIS IS THE FIX: Register atexit cleanup for normal exits
 atexit.register(daemon.cleanup_stale_state)
 
-# Signal done before exit - this lets the test know atexit is about to run
+# Signal done before exit
 os.write({done_write_fd}, b"D")
 os.close({done_write_fd})
 
@@ -87,20 +85,18 @@ os.close({done_write_fd})
                     cwd=str(cwd),
                     pass_fds=(write_fd, done_write_fd),
                 )
-                os.close(write_fd)  # Close our copy of write end
+                os.close(write_fd)
 
                 proc.wait(timeout=10)
                 wait_for_daemon_ready(read_fd)
 
-            # Close our copy of done_write_fd after passing to child
+            # Close our copy after passing to child
             try:
                 os.close(done_write_fd)
             except OSError:
                 pass
 
-            # Wait for daemon to signal done (or detect crash via EOF)
-            import select
-
+            # Wait for daemon to signal done
             ready, _, _ = select.select([done_read_fd], [], [], 5.0)
             if not ready:
                 raise TimeoutError("Daemon did not signal done within 5s")
@@ -111,17 +107,11 @@ os.close({done_write_fd})
                     f"Daemon crashed before signaling done (got {data!r})"
                 )
 
-            # Poll briefly for atexit handler to complete
-            # (atexit runs after done signal but before process fully exits)
-            for _ in range(50):
-                if not pid_file.exists() and not port_file.exists():
-                    break
-                import time
-
-                time.sleep(0.01)
+            # Wait for EOF on pipe (indicates process fully exited, atexit complete)
+            remaining = os.read(done_read_fd, 1)
+            assert remaining == b"", f"Expected EOF, got {remaining!r}"
 
         finally:
-            # Clean up done pipe
             try:
                 os.close(done_read_fd)
             except OSError:
@@ -141,17 +131,29 @@ os.close({done_write_fd})
 
         This test documents the BUG that atexit fixes - without the atexit
         registration, state files persist after normal daemon exit.
+
+        Uses the ready-pipe pattern for event-driven synchronization:
+        - Daemon signals b"R" when started (ready_fd)
+        - Daemon signals b"D" when done and about to exit (done_fd)
+        This eliminates polling loops and time.sleep() for deterministic tests.
         """
+        import os
+        import select
+
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
         cwd = Path.cwd()
         pid_file = tmp_path / "daemon.pid"
         port_file = tmp_path / "daemon.port"
         log_file = tmp_path / "daemon.log"
 
-        # Script WITHOUT atexit registration (the bug)
-        script = f"""
+        done_read_fd, done_write_fd = os.pipe()
+
+        try:
+            with daemon_ready_pipe() as (read_fd, write_fd):
+                script = f"""
 import os
 import sys
-import time
 sys.path.insert(0, "{cwd}")
 os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
 
@@ -159,33 +161,60 @@ os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
 from pathlib import Path
 
 # Do what start_server does in daemon mode (WITHOUT atexit fix)
-daemon.daemonize(Path("{log_file}"))
+daemon.daemonize(Path("{log_file}"), ready_fd={write_fd})
 daemon.write_port_file(50099)
 daemon.install_shutdown_handlers()
 
 # NO atexit.register - this is the bug
 
-Path("{tmp_path / 'daemon_started'}").write_text("yes")
-time.sleep(0.2)
-Path("{tmp_path / 'daemon_exited'}").write_text("yes")
+# Signal done before exit
+os.write({done_write_fd}, b"D")
+os.close({done_write_fd})
+
+# Normal exit - NO atexit handlers registered, so files remain
 """
-        script_file = tmp_path / "test_script.py"
-        script_file.write_text(script)
+                proc = subprocess.Popen(
+                    [sys.executable, "-c", script],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=str(cwd),
+                    pass_fds=(write_fd, done_write_fd),
+                )
+                os.close(write_fd)
 
-        proc = subprocess.Popen(
-            [sys.executable, str(script_file)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=str(cwd),
-        )
-        proc.wait(timeout=10)
+                proc.wait(timeout=10)
+                wait_for_daemon_ready(read_fd)
 
-        for _ in range(30):
-            if (tmp_path / "daemon_exited").exists():
-                break
-            time.sleep(0.1)
+            # Close our copy after passing to child
+            try:
+                os.close(done_write_fd)
+            except OSError:
+                pass
 
-        time.sleep(0.5)
+            # Wait for daemon to signal done
+            ready, _, _ = select.select([done_read_fd], [], [], 5.0)
+            if not ready:
+                raise TimeoutError("Daemon did not signal done within 5s")
+
+            data = os.read(done_read_fd, 1)
+            if data != b"D":
+                raise AssertionError(
+                    f"Daemon crashed before signaling done (got {data!r})"
+                )
+
+            # Wait for EOF on pipe (indicates process fully exited)
+            remaining = os.read(done_read_fd, 1)
+            assert remaining == b"", f"Expected EOF, got {remaining!r}"
+
+        finally:
+            try:
+                os.close(done_read_fd)
+            except OSError:
+                pass
+            try:
+                os.close(done_write_fd)
+            except OSError:
+                pass
 
         # WITHOUT atexit, files remain (this is the bug)
         assert pid_file.exists(), "Without atexit, PID file should remain"
