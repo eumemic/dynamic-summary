@@ -255,7 +255,7 @@ class TestTimeWindowedQueryOnSyncedTranscript:
         client = AppendExecutorClient(sqlite_backend, executor)
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # Create a transcript with 3 distinct turns at different times:
         # Turn 1: 14:00:00 - 14:00:30 (asks about breakfast)
@@ -338,11 +338,11 @@ class TestTimeWindowedQueryOnSyncedTranscript:
         )
 
         # Execute sync
-        result = execute_sync(transcript_path, state_path, client)
+        result = execute_sync(transcript_path, document_id, client)
 
         # Verify document was created
         assert result.document_id == "transcript"
-        assert len(result.appended_uuids) >= 3
+        assert result.turns_appended >= 3
 
         # Verify document is temporal
         is_temporal = sqlite_backend.doc_repo.get_document_is_temporal(
@@ -477,7 +477,7 @@ class TestTimeWindowedQueryOnSyncedTranscript:
         client = AppendExecutorClient(sqlite_backend, executor)
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # Create a transcript with one turn spanning 14:00 - 14:05
         transcript_path.write_text(
@@ -510,7 +510,7 @@ class TestTimeWindowedQueryOnSyncedTranscript:
             + "\n"
         )
 
-        result = execute_sync(transcript_path, state_path, client)
+        result = execute_sync(transcript_path, document_id, client)
 
         # Get leaves for mock setup
         doc_store = sqlite_backend.for_document(result.document_id)
@@ -559,7 +559,7 @@ class TestTimeWindowedQueryOnSyncedTranscript:
         client = AppendExecutorClient(sqlite_backend, executor)
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # Create a transcript with a compaction summary in the middle
         transcript_path.write_text(
@@ -636,7 +636,7 @@ class TestTimeWindowedQueryOnSyncedTranscript:
         )
 
         # Execute sync
-        result = execute_sync(transcript_path, state_path, client)
+        result = execute_sync(transcript_path, document_id, client)
 
         # Verify document was created
         assert result.document_id == "transcript"

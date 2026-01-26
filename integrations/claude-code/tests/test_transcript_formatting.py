@@ -16,7 +16,7 @@ class TestTranscriptFormatting:
     def test_double_newlines_between_messages(self, tmp_path: Path) -> None:
         """Messages should be separated by double newlines."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
@@ -56,7 +56,7 @@ class TestTranscriptFormatting:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         # With turn-based grouping: Turn 1 = msg1+msg2, Turn 2 = msg3 (standalone)
         assert len(client.appends) == 2
@@ -73,7 +73,7 @@ class TestTranscriptFormatting:
     def test_slash_commands_simplified(self, tmp_path: Path) -> None:
         """Slash commands should be simplified from XML format."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # The XML command format that Claude Code produces
         command_content = (
@@ -99,7 +99,7 @@ class TestTranscriptFormatting:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         assert len(client.appends) == 1
         text = client.appends[0][1]
@@ -116,7 +116,7 @@ class TestTranscriptFormatting:
     def test_local_stdout_removed(self, tmp_path: Path) -> None:
         """Empty local-command-stdout tags should be removed."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             json.dumps(
@@ -134,7 +134,7 @@ class TestTranscriptFormatting:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         # Empty messages should result in no append
         # or if appended, should not contain the tag
@@ -149,7 +149,7 @@ class TestTurnBasedBatching:
     def test_one_append_per_turn(self, tmp_path: Path) -> None:
         """Each conversation turn should be a separate AppendUnit."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
@@ -212,7 +212,7 @@ class TestTurnBasedBatching:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         # Should have 3 appends (one per turn)
         assert len(client.appends) == 3
@@ -229,7 +229,7 @@ class TestTurnBasedBatching:
     def test_two_turns_are_both_appended(self, tmp_path: Path) -> None:
         """Two turns should result in appended content for both."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
@@ -260,11 +260,10 @@ class TestTurnBasedBatching:
         )
 
         client = FakeTranscriptClient()
-        result = execute_sync(transcript_path, state_path, client)
+        result = execute_sync(transcript_path, document_id, client)
 
         # Should have appended both turns
-        assert "a1" in result.appended_uuids
-        assert "b1" in result.appended_uuids
+        assert result.turns_appended == 2
 
         # Should have batch appended
         assert len(client.batch_append_calls) == 1
@@ -272,7 +271,7 @@ class TestTurnBasedBatching:
     def test_turn_content_has_expected_text(self, tmp_path: Path) -> None:
         """Each turn's content should contain the message text."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
@@ -303,7 +302,7 @@ class TestTurnBasedBatching:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         # Should have batch appended once
         assert len(client.batch_append_calls) == 1
@@ -323,7 +322,7 @@ class TestToolUsageBatching:
     def test_tool_only_with_text_between_not_batched(self, tmp_path: Path) -> None:
         """Tool-only messages separated by text messages should not batch."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # Turns must start with a user message
         transcript_path.write_text(
@@ -419,7 +418,7 @@ class TestToolUsageBatching:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         text = client.appends[0][1]
 
@@ -431,7 +430,7 @@ class TestToolUsageBatching:
     def test_consecutive_tool_uses_batched(self, tmp_path: Path) -> None:
         """Consecutive tool-only messages should be batched into one line."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # Turns must start with a user message
         transcript_path.write_text(
@@ -529,7 +528,7 @@ class TestToolUsageBatching:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         assert len(client.appends) == 1
         text = client.appends[0][1]
@@ -543,7 +542,7 @@ class TestToolUsageBatching:
     def test_tool_names_include_summary(self, tmp_path: Path) -> None:
         """Tool names should include a brief summary of the invocation."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
@@ -610,7 +609,7 @@ class TestToolUsageBatching:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         # Get text from batch_append (stateless sync uses batch_append)
         assert len(client.batch_append_calls) == 1
@@ -624,7 +623,7 @@ class TestToolUsageBatching:
     def test_single_tool_use_not_batched(self, tmp_path: Path) -> None:
         """A single tool use followed by text should not be batched."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
@@ -687,7 +686,7 @@ class TestToolUsageBatching:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         text = client.appends[0][1]
 
@@ -704,7 +703,7 @@ class TestCommandHandling:
     def test_builtin_command_transcribed_simply(self, tmp_path: Path) -> None:
         """Built-in commands like /compact should be transcribed as [User issued /compact command]."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
@@ -751,7 +750,7 @@ class TestCommandHandling:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         text = client.appends[0][1]
 
@@ -766,7 +765,7 @@ class TestCommandHandling:
     def test_custom_command_expansion_skipped(self, tmp_path: Path) -> None:
         """Custom commands like /commit should skip the expanded file content."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
@@ -822,7 +821,7 @@ class TestCommandHandling:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         text = client.appends[0][1]
 
@@ -836,7 +835,7 @@ class TestCommandHandling:
     def test_command_followed_by_assistant(self, tmp_path: Path) -> None:
         """Command directly followed by assistant (no expansion) should work."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
@@ -875,7 +874,7 @@ class TestCommandHandling:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         text = client.appends[0][1]
 
@@ -887,7 +886,7 @@ class TestCommandHandling:
     def test_hyphenated_command_cleaned_properly(self, tmp_path: Path) -> None:
         """Commands with hyphens like /review-pr should be cleaned properly."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
@@ -924,7 +923,7 @@ class TestCommandHandling:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         text = client.appends[0][1]
 

@@ -654,7 +654,7 @@ class TestExecuteSyncStateless:
         client = StatelessMockClient()
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # Create transcript with one turn
         transcript_path.write_text(
@@ -673,8 +673,46 @@ class TestExecuteSyncStateless:
             + "\n"
         )
 
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         # Should have called get_document_status to determine indexed state
         assert len(client.get_document_status_calls) == 1
         assert client.get_document_status_calls[0] == "transcript"
+
+    def test_execute_sync_no_state_file(self, tmp_path: Path) -> None:
+        """execute_sync should not create or use any state files."""
+        client = StatelessMockClient()
+
+        transcript_path = tmp_path / "transcript.jsonl"
+        document_id = "test-doc"
+
+        # Create transcript with one turn
+        transcript_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        make_user_message("msg1", None, "2024-01-21T14:30:00Z", "Hello")
+                    ),
+                    json.dumps(
+                        make_assistant_message(
+                            "msg2", "msg1", "2024-01-21T14:30:05Z", "Hi!"
+                        )
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        # Run sync
+        execute_sync(transcript_path, document_id, client)
+
+        # No state files should be created in tmp_path
+        # (old behavior created state.jsonl or similar)
+        files_in_tmp = list(tmp_path.iterdir())
+        state_files = [
+            f for f in files_in_tmp if f.suffix == ".jsonl" and f != transcript_path
+        ]
+        assert state_files == [], f"Expected no state files, found: {state_files}"
+
+        # Verify sync worked correctly (content was appended)
+        assert len(client.batch_append_calls) == 1

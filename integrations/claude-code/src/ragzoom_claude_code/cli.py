@@ -12,6 +12,9 @@ from ragzoom_claude_code.transcript_sync import (
     set_session_pid,
 )
 
+# Note: get_state_path and set_session_pid are still used by set-pid command
+# and reset command for state file management. execute_sync no longer uses state files.
+
 
 @click.group()
 def cli() -> None:
@@ -35,7 +38,6 @@ def sync_cmd(jsonl_path: Path, server_address: str) -> None:
     Incrementally transcribes new conversation records and indexes them.
     Uses UUID-based ancestry tracking to detect and handle reverts.
     Uses the session ID (JSONL filename without extension) as the document ID.
-    Tracks progress via state files (configurable via RAGZOOM_STATE_DIR env var).
 
     The JSONL files are typically found in:
     ~/.claude/projects/<project-path>/<session-id>.jsonl
@@ -45,20 +47,19 @@ def sync_cmd(jsonl_path: Path, server_address: str) -> None:
     """
     from ragzoom.wrapper import RagZoom
 
-    # State file uses same naming convention but with .jsonl extension
-    state_path = get_state_path(jsonl_path.stem)
-
+    document_id = jsonl_path.stem
     client = RagZoom(server_address=server_address)
 
     try:
-        result = execute_sync(jsonl_path, state_path, client)
+        result = execute_sync(jsonl_path, document_id, client)
         if result.truncated:
             click.echo(
-                f"Reverted document '{result.document_id}' to span {result.truncate_span}"
+                f"Reverted document '{result.document_id}' "
+                f"(cutoff: {result.truncate_cutoff_time})"
             )
-        if result.appended_uuids:
+        if result.turns_appended > 0:
             click.echo(
-                f"Synced {len(result.appended_uuids)} messages to '{result.document_id}'"
+                f"Synced {result.turns_appended} turns to '{result.document_id}'"
             )
         else:
             click.echo(f"No new content to sync for '{result.document_id}'")
@@ -143,10 +144,10 @@ def reset_cmd(jsonl_path: Path, server_address: str, resync: bool) -> None:
         click.echo("Re-syncing from scratch...")
         ragzoom_client = RagZoom(server_address=server_address)
         try:
-            sync_result = execute_sync(jsonl_path, state_path, ragzoom_client)
-            if sync_result.appended_uuids:
+            sync_result = execute_sync(jsonl_path, document_id, ragzoom_client)
+            if sync_result.turns_appended > 0:
                 click.echo(
-                    f"Synced {len(sync_result.appended_uuids)} messages to '{sync_result.document_id}'"
+                    f"Synced {sync_result.turns_appended} turns to '{sync_result.document_id}'"
                 )
             else:
                 click.echo(f"No content to sync for '{sync_result.document_id}'")

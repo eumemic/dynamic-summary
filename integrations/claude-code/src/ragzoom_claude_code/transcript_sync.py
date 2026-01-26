@@ -1110,26 +1110,23 @@ def transcribe_uuids_from_map(
 
 @dataclass
 class SyncResult:
-    """Result from executing a sync operation."""
+    """Result from executing a sync operation.
+
+    The stateless sync algorithm derives state from the document status API,
+    eliminating the need for UUID-based tracking or span positions.
+    """
 
     document_id: str
+    """Document ID that was synced."""
+
     truncated: bool
-    truncate_span: int | None
-    appended_uuids: list[str]
-    new_span_end: int
+    """True if a revert was detected and orphaned content was removed."""
 
+    truncate_cutoff_time: str | None
+    """ISO 8601 timestamp used for truncation, if truncated is True."""
 
-def _is_trackable_uuid(uuid: str, records: dict[str, dict[str, object]]) -> bool:
-    """Check if UUID should be tracked in appended_uuids.
-
-    Excludes tool result messages which are internal implementation details.
-    """
-    record = records.get(uuid)
-    if record is None:
-        return False
-
-    is_tool_result = record.get("type") == "user" and "toolUseResult" in record
-    return not is_tool_result
+    turns_appended: int
+    """Number of conversation turns appended to the document."""
 
 
 def _handle_revert_detection(
@@ -1138,30 +1135,31 @@ def _handle_revert_detection(
     records: dict[str, dict[str, object]],
     client: object,
     document_id: str,
-) -> bool:
+) -> str | None:
     """Detect and handle revert by comparing connection point to indexed content.
 
-    Returns True if a revert was detected and truncation was performed.
+    Returns the cutoff timestamp string if a revert was detected and truncation
+    was performed, or None if no revert occurred.
     """
     if r_uuid is None or indexed_time_end is None:
-        return False
+        return None
 
     r_record = records.get(r_uuid)
     if r_record is None:
-        return False
+        return None
 
     r_timestamp_str = r_record.get("timestamp")
     if not isinstance(r_timestamp_str, str):
-        return False
+        return None
 
     r_timestamp = _parse_timestamp(r_timestamp_str)
     if r_timestamp >= indexed_time_end:
-        return False
+        return None
 
     # Revert detected: truncate orphaned content
     truncate_from_time = getattr(client, "truncate_from_time")
     truncate_from_time(document_id, r_timestamp_str)
-    return True
+    return r_timestamp_str
 
 
 def _build_records_map(transcript_path: Path) -> dict[str, dict[str, object]]:
@@ -1181,7 +1179,7 @@ def _build_records_map(transcript_path: Path) -> dict[str, dict[str, object]]:
 
 def execute_sync(
     transcript_path: Path,
-    state_path: Path,
+    document_id: str,
     client: object,
 ) -> SyncResult:
     """Execute a complete sync operation using stateless algorithm.
@@ -1194,20 +1192,13 @@ def execute_sync(
 
     Args:
         transcript_path: Path to the JSONL transcript
-        state_path: Path to the session state file (used for document_id only)
+        document_id: Document ID to sync to (typically the transcript filename stem)
         client: RagZoom client with get_document_status(), batch_append(),
                 and truncate_from_time() methods
 
     Returns:
         SyncResult describing what was done
     """
-    # Get document_id from state file if it exists, otherwise from filename
-    state = SessionState.load(state_path)
-    if state is None:
-        document_id = transcript_path.stem
-        state = SessionState(header=SessionStateHeader(document_id=document_id))
-    else:
-        document_id = state.header.document_id
 
     # Get current head
     current_head = get_current_head(transcript_path)
@@ -1216,9 +1207,8 @@ def execute_sync(
         return SyncResult(
             document_id=document_id,
             truncated=False,
-            truncate_span=None,
-            appended_uuids=[],
-            new_span_end=0,
+            truncate_cutoff_time=None,
+            turns_appended=0,
         )
 
     # Get indexed state from RagZoom document status
@@ -1242,75 +1232,49 @@ def execute_sync(
     else:
         uuids_to_append = build_ancestry_chain(current_head, r_uuid, records)
 
-    # Detect and handle revert
-    truncated = _handle_revert_detection(
+    # Detect and handle revert (returns cutoff time if truncation occurred)
+    truncate_cutoff_time = _handle_revert_detection(
         r_uuid, indexed_time_end, records, client, document_id
     )
-    truncate_span: int | None = None  # Not used in stateless (time-based truncation)
-
-    # Append new content to document
-    appended_uuids: list[str] = []
-    new_span_end = 0
 
     if not uuids_to_append:
-        # Save state and return early if nothing to append
-        state.save(state_path)
+        # Nothing to append
         return SyncResult(
             document_id=document_id,
-            truncated=truncated,
-            truncate_span=truncate_span,
-            appended_uuids=[],
-            new_span_end=0,
+            truncated=truncate_cutoff_time is not None,
+            truncate_cutoff_time=truncate_cutoff_time,
+            turns_appended=0,
         )
 
     # Group UUIDs into conversation turns
     turns = group_into_turns(uuids_to_append, records)
     if not turns:
-        state.save(state_path)
         return SyncResult(
             document_id=document_id,
-            truncated=truncated,
-            truncate_span=truncate_span,
-            appended_uuids=[],
-            new_span_end=0,
+            truncated=truncate_cutoff_time is not None,
+            truncate_cutoff_time=truncate_cutoff_time,
+            turns_appended=0,
         )
 
     # Convert turns to AppendUnits and filter out empty ones
     append_units = turns_to_append_units(turns, records)
-    non_empty = [
-        (unit, turn) for unit, turn in zip(append_units, turns) if unit.text.strip()
-    ]
+    non_empty = [unit for unit in append_units if unit.text.strip()]
 
     if not non_empty:
-        state.save(state_path)
         return SyncResult(
             document_id=document_id,
-            truncated=truncated,
-            truncate_span=truncate_span,
-            appended_uuids=[],
-            new_span_end=0,
+            truncated=truncate_cutoff_time is not None,
+            truncate_cutoff_time=truncate_cutoff_time,
+            turns_appended=0,
         )
 
     # Batch append all units
-    units = [unit for unit, _ in non_empty]
     batch_append = getattr(client, "batch_append")
-    batch_append(document_id, units)
-
-    # Collect trackable UUIDs from appended turns
-    for _unit, turn in non_empty:
-        trackable = [uuid for uuid in turn.uuids if _is_trackable_uuid(uuid, records)]
-        appended_uuids.extend(trackable)
-
-    # Calculate total span from appended text
-    new_span_end = sum(len(unit.text) for unit in units)
-
-    # Save state file (for backward compatibility - preserves document_id and PID)
-    state.save(state_path)
+    batch_append(document_id, non_empty)
 
     return SyncResult(
         document_id=document_id,
-        truncated=truncated,
-        truncate_span=truncate_span,
-        appended_uuids=appended_uuids,
-        new_span_end=new_span_end,
+        truncated=truncate_cutoff_time is not None,
+        truncate_cutoff_time=truncate_cutoff_time,
+        turns_appended=len(non_empty),
     )
