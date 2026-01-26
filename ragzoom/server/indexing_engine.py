@@ -1446,32 +1446,23 @@ class IndexingEngine:
         preceding_context_json = json.dumps(tiling_ids)
         store.nodes._repo.update_preceding_context(job.leaf_id, preceding_context_json)
 
-        # Contextualize preceding context if present, then build embedding text
-        context_summary = ""
-        contextualization_result = None
-        if context_prefix:
-            # Generate a contextualizing summary of preceding context
-            # (extracts only information relevant to understanding the leaf)
-            logger.info("EMBED_LLM_START: leaf=%s contextualize", job.leaf_id)
-            contextualization_result = await self._llm_service._contextualize_text(
-                preceding_context=context_prefix,
-                target_text=leaf_text,
-                target_tokens=self._index_config.target_embedding_tokens,
-                parent_id=job.leaf_id,
-                reporter=telemetry,
-            )
-            logger.info("EMBED_LLM_END: leaf=%s contextualize", job.leaf_id)
-            context_summary = contextualization_result.summary
-            # Store the summary in the database
-            store.nodes._repo.update_preceding_context_summary(
-                job.leaf_id, context_summary
-            )
+        # Generate retrieval-optimized text for embedding
+        # Per specs/embedding-text-optimization.md: single-step process that
+        # produces text optimized for semantic search (passthrough for small
+        # content, LLM-compressed for large content)
+        logger.info("EMBED_LLM_START: leaf=%s prepare_embedding_text", job.leaf_id)
+        embedding_text_result = await self._llm_service._prepare_embedding_text(
+            preceding_context=context_prefix,
+            leaf_text=leaf_text,
+            target_tokens=self._index_config.target_embedding_tokens,
+            parent_id=job.leaf_id,
+            reporter=telemetry,
+        )
+        logger.info("EMBED_LLM_END: leaf=%s prepare_embedding_text", job.leaf_id)
+        text_to_embed = embedding_text_result.summary
 
-        # Build embedding text: summary + leaf (no truncation needed)
-        if context_summary:
-            text_to_embed = f"{context_summary}\n{leaf_text}"
-        else:
-            text_to_embed = leaf_text
+        # Store the optimized text in preceding_context_summary for debugging/inspection
+        store.nodes._repo.update_preceding_context_summary(job.leaf_id, text_to_embed)
 
         # Record embedding start time for telemetry
         embed_start_time = time.time()
@@ -1516,8 +1507,10 @@ class IndexingEngine:
             total_embedding_tokens, embedding_cost_per_1k
         )
 
-        # Add contextualization LLM cost if we made that call
-        if contextualization_result is not None:
+        # Add embedding text optimization LLM cost if LLM was called
+        # (passthrough case has zero usage tokens)
+        usage = embedding_text_result.usage
+        if usage.prompt_tokens > 0:
             input_cost_per_1k, output_cost_per_1k = get_llm_costs(
                 self._index_config.summary_model
             )
@@ -1525,7 +1518,6 @@ class IndexingEngine:
             cache_discount = model_info.get_cache_discount(
                 self._index_config.summary_model
             )
-            usage = contextualization_result.usage
             leaf_cost += calculate_prompt_cost_with_cache(
                 usage.prompt_tokens,
                 usage.cached_tokens,

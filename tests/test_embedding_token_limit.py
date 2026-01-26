@@ -110,26 +110,30 @@ async def test_embed_leaf_uses_embedding_context_tokens() -> None:
     # Create mock LLM service
     mock_llm_service = MagicMock()
 
-    # Track what target_tokens is passed to _contextualize_text
-    contextualize_calls: list[int] = []
+    # Track what target_tokens is passed to _prepare_embedding_text
+    prepare_embedding_calls: list[int] = []
 
-    async def mock_contextualize(
+    async def mock_prepare_embedding_text(
         preceding_context: str,
-        target_text: str,
+        leaf_text: str,
         target_tokens: int,
         *,
         parent_id: str | None = None,
         reporter: object = None,
     ) -> SummaryResult:
-        contextualize_calls.append(target_tokens)
+        prepare_embedding_calls.append(target_tokens)
+        # Return complete text ready for embedding (context + leaf combined)
+        combined = (
+            f"{preceding_context}\n{leaf_text}" if preceding_context else leaf_text
+        )
         return SummaryResult(
-            summary="summarized context",
+            summary=combined,
             retry_count=0,
             summary_tokens=50,
             usage=AccumulatedUsage(),
         )
 
-    mock_llm_service._contextualize_text = mock_contextualize
+    mock_llm_service._prepare_embedding_text = mock_prepare_embedding_text
 
     # Mock embed_texts_with_usage
     from ragzoom.contracts.embedding_model import EmbeddingResult
@@ -186,15 +190,15 @@ async def test_embed_leaf_uses_embedding_context_tokens() -> None:
             job = EmbeddingJob(document_id="test-doc", leaf_id="test-leaf-id")
             await engine._embed_leaf(job)
 
-    # Verify _contextualize_text was called with target_embedding_tokens
+    # Verify _prepare_embedding_text was called with target_embedding_tokens
     assert (
-        len(contextualize_calls) == 1
-    ), "_contextualize_text should have been called once"
-    assert contextualize_calls[0] == 300, (
-        f"_contextualize_text should use target_embedding_tokens (300), "
-        f"but was called with {contextualize_calls[0]}. "
+        len(prepare_embedding_calls) == 1
+    ), "_prepare_embedding_text should have been called once"
+    assert prepare_embedding_calls[0] == 300, (
+        f"_prepare_embedding_text should use target_embedding_tokens (300), "
+        f"but was called with {prepare_embedding_calls[0]}. "
         f"This is the bug: it's using target_chunk_tokens instead of "
-        f"target_embedding_tokens for embedding contextualization."
+        f"target_embedding_tokens for embedding text preparation."
     )
 
 
@@ -251,26 +255,26 @@ async def test_indexing_engine_limits_embedding_text() -> None:
 
     mock_llm_service.embed_texts_with_usage = capture_embed_texts_with_usage
 
-    # Mock _contextualize_text to return a short summary (simulating context summarization)
+    # Mock _prepare_embedding_text to return optimized text for embedding
     from ragzoom.services.summary_utils import AccumulatedUsage, SummaryResult
 
-    async def mock_contextualize(
+    async def mock_prepare_embedding_text(
         preceding_context: str,
-        target_text: str,
+        leaf_text: str,
         target_tokens: int,
         *,
         parent_id: str | None = None,
         reporter: object = None,
     ) -> SummaryResult:
-        # Return a short summary instead of the full context
+        # Return optimized text within token limit (simulating LLM compression)
         return SummaryResult(
-            summary="summarized context",
+            summary="optimized embedding text",
             retry_count=0,
             summary_tokens=50,
             usage=AccumulatedUsage(),
         )
 
-    mock_llm_service._contextualize_text = mock_contextualize
+    mock_llm_service._prepare_embedding_text = mock_prepare_embedding_text
 
     # Create mock retriever that returns large context (~5000 tokens)
     from ragzoom.retrieve import RetrievalResult
@@ -388,6 +392,27 @@ async def test_embed_leaf_records_telemetry() -> None:
 
     mock_llm_service.embed_texts_with_usage = mock_embed_texts_with_usage
 
+    # Mock _prepare_embedding_text to return the leaf text as embedding text
+    from ragzoom.services.summary_utils import AccumulatedUsage, SummaryResult
+
+    async def mock_prepare_embedding_text(
+        preceding_context: str,
+        leaf_text: str,
+        target_tokens: int,
+        *,
+        parent_id: str | None = None,
+        reporter: object = None,
+    ) -> SummaryResult:
+        # Passthrough: return leaf text (no context in this test)
+        return SummaryResult(
+            summary=leaf_text,
+            retry_count=0,
+            summary_tokens=50,
+            usage=AccumulatedUsage(),
+        )
+
+    mock_llm_service._prepare_embedding_text = mock_prepare_embedding_text
+
     # Create telemetry collector and pre-register the leaf node
     telemetry = TelemetryCollector(
         document_id="test-doc",
@@ -492,6 +517,26 @@ async def test_embed_leaf_includes_level_index_in_vector_metadata() -> None:
         }
 
     mock_llm_service.embed_texts_with_usage = mock_embed_texts_with_usage
+
+    # Mock _prepare_embedding_text to return the leaf text as embedding text
+    from ragzoom.services.summary_utils import AccumulatedUsage, SummaryResult
+
+    async def mock_prepare_embedding_text(
+        preceding_context: str,
+        leaf_text: str,
+        target_tokens: int,
+        *,
+        parent_id: str | None = None,
+        reporter: object = None,
+    ) -> SummaryResult:
+        return SummaryResult(
+            summary=leaf_text,
+            retry_count=0,
+            summary_tokens=50,
+            usage=AccumulatedUsage(),
+        )
+
+    mock_llm_service._prepare_embedding_text = mock_prepare_embedding_text
 
     # Create engine
     engine = IndexingEngine(
