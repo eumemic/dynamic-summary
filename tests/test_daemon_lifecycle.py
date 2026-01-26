@@ -112,33 +112,32 @@ Path("{flag_file}").write_text(f"daemon pid: {{os.getpid()}}")
     @pytest.mark.slow_threshold(5)
     def test_daemonize_writes_pid_file(self, tmp_path: Path) -> None:
         """daemonize() should write daemon PID to state file."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
         log_file = tmp_path / "daemon.log"
         pid_file = tmp_path / "daemon.pid"
 
-        script = f"""
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            script = f"""
 import os
 import sys
-import time
 sys.path.insert(0, "{Path.cwd()}")
 os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
 from ragzoom.daemon import daemonize
 from pathlib import Path
 
-daemonize(Path("{log_file}"))
-Path("{tmp_path / 'ran'}").write_text("yes")
-time.sleep(0.3)
+daemonize(Path("{log_file}"), ready_fd={write_fd})
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        proc.wait(timeout=5)
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            proc.wait(timeout=5)
+            wait_for_daemon_ready(read_fd)
 
-        # Give daemon time to start
-        time.sleep(0.5)
-
-        # PID file should exist and contain a valid PID
         assert pid_file.exists(), "PID file should be created"
         pid_content = pid_file.read_text().strip()
         pid = int(pid_content)
