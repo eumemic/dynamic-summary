@@ -458,11 +458,12 @@ Add retrieval-optimized embedding text preparation to summary_utils.py, followin
   - Location: `tests/test_embedding_text.py`
   - **DONE**: Created `tests/test_embedding_text.py` with acceptance test that verifies oversized leaves (10000 tokens) are compressed by `_prepare_embedding_text` and successfully embedded. Test mocks the LLM service to simulate compression and verifies the vector is upserted.
 
-- [ ] Test passthrough behavior (no LLM call for small content)
+- [x] Test passthrough behavior (no LLM call for small content)
   - Spec: specs/embedding-text-optimization.md § Acceptance Criteria > 2
   - Success: Combined content under target_embedding_tokens passes through without LLM
   - Test: `tests/test_embedding_text.py::test_passthrough_no_llm_call`
   - Location: `tests/test_embedding_text.py`
+  - **DONE**: Created acceptance test verifying that when combined context + leaf text is under target_embedding_tokens (500), the workflow returns the combined text without invoking the LLM. Test mocks _prepare_embedding_text to track passthrough behavior via zero AccumulatedUsage.
 
 - [ ] Test config deprecation error message quality
   - Spec: specs/embedding-text-optimization.md § Acceptance Criteria > 4
