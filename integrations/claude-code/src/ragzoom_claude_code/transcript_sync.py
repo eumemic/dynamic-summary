@@ -240,6 +240,7 @@ def build_ancestry_chain(
     head_uuid: str,
     stop_uuid: str | None,
     records: dict[str, dict[str, object]],
+    parent_map: dict[str, str | None],
 ) -> list[str]:
     """Collect UUIDs from stop_uuid to head_uuid in chronological order.
 
@@ -247,17 +248,15 @@ def build_ancestry_chain(
     (exclusive) or the root (parentUuid=None). Returns the collected UUIDs in
     chronological order (oldest first).
 
-    Only UUIDs that exist in the records dict are included. If a parent UUID
-    is missing from records, the chain stops at that point.
-
-    This function is designed to work with the same records dict used by
-    find_truncation_point(), making it easy to build the ancestry chain
-    for records that need to be appended.
+    Only UUIDs that exist in the records dict are included. Uses parent_map
+    for traversal to bridge compaction boundaries.
 
     Args:
         head_uuid: UUID of the endpoint (most recent record)
         stop_uuid: UUID to stop at (exclusive), or None to include entire chain
-        records: UUID -> record mapping (must include parentUuid field)
+        records: UUID -> record mapping
+        parent_map: UUID -> parentUuid mapping that bridges compaction
+            boundaries. Use build_parent_map() to create this.
 
     Returns:
         List of UUIDs from stop_uuid's successor to head_uuid, in chronological
@@ -271,12 +270,11 @@ def build_ancestry_chain(
     current: str | None = head_uuid
 
     while current is not None and current != stop_uuid:
-        record = records.get(current)
-        if record is None:
+        if current not in records:
             # Current UUID not in records - can't include or trace further
             break
         chain.append(current)
-        current = _get_parent_uuid(record)
+        current = parent_map.get(current)
 
     # Reverse to get chronological order (oldest first)
     chain.reverse()
@@ -944,12 +942,17 @@ def execute_sync(
     # Build records map for stateless algorithm
     records = _build_records_map(transcript_path)
 
+    # Build parent map with compaction bridging for ancestry traversal
+    parent_map = build_parent_map(transcript_path)
+
     # Find truncation point using sliding window algorithm
     r_uuid, s_uuid = find_truncation_point(current_head, records, indexed_time_end)
 
-    # Build list of UUIDs to append
+    # Build list of UUIDs to append (using parent_map to bridge compactions)
     uuids_to_append = (
-        [] if s_uuid is None else build_ancestry_chain(current_head, r_uuid, records)
+        []
+        if s_uuid is None
+        else build_ancestry_chain(current_head, r_uuid, records, parent_map)
     )
 
     # Detect and handle revert (returns cutoff time if truncation occurred)

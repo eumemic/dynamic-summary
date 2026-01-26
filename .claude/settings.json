@@ -57,20 +57,11 @@
     ],
     "SessionStart": [
       {
-        "matcher": "startup|resume|clear",
+        "matcher": "startup|resume|clear|compact",
         "hooks": [
           {
             "type": "command",
             "command": "$(git rev-parse --show-toplevel)/.claude/hooks/session-start.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "compact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$(git rev-parse --show-toplevel)/.claude/hooks/session-start-compact.sh"
           }
         ]
       }
