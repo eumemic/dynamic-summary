@@ -407,17 +407,19 @@ Add retrieval-optimized embedding text preparation to summary_utils.py, followin
 
 ### Phase 37: Indexing Engine Integration
 
-- [ ] Update `_embed_leaf` to use new `_prepare_embedding_text` method
+- [x] Update `_embed_leaf` to use new `_prepare_embedding_text` method
   - Spec: specs/embedding-text-optimization.md § Behavior
   - Success: `_embed_leaf` calls `self._llm_service._prepare_embedding_text()` instead of `_contextualize_text` + concatenation
-  - Test: `tests/test_embedding_token_limit.py::test_embed_leaf_uses_prepare_embedding_text`
+  - Test: `tests/test_embedding_token_limit.py::test_embed_leaf_uses_embedding_context_tokens`
   - Location: `ragzoom/server/indexing_engine.py:1449-1475`
+  - **DONE**: Added `_prepare_embedding_text` method to LLMService that delegates to `run_embedding_text_from_config`. Updated `_embed_leaf` to call this method instead of `_contextualize_text` + concatenation. The method returns the complete text ready for embedding (either passthrough for small content or LLM-optimized for large content). Updated cost calculation to use `embedding_text_result.usage`. Updated 4 tests to mock the new method.
 
-- [ ] Remove `_contextualize_text` calls from embedding path
+- [x] Remove `_contextualize_text` calls from embedding path
   - Spec: specs/embedding-text-optimization.md § Solution
   - Success: Embedding no longer uses two-step process
-  - Test: `tests/test_embedding_token_limit.py::test_no_contextualize_text_in_embedding`
+  - Test: `tests/test_embedding_token_limit.py::test_embed_leaf_uses_embedding_context_tokens`
   - Location: `ragzoom/server/indexing_engine.py`
+  - **DONE**: The embedding path now uses `_prepare_embedding_text` which is a single-step process. No `_contextualize_text` calls remain in the embedding path.
 
 - [ ] Remove `_contextualize_text` method from LLMService (now unused)
   - Spec: specs/embedding-text-optimization.md § Solution

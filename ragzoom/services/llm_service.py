@@ -413,3 +413,38 @@ class LLMService:
             parent_id=parent_id,
             reporter=reporter,
         )
+
+    async def _prepare_embedding_text(
+        self,
+        preceding_context: str,
+        leaf_text: str,
+        target_tokens: int,
+        *,
+        parent_id: str | None = None,
+        reporter: TelemetryCollector | None = None,
+    ) -> SummaryResult:
+        """Generate retrieval-optimized text for embedding.
+
+        Per specs/embedding-text-optimization.md: produces text optimized for
+        semantic search matching. When combined input exceeds target_tokens,
+        LLM generates a retrieval-optimized summary preserving key terms,
+        entities, and searchable concepts.
+
+        Unlike _contextualize_text which only summarizes context, this returns
+        the complete text ready for embedding (either passthrough or optimized).
+
+        Returns:
+            SummaryResult containing the embedding text, retry count, token count,
+            and accumulated usage across all LLM attempts for cost calculation.
+        """
+        from ragzoom.services.summary_utils import run_embedding_text_from_config
+
+        return await run_embedding_text_from_config(
+            index_config=self.config,
+            preceding_context=preceding_context,
+            leaf_text=leaf_text,
+            target_tokens=target_tokens,
+            parent_id=parent_id,
+            reporter=reporter,
+            call_llm=self._summarizer._make_summary_call,
+        )
