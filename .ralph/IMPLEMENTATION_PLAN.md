@@ -297,11 +297,12 @@ Implement gRPC servicer and client methods.
   - Location: ragzoom/server/servicers.py:517-525
   - Implementation: Uses datetime.fromisoformat() with Z->+00:00 replacement for parsing
 
-- [ ] Add `TruncateFromTimeResult` dataclass to client
+- [x] Add `TruncateFromTimeResult` dataclass to client
   - Spec: specs/temporal-document-apis.md § API Changes > Python Client
   - Success: Dataclass with `document_id`, `deleted_node_ids`, `cutoff_time` fields
   - Test: N/A (type definition)
-  - Location: ragzoom/client/grpc_client.py
+  - Location: ragzoom/client/grpc_client.py:189-206
+  - Implementation: Added dataclass with comprehensive docstring following existing TruncateResult pattern
 
 - [ ] Implement `truncate_from_time()` client method
   - Spec: specs/temporal-document-apis.md § API Changes > Python Client
