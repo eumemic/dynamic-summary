@@ -1150,3 +1150,109 @@ class TestTruncateFromTimeServicer:
 
         with pytest.raises(ValueError, match="TruncateFromTime requires"):
             await servicer.TruncateFromTime(request, context)
+
+
+class TestTruncateFromTimeSpanGapBug:
+    """Regression test ensuring span gaps are not created after temporal truncation.
+
+    When truncate_from_time deletes a leaf from the middle of a document,
+    subsequent leaves must have their span positions adjusted to eliminate gaps.
+    This is required because the tree requires contiguous spans for summarization.
+
+    The fix adjusts spans by shifting all remaining nodes after deleted leaves:
+    - Before: A at [0,100], B at [100,200] (deleted), C at [200,300]
+    - After: A at [0,100], C at [100,200] (shifted by 100)
+    """
+
+    def test_truncate_from_time_should_not_create_span_gaps(
+        self, storage_backend: StorageBackend
+    ) -> None:
+        """After temporal truncation, remaining leaves should have contiguous spans.
+
+        Verifies that when a middle leaf is deleted by truncate_from_time,
+        remaining leaves have their span positions adjusted to eliminate gaps.
+        """
+        doc_id = "test-truncate-span-gap"
+
+        # Create a temporal document
+        doc_store = storage_backend.for_document(doc_id)
+        doc_store.set_metadata(
+            file_path="test.txt",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        doc_store._doc_repo.set_document_is_temporal(doc_id, is_temporal=True)
+
+        # Create 3 leaves at contiguous spans with different time ranges:
+        # - leaf-0: t=1000-1050 (will be KEPT - time_end < cutoff)
+        # - leaf-1: t=1050-1150 (will be DELETED - time_end > cutoff)
+        # - leaf-2: t=1100-1120 (will be KEPT - time_end < cutoff)
+        #
+        # Cutoff at t=1125: delete nodes where time_end > 1125
+        # This creates the scenario where a middle leaf is deleted.
+        nodes_data: list[NodeDataDict] = [
+            {
+                "node_id": f"{doc_id}-leaf-0",
+                "text": "A" * 100,  # 100 chars
+                "span_start": 0,
+                "span_end": 100,
+                "token_count": 10,
+                "height": 0,
+                "level_index": 0,
+                "time_start": 1000.0,
+                "time_end": 1050.0,
+            },
+            {
+                "node_id": f"{doc_id}-leaf-1",
+                "text": "B" * 100,  # 100 chars
+                "span_start": 100,
+                "span_end": 200,
+                "token_count": 10,
+                "height": 0,
+                "level_index": 1,
+                "time_start": 1050.0,
+                "time_end": 1150.0,  # > cutoff, will be deleted
+            },
+            {
+                "node_id": f"{doc_id}-leaf-2",
+                "text": "C" * 100,  # 100 chars
+                "span_start": 200,
+                "span_end": 300,
+                "token_count": 10,
+                "height": 0,
+                "level_index": 2,
+                "time_start": 1100.0,
+                "time_end": 1120.0,  # < cutoff, will be kept
+            },
+        ]
+        doc_store.nodes.add_batch(nodes_data)
+
+        # Verify pre-condition: 3 leaves with contiguous spans
+        leaves_before = sorted(doc_store.nodes.get_leaves(), key=lambda n: n.span_start)
+        assert len(leaves_before) == 3
+        assert leaves_before[0].span_end == leaves_before[1].span_start  # No gap
+        assert leaves_before[1].span_end == leaves_before[2].span_start  # No gap
+
+        # Truncate at cutoff_time = 1125
+        # This should delete leaf-1 (time_end=1150 > 1125)
+        # and keep leaf-0 and leaf-2
+        deleted_ids = storage_backend.delete_nodes_from_time(doc_id, cutoff_time=1125.0)
+
+        # Verify leaf-1 was deleted
+        assert f"{doc_id}-leaf-1" in deleted_ids
+        assert len(deleted_ids) == 1
+
+        # Verify remaining leaves
+        leaves_after = sorted(doc_store.nodes.get_leaves(), key=lambda n: n.span_start)
+        assert len(leaves_after) == 2
+        assert leaves_after[0].id == f"{doc_id}-leaf-0"
+        assert leaves_after[1].id == f"{doc_id}-leaf-2"
+
+        # Verify spans are contiguous after truncation:
+        # - leaf-0: [0, 100] (unchanged)
+        # - leaf-2: [100, 200] (shifted from [200, 300] to fill gap left by deleted leaf-1)
+        assert leaves_after[0].span_end == leaves_after[1].span_start, (
+            f"Gap detected after truncation: leaf-0 ends at {leaves_after[0].span_end}, "
+            f"leaf-2 starts at {leaves_after[1].span_start}. "
+            f"Gap size: {leaves_after[1].span_start - leaves_after[0].span_end} chars."
+        )

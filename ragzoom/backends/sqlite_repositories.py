@@ -1126,6 +1126,10 @@ class SqliteNodeRepository:
         - Leaf nodes with time_end beyond the cutoff
         - Internal (summary) nodes whose time range extends beyond the cutoff
 
+        After deletion, adjusts span positions of remaining nodes to eliminate
+        gaps created by deleted leaves. This ensures contiguous span coverage
+        which is required for summarization.
+
         Args:
             document_id: Document identifier
             cutoff_time: Unix timestamp - delete nodes where time_end > this value
@@ -1135,12 +1139,29 @@ class SqliteNodeRepository:
         """
         with self.SessionLocal() as session:
             # Step 1: Find nodes to delete (time_end extends beyond cutoff)
-            stmt = select(SQLiteTreeNode.id).where(
+            # Also get span info for leaves to calculate gap adjustments
+            stmt = select(
+                SQLiteTreeNode.id,
+                SQLiteTreeNode.height,
+                SQLiteTreeNode.span_start,
+                SQLiteTreeNode.span_end,
+            ).where(
                 SQLiteTreeNode.document_id == document_id,
                 SQLiteTreeNode.time_end.isnot(None),
                 SQLiteTreeNode.time_end > cutoff_time,
             )
-            node_ids = [str(row) for row in session.execute(stmt).scalars().all()]
+            rows = session.execute(stmt).all()
+            node_ids = [str(row.id) for row in rows]
+
+            # Collect span ranges of deleted leaves (height=0), sorted by span_start
+            deleted_leaf_spans: list[tuple[int, int]] = sorted(
+                [
+                    (int(row.span_start), int(row.span_end))
+                    for row in rows
+                    if row.height == 0
+                ],
+                key=lambda x: x[0],
+            )
 
             if node_ids:
                 # Step 2: NULL out parent_id on kept children whose parents will be deleted.
@@ -1177,6 +1198,26 @@ class SqliteNodeRepository:
                 session.execute(
                     delete(SQLiteTreeNode).where(SQLiteTreeNode.id.in_(node_ids))
                 )
+
+                # Step 5: Adjust spans of remaining nodes to eliminate gaps
+                # For each deleted leaf span [start, end], all remaining nodes with
+                # span_start >= end need their spans shifted by (end - start).
+                # Process in reverse order so earlier shifts don't affect later ones.
+                for span_start, span_end in reversed(deleted_leaf_spans):
+                    shift_amount = span_end - span_start
+                    # Update all remaining nodes whose span starts at or after deleted end
+                    session.execute(
+                        update(SQLiteTreeNode)
+                        .where(
+                            SQLiteTreeNode.document_id == document_id,
+                            SQLiteTreeNode.span_start >= span_end,
+                        )
+                        .values(
+                            span_start=SQLiteTreeNode.span_start - shift_amount,
+                            span_end=SQLiteTreeNode.span_end - shift_amount,
+                        )
+                    )
+
                 session.commit()
                 # Clear from cache
                 for node_id in node_ids:
