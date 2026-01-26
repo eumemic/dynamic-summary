@@ -788,6 +788,126 @@ class TestTruncateFromTimeVectors:
         assert remaining_leaves[0].id == f"{doc_id}-leaf-0"
 
 
+class TestTruncateFromTimeOrphaning:
+    """Tests for orphaning behavior during time-based truncation.
+
+    Verifies acceptance criterion #6: truncate_from_time correctly orphans
+    kept children by setting parent_id = NULL when their parents are deleted.
+    """
+
+    def test_truncate_from_time_orphans_kept_children(
+        self, storage_backend: StorageBackend
+    ) -> None:
+        """Kept children whose parents are deleted get parent_id = NULL.
+
+        This test verifies acceptance criterion #6 from the spec:
+        'truncate_from_time correctly orphans kept children (NULL parent_id)'
+
+        Setup:
+        - 2 leaves with time_end before cutoff (should be kept)
+        - 1 inner node (parent) with time_end after cutoff (should be deleted)
+        - The leaves reference their parent via parent_id
+
+        After truncation:
+        - Inner node is deleted
+        - Both leaves remain but with parent_id = NULL (orphaned)
+        """
+        doc_id = "test-truncate-orphan"
+
+        # Create a temporal document
+        doc_store = storage_backend.for_document(doc_id)
+        doc_store.set_metadata(
+            file_path="test.txt",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        doc_store._doc_repo.set_document_is_temporal(doc_id, is_temporal=True)
+
+        # Create structure:
+        # - leaf-0: t=1000-1050 (before cutoff, kept)
+        # - leaf-1: t=1050-1100 (before cutoff, kept)
+        # - inner-0: t=1000-1200 (after cutoff, deleted) - parent of both leaves
+        # Cutoff at t=1150: delete nodes where time_end > 1150
+
+        inner_node_id = f"{doc_id}-inner-0"
+
+        # Add leaves with parent_id referencing the inner node
+        leaves: list[NodeDataDict] = [
+            {
+                "node_id": f"{doc_id}-leaf-0",
+                "text": "First leaf content",
+                "span_start": 0,
+                "span_end": 100,
+                "token_count": 10,
+                "height": 0,
+                "level_index": 0,
+                "time_start": 1000.0,
+                "time_end": 1050.0,
+                "parent_id": inner_node_id,
+            },
+            {
+                "node_id": f"{doc_id}-leaf-1",
+                "text": "Second leaf content",
+                "span_start": 100,
+                "span_end": 200,
+                "token_count": 10,
+                "height": 0,
+                "level_index": 1,
+                "time_start": 1050.0,
+                "time_end": 1100.0,
+                "parent_id": inner_node_id,
+            },
+        ]
+        doc_store.nodes.add_batch(leaves)
+
+        # Add parent node that spans both leaves but extends beyond cutoff
+        inner: list[NodeDataDict] = [
+            {
+                "node_id": inner_node_id,
+                "text": "Summary of both leaves",
+                "span_start": 0,
+                "span_end": 200,
+                "token_count": 15,
+                "height": 1,
+                "level_index": 0,
+                "left_child_id": f"{doc_id}-leaf-0",
+                "right_child_id": f"{doc_id}-leaf-1",
+                "time_start": 1000.0,
+                "time_end": 1200.0,  # Extends beyond cutoff
+            },
+        ]
+        doc_store.nodes.add_batch(inner)
+
+        # Verify pre-condition: leaves have parent_id set
+        all_nodes_before = {n.id: n for n in doc_store.nodes.get_all()}
+        assert all_nodes_before[f"{doc_id}-leaf-0"].parent_id == inner_node_id
+        assert all_nodes_before[f"{doc_id}-leaf-1"].parent_id == inner_node_id
+        assert inner_node_id in all_nodes_before
+
+        # Truncate at cutoff_time = 1150
+        # This should delete inner-0 (time_end=1200 > 1150)
+        # And orphan leaf-0 and leaf-1 (their parent was deleted)
+        deleted_ids = storage_backend.delete_nodes_from_time(doc_id, cutoff_time=1150.0)
+
+        # Verify the inner node was deleted
+        assert inner_node_id in deleted_ids
+        assert len(deleted_ids) == 1  # Only inner node deleted
+
+        # Verify leaves still exist
+        all_nodes_after = {n.id: n for n in doc_store.nodes.get_all()}
+        assert f"{doc_id}-leaf-0" in all_nodes_after
+        assert f"{doc_id}-leaf-1" in all_nodes_after
+        assert inner_node_id not in all_nodes_after
+
+        # KEY ASSERTION: Verify leaves are now orphaned (parent_id = NULL)
+        assert (
+            all_nodes_after[f"{doc_id}-leaf-0"].parent_id is None
+        ), "Kept child should be orphaned (parent_id = NULL) when parent is deleted"
+        assert (
+            all_nodes_after[f"{doc_id}-leaf-1"].parent_id is None
+        ), "Kept child should be orphaned (parent_id = NULL) when parent is deleted"
+
+
 class TestTruncateFromTimeServicer:
     """Tests for the TruncateFromTime gRPC servicer method.
 
