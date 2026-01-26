@@ -17,7 +17,7 @@ def test_config_accepts_none_target_chunk_tokens() -> None:
     # Create a config with target_chunk_tokens=None
     config = IndexConfig(
         target_chunk_tokens=None,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
         max_parallelism=4,
         summary_model="gpt-4o-mini",
         embedding_model="text-embedding-3-small",
@@ -41,7 +41,7 @@ def test_config_backward_compatible() -> None:
     # Create a config with an integer target_chunk_tokens (current behavior)
     config = IndexConfig(
         target_chunk_tokens=200,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
         max_parallelism=4,
         summary_model="gpt-4o-mini",
         embedding_model="text-embedding-3-small",
@@ -67,7 +67,7 @@ def test_config_validates_positive_chunk_tokens() -> None:
     with pytest.raises(ValueError, match="target_chunk_tokens must be positive"):
         IndexConfig(
             target_chunk_tokens=0,
-            target_embedding_context_tokens=200,
+            target_embedding_tokens=200,
             max_parallelism=4,
             summary_model="gpt-4o-mini",
             embedding_model="text-embedding-3-small",
@@ -82,7 +82,7 @@ def test_config_validates_positive_chunk_tokens() -> None:
     with pytest.raises(ValueError, match="target_chunk_tokens must be positive"):
         IndexConfig(
             target_chunk_tokens=-1,
-            target_embedding_context_tokens=200,
+            target_embedding_tokens=200,
             max_parallelism=4,
             summary_model="gpt-4o-mini",
             embedding_model="text-embedding-3-small",
@@ -96,7 +96,7 @@ def test_config_validates_positive_chunk_tokens() -> None:
     # Test that None is allowed (no exception)
     config = IndexConfig(
         target_chunk_tokens=None,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
         max_parallelism=4,
         summary_model="gpt-4o-mini",
         embedding_model="text-embedding-3-small",

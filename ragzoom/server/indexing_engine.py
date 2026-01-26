@@ -1456,7 +1456,7 @@ class IndexingEngine:
             contextualization_result = await self._llm_service._contextualize_text(
                 preceding_context=context_prefix,
                 target_text=leaf_text,
-                target_tokens=self._index_config.target_embedding_context_tokens,
+                target_tokens=self._index_config.target_embedding_tokens,
                 parent_id=job.leaf_id,
                 reporter=telemetry,
             )
@@ -1954,12 +1954,12 @@ class IndexingEngine:
             self._index_config.embedding_model,
             async_client=self._llm_service.client,
         )
-        # For retrieval operations, use target_embedding_context_tokens as fallback
+        # For retrieval operations, use target_embedding_tokens as fallback
         # when target_chunk_tokens is None (client-managed chunking mode)
         chunk_tokens = (
             self._index_config.target_chunk_tokens
             if self._index_config.target_chunk_tokens is not None
-            else self._index_config.target_embedding_context_tokens
+            else self._index_config.target_embedding_tokens
         )
         budget_planner = BudgetPlanner(
             document_store,

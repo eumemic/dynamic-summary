@@ -25,7 +25,7 @@ async def test_chars_per_token_fallback_before_first_append(
     # Configure runtime for client-managed chunking
     index_config = IndexConfig.load(
         target_chunk_tokens=None,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
     )
 
     indexer_runtime_harness.runtime._index_config = index_config

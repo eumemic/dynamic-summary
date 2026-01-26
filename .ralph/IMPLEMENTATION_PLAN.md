@@ -261,17 +261,19 @@ Remove the old config field and update all references atomically to prevent type
   - Location: `ragzoom/config.py:398` (from_dict method)
   - **DONE**: Added check in from_dict that raises ValueError with helpful message when deprecated field is present. Error explains to use `target_embedding_tokens` instead and references spec.
 
-- [ ] Remove `target_embedding_context_tokens` from IndexConfig fields
+- [x] Remove `target_embedding_context_tokens` from IndexConfig fields
   - Spec: specs/embedding-text-optimization.md § Configuration > Removed Parameter
   - Success: `IndexConfig` no longer has `target_embedding_context_tokens` attribute
   - Test: `tests/test_index_config.py::test_no_target_embedding_context_tokens_field`
   - Location: `ragzoom/config.py:291` (IndexConfig dataclass)
+  - **DONE**: Removed field from IndexConfig dataclass. All usages updated to use `target_embedding_tokens`.
 
-- [ ] Remove `target_embedding_context_tokens` from IndexConfigDict
+- [x] Remove `target_embedding_context_tokens` from IndexConfigDict
   - Spec: specs/embedding-text-optimization.md § Configuration > Removed Parameter
   - Success: TypedDict no longer declares the field
   - Test: (type checking)
   - Location: `ragzoom/config.py:29` (IndexConfigDict)
+  - **DONE**: Removed field from IndexConfigDict TypedDict.
 
 - [x] Remove `target_embedding_context_tokens` from default_config.json
   - Spec: specs/embedding-text-optimization.md § Migration
@@ -280,47 +282,54 @@ Remove the old config field and update all references atomically to prevent type
   - Location: `ragzoom/default_config.json`
   - **DONE**: Removed field from default_config.json. This was necessary alongside the from_dict deprecation error since load() uses from_dict internally.
 
-- [ ] Update `ragzoom/services/query_service.py` to use new config field
+- [x] Update `ragzoom/services/query_service.py` to use new config field
   - Spec: specs/embedding-text-optimization.md § Migration
   - Success: Uses `target_embedding_tokens` for fallback calculations
   - Test: `tests/test_query_service.py` passes
   - Location: `ragzoom/services/query_service.py:108-113`
+  - **DONE**: Updated to use `target_embedding_tokens`.
 
-- [ ] Update `ragzoom/server/servicers.py` to use new config field
+- [x] Update `ragzoom/server/servicers.py` to use new config field
   - Spec: specs/embedding-text-optimization.md § Migration
   - Success: Uses `target_embedding_tokens` for retrieval operations
   - Test: `tests/test_servicers.py` passes
   - Location: `ragzoom/server/servicers.py:241-246`
+  - **DONE**: Updated to use `target_embedding_tokens`.
 
-- [ ] Update `ragzoom/telemetry_collection.py` to use new config field
+- [x] Update `ragzoom/telemetry_collection.py` to use new config field
   - Spec: specs/embedding-text-optimization.md § Migration
   - Success: Telemetry uses new field for fallback calculations
   - Test: `tests/test_cached_token_telemetry.py` passes
   - Location: `ragzoom/telemetry_collection.py:684-688`
+  - **DONE**: Updated to use `target_embedding_tokens`.
 
-- [ ] Update `ragzoom/server/indexing_engine.py` to use new config field
+- [x] Update `ragzoom/server/indexing_engine.py` to use new config field
   - Spec: specs/embedding-text-optimization.md § Migration
   - Success: All uses of old config field replaced with new
   - Test: No grep matches for `target_embedding_context_tokens` in indexing_engine.py
   - Location: `ragzoom/server/indexing_engine.py:1459, 1957, 1962`
+  - **DONE**: Updated both occurrences to use `target_embedding_tokens`.
 
-- [ ] Update `tests/conftest.py` to use new config field
+- [x] Update `tests/conftest.py` to use new config field
   - Spec: specs/embedding-text-optimization.md § Migration
   - Success: Test fixtures use `target_embedding_tokens`
   - Test: All tests pass
   - Location: `tests/conftest.py:83-88`
+  - **DONE**: Updated fallback pattern to use `target_embedding_tokens`.
 
-- [ ] Update `tests/utils.py` to use new config field
+- [x] Update `tests/utils.py` to use new config field
   - Spec: specs/embedding-text-optimization.md § Migration
   - Success: Test utilities use new field
   - Test: All tests pass
   - Location: `tests/utils.py:594-599`
+  - **DONE**: Updated fallback pattern to use `target_embedding_tokens`.
 
-- [ ] Update all test fixtures using `target_embedding_context_tokens`
+- [x] Update all test fixtures using `target_embedding_context_tokens`
   - Spec: specs/embedding-text-optimization.md § Migration
   - Success: All tests pass with new config field name
   - Test: Full test suite passes
   - Location: Multiple test files (see grep results)
+  - **DONE**: Updated all test files: test_config.py, test_index_config.py, test_clear_orphaned_nodes.py, test_integration.py, test_phase4_dynamic_summary_targets.py, test_chars_per_token_*.py, test_embedding_token_limit.py, test_cached_token_telemetry.py, test_retrieval_invariants_sqlite.py, test_retry_conversation_continuation.py, test_query_performance.py.
 
 ### Phase 36: Core Implementation
 
