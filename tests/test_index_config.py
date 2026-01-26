@@ -472,3 +472,58 @@ def test_no_target_embedding_context_tokens_field() -> None:
     assert not hasattr(config, "target_embedding_context_tokens")
     # But the new field should exist
     assert hasattr(config, "target_embedding_tokens")
+
+
+def test_deprecation_error_message_helpful() -> None:
+    """Test that deprecation error message explains what to use instead.
+
+    Acceptance test for specs/embedding-text-optimization.md § Acceptance Criteria > 4:
+    "Config migration: Old configs with target_embedding_context_tokens get clear
+    deprecation error"
+
+    This test verifies the error message provides actionable guidance:
+    1. Identifies the problematic field by name
+    2. Explains that the field was removed (not just deprecated)
+    3. Tells the user exactly which field to use instead
+    4. Optionally points to documentation for more details
+    """
+    import pytest
+
+    config_dict = {
+        "target_chunk_tokens": 200,
+        "target_embedding_context_tokens": 200,
+        "max_parallelism": 4,
+        "summary_model": "gpt-4o-mini",
+        "embedding_model": "text-embedding-3-small",
+        "retry_threshold": 0.5,
+        "max_retries": 3,
+        "embedding_batch_size": 100,
+        "use_anti_verbatim_vaccine": True,
+        "processing_strategy": "bottom_to_top",
+        "preceding_context": {"leaf": {}, "inner": {}},
+    }
+
+    with pytest.raises(ValueError) as exc_info:
+        IndexConfig.from_dict(config_dict)  # type: ignore[arg-type]
+
+    error_message = str(exc_info.value)
+
+    # 1. Identifies the problematic field by name
+    assert (
+        "target_embedding_context_tokens" in error_message
+    ), "Error message should name the problematic field"
+
+    # 2. Explains that the field was removed
+    assert (
+        "removed" in error_message.lower()
+    ), "Error message should explain the field was removed"
+
+    # 3. Tells the user exactly which field to use instead
+    assert (
+        "target_embedding_tokens" in error_message
+    ), "Error message should tell user which field to use instead"
+
+    # 4. Message is a complete sentence with actionable guidance
+    assert (
+        "Use" in error_message
+    ), "Error message should provide actionable guidance (e.g., 'Use X instead')"
