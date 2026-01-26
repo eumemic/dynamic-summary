@@ -341,60 +341,72 @@ class TestTemporalValidationOnSubsequentAppends:
         assert len(leaves) == 3
 
 
-class TestTemporalRequiresClientControlledChunking:
-    """Test that temporal documents require client-controlled chunking."""
+class TestTemporalIgnoresTargetChunkTokens:
+    """Test that temporal documents ignore target_chunk_tokens config.
+
+    Temporal documents always use client-controlled chunking to preserve
+    the one-to-one mapping between input units and leaf nodes. When
+    target_chunk_tokens is set in config, it is silently ignored for
+    temporal documents.
+    """
 
     @pytest.mark.asyncio
-    async def test_append_with_timestamp_and_target_chunk_tokens_raises(
+    async def test_append_with_timestamp_ignores_target_chunk_tokens(
         self, sqlite_backend: SQLiteStorageBackend
     ) -> None:
-        """First append with timestamps + target_chunk_tokens set → Error."""
-        # Create config WITH target_chunk_tokens (server-controlled chunking)
+        """First append with timestamps + target_chunk_tokens set → Success (ignored)."""
+        # Create config WITH target_chunk_tokens (would normally split)
         config = IndexConfig.load(target_chunk_tokens=512)
         store = _create_document(sqlite_backend, "doc-chunking-val-1")
         executor = AppendExecutor(config, StubEmbedder())
 
-        # Attempt append WITH timestamp should fail because target_chunk_tokens is set
-        with pytest.raises(ValueError) as exc_info:
-            await executor.append(
-                store=store,
-                document_id="doc-chunking-val-1",
-                new_text="First message",
-                timestamp="2024-01-21T14:30:00Z",
-            )
+        # Append WITH timestamp succeeds - target_chunk_tokens is ignored
+        await executor.append(
+            store=store,
+            document_id="doc-chunking-val-1",
+            new_text="First message",
+            timestamp="2024-01-21T14:30:00Z",
+        )
 
-        error_msg = str(exc_info.value).lower()
-        assert "temporal" in error_msg
-        assert "client-controlled" in error_msg or "target_chunk_tokens" in error_msg
+        # Verify document is temporal and has exactly one leaf
+        assert (
+            sqlite_backend.doc_repo.get_document_is_temporal("doc-chunking-val-1")
+            is True
+        )
+        leaves = store.nodes.get_leaves()
+        assert len(leaves) == 1
 
     @pytest.mark.asyncio
-    async def test_batch_append_with_timestamps_and_target_chunk_tokens_raises(
+    async def test_batch_append_with_timestamps_ignores_target_chunk_tokens(
         self, sqlite_backend: SQLiteStorageBackend
     ) -> None:
-        """First batch append with timestamps + target_chunk_tokens set → Error."""
-        # Create config WITH target_chunk_tokens (server-controlled chunking)
+        """First batch append with timestamps + target_chunk_tokens set → Success."""
+        # Create config WITH target_chunk_tokens (would normally split)
         config = IndexConfig.load(target_chunk_tokens=512)
         store = _create_document(sqlite_backend, "doc-chunking-val-2")
         executor = AppendExecutor(config, StubEmbedder())
 
-        # Attempt batch append WITH timestamps should fail
-        with pytest.raises(ValueError) as exc_info:
-            await executor.append_batch(
-                store=store,
-                document_id="doc-chunking-val-2",
-                units=["Turn A", "Turn B"],
-                timestamps=["2024-01-21T14:30:00Z", "2024-01-21T14:30:05Z"],
-            )
+        # Batch append WITH timestamps succeeds - target_chunk_tokens is ignored
+        await executor.append_batch(
+            store=store,
+            document_id="doc-chunking-val-2",
+            units=["Turn A", "Turn B"],
+            timestamps=["2024-01-21T14:30:00Z", "2024-01-21T14:30:05Z"],
+        )
 
-        error_msg = str(exc_info.value).lower()
-        assert "temporal" in error_msg
-        assert "client-controlled" in error_msg or "target_chunk_tokens" in error_msg
+        # Verify document is temporal and has exactly two leaves (one per unit)
+        assert (
+            sqlite_backend.doc_repo.get_document_is_temporal("doc-chunking-val-2")
+            is True
+        )
+        leaves = store.nodes.get_leaves()
+        assert len(leaves) == 2
 
     @pytest.mark.asyncio
-    async def test_append_without_timestamp_and_target_chunk_tokens_succeeds(
+    async def test_append_without_timestamp_respects_target_chunk_tokens(
         self, sqlite_backend: SQLiteStorageBackend
     ) -> None:
-        """First append without timestamps + target_chunk_tokens set → Success (non-temporal)."""
+        """First append without timestamps + target_chunk_tokens set → uses chunking."""
         config = IndexConfig.load(target_chunk_tokens=512)
         store = _create_document(sqlite_backend, "doc-chunking-val-3")
         executor = AppendExecutor(config, StubEmbedder())
@@ -413,23 +425,113 @@ class TestTemporalRequiresClientControlledChunking:
         )
 
     @pytest.mark.asyncio
-    async def test_append_with_timestamp_tuple_and_target_chunk_tokens_raises(
+    async def test_append_with_timestamp_tuple_ignores_target_chunk_tokens(
         self, sqlite_backend: SQLiteStorageBackend
     ) -> None:
-        """First append with timestamp tuple + target_chunk_tokens set → Error."""
+        """First append with timestamp tuple + target_chunk_tokens set → Success."""
         config = IndexConfig.load(target_chunk_tokens=512)
         store = _create_document(sqlite_backend, "doc-chunking-val-4")
         executor = AppendExecutor(config, StubEmbedder())
 
-        # Attempt append WITH timestamp tuple should fail
-        with pytest.raises(ValueError) as exc_info:
-            await executor.append(
-                store=store,
-                document_id="doc-chunking-val-4",
-                new_text="First message",
-                timestamp=("2024-01-21T14:30:00Z", "2024-01-21T14:30:05Z"),
-            )
+        # Append WITH timestamp tuple succeeds - target_chunk_tokens is ignored
+        await executor.append(
+            store=store,
+            document_id="doc-chunking-val-4",
+            new_text="First message",
+            timestamp=("2024-01-21T14:30:00Z", "2024-01-21T14:30:05Z"),
+        )
 
-        error_msg = str(exc_info.value).lower()
-        assert "temporal" in error_msg
-        assert "client-controlled" in error_msg or "target_chunk_tokens" in error_msg
+        # Verify document is temporal and has exactly one leaf
+        assert (
+            sqlite_backend.doc_repo.get_document_is_temporal("doc-chunking-val-4")
+            is True
+        )
+        leaves = store.nodes.get_leaves()
+        assert len(leaves) == 1
+
+    @pytest.mark.asyncio
+    async def test_subsequent_append_to_temporal_doc_ignores_server_chunking(
+        self, sqlite_backend: SQLiteStorageBackend
+    ) -> None:
+        """Subsequent append to temporal document with different config succeeds.
+
+        Scenario: A temporal document was created with target_chunk_tokens=None,
+        then someone appends with an executor that has target_chunk_tokens set
+        (e.g., daemon restarted with different config).
+
+        This should succeed - the config setting is ignored for temporal documents.
+        """
+        # Step 1: Create temporal document with target_chunk_tokens=None
+        correct_config = IndexConfig.load(target_chunk_tokens=None)
+        store = _create_document(sqlite_backend, "doc-subsequent-guard")
+        correct_executor = AppendExecutor(correct_config, StubEmbedder())
+
+        await correct_executor.append(
+            store=store,
+            document_id="doc-subsequent-guard",
+            new_text="First message",
+            timestamp="2024-01-21T14:30:00Z",
+        )
+
+        # Verify document is temporal
+        assert (
+            sqlite_backend.doc_repo.get_document_is_temporal("doc-subsequent-guard")
+            is True
+        )
+
+        # Step 2: Append with different config (target_chunk_tokens set)
+        different_config = IndexConfig.load(target_chunk_tokens=512)
+        different_executor = AppendExecutor(different_config, StubEmbedder())
+
+        # This succeeds - target_chunk_tokens is ignored for temporal docs
+        await different_executor.append(
+            store=store,
+            document_id="doc-subsequent-guard",
+            new_text="Second message",
+            timestamp="2024-01-21T14:30:05Z",
+        )
+
+        # Verify we have exactly 2 leaves (one per append, no splitting)
+        leaves = store.nodes.get_leaves()
+        assert len(leaves) == 2
+
+    @pytest.mark.asyncio
+    async def test_subsequent_batch_append_to_temporal_doc_ignores_server_chunking(
+        self, sqlite_backend: SQLiteStorageBackend
+    ) -> None:
+        """Subsequent batch append to temporal document with different config succeeds."""
+        # Step 1: Create temporal document
+        correct_config = IndexConfig.load(target_chunk_tokens=None)
+        store = _create_document(sqlite_backend, "doc-subsequent-batch-guard")
+        correct_executor = AppendExecutor(correct_config, StubEmbedder())
+
+        await correct_executor.append_batch(
+            store=store,
+            document_id="doc-subsequent-batch-guard",
+            units=["Turn A"],
+            timestamps=["2024-01-21T14:30:00Z"],
+        )
+
+        # Verify document is temporal
+        assert (
+            sqlite_backend.doc_repo.get_document_is_temporal(
+                "doc-subsequent-batch-guard"
+            )
+            is True
+        )
+
+        # Step 2: Batch append with different config
+        different_config = IndexConfig.load(target_chunk_tokens=512)
+        different_executor = AppendExecutor(different_config, StubEmbedder())
+
+        # This succeeds - target_chunk_tokens is ignored for temporal docs
+        await different_executor.append_batch(
+            store=store,
+            document_id="doc-subsequent-batch-guard",
+            units=["Turn B", "Turn C"],
+            timestamps=["2024-01-21T14:30:05Z", "2024-01-21T14:30:10Z"],
+        )
+
+        # Verify we have exactly 3 leaves (one per unit, no splitting)
+        leaves = store.nodes.get_leaves()
+        assert len(leaves) == 3

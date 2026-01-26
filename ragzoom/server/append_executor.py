@@ -164,7 +164,12 @@ class AppendExecutor:
         rightmost existing leaf.
         """
         # Only reject empty text when not in client-managed chunking mode
-        if not new_text and self._config.target_chunk_tokens is not None:
+        # Temporal documents (timestamp present) always use client-managed mode
+        if (
+            not new_text
+            and self._config.target_chunk_tokens is not None
+            and timestamp is None
+        ):
             raise ValueError("append requires non-empty text")
 
         # Parse timestamp parameter
@@ -173,7 +178,11 @@ class AppendExecutor:
         time_end = parsed[1] if parsed else None
 
         # Client-managed chunking: truncate units > MAX_UNIT_CHARS
-        if self._config.target_chunk_tokens is None and len(new_text) > MAX_UNIT_CHARS:
+        # Applies when: config specifies client-managed, OR timestamps present (temporal mode)
+        use_client_chunking = (
+            self._config.target_chunk_tokens is None or timestamp is not None
+        )
+        if use_client_chunking and len(new_text) > MAX_UNIT_CHARS:
             logger.warning(
                 "append[%s]: truncating unit from %d to %d characters "
                 "(client-managed chunking mode)",
@@ -195,17 +204,19 @@ class AppendExecutor:
         is_first_append = right_leaf is None
         has_timestamps = timestamp is not None
 
+        # Determine if we're in temporal mode (forces client-controlled chunking)
+        is_temporal_mode = False
+
         if is_first_append:
             # First append: infer is_temporal from presence of timestamps
             if has_timestamps:
-                # Temporal documents require client-controlled chunking
+                is_temporal_mode = True
                 if self._config.target_chunk_tokens is not None:
-                    raise ValueError(
-                        "Temporal documents require target_chunk_tokens=null in config. "
-                        "This setting preserves one-to-one mapping between input units and "
-                        "leaf nodes, which is required for accurate timestamp-based queries. "
-                        "Set 'target_chunk_tokens: null' in your config file or use "
-                        "'--target-chunk-tokens null' on the CLI."
+                    logger.debug(
+                        "append[%s]: temporal document ignores target_chunk_tokens=%d, "
+                        "using client-controlled chunking",
+                        document_id,
+                        self._config.target_chunk_tokens,
                     )
                 store._doc_repo.set_document_is_temporal(document_id, is_temporal=True)
         else:
@@ -223,6 +234,15 @@ class AppendExecutor:
                 raise ValueError(
                     f"Document '{document_id}' is non-temporal and does not accept timestamps"
                 )
+            if is_temporal:
+                is_temporal_mode = True
+                if self._config.target_chunk_tokens is not None:
+                    logger.debug(
+                        "append[%s]: temporal document ignores target_chunk_tokens=%d, "
+                        "using client-controlled chunking",
+                        document_id,
+                        self._config.target_chunk_tokens,
+                    )
 
         # New leaves start where the existing content ends
         span_start = int(right_leaf.span_end) if right_leaf else 0
@@ -254,9 +274,13 @@ class AppendExecutor:
             )
 
         # Split only the new text - don't touch existing content
-        chunks = self._splitter.split_text(new_text)
-        if not chunks:
-            raise ValueError("splitter returned no chunks for append")
+        # In temporal mode, bypass splitter to preserve one-to-one unit-to-leaf mapping
+        if is_temporal_mode:
+            chunks = [new_text]
+        else:
+            chunks = self._splitter.split_text(new_text)
+            if not chunks:
+                raise ValueError("splitter returned no chunks for append")
 
         # Build timestamps sequence: all chunks share the same timestamp
         chunk_timestamps: list[tuple[float, float] | None] | None = None
@@ -478,17 +502,19 @@ class AppendExecutor:
         is_first_append = right_leaf is None
         has_timestamps = parsed_timestamps is not None
 
+        # Determine if we're in temporal mode (forces client-controlled chunking)
+        is_temporal_mode = False
+
         if is_first_append:
             # First append: infer is_temporal from presence of timestamps
             if has_timestamps:
-                # Temporal documents require client-controlled chunking
+                is_temporal_mode = True
                 if self._config.target_chunk_tokens is not None:
-                    raise ValueError(
-                        "Temporal documents require target_chunk_tokens=null in config. "
-                        "This setting preserves one-to-one mapping between input units and "
-                        "leaf nodes, which is required for accurate timestamp-based queries. "
-                        "Set 'target_chunk_tokens: null' in your config file or use "
-                        "'--target-chunk-tokens null' on the CLI."
+                    logger.debug(
+                        "append_batch[%s]: temporal document ignores target_chunk_tokens=%d, "
+                        "using client-controlled chunking",
+                        document_id,
+                        self._config.target_chunk_tokens,
                     )
                 store._doc_repo.set_document_is_temporal(document_id, is_temporal=True)
         else:
@@ -506,6 +532,15 @@ class AppendExecutor:
                 raise ValueError(
                     f"Document '{document_id}' is non-temporal and does not accept timestamps"
                 )
+            if is_temporal:
+                is_temporal_mode = True
+                if self._config.target_chunk_tokens is not None:
+                    logger.debug(
+                        "append_batch[%s]: temporal document ignores target_chunk_tokens=%d, "
+                        "using client-controlled chunking",
+                        document_id,
+                        self._config.target_chunk_tokens,
+                    )
 
         # Track position across all units
         span_start = int(right_leaf.span_end) if right_leaf else 0
@@ -556,9 +591,15 @@ class AppendExecutor:
             time_end = unit_timestamp[1] if unit_timestamp else None
 
             # Split this unit (may produce 1+ chunks)
-            chunks = self._splitter.split_text(unit_text)
-            if not chunks:
-                raise ValueError("splitter returned no chunks for unit in append_batch")
+            # In temporal mode, bypass splitter to preserve one-to-one unit-to-leaf mapping
+            if is_temporal_mode:
+                chunks = [unit_text]
+            else:
+                chunks = self._splitter.split_text(unit_text)
+                if not chunks:
+                    raise ValueError(
+                        "splitter returned no chunks for unit in append_batch"
+                    )
 
             # Build timestamps sequence: all chunks from this unit share the same timestamp
             chunk_timestamps: list[tuple[float, float] | None] | None = None
@@ -896,8 +937,8 @@ class AppendExecutor:
     ) -> tuple[list[str], list[tuple[float, float] | None] | None]:
         """Process units for batch append, handling truncation or filtering.
 
-        In client-managed chunking mode (target_chunk_tokens is None), truncates
-        oversized units but preserves all units including empty ones.
+        In client-managed chunking mode (target_chunk_tokens is None OR timestamps
+        present), truncates oversized units but preserves all units including empty ones.
 
         In normal mode, filters out empty/whitespace-only units.
 
@@ -907,7 +948,13 @@ class AppendExecutor:
         result_units: list[str] = []
         result_timestamps: list[tuple[float, float] | None] = []
 
-        if self._config.target_chunk_tokens is None:
+        # Use client-managed chunking if config specifies it OR timestamps are present
+        # (temporal documents always use client-managed chunking)
+        use_client_chunking = (
+            self._config.target_chunk_tokens is None or parsed_timestamps is not None
+        )
+
+        if use_client_chunking:
             # Client-managed chunking: truncate oversized units, preserve all
             for i, unit in enumerate(units):
                 if len(unit) > MAX_UNIT_CHARS:

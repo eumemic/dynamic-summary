@@ -27,6 +27,38 @@ Two changes to RagZoom core:
 - When set to an integer: current behavior (fixed chunking + fixed summary targets)
 - Fully backward compatible—existing configs work unchanged
 
+## Temporal Documents Always Use Client-Managed Chunking
+
+**Behavior:** When appending to a temporal document (timestamps provided), `target_chunk_tokens` is **ignored**. The system automatically uses client-managed chunking regardless of config.
+
+### Rationale
+
+If the server were to chunk temporal data, it would need to assign timestamps to sub-chunks. There's no correct way to do this:
+- **Same range for all chunks** → falsifies data (makes sequential events appear simultaneous)
+- **Evenly divide the time range** → fabricates timestamps that don't reflect reality
+- **Null timestamps on sub-chunks** → loses temporal information
+
+Rather than requiring users to configure this correctly, the system enforces it automatically: any append with timestamps uses client-managed chunking.
+
+### Implementation
+
+In `append_executor.py`, when timestamps are present:
+1. Truncation behavior uses client-managed mode (truncate > 50k chars, preserve empty units)
+2. Splitter is bypassed entirely—each input unit becomes exactly one leaf
+3. A debug log message notes when `target_chunk_tokens` is being ignored
+
+```python
+# Determine if we're in temporal mode (forces client-controlled chunking)
+is_temporal_mode = has_timestamps or is_temporal
+
+if is_temporal_mode:
+    chunks = [unit_text]  # Bypass splitter
+else:
+    chunks = self._splitter.split_text(unit_text)
+```
+
+This ensures temporal documents work correctly regardless of server config.
+
 ## Behavior Changes
 
 ### Append Operations
@@ -120,6 +152,7 @@ Memory service will use a config with `target_chunk_tokens: null` to enable clie
 4. **Passthrough floor**: Summaries targeting < 50 tokens pass through unchanged
 5. **Backward compatible**: Existing configs with `target_chunk_tokens: 200` work identically
 6. **Large unit handling**: Units > 50k chars are truncated with a warning logged
+7. **Temporal auto-chunking**: Temporal documents always use client-managed chunking; `target_chunk_tokens` is ignored
 
 ## Non-Goals
 
