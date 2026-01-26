@@ -440,23 +440,26 @@ Unit tests for the core stateless sync functions.
 
 Replace append log logic with stateless algorithm.
 
-- [ ] Refactor `execute_sync()` to use document status for indexed state
+- [x] Refactor `execute_sync()` to use document status for indexed state
   - Spec: specs/stateless-transcript-sync.md § 2. Use Document Status for Indexed State
   - Success: Function calls `client.get_document_status()` instead of reading append log
   - Test: `test_execute_sync_stateless`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:923
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:1139
+  - Implementation: Refactored execute_sync to call get_document_status() for indexed_time_end, use find_truncation_point() and build_ancestry_chain() for sync planning, and truncate_from_time() for revert detection. Updated all test fixtures (FakeTranscriptClient, MockClient, AppendExecutorClient) with get_document_status() and truncate_from_time() methods. Tests updated to verify stateless behavior.
 
-- [ ] Refactor `execute_sync()` to use `find_truncation_point()`
+- [x] Refactor `execute_sync()` to use `find_truncation_point()`
   - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
   - Success: Function uses new algorithm instead of `compute_sync_plan()`
   - Test: `test_execute_sync_stateless`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:923
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:1139
+  - Implementation: Completed as part of the above refactoring
 
-- [ ] Refactor `execute_sync()` to use `truncate_from_time()` for reverts
+- [x] Refactor `execute_sync()` to use `truncate_from_time()` for reverts
   - Spec: specs/stateless-transcript-sync.md § 4. Revert Detection and Truncation
   - Success: Function calls time-based truncation instead of span-based
   - Test: `test_execute_sync_revert_truncation`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:923
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:1139
+  - Implementation: Completed as part of the above refactoring
 
 - [ ] Remove state file creation/reading from `execute_sync()`
   - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log

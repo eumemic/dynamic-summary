@@ -13,6 +13,7 @@ from pathlib import Path
 from ragzoom_claude_code.transcript_sync import (
     execute_sync,
 )
+
 from ragzoom.wrapper import AppendUnit
 
 
@@ -57,6 +58,21 @@ class BatchAppendResult:
 
 
 @dataclass
+class MockDocumentStatus:
+    """Mock document status for stateless sync testing."""
+
+    document_id: str
+    exists: bool = False
+    is_temporal: bool = True
+    leaf_count: int = 0
+    node_count: int = 0
+    complete_forest_size: int = 0
+    completion_pct: float = 0.0
+    time_start: str | None = None
+    time_end: str | None = None
+
+
+@dataclass
 class MockClient:
     """Mock client that tracks method calls for testing."""
 
@@ -67,6 +83,14 @@ class MockClient:
     truncate_calls: list[tuple[str, int]] = field(default_factory=list)
 
     _span_counter: int = field(default=0)
+    _document_status: MockDocumentStatus | None = None
+
+    def get_document_status(self, document_id: str) -> MockDocumentStatus:
+        """Return document status for stateless sync."""
+        if self._document_status is not None:
+            return self._document_status
+        # Default: non-existent document (first sync)
+        return MockDocumentStatus(document_id=document_id, exists=False)
 
     def append(
         self,
@@ -363,9 +387,21 @@ class TestExecuteSyncUsesBatchAppend:
         execute_sync(transcript_path, state_path, client)
         assert len(client.batch_append_calls) == 1
 
+        # Simulate that document now has indexed content up to msg1's timestamp
+        # In stateless sync, the second sync queries document status to know what's indexed
+        client._document_status = MockDocumentStatus(
+            document_id="transcript",
+            exists=True,
+            is_temporal=True,
+            leaf_count=1,
+            node_count=1,
+            time_start="2024-01-21T14:30:00Z",
+            time_end="2024-01-21T14:30:00Z",  # Indexed up to this timestamp
+        )
+
         # Reset tracking
         client.batch_append_calls = []
 
-        # Second sync with no changes
+        # Second sync with no changes - should detect head is already indexed
         execute_sync(transcript_path, state_path, client)
         assert len(client.batch_append_calls) == 0

@@ -1069,6 +1069,21 @@ class FakeAppendResult:
     chunks_created: int = 1
 
 
+@dataclass
+class FakeDocumentStatus:
+    """Fake document status for stateless sync testing."""
+
+    document_id: str
+    exists: bool = False
+    is_temporal: bool = True
+    leaf_count: int = 0
+    node_count: int = 0
+    complete_forest_size: int = 0
+    completion_pct: float = 0.0
+    time_start: str | None = None
+    time_end: str | None = None
+
+
 class FakeTranscriptClient:
     """Fake client for transcript sync tests that tracks appends and truncations."""
 
@@ -1076,7 +1091,48 @@ class FakeTranscriptClient:
         self.appends: list[tuple[str, str]] = []
         self.timestamps: list[tuple[str, str] | None] = []
         self.truncates: list[tuple[str, int]] = []
+        self.truncate_from_time_calls: list[tuple[str, str]] = []
+        self.batch_append_calls: list[tuple[str, list[object]]] = []
         self._current_span: int = 0
+        self._document_status: FakeDocumentStatus | None = None
+        self._last_time_end: str | None = None
+
+    def get_document_status(self, document_id: str) -> FakeDocumentStatus:
+        """Return document status for stateless sync.
+
+        Returns configured status or auto-generated based on appends.
+        """
+        if self._document_status is not None:
+            return self._document_status
+
+        # Auto-generate status based on what's been appended
+        if self._last_time_end is not None:
+            return FakeDocumentStatus(
+                document_id=document_id,
+                exists=True,
+                is_temporal=True,
+                leaf_count=len(self.appends),
+                node_count=len(self.appends),
+                time_end=self._last_time_end,
+            )
+
+        # Default: non-existent document
+        return FakeDocumentStatus(document_id=document_id, exists=False)
+
+    def truncate_from_time(self, document_id: str, cutoff_time: str) -> object:
+        """Track time-based truncation calls."""
+        self.truncate_from_time_calls.append((document_id, cutoff_time))
+        # Update internal state to reflect truncation
+        self._last_time_end = cutoff_time
+        return type(
+            "TruncateFromTimeResult",
+            (),
+            {
+                "document_id": document_id,
+                "deleted_node_ids": [],
+                "cutoff_time": cutoff_time,
+            },
+        )()
 
     def append(
         self,
@@ -1101,27 +1157,44 @@ class FakeTranscriptClient:
 
         Args:
             document_id: Document to append to
-            units: Either list of strings or list of AppendUnit objects
+            units: List of AppendUnit objects or strings
         """
+        self.batch_append_calls.append((document_id, units))
         span_start = self._current_span
+
         for unit in units:
-            # Support both string units and AppendUnit objects
+            # Extract text and timestamp from AppendUnit or treat as string
             if hasattr(unit, "text"):
-                text = unit.text  # AppendUnit
-                timestamp = None
-                if hasattr(unit, "time_start") and hasattr(unit, "time_end"):
-                    if unit.time_start is not None and unit.time_end is not None:
-                        timestamp = (unit.time_start, unit.time_end)
-                self.timestamps.append(timestamp)
+                text = unit.text
+                timestamp = self._extract_timestamp(unit)
             else:
                 text = str(unit)
+                timestamp = None
+
             self.appends.append((document_id, text))
+            self.timestamps.append(timestamp)
             self._current_span += len(text)
+
         return FakeAppendResult(
             span_start=span_start,
             span_end=self._current_span,
             chunks_created=len(units),
         )
+
+    def _extract_timestamp(self, unit: object) -> tuple[str, str] | None:
+        """Extract timestamp tuple from AppendUnit if present."""
+        if not hasattr(unit, "time_start") or not hasattr(unit, "time_end"):
+            return None
+
+        time_start = getattr(unit, "time_start")
+        time_end = getattr(unit, "time_end")
+
+        if time_start is None or time_end is None:
+            return None
+
+        # Track last time_end for auto-generated document status
+        self._last_time_end = time_end
+        return (time_start, time_end)
 
     def truncate(self, document_id: str, span_start: int) -> None:
         """Truncate document to span."""

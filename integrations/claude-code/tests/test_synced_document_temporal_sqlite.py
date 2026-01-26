@@ -10,11 +10,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from ragzoom_claude_code.transcript_sync import execute_sync
+
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
-from ragzoom_claude_code.transcript_sync import (
-    SessionState,
-    execute_sync,
-)
 from ragzoom.config import IndexConfig
 from ragzoom.contracts.embedding_model import EmbeddingProvider
 from ragzoom.server.append_executor import AppendExecutor, AppendOutcome
@@ -142,6 +140,38 @@ class AppendExecutorClient:
         # Truncation is handled by the indexing runtime, not AppendExecutor.
         # For testing purposes, we just track this was called.
         pass
+
+    def get_document_status(self, document_id: str) -> object:
+        """Return document status for stateless sync.
+
+        Returns a minimal status indicating the document doesn't exist yet
+        (first sync case).
+        """
+        # For these tests, we always return non-existent document status
+        # to simulate first sync. Real implementations would query the backend.
+        return type(
+            "DocumentStatus",
+            (),
+            {
+                "document_id": document_id,
+                "exists": False,
+                "is_temporal": True,
+                "time_end": None,
+            },
+        )()
+
+    def truncate_from_time(self, document_id: str, cutoff_time: str) -> object:
+        """Time-based truncation for stateless sync."""
+        # For these tests, time-based truncation is not implemented
+        return type(
+            "TruncateFromTimeResult",
+            (),
+            {
+                "document_id": document_id,
+                "deleted_node_ids": [],
+                "cutoff_time": cutoff_time,
+            },
+        )()
 
 
 class TestSyncedDocumentIsTemporal:
@@ -330,7 +360,7 @@ class TestSyncedDocumentIsTemporal:
         )
         assert is_temporal_after_second is True
 
-        # Load state to verify entries
-        state = SessionState.load(state_path)
-        assert state is not None
-        assert len(state.entries) >= 1
+        # Verify content was appended by checking leaf count
+        store = sqlite_backend.for_document("transcript")
+        leaves = list(store.nodes.iter_leaves())
+        assert len(leaves) >= 1, "Should have at least one leaf after incremental sync"

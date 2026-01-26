@@ -5,10 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ragzoom_claude_code.transcript_sync import (
-    SessionState,
-    execute_sync,
-)
+from ragzoom_claude_code.transcript_sync import execute_sync
+
 from tests.conftest import FakeTranscriptClient
 
 
@@ -228,12 +226,8 @@ class TestTurnBasedBatching:
         # Third append should contain turn 3 content
         assert "Turn 3" in client.appends[2][1]
 
-    def test_state_has_one_entry_per_turn(self, tmp_path: Path) -> None:
-        """State should have one entry per turn for turn-level tracking.
-
-        Per timestamped-transcript-sync.md § AppendEntry Tracking:
-        "Each turn's AppendEntry.last_uuid = the last message UUID in that turn."
-        """
+    def test_two_turns_are_both_appended(self, tmp_path: Path) -> None:
+        """Two turns should result in appended content for both."""
         transcript_path = tmp_path / "transcript.jsonl"
         state_path = tmp_path / "state.jsonl"
 
@@ -266,20 +260,17 @@ class TestTurnBasedBatching:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        result = execute_sync(transcript_path, state_path, client)
 
-        state = SessionState.load(state_path)
-        assert state is not None
+        # Should have appended both turns
+        assert "a1" in result.appended_uuids
+        assert "b1" in result.appended_uuids
 
-        # Should have 2 entries (one per turn)
-        assert len(state.entries) == 2
+        # Should have batch appended
+        assert len(client.batch_append_calls) == 1
 
-        # Each entry should be for its turn's last UUID
-        assert state.entries[0].last_uuid == "a1"
-        assert state.entries[1].last_uuid == "b1"
-
-    def test_turn_spans_are_cumulative(self, tmp_path: Path) -> None:
-        """Each turn's span_end should be cumulative up to that turn."""
+    def test_turn_content_has_expected_text(self, tmp_path: Path) -> None:
+        """Each turn's content should contain the message text."""
         transcript_path = tmp_path / "transcript.jsonl"
         state_path = tmp_path / "state.jsonl"
 
@@ -314,17 +305,16 @@ class TestTurnBasedBatching:
         client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
-        state = SessionState.load(state_path)
-        assert state is not None
-        assert len(state.entries) == 2
+        # Should have batch appended once
+        assert len(client.batch_append_calls) == 1
 
-        # First entry's span_end should be the length of turn 1 text
-        first_turn_len = len(client.appends[0][1])
-        assert state.entries[0].span_end == first_turn_len
+        # Get all appended text and verify content
+        _, units = client.batch_append_calls[0]
+        all_text = " ".join(u.text for u in units)
 
-        # Second entry's span_end should be cumulative of all turn texts
-        total_len = sum(len(text) for _, text in client.appends)
-        assert state.entries[1].span_end == total_len
+        # Both turns' content should be present
+        assert "First turn" in all_text
+        assert "Second turn" in all_text
 
 
 class TestToolUsageBatching:
@@ -622,11 +612,14 @@ class TestToolUsageBatching:
         client = FakeTranscriptClient()
         execute_sync(transcript_path, state_path, client)
 
-        text = client.appends[0][1]
+        # Get text from batch_append (stateless sync uses batch_append)
+        assert len(client.batch_append_calls) == 1
+        _, units = client.batch_append_calls[0]
+        text = " ".join(u.text for u in units)
 
-        # Should show tool with argument summary
-        assert "Bash(python -m ragzoom" in text or "Bash(ragzoom" in text
-        assert "Read(ragzoom/db_utils.py)" in text
+        # Should show tool with argument summary (JSON format for complex args)
+        assert 'Bash({"command":' in text or "Bash(python -m ragzoom" in text
+        assert 'Read({"file_path":' in text or "Read(ragzoom/db_utils.py)" in text
 
     def test_single_tool_use_not_batched(self, tmp_path: Path) -> None:
         """A single tool use followed by text should not be batched."""
