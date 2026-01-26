@@ -127,7 +127,7 @@ class TestExecuteSyncUsesBatchAppend:
         client = MockClient()
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # Create transcript with two turns
         transcript_path.write_text(
@@ -167,7 +167,7 @@ class TestExecuteSyncUsesBatchAppend:
             + "\n"
         )
 
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         assert len(client.append_calls) == 0, "Should not call individual append()"
         assert len(client.batch_append_calls) == 1, "Should call batch_append() once"
@@ -179,7 +179,7 @@ class TestExecuteSyncUsesBatchAppend:
         client = MockClient()
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
@@ -197,7 +197,7 @@ class TestExecuteSyncUsesBatchAppend:
             + "\n"
         )
 
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         # Verify batch_append was called with AppendUnits
         assert len(client.batch_append_calls) == 1
@@ -217,7 +217,7 @@ class TestExecuteSyncUsesBatchAppend:
         client = MockClient()
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
@@ -249,7 +249,7 @@ class TestExecuteSyncUsesBatchAppend:
             + "\n"
         )
 
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         assert len(client.batch_append_calls) == 1
         _, units = client.batch_append_calls[0]
@@ -265,7 +265,7 @@ class TestExecuteSyncUsesBatchAppend:
         client = MockClient()
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
@@ -291,7 +291,7 @@ class TestExecuteSyncUsesBatchAppend:
             + "\n"
         )
 
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         _, units = client.batch_append_calls[0]
         assert len(units) == 1
@@ -303,7 +303,7 @@ class TestExecuteSyncUsesBatchAppend:
         client = MockClient()
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # First sync with one turn
         transcript_path.write_text(
@@ -321,7 +321,7 @@ class TestExecuteSyncUsesBatchAppend:
             )
             + "\n"
         )
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         # Reset mock tracking
         client.batch_append_calls = []
@@ -353,7 +353,7 @@ class TestExecuteSyncUsesBatchAppend:
             )
             + "\n"
         )
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         assert len(client.append_calls) == 0
         assert len(client.batch_append_calls) == 1
@@ -363,10 +363,10 @@ class TestExecuteSyncUsesBatchAppend:
         client = MockClient()
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
         transcript_path.write_text("")
 
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         assert len(client.batch_append_calls) == 0
         assert len(client.append_calls) == 0
@@ -376,7 +376,7 @@ class TestExecuteSyncUsesBatchAppend:
         client = MockClient()
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             json.dumps(make_user_message("msg1", None, "2024-01-21T14:30:00Z", "Hello"))
@@ -384,7 +384,7 @@ class TestExecuteSyncUsesBatchAppend:
         )
 
         # First sync
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
         assert len(client.batch_append_calls) == 1
 
         # Simulate that document now has indexed content up to msg1's timestamp
@@ -403,5 +403,5 @@ class TestExecuteSyncUsesBatchAppend:
         client.batch_append_calls = []
 
         # Second sync with no changes - should detect head is already indexed
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
         assert len(client.batch_append_calls) == 0

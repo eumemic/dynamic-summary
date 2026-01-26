@@ -186,7 +186,7 @@ class TestSyncedDocumentIsTemporal:
         client = AppendExecutorClient(sqlite_backend, executor)
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # Create transcript with timestamps (like real Claude Code transcripts)
         transcript_path.write_text(
@@ -223,11 +223,11 @@ class TestSyncedDocumentIsTemporal:
         )
 
         # Execute sync
-        result = execute_sync(transcript_path, state_path, client)
+        result = execute_sync(transcript_path, document_id, client)
 
         # Verify document was created and is temporal
         assert result.document_id == "transcript"
-        assert len(result.appended_uuids) >= 1
+        assert result.turns_appended >= 1
 
         # Check the is_temporal flag
         is_temporal = sqlite_backend.doc_repo.get_document_is_temporal(
@@ -246,7 +246,7 @@ class TestSyncedDocumentIsTemporal:
         client = AppendExecutorClient(sqlite_backend, executor)
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # Create transcript with distinct timestamps
         transcript_path.write_text(
@@ -278,7 +278,7 @@ class TestSyncedDocumentIsTemporal:
         )
 
         # Execute sync
-        result = execute_sync(transcript_path, state_path, client)
+        result = execute_sync(transcript_path, document_id, client)
 
         # Get leaf nodes and check timestamps
         store = sqlite_backend.for_document(result.document_id)
@@ -301,7 +301,7 @@ class TestSyncedDocumentIsTemporal:
         client = AppendExecutorClient(sqlite_backend, executor)
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # First sync with one message
         transcript_path.write_text(
@@ -316,7 +316,7 @@ class TestSyncedDocumentIsTemporal:
             )
             + "\n"
         )
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         # Verify document is temporal after first sync
         is_temporal_after_first = sqlite_backend.doc_repo.get_document_is_temporal(
@@ -352,7 +352,7 @@ class TestSyncedDocumentIsTemporal:
             )
             + "\n"
         )
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         # Should still be temporal
         is_temporal_after_second = sqlite_backend.doc_repo.get_document_is_temporal(
