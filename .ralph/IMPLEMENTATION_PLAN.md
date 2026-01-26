@@ -435,11 +435,12 @@ Add retrieval-optimized embedding text preparation to summary_utils.py, followin
   - Location: `ragzoom/services/summarizer.py`
   - **DONE**: Removed the `contextualize` method from Summarizer class. The method was previously used for the two-step embedding process but is now replaced by the unified `run_embedding_text_workflow` function-based pattern. No callers existed anywhere in the codebase.
 
-- [ ] Remove `run_contextualization_workflow` and related functions (now unused)
+- [x] Remove `run_contextualization_workflow` and related functions (now unused)
   - Spec: specs/embedding-text-optimization.md § Solution
   - Success: Functions no longer exist in summary_utils.py
   - Test: (code inspection)
   - Location: `ragzoom/services/summary_utils.py`
+  - **DONE**: Removed `prepare_contextualization_inputs`, `ContextualizationRequest`, `run_contextualization_workflow`, `run_contextualization_from_config`, and `run_contextualization_request` from summary_utils.py. Updated test_summary_passthrough.py to remove obsolete test. Updated jscpd comments in run_embedding_text_workflow to reference run_summary_workflow. Updated comments in indexing_engine.py and test_embedding_token_limit.py to reflect new terminology.
 
 - [ ] Store retrieval-optimized text in `preceding_context_summary` field
   - Spec: specs/embedding-text-optimization.md § Storage

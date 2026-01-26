@@ -75,12 +75,12 @@ def test_summarized_context_and_leaf_within_embedding_limit() -> None:
 
 @pytest.mark.asyncio
 async def test_embed_leaf_uses_embedding_context_tokens() -> None:
-    """Test that _embed_leaf uses target_embedding_tokens for contextualization.
+    """Test that _embed_leaf uses target_embedding_tokens for embedding text optimization.
 
-    Verifies that when contextualizing preceding context for embedding, the engine
-    uses config.target_embedding_tokens instead of config.target_chunk_tokens.
+    Verifies that when preparing embedding text, the engine uses
+    config.target_embedding_tokens instead of config.target_chunk_tokens.
     This allows client-managed chunking (target_chunk_tokens=None) while still having
-    sensible embedding context summarization.
+    sensible embedding text optimization.
     """
     from unittest.mock import AsyncMock, MagicMock, patch
 
