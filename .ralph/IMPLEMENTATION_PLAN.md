@@ -702,11 +702,12 @@ Convert signal handler tests to use ready-pipe with appropriate signal handling.
 
 Convert atexit cleanup tests to use ready-pipe pattern.
 
-- [ ] Migrate `test_normal_exit_cleans_up_state_files` to ready-pipe
+- [x] Migrate `test_normal_exit_cleans_up_state_files` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestAtexitCleanup
   - Success: Test uses ready-pipe, removes polling loop with `time.sleep(0.1)` and final `time.sleep(0.5)`
   - Test: `test_normal_exit_cleans_up_state_files`
-  - Location: tests/test_daemon_atexit.py
+  - Location: tests/test_daemon_atexit.py:29
+  - Implementation: Uses dual-pipe pattern: ready_fd for daemon startup (via daemonize()), done_fd for daemon about-to-exit signal. Replaced marker file polling + time.sleep(0.5) with select()-based done pipe wait + brief poll for file cleanup. Test time reduced from ~3.5s to ~0.05s.
 
 - [ ] Migrate `test_without_atexit_files_remain` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestAtexitCleanup
