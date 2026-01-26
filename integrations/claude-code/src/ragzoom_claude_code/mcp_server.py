@@ -12,15 +12,21 @@ from ragzoom_claude_code.transcript_sync import SessionState, _get_state_dir
 mcp = FastMCP(name="RagZoom Memory")
 
 
-def _get_session_id() -> tuple[str, SessionState]:
-    """Find the session ID by matching our parent PID to transcript state files.
+def _get_session_id() -> str:
+    """Get the document ID for the current session.
 
-    The sync hook writes Claude Code's PID to the state file. We find our session
-    by scanning state files for one whose last_pid matches our parent process.
+    Identity resolution priority:
+    1. RAGZOOM_DOCUMENT_ID env var (configured identity - Jarvis/Legion model)
+    2. PID-based state file lookup (discovered identity - Claude Code model)
 
     Returns:
-        Tuple of (document_id, session_state)
+        Document ID string
     """
+    # Configured identity (Jarvis/Legion model)
+    if doc_id := os.environ.get("RAGZOOM_DOCUMENT_ID"):
+        return doc_id
+
+    # Discovered identity (Claude Code model) - PID-based lookup
     claude_code_pid = os.getppid()
 
     state_dir = _get_state_dir()
@@ -34,7 +40,7 @@ def _get_session_id() -> tuple[str, SessionState]:
     for state_file in state_dir.glob("*.jsonl"):
         state = SessionState.load(state_file)
         if state is not None and state.header.last_pid == claude_code_pid:
-            return state.header.document_id, state
+            return state.header.document_id
 
     raise ValueError(
         f"No session found for PID {claude_code_pid}. "
@@ -133,7 +139,7 @@ def remember(
     - **Recent content:** Recent time ranges often return height=0 (verbatim)
       since they haven't been summarized yet.
     """
-    doc_id, _ = _get_session_id()
+    doc_id = _get_session_id()
 
     # Query RagZoom via gRPC
     server_address = os.environ.get("RAGZOOM_SERVER_ADDRESS", "localhost:50051")
