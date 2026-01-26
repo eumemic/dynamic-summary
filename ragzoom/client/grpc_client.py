@@ -187,6 +187,24 @@ class TruncateResult:
 
 
 @dataclass
+class TruncateFromTimeResult:
+    """Result from time-based truncation of a temporal document.
+
+    Time-based truncation removes all nodes where time_end > cutoff_time.
+    This is the temporal analog of span-based truncation (TruncateResult).
+
+    Attributes:
+        document_id: Document that was truncated.
+        deleted_node_ids: IDs of nodes that were removed.
+        cutoff_time: The cutoff timestamp used (echoed from request).
+    """
+
+    document_id: str
+    deleted_node_ids: list[str]
+    cutoff_time: str
+
+
+@dataclass
 class SessionCursor:
     """Cursor position for session ingestion."""
 
