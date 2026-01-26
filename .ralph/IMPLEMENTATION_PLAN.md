@@ -465,17 +465,19 @@ Add retrieval-optimized embedding text preparation to summary_utils.py, followin
   - Location: `tests/test_embedding_text.py`
   - **DONE**: Created acceptance test verifying that when combined context + leaf text is under target_embedding_tokens (500), the workflow returns the combined text without invoking the LLM. Test mocks _prepare_embedding_text to track passthrough behavior via zero AccumulatedUsage.
 
-- [ ] Test config deprecation error message quality
+- [x] Test config deprecation error message quality
   - Spec: specs/embedding-text-optimization.md § Acceptance Criteria > 4
   - Success: Error message explains what to use instead
   - Test: `tests/test_index_config.py::test_deprecation_error_message_helpful`
   - Location: `tests/test_index_config.py`
+  - **DONE**: Added acceptance test that verifies the deprecation error message: (1) names the problematic field, (2) explains it was removed, (3) tells user which field to use instead, and (4) provides actionable guidance.
 
-- [ ] Test original text preservation in database
+- [x] Test original text preservation in database
   - Spec: specs/embedding-text-optimization.md § Acceptance Criteria > 5
   - Success: Leaf text in database is unchanged; only embedding uses optimized version
   - Test: `tests/test_embedding_text.py::test_original_text_preserved`
   - Location: `tests/test_embedding_text.py`
+  - **DONE**: Added acceptance test that verifies: (1) original leaf text is unchanged after embedding, (2) embedding uses optimized text not original, and (3) optimized text is stored in preceding_context_summary for debugging.
 
 ---
 

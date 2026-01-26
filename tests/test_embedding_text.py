@@ -312,3 +312,167 @@ async def test_passthrough_no_llm_call() -> None:
     assert small_leaf_text.strip() in embedded_text, (
         f"Passthrough text should include leaf text. " f"Got: {embedded_text[:200]}"
     )
+
+
+@pytest.mark.asyncio
+async def test_original_text_preserved() -> None:
+    """Test that leaf text in database is unchanged; only embedding uses optimized version.
+
+    Acceptance test for specs/embedding-text-optimization.md § Acceptance Criteria > 5:
+    "Original text preserved: Leaf text in database unchanged; only embedding uses
+    optimized version"
+
+    The embedding text optimization compresses large content for better retrieval, but
+    the original verbatim text must be preserved in the database. Users querying the
+    leaf node should see the original text, not the compressed version. Only the
+    embedding vector should be based on the optimized text.
+
+    The spec says:
+    - "Leaf text in database: Unchanged (original verbatim text preserved)"
+    - "Embedding vector: Based on retrieval-optimized text"
+    - "preceding_context_summary field: Repurposed to store the retrieval-optimized text"
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from ragzoom.contracts.embedding_model import EmbeddingResult
+    from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
+    from ragzoom.services.summary_utils import AccumulatedUsage, SummaryResult
+
+    # Create original leaf text that exceeds target and will be compressed
+    original_leaf_text = (
+        "This is the original, verbatim content that users uploaded. "
+        "It contains important details about the project timeline and deliverables. "
+        "The team discussed implementing a new authentication system using OAuth 2.0. "
+        "Alice mentioned that the deadline is April 15th, and Bob agreed to handle "
+        "the frontend integration. Carol will review the security implications. "
+    ) * 20  # Repeat to exceed target
+
+    optimized_text = (
+        "OAuth 2.0 authentication implementation. Deadline: April 15th. "
+        "Team: Alice (timeline), Bob (frontend), Carol (security review)."
+    )
+
+    # Verify original exceeds target (should trigger compression)
+    token_count = tokenizer.count_tokens(original_leaf_text)
+    assert token_count > 500, (
+        f"Test setup error: original text should exceed 500 tokens, got {token_count}. "
+        "This ensures compression is triggered."
+    )
+
+    # Setup mocks for storage backend
+    mock_store = MagicMock()
+    mock_doc_store = MagicMock()
+    mock_store.for_document.return_value = mock_doc_store
+
+    # Create mock leaf with original text
+    mock_leaf = MagicMock()
+    mock_leaf.text = original_leaf_text
+    mock_leaf.id = "test-leaf-id"
+    mock_leaf.span_start = 0
+    mock_leaf.span_end = len(original_leaf_text)
+    mock_leaf.level_index = 0
+    mock_leaf.coord_version = 1
+    mock_leaf.parent_id = None
+
+    # Track any changes to the leaf's text attribute
+    original_text_at_start = mock_leaf.text
+
+    mock_doc_store.nodes.get.return_value = mock_leaf
+
+    # Track calls to update_preceding_context_summary
+    update_context_summary_calls: list[tuple[str, str]] = []
+    mock_nodes_repo = MagicMock()
+
+    def capture_update_context_summary(leaf_id: str, text: str) -> None:
+        update_context_summary_calls.append((leaf_id, text))
+
+    mock_nodes_repo.update_preceding_context_summary = capture_update_context_summary
+    mock_doc_store.nodes._repo = mock_nodes_repo
+
+    # Setup mock LLM service
+    mock_llm_service = MagicMock()
+
+    # Track what text is embedded
+    embed_texts_received: list[str] = []
+
+    async def mock_embed_texts_with_usage(texts: list[str]) -> EmbeddingResult:
+        embed_texts_received.extend(texts)
+        return {
+            "embeddings": [[0.1] * 1536 for _ in texts],
+            "usage": {"total_tokens": 50, "model": "text-embedding-3-small"},
+        }
+
+    mock_llm_service.embed_texts_with_usage = mock_embed_texts_with_usage
+
+    # Mock _prepare_embedding_text to return optimized text
+    async def mock_prepare_embedding_text(
+        preceding_context: str,
+        leaf_text: str,
+        target_tokens: int,
+        *,
+        parent_id: str | None = None,
+        reporter: object = None,
+    ) -> SummaryResult:
+        # Return optimized text (simulating LLM compression)
+        return SummaryResult(
+            summary=optimized_text,
+            retry_count=0,
+            summary_tokens=tokenizer.count_tokens(optimized_text),
+            usage=AccumulatedUsage(prompt_tokens=500, completion_tokens=50),
+        )
+
+    mock_llm_service._prepare_embedding_text = mock_prepare_embedding_text
+
+    # Setup config
+    config = IndexConfig.load().replace(target_embedding_tokens=500)
+
+    # Create engine
+    engine = IndexingEngine(
+        store=mock_store,
+        llm_service=mock_llm_service,
+        index_config=config,
+        openai_client=AsyncMock(),
+    )
+
+    # Create mock vector index
+    mock_vector_index = MagicMock()
+    mock_vector_index.upsert = MagicMock()
+
+    # Execute: Run embedding job
+    with patch.object(engine, "_get_vector_index", return_value=mock_vector_index):
+        job = EmbeddingJob(document_id="test-doc", leaf_id="test-leaf-id")
+        await engine._embed_leaf(job)
+
+    # VERIFY 1: Original text in database is UNCHANGED
+    # The mock leaf's text attribute should still contain the original text
+    assert mock_leaf.text == original_text_at_start, (
+        "Original leaf text should be preserved in database. "
+        f"Expected: {original_text_at_start[:100]}... "
+        f"Got: {mock_leaf.text[:100]}..."
+    )
+    assert (
+        mock_leaf.text == original_leaf_text
+    ), "Leaf text should match the original input text exactly"
+
+    # VERIFY 2: Embedding used the OPTIMIZED text, not the original
+    assert len(embed_texts_received) == 1, "Embedding should have been called once"
+    assert embed_texts_received[0] == optimized_text, (
+        "Embedding should use optimized text, not original. "
+        f"Expected optimized: {optimized_text[:100]}... "
+        f"Got: {embed_texts_received[0][:100]}..."
+    )
+    assert (
+        embed_texts_received[0] != original_leaf_text
+    ), "Embedding should NOT use the original text directly"
+
+    # VERIFY 3: Optimized text stored in preceding_context_summary for debugging
+    assert (
+        len(update_context_summary_calls) == 1
+    ), "update_preceding_context_summary should have been called once"
+    stored_leaf_id, stored_text = update_context_summary_calls[0]
+    assert stored_leaf_id == "test-leaf-id", "Should update the correct leaf"
+    assert stored_text == optimized_text, (
+        "preceding_context_summary should store the optimized text for inspection. "
+        f"Expected: {optimized_text[:100]}... "
+        f"Got: {stored_text[:100]}..."
+    )
