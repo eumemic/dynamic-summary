@@ -141,29 +141,33 @@ Implement the new GetDocumentStatus servicer method.
   - Location: ragzoom/document_store.py:836-863
   - Implementation: Iterates leaf nodes (via fallback path) to find MIN(time_start) and MAX(time_end). Also supports optimized `get_temporal_range_for_document()` method on repository if available.
 
-- [ ] Implement `GetDocumentStatus` servicer method
+- [x] Implement `GetDocumentStatus` servicer method
   - Spec: specs/temporal-document-apis.md § 1. Document Status API
   - Success: Returns DocumentStatusResponse with all fields populated correctly
-  - Test: `test_get_document_status_servicer`
-  - Location: ragzoom/server/servicers.py (WorkerServicer or new service)
+  - Test: `test_get_document_status_existing_document`, `test_get_document_status_completion_with_inner_nodes`
+  - Location: ragzoom/server/servicers.py:813-888 (WorkerServicer)
+  - Implementation: Uses `getattr()` pattern for proto types, calculates all metrics from document store
 
-- [ ] Handle non-existent documents in GetDocumentStatus
+- [x] Handle non-existent documents in GetDocumentStatus
   - Spec: specs/temporal-document-apis.md § 1. Document Status API
   - Success: Returns `exists=False` with zeroed fields for unknown documents
   - Test: `test_get_document_status_not_found`
-  - Location: ragzoom/server/servicers.py
+  - Location: ragzoom/server/servicers.py:840-850
+  - Implementation: Checks node_count == 0 to determine existence
 
-- [ ] Populate `complete_forest_size` and `completion_pct` fields
+- [x] Populate `complete_forest_size` and `completion_pct` fields
   - Spec: specs/temporal-document-apis.md § 1. Document Status API
   - Success: Uses `2N - popcount(N)` formula for forest size, calculates percentage
-  - Test: `test_get_document_status_completion`
-  - Location: ragzoom/server/servicers.py
+  - Test: `test_get_document_status_completion_with_inner_nodes`
+  - Location: ragzoom/server/servicers.py:859-860
+  - Implementation: Uses `complete_forest_size()` helper, calculates `node_count / forest_size * 100`
 
-- [ ] Populate `time_start` and `time_end` fields for temporal documents
+- [x] Populate `time_start` and `time_end` fields for temporal documents
   - Spec: specs/temporal-document-apis.md § 1. Document Status API
   - Success: Returns temporal range from leaf nodes, null for non-temporal
   - Test: `test_get_document_status_temporal_range`
-  - Location: ragzoom/server/servicers.py
+  - Location: ragzoom/server/servicers.py:863-872
+  - Implementation: Uses `get_temporal_range()` with `_unix_to_iso8601()` conversion
 
 ### Phase 43: Document Status Client Implementation
 

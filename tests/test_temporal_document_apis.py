@@ -6,7 +6,7 @@ specs/temporal-document-apis.md.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 import pytest
 
@@ -371,3 +371,255 @@ class TestDocumentStoreTemporalRange:
         doc_store = storage_backend.for_document(None)
         result = doc_store.get_temporal_range()
         assert result == (None, None)
+
+
+class _MockServicerContext:
+    """Mock gRPC servicer context for testing."""
+
+    async def abort(self, code: object, details: str) -> NoReturn:
+        raise ValueError(f"Aborted with {code}: {details}")
+
+
+class TestGetDocumentStatusServicer:
+    """Tests for the GetDocumentStatus gRPC servicer method.
+
+    Verifies that the servicer correctly returns document status including
+    existence, completion metrics, and temporal range.
+    """
+
+    @pytest.fixture
+    def doc_store(self, storage_backend: StorageBackend) -> DocumentStore:
+        """Create a document store with test metadata."""
+        doc_store = storage_backend.for_document("test-status-doc")
+        doc_store.set_metadata(
+            file_path="test.txt",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        return doc_store
+
+    @pytest.fixture
+    def mock_state(self, storage_backend: StorageBackend) -> object:
+        """Create a mock ServerState with the storage backend."""
+        from unittest.mock import MagicMock
+
+        state = MagicMock()
+        state.store = storage_backend
+        return state
+
+    @pytest.mark.asyncio
+    async def test_get_document_status_not_found(self, mock_state: object) -> None:
+        """GetDocumentStatus returns exists=False for non-existent documents."""
+        from ragzoom.rpc import dynamic_summary_pb2 as pb2
+        from ragzoom.server.servicers import WorkerServicer
+
+        servicer = WorkerServicer(mock_state)  # type: ignore[arg-type]
+        request_cls = getattr(pb2, "DocumentStatusRequest")
+        request = request_cls(document_id="nonexistent-doc")
+        context = _MockServicerContext()
+
+        response = await servicer.GetDocumentStatus(request, context)
+
+        assert getattr(response, "document_id") == "nonexistent-doc"
+        assert getattr(response, "exists") is False
+        assert getattr(response, "is_temporal") is False
+        assert getattr(response, "leaf_count") == 0
+        assert getattr(response, "node_count") == 0
+        assert getattr(response, "complete_forest_size") == 0
+        assert getattr(response, "completion_pct") == 0.0
+
+    @pytest.mark.asyncio
+    async def test_get_document_status_existing_document(
+        self, mock_state: object, doc_store: DocumentStore
+    ) -> None:
+        """GetDocumentStatus returns correct metrics for existing documents."""
+        from ragzoom.rpc import dynamic_summary_pb2 as pb2
+        from ragzoom.server.servicers import WorkerServicer
+
+        # Add 4 leaves
+        nodes_data: list[NodeDataDict] = [
+            {
+                "node_id": f"leaf-{i}",
+                "text": f"Leaf text {i}",
+                "span_start": i * 10,
+                "span_end": (i + 1) * 10,
+                "token_count": 5,
+                "height": 0,
+                "level_index": i,
+            }
+            for i in range(4)
+        ]
+        doc_store.nodes.add_batch(nodes_data)
+
+        servicer = WorkerServicer(mock_state)  # type: ignore[arg-type]
+        request_cls = getattr(pb2, "DocumentStatusRequest")
+        request = request_cls(document_id="test-status-doc")
+        context = _MockServicerContext()
+
+        response = await servicer.GetDocumentStatus(request, context)
+
+        assert getattr(response, "document_id") == "test-status-doc"
+        assert getattr(response, "exists") is True
+        assert getattr(response, "is_temporal") is False  # No timestamps on leaves
+        assert getattr(response, "leaf_count") == 4
+        assert getattr(response, "node_count") == 4  # Only leaves, no inner nodes yet
+        # complete_forest_size for 4 leaves: 2*4 - 1 = 7
+        assert getattr(response, "complete_forest_size") == 7
+        # completion: 4/7 * 100 ≈ 57.14%
+        expected_pct = 4 / 7 * 100.0
+        actual_pct: float = getattr(response, "completion_pct")
+        assert abs(actual_pct - expected_pct) < 0.01
+
+    @pytest.mark.asyncio
+    async def test_get_document_status_completion_with_inner_nodes(
+        self, mock_state: object, doc_store: DocumentStore
+    ) -> None:
+        """GetDocumentStatus shows higher completion when inner nodes exist."""
+        from ragzoom.rpc import dynamic_summary_pb2 as pb2
+        from ragzoom.server.servicers import WorkerServicer
+
+        # Add 4 leaves
+        leaves: list[NodeDataDict] = [
+            {
+                "node_id": f"leaf-{i}",
+                "text": f"Leaf text {i}",
+                "span_start": i * 10,
+                "span_end": (i + 1) * 10,
+                "token_count": 5,
+                "height": 0,
+                "level_index": i,
+            }
+            for i in range(4)
+        ]
+        doc_store.nodes.add_batch(leaves)
+
+        # Add 2 inner nodes at height 1
+        inner_h1: list[NodeDataDict] = [
+            {
+                "node_id": "inner-0",
+                "text": "Summary of leaves 0-1",
+                "span_start": 0,
+                "span_end": 20,
+                "token_count": 10,
+                "height": 1,
+                "level_index": 0,
+                "left_child_id": "leaf-0",
+                "right_child_id": "leaf-1",
+            },
+            {
+                "node_id": "inner-1",
+                "text": "Summary of leaves 2-3",
+                "span_start": 20,
+                "span_end": 40,
+                "token_count": 10,
+                "height": 1,
+                "level_index": 1,
+                "left_child_id": "leaf-2",
+                "right_child_id": "leaf-3",
+            },
+        ]
+        doc_store.nodes.add_batch(inner_h1)
+
+        # Add root at height 2
+        root: list[NodeDataDict] = [
+            {
+                "node_id": "root",
+                "text": "Summary of all",
+                "span_start": 0,
+                "span_end": 40,
+                "token_count": 15,
+                "height": 2,
+                "level_index": 0,
+                "left_child_id": "inner-0",
+                "right_child_id": "inner-1",
+            },
+        ]
+        doc_store.nodes.add_batch(root)
+
+        servicer = WorkerServicer(mock_state)  # type: ignore[arg-type]
+        request_cls = getattr(pb2, "DocumentStatusRequest")
+        request = request_cls(document_id="test-status-doc")
+        context = _MockServicerContext()
+
+        response = await servicer.GetDocumentStatus(request, context)
+
+        assert getattr(response, "leaf_count") == 4
+        assert getattr(response, "node_count") == 7  # 4 leaves + 2 inner + 1 root
+        assert getattr(response, "complete_forest_size") == 7  # 2*4 - 1
+        # 100% complete: 7/7
+        assert getattr(response, "completion_pct") == 100.0
+
+    @pytest.mark.asyncio
+    async def test_get_document_status_temporal_range(
+        self, mock_state: object, storage_backend: StorageBackend
+    ) -> None:
+        """GetDocumentStatus includes temporal range for temporal documents."""
+        from ragzoom.rpc import dynamic_summary_pb2 as pb2
+        from ragzoom.server.servicers import WorkerServicer
+
+        # Create a temporal document
+        doc_store = storage_backend.for_document("test-temporal-status")
+        doc_store.set_metadata(
+            file_path="test.txt",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        # Mark as temporal via the document repository
+        doc_store._doc_repo.set_document_is_temporal(
+            "test-temporal-status", is_temporal=True
+        )
+
+        # Add leaves with timestamps
+        nodes_data: list[NodeDataDict] = [
+            {
+                "node_id": "leaf-0",
+                "text": "First message",
+                "span_start": 0,
+                "span_end": 10,
+                "token_count": 5,
+                "height": 0,
+                "level_index": 0,
+                "time_start": 1737849600.0,  # 2025-01-26T00:00:00Z
+                "time_end": 1737853200.0,  # 2025-01-26T01:00:00Z
+            },
+            {
+                "node_id": "leaf-1",
+                "text": "Second message",
+                "span_start": 10,
+                "span_end": 20,
+                "token_count": 5,
+                "height": 0,
+                "level_index": 1,
+                "time_start": 1737853200.0,  # 2025-01-26T01:00:00Z
+                "time_end": 1737856800.0,  # 2025-01-26T02:00:00Z
+            },
+        ]
+        doc_store.nodes.add_batch(nodes_data)
+
+        servicer = WorkerServicer(mock_state)  # type: ignore[arg-type]
+        request_cls = getattr(pb2, "DocumentStatusRequest")
+        request = request_cls(document_id="test-temporal-status")
+        context = _MockServicerContext()
+
+        response = await servicer.GetDocumentStatus(request, context)
+
+        assert getattr(response, "exists") is True
+        assert getattr(response, "is_temporal") is True
+        assert getattr(response, "time_start") == "2025-01-26T00:00:00Z"
+        assert getattr(response, "time_end") == "2025-01-26T02:00:00Z"
+
+    @pytest.mark.asyncio
+    async def test_get_document_status_requires_document_id(
+        self, mock_state: object
+    ) -> None:
+        """GetDocumentStatus returns error when document_id is empty."""
+        from ragzoom.rpc import dynamic_summary_pb2 as pb2
+        from ragzoom.server.servicers import WorkerServicer
+
+        servicer = WorkerServicer(mock_state)  # type: ignore[arg-type]
+        request_cls = getattr(pb2, "DocumentStatusRequest")
+        request = request_cls(document_id="")
+        context = _MockServicerContext()
+
+        with pytest.raises(ValueError, match="GetDocumentStatus requires"):
+            await servicer.GetDocumentStatus(request, context)
