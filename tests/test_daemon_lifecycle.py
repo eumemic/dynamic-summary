@@ -146,9 +146,12 @@ daemonize(Path("{log_file}"), ready_fd={write_fd})
     @pytest.mark.slow_threshold(5)
     def test_daemonize_redirects_stdout_stderr(self, tmp_path: Path) -> None:
         """daemonize() should redirect stdout/stderr to log file."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
         log_file = tmp_path / "daemon.log"
 
-        script = f"""
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            script = f"""
 import os
 import sys
 sys.path.insert(0, "{Path.cwd()}")
@@ -156,21 +159,21 @@ os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
 from ragzoom.daemon import daemonize
 from pathlib import Path
 
-daemonize(Path("{log_file}"))
+daemonize(Path("{log_file}"), ready_fd={write_fd})
 print("stdout message")
 print("stderr message", file=sys.stderr)
 sys.stdout.flush()
 sys.stderr.flush()
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        proc.wait(timeout=5)
-
-        # Give daemon time to write
-        time.sleep(0.5)
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            proc.wait(timeout=5)
+            wait_for_daemon_ready(read_fd)
 
         # Log file should contain the messages
         assert log_file.exists(), "Log file should be created"
