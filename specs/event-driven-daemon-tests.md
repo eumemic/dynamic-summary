@@ -1,5 +1,5 @@
 ---
-status: READY
+status: COMPLETE
 ---
 
 # Event-Driven Daemon Tests
