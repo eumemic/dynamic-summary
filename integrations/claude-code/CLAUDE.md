@@ -52,12 +52,10 @@ ragzoom-claude-code mcp-server
 
 ## State Files
 
-Sync state is stored in `$RAGZOOM_STATE_DIR/<document_id>.jsonl` (default: `data/transcript-state/`):
+Session state is stored in `$RAGZOOM_STATE_DIR/<document_id>.jsonl` (default: `data/transcript-state/`):
 
 ```json
 {"document_id": "abc123", "last_pid": 12345}
-{"last_uuid": "uuid1", "span_end": 1000, "first_uuid": "uuid1"}
-{"last_uuid": "uuid2", "span_end": 2500, "first_uuid": "uuid2"}
 ```
 
-Line 1 is the header with document ID and optional PID. Subsequent lines are append log entries tracking which UUIDs map to which document spans.
+The file contains a single header line with the document ID and optional PID for session discovery. The stateless sync algorithm derives all other state from the transcript and RagZoom document status API.

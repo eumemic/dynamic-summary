@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -504,61 +503,14 @@ class SessionStateHeader:
 
 
 @dataclass
-class AppendEntry:
-    """A single entry in the append log.
-
-    For turn-level tracking, each entry represents one conversation turn.
-    The first_uuid marks the turn's start (for revert detection) and
-    last_uuid marks its end (for continuation detection).
-    """
-
-    last_uuid: str
-    """UUID of the last message in this append (turn end)."""
-
-    span_end: int
-    """Document span position after this append."""
-
-    first_uuid: str | None = None
-    """UUID of the first message in this append (turn start).
-
-    Used for turn-granularity revert detection: if a common ancestor
-    falls between first_uuid and last_uuid (within the turn), we truncate
-    to before this turn rather than keeping it.
-
-    None for backward compatibility with pre-turn-tracking entries.
-    """
-
-    def to_json(self) -> dict[str, object]:
-        """Serialize to JSON-compatible dict."""
-        result: dict[str, object] = {
-            "last_uuid": self.last_uuid,
-            "span_end": self.span_end,
-        }
-        if self.first_uuid is not None:
-            result["first_uuid"] = self.first_uuid
-        return result
-
-    @classmethod
-    def from_json(cls, data: dict[str, object]) -> AppendEntry:
-        """Deserialize from JSON dict."""
-        last_uuid = data["last_uuid"]
-        span_end = data["span_end"]
-        first_uuid = data.get("first_uuid")
-        if not isinstance(last_uuid, str):
-            raise TypeError(f"last_uuid must be str, got {type(last_uuid)}")
-        if not isinstance(span_end, int):
-            raise TypeError(f"span_end must be int, got {type(span_end)}")
-        if first_uuid is not None and not isinstance(first_uuid, str):
-            raise TypeError(f"first_uuid must be str or None, got {type(first_uuid)}")
-        return cls(last_uuid=last_uuid, span_end=span_end, first_uuid=first_uuid)
-
-
-@dataclass
 class SessionState:
-    """Session state with header and append log."""
+    """Session state with header for MCP server session discovery.
+
+    Used to map document_id to Claude Code PID so the MCP server can
+    identify which session it belongs to.
+    """
 
     header: SessionStateHeader
-    entries: list[AppendEntry] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: Path) -> SessionState | None:
@@ -574,17 +526,12 @@ class SessionState:
             return None
 
         header = SessionStateHeader.from_json(json.loads(lines[0]))
-        entries = [
-            AppendEntry.from_json(json.loads(line)) for line in lines[1:] if line
-        ]
-        return cls(header=header, entries=entries)
+        return cls(header=header)
 
     def save(self, path: Path) -> None:
         """Save session state to JSONL file."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        lines = [json.dumps(self.header.to_json())]
-        lines.extend(json.dumps(entry.to_json()) for entry in self.entries)
-        path.write_text("\n".join(lines) + "\n")
+        path.write_text(json.dumps(self.header.to_json()) + "\n")
 
 
 def _get_state_dir() -> Path:
@@ -1001,10 +948,9 @@ def execute_sync(
     r_uuid, s_uuid = find_truncation_point(current_head, records, indexed_time_end)
 
     # Build list of UUIDs to append
-    if s_uuid is None:
-        uuids_to_append: list[str] = []
-    else:
-        uuids_to_append = build_ancestry_chain(current_head, r_uuid, records)
+    uuids_to_append = (
+        [] if s_uuid is None else build_ancestry_chain(current_head, r_uuid, records)
+    )
 
     # Detect and handle revert (returns cutoff time if truncation occurred)
     truncate_cutoff_time = _handle_revert_detection(

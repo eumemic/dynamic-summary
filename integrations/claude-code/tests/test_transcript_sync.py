@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 from ragzoom_claude_code.transcript_sync import (
-    AppendEntry,
     build_parent_map,
     find_common_ancestor,
 )
@@ -202,25 +201,6 @@ class TestFindCommonAncestor:
             find_common_ancestor("unknown", "msg2", parent_map)
 
 
-class TestAppendEntry:
-    """Tests for AppendEntry dataclass."""
-
-    def test_to_json(self) -> None:
-        """Should serialize to JSON dict."""
-        entry = AppendEntry(last_uuid="abc123", span_end=1523)
-
-        assert entry.to_json() == {"last_uuid": "abc123", "span_end": 1523}
-
-    def test_from_json(self) -> None:
-        """Should deserialize from JSON dict."""
-        data = {"last_uuid": "abc123", "span_end": 1523}
-
-        entry = AppendEntry.from_json(data)
-
-        assert entry.last_uuid == "abc123"
-        assert entry.span_end == 1523
-
-
 class TestGetAncestorChain:
     """Tests for getting ordered ancestor chain between two nodes."""
 
@@ -296,20 +276,15 @@ class TestSessionState:
     """Tests for SessionState JSONL format."""
 
     def test_save_and_load(self, tmp_path: Path) -> None:
-        """Should persist and restore state."""
+        """Should persist and restore header state."""
         from ragzoom_claude_code.transcript_sync import (
-            AppendEntry,
             SessionState,
             SessionStateHeader,
         )
 
         state_path = tmp_path / "session.jsonl"
         state = SessionState(
-            header=SessionStateHeader(document_id="doc-123"),
-            entries=[
-                AppendEntry("msg1", 100),
-                AppendEntry("msg2", 200),
-            ],
+            header=SessionStateHeader(document_id="doc-123", last_pid=12345),
         )
 
         state.save(state_path)
@@ -317,9 +292,7 @@ class TestSessionState:
 
         assert loaded is not None
         assert loaded.header.document_id == "doc-123"
-        assert len(loaded.entries) == 2
-        assert loaded.entries[0].last_uuid == "msg1"
-        assert loaded.entries[1].span_end == 200
+        assert loaded.header.last_pid == 12345
 
     def test_load_nonexistent_returns_none(self, tmp_path: Path) -> None:
         """Should return None for missing file."""
