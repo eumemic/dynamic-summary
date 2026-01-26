@@ -119,11 +119,12 @@ Add `RAGZOOM_DOCUMENT_ID` env var and `--document-id` CLI flag support to both s
   - Location: integrations/claude-code/src/ragzoom_claude_code/cli.py:59
   - Implementation: `doc_id = document_id or jsonl_path.stem` combined with Click's `envvar` handles all three levels
 
-- [ ] Add env var check to MCP server `_get_session_id()` function
+- [x] Add env var check to MCP server `_get_session_id()` function
   - Spec: specs/unified-agent-identity.md § 4. MCP Server Identity Resolution
   - Success: Checks `os.environ.get("RAGZOOM_DOCUMENT_ID")` first, returns if set
   - Test: `test_mcp_server_env_var_identity`
   - Location: integrations/claude-code/src/ragzoom_claude_code/mcp_server.py:15-37
+  - Implementation: Function now checks `RAGZOOM_DOCUMENT_ID` env var first. Changed return type from `tuple[str, SessionState]` to `str`. Updated `remember` tool to use new string return type.
 
 - [ ] Add tests for env var precedence in sync CLI
   - Spec: specs/unified-agent-identity.md § Acceptance Criteria #1, #3
