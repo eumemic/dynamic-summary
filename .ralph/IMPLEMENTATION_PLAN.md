@@ -102,11 +102,6 @@ Unifies how Claude Code integration components discover their target document. S
 
 **Dependencies:** Stateless Transcript Sync (Phase 49-53) must be complete first - this feature eliminates remaining state file machinery.
 
-**⚠️ CRITICAL: Work-In-Progress State**
-There are uncommitted changes to `mcp_server.py` that introduce a **broken import** - `get_session_document_id` is imported but doesn't exist yet. The MCP server will fail to start until Phase 62's first item is completed. Additionally, line 130 still uses tuple unpacking (`doc_id, _ = _get_session_id()`) but the function now returns a string.
-
-**Recommended order:** Complete Phase 62 item 1 first (implement `get_session_document_id()`), then fix line 130, then proceed with other items.
-
 ### Phase 61: Add Environment Variable Support
 
 Add `RAGZOOM_DOCUMENT_ID` env var and `--document-id` CLI flag support to both sync script and MCP server.
