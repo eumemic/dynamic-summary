@@ -442,11 +442,12 @@ Add retrieval-optimized embedding text preparation to summary_utils.py, followin
   - Location: `ragzoom/services/summary_utils.py`
   - **DONE**: Removed `prepare_contextualization_inputs`, `ContextualizationRequest`, `run_contextualization_workflow`, `run_contextualization_from_config`, and `run_contextualization_request` from summary_utils.py. Updated test_summary_passthrough.py to remove obsolete test. Updated jscpd comments in run_embedding_text_workflow to reference run_summary_workflow. Updated comments in indexing_engine.py and test_embedding_token_limit.py to reflect new terminology.
 
-- [ ] Store retrieval-optimized text in `preceding_context_summary` field
+- [x] Store retrieval-optimized text in `preceding_context_summary` field
   - Spec: specs/embedding-text-optimization.md § Storage
   - Success: Database stores the optimized text for inspection/debugging
   - Test: `tests/test_embedding_token_limit.py::test_stores_optimized_text`
   - Location: `ragzoom/server/indexing_engine.py`
+  - **DONE**: Implementation already existed at line 1465 in `_embed_leaf`: `store.nodes._repo.update_preceding_context_summary(job.leaf_id, text_to_embed)`. Added test that verifies `update_preceding_context_summary` is called with the retrieval-optimized text returned from `_prepare_embedding_text`. Test uses distinct mock optimized text to ensure the correct value is stored.
 
 ### Phase 38: Acceptance Tests
 
