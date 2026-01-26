@@ -281,6 +281,82 @@ class DocumentRepository(BaseRepository):
 
             return deleted_node_ids
 
+    def delete_nodes_from_time(
+        self,
+        document_id: str,
+        cutoff_time: float,
+        *,
+        session: Optional["Session"] = None,
+    ) -> list[str]:
+        """Delete all nodes whose time_end exceeds the given cutoff time.
+
+        Used for truncating a temporal document. Deletes any node where
+        time_end > cutoff_time, which includes:
+        - Leaf nodes with time_end beyond the cutoff
+        - Internal (summary) nodes whose time range extends beyond the cutoff
+
+        Args:
+            document_id: Document identifier
+            cutoff_time: Unix timestamp - delete nodes where time_end > this value
+            session: Optional session for transaction support
+
+        Returns:
+            List of deleted node IDs (for vector index cleanup)
+        """
+        with self._session_scope(session) as db_session:
+            from sqlalchemy import text
+
+            # Step 1: NULL out parent_id on kept children whose parents will be deleted.
+            # A kept child (time_end <= cutoff OR time_end IS NULL) may have a parent
+            # that extends beyond the cutoff (parent.time_end > cutoff).
+            db_session.execute(
+                text(
+                    "UPDATE tree_nodes SET parent_id = NULL "
+                    "WHERE document_id = :document_id "
+                    "AND (time_end IS NULL OR time_end <= :cutoff_time) "
+                    "AND parent_id IN ("
+                    "    SELECT id FROM tree_nodes "
+                    "    WHERE document_id = :document_id "
+                    "    AND time_end IS NOT NULL AND time_end > :cutoff_time"
+                    ")"
+                ),
+                {"document_id": document_id, "cutoff_time": cutoff_time},
+            )
+
+            # Step 2: NULL out following_neighbor_id on kept nodes whose neighbors
+            # will be deleted. This prevents dangling neighbor references.
+            db_session.execute(
+                text(
+                    "UPDATE tree_nodes SET following_neighbor_id = NULL "
+                    "WHERE document_id = :document_id "
+                    "AND (time_end IS NULL OR time_end <= :cutoff_time) "
+                    "AND following_neighbor_id IN ("
+                    "    SELECT id FROM tree_nodes "
+                    "    WHERE document_id = :document_id "
+                    "    AND time_end IS NOT NULL AND time_end > :cutoff_time"
+                    ")"
+                ),
+                {"document_id": document_id, "cutoff_time": cutoff_time},
+            )
+
+            # Step 3: Delete nodes whose time_end extends beyond the cutoff.
+            result = db_session.execute(
+                text(
+                    "DELETE FROM tree_nodes "
+                    "WHERE document_id = :document_id "
+                    "AND time_end IS NOT NULL AND time_end > :cutoff_time "
+                    "RETURNING id"
+                ),
+                {"document_id": document_id, "cutoff_time": cutoff_time},
+            )
+
+            deleted_node_ids = [str(row[0]) for row in result]
+
+            if deleted_node_ids:
+                self.cache_manager.remove_batch(deleted_node_ids)
+
+            return deleted_node_ids
+
     def get_document_token_stats(self, document_id: str) -> dict[str, float | int]:
         """Get token statistics for a document using efficient SQL aggregation.
 

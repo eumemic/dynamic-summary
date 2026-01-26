@@ -237,23 +237,26 @@ Add proto messages and service method for time-based truncation.
 
 Implement time-based truncation in storage backend.
 
-- [ ] Add `delete_nodes_from_time()` method to storage backend contract
+- [x] Add `delete_nodes_from_time()` method to storage backend contract
   - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API
   - Success: Contract defines method signature with document_id and cutoff_time parameters
   - Test: N/A (contract definition)
-  - Location: ragzoom/contracts/storage_backend.py
+  - Location: ragzoom/contracts/storage_backend.py:60-79
+  - Implementation: Added method with comprehensive docstring, matching the pattern of delete_nodes_from_span
 
-- [ ] Implement `delete_nodes_from_time()` in SQLite backend
+- [x] Implement `delete_nodes_from_time()` in SQLite backend
   - Spec: specs/temporal-document-apis.md § Implementation Outline > Phase 2
   - Success: Deletes nodes where `time_end > cutoff`, NULLs parent_id on kept children
   - Test: `test_sqlite_delete_nodes_from_time`
-  - Location: ragzoom/backends/sqlite_backend.py
+  - Location: ragzoom/backends/sqlite_repositories.py:1117-1173
+  - Implementation: Added to SqliteNodeRepository following the same pattern as delete_nodes_from_span. Backend delegates to node_repo.
 
-- [ ] Implement `delete_nodes_from_time()` in Postgres backend
+- [x] Implement `delete_nodes_from_time()` in Postgres backend
   - Spec: specs/temporal-document-apis.md § Implementation Outline > Phase 2
   - Success: Deletes nodes where `time_end > cutoff`, NULLs parent_id on kept children
   - Test: `test_postgres_delete_nodes_from_time`
-  - Location: ragzoom/backends/postgres_backend.py
+  - Location: ragzoom/repositories/document_repository.py:284-347
+  - Implementation: Added to DocumentRepository following the same pattern as delete_nodes_from_span. Backend delegates to doc_repo.
 
 - [ ] Delete vectors for removed nodes in truncation
   - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API

@@ -1114,6 +1114,76 @@ class SqliteNodeRepository:
 
             return node_ids
 
+    def delete_nodes_from_time(
+        self,
+        document_id: str,
+        cutoff_time: float,
+    ) -> list[str]:
+        """Delete all nodes whose time_end exceeds the given cutoff time.
+
+        Used for truncating a temporal document. Deletes any node where
+        time_end > cutoff_time, which includes:
+        - Leaf nodes with time_end beyond the cutoff
+        - Internal (summary) nodes whose time range extends beyond the cutoff
+
+        Args:
+            document_id: Document identifier
+            cutoff_time: Unix timestamp - delete nodes where time_end > this value
+
+        Returns:
+            List of deleted node IDs (for vector index cleanup)
+        """
+        with self.SessionLocal() as session:
+            # Step 1: Find nodes to delete (time_end extends beyond cutoff)
+            stmt = select(SQLiteTreeNode.id).where(
+                SQLiteTreeNode.document_id == document_id,
+                SQLiteTreeNode.time_end.isnot(None),
+                SQLiteTreeNode.time_end > cutoff_time,
+            )
+            node_ids = [str(row) for row in session.execute(stmt).scalars().all()]
+
+            if node_ids:
+                # Step 2: NULL out parent_id on kept children whose parents will be deleted.
+                # This prevents FK violations where children point to deleted parents.
+                session.execute(
+                    update(SQLiteTreeNode)
+                    .where(
+                        SQLiteTreeNode.document_id == document_id,
+                        or_(
+                            SQLiteTreeNode.time_end.is_(None),
+                            SQLiteTreeNode.time_end <= cutoff_time,
+                        ),
+                        SQLiteTreeNode.parent_id.in_(node_ids),
+                    )
+                    .values(parent_id=None)
+                )
+
+                # Step 3: NULL out following_neighbor_id on kept nodes whose neighbors
+                # will be deleted. This prevents dangling neighbor references.
+                session.execute(
+                    update(SQLiteTreeNode)
+                    .where(
+                        SQLiteTreeNode.document_id == document_id,
+                        or_(
+                            SQLiteTreeNode.time_end.is_(None),
+                            SQLiteTreeNode.time_end <= cutoff_time,
+                        ),
+                        SQLiteTreeNode.following_neighbor_id.in_(node_ids),
+                    )
+                    .values(following_neighbor_id=None)
+                )
+
+                # Step 4: Delete the nodes
+                session.execute(
+                    delete(SQLiteTreeNode).where(SQLiteTreeNode.id.in_(node_ids))
+                )
+                session.commit()
+                # Clear from cache
+                for node_id in node_ids:
+                    self.cache_manager.invalidate(node_id)
+
+            return node_ids
+
     def get_tree_completion_frontier(self, document_id: str | None) -> int:
         """Get the tree completion frontier for contextual indexing.
 
