@@ -1,13 +1,6 @@
 #!/bin/bash
 # UserPromptSubmit hook to provide memory status to Claude
 
-# Skip hooks when sync is disabled (e.g., RAGZOOM_DISABLE_SYNC=1 ralph build)
-if [[ "${RAGZOOM_DISABLE_SYNC:-}" == "1" ]]; then
-    cat > /dev/null  # consume stdin
-    echo '{"additionalContext": ""}'
-    exit 0
-fi
-
 # Get session ID from environment or input
 input=$(cat)
 session_id="${CLAUDE_SESSION_ID:-$(echo "$input" | jq -r '.session_id // empty')}"
