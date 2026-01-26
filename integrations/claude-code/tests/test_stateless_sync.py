@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
 from ragzoom_claude_code.transcript_sync import (
     build_ancestry_chain,
+    execute_sync,
     find_truncation_point,
     is_user_message,
 )
+
+from ragzoom.wrapper import AppendUnit
 
 
 class TestIsUserMessage:
@@ -517,3 +523,158 @@ class TestBuildAncestryChain:
 
         # Should return entire chain since stop_uuid was never found
         assert result == ["msg1", "msg2", "msg3"]
+
+
+# --- Helper classes and functions for execute_sync tests ---
+
+
+def make_user_message(
+    uuid: str,
+    parent_uuid: str | None,
+    timestamp: str,
+    content: str,
+) -> dict[str, object]:
+    """Create a user transcript message record."""
+    return {
+        "uuid": uuid,
+        "parentUuid": parent_uuid,
+        "type": "user",
+        "timestamp": timestamp,
+        "message": {"content": content},
+    }
+
+
+def make_assistant_message(
+    uuid: str,
+    parent_uuid: str | None,
+    timestamp: str,
+    content: str,
+) -> dict[str, object]:
+    """Create an assistant transcript message record."""
+    return {
+        "uuid": uuid,
+        "parentUuid": parent_uuid,
+        "type": "assistant",
+        "timestamp": timestamp,
+        "message": {"content": [{"type": "text", "text": content}]},
+    }
+
+
+@dataclass
+class MockDocumentStatus:
+    """Mock document status for testing stateless sync."""
+
+    document_id: str
+    exists: bool = False
+    is_temporal: bool = True
+    leaf_count: int = 0
+    node_count: int = 0
+    complete_forest_size: int = 0
+    completion_pct: float = 0.0
+    time_start: str | None = None
+    time_end: str | None = None
+
+
+@dataclass
+class BatchAppendResult:
+    """Result type compatible with execute_sync expectations."""
+
+    span_start: int
+    span_end: int
+
+
+@dataclass
+class TruncateFromTimeResult:
+    """Mock result from time-based truncation."""
+
+    document_id: str
+    deleted_node_ids: list[str]
+    cutoff_time: str
+
+
+@dataclass
+class StatelessMockClient:
+    """Mock client that tracks calls for testing stateless sync.
+
+    This client provides get_document_status() for querying indexed state
+    and truncate_from_time() for temporal truncation - the key APIs for
+    stateless sync.
+    """
+
+    # Call tracking
+    get_document_status_calls: list[str] = field(default_factory=list)
+    truncate_from_time_calls: list[tuple[str, str]] = field(default_factory=list)
+    batch_append_calls: list[tuple[str, list[AppendUnit]]] = field(default_factory=list)
+    truncate_calls: list[tuple[str, int]] = field(default_factory=list)
+
+    # Configurable return values
+    _document_status: MockDocumentStatus | None = None
+    _span_counter: int = field(default=0)
+
+    def get_document_status(self, document_id: str) -> MockDocumentStatus:
+        """Return document status for stateless sync."""
+        self.get_document_status_calls.append(document_id)
+        if self._document_status is not None:
+            return self._document_status
+        # Default: non-existent document
+        return MockDocumentStatus(document_id=document_id, exists=False)
+
+    def truncate_from_time(
+        self, document_id: str, cutoff_time: str
+    ) -> TruncateFromTimeResult:
+        """Track time-based truncation calls."""
+        self.truncate_from_time_calls.append((document_id, cutoff_time))
+        return TruncateFromTimeResult(
+            document_id=document_id,
+            deleted_node_ids=[],
+            cutoff_time=cutoff_time,
+        )
+
+    def batch_append(
+        self,
+        document_id: str,
+        units: list[AppendUnit],
+    ) -> BatchAppendResult:
+        """Track batch append calls."""
+        self.batch_append_calls.append((document_id, units))
+        for unit in units:
+            self._span_counter += len(unit.text)
+        return BatchAppendResult(span_start=0, span_end=self._span_counter)
+
+    def truncate(self, document_id: str, span_start: int) -> None:
+        """Track span-based truncate calls (should not be used in stateless)."""
+        self.truncate_calls.append((document_id, span_start))
+
+
+class TestExecuteSyncStateless:
+    """Tests for execute_sync using stateless document status approach."""
+
+    def test_execute_sync_calls_get_document_status(self, tmp_path: Path) -> None:
+        """execute_sync should call client.get_document_status() to get indexed state."""
+        client = StatelessMockClient()
+
+        transcript_path = tmp_path / "transcript.jsonl"
+        state_path = tmp_path / "state.jsonl"
+
+        # Create transcript with one turn
+        transcript_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        make_user_message("msg1", None, "2024-01-21T14:30:00Z", "Hello")
+                    ),
+                    json.dumps(
+                        make_assistant_message(
+                            "msg2", "msg1", "2024-01-21T14:30:05Z", "Hi!"
+                        )
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        execute_sync(transcript_path, state_path, client)
+
+        # Should have called get_document_status to determine indexed state
+        assert len(client.get_document_status_calls) == 1
+        assert client.get_document_status_calls[0] == "transcript"

@@ -1119,29 +1119,95 @@ class SyncResult:
     new_span_end: int
 
 
+def _is_trackable_uuid(uuid: str, records: dict[str, dict[str, object]]) -> bool:
+    """Check if UUID should be tracked in appended_uuids.
+
+    Excludes tool result messages which are internal implementation details.
+    """
+    record = records.get(uuid)
+    if record is None:
+        return False
+
+    is_tool_result = record.get("type") == "user" and "toolUseResult" in record
+    return not is_tool_result
+
+
+def _handle_revert_detection(
+    r_uuid: str | None,
+    indexed_time_end: datetime | None,
+    records: dict[str, dict[str, object]],
+    client: object,
+    document_id: str,
+) -> bool:
+    """Detect and handle revert by comparing connection point to indexed content.
+
+    Returns True if a revert was detected and truncation was performed.
+    """
+    if r_uuid is None or indexed_time_end is None:
+        return False
+
+    r_record = records.get(r_uuid)
+    if r_record is None:
+        return False
+
+    r_timestamp_str = r_record.get("timestamp")
+    if not isinstance(r_timestamp_str, str):
+        return False
+
+    r_timestamp = _parse_timestamp(r_timestamp_str)
+    if r_timestamp >= indexed_time_end:
+        return False
+
+    # Revert detected: truncate orphaned content
+    truncate_from_time = getattr(client, "truncate_from_time")
+    truncate_from_time(document_id, r_timestamp_str)
+    return True
+
+
+def _build_records_map(transcript_path: Path) -> dict[str, dict[str, object]]:
+    """Build UUID -> record map from transcript.
+
+    Includes all records with UUIDs, including compaction summaries.
+    Compaction summaries are needed for parent-child chain traversal
+    but are filtered out during transcription.
+    """
+    records: dict[str, dict[str, object]] = {}
+    for record, _ in iter_jsonl(transcript_path):
+        uuid = record.get("uuid")
+        if isinstance(uuid, str):
+            records[uuid] = record
+    return records
+
+
 def execute_sync(
     transcript_path: Path,
     state_path: Path,
     client: object,
 ) -> SyncResult:
-    """Execute a complete sync operation.
+    """Execute a complete sync operation using stateless algorithm.
+
+    The stateless algorithm derives sync state from two sources:
+    1. The JSONL transcript (source of truth for content)
+    2. RagZoom document status (source of truth for what's indexed)
+
+    This makes sync idempotent and crash-safe, eliminating external state files.
 
     Args:
         transcript_path: Path to the JSONL transcript
-        state_path: Path to the session state file
-        client: RagZoom client with append() and truncate() methods
+        state_path: Path to the session state file (used for document_id only)
+        client: RagZoom client with get_document_status(), batch_append(),
+                and truncate_from_time() methods
 
     Returns:
         SyncResult describing what was done
     """
-    # Load or create session state
+    # Get document_id from state file if it exists, otherwise from filename
     state = SessionState.load(state_path)
     if state is None:
-        # Generate document_id from transcript filename
         document_id = transcript_path.stem
         state = SessionState(header=SessionStateHeader(document_id=document_id))
-
-    document_id = state.header.document_id
+    else:
+        document_id = state.header.document_id
 
     # Get current head
     current_head = get_current_head(transcript_path)
@@ -1155,111 +1221,90 @@ def execute_sync(
             new_span_end=0,
         )
 
-    # Build parent map and compute sync plan
-    parent_map = build_parent_map(transcript_path)
-    append_log = state.append_log()
-    plan = compute_sync_plan(current_head, append_log, parent_map)
+    # Get indexed state from RagZoom document status
+    get_document_status = getattr(client, "get_document_status")
+    doc_status = get_document_status(document_id)
 
-    # Nothing to do
-    if not plan.uuids_to_transcribe and plan.truncate_to_span is None:
-        last_entry = append_log.last_entry()
-        span_end = last_entry.span_end if last_entry else 0
+    # Parse indexed_time_end if document has temporal content
+    indexed_time_end: datetime | None = None
+    if doc_status.exists and doc_status.time_end is not None:
+        indexed_time_end = _parse_timestamp(doc_status.time_end)
+
+    # Build records map for stateless algorithm
+    records = _build_records_map(transcript_path)
+
+    # Find truncation point using sliding window algorithm
+    r_uuid, s_uuid = find_truncation_point(current_head, records, indexed_time_end)
+
+    # Build list of UUIDs to append
+    if s_uuid is None:
+        uuids_to_append: list[str] = []
+    else:
+        uuids_to_append = build_ancestry_chain(current_head, r_uuid, records)
+
+    # Detect and handle revert
+    truncated = _handle_revert_detection(
+        r_uuid, indexed_time_end, records, client, document_id
+    )
+    truncate_span: int | None = None  # Not used in stateless (time-based truncation)
+
+    # Append new content to document
+    appended_uuids: list[str] = []
+    new_span_end = 0
+
+    if not uuids_to_append:
+        # Save state and return early if nothing to append
         state.save(state_path)
         return SyncResult(
             document_id=document_id,
-            truncated=False,
-            truncate_span=None,
+            truncated=truncated,
+            truncate_span=truncate_span,
             appended_uuids=[],
-            new_span_end=span_end,
+            new_span_end=0,
         )
 
-    truncated = False
-    truncate_span: int | None = None
-
-    # Execute truncation if needed
-    if plan.truncate_to_span is not None:
-        truncate_method = getattr(client, "truncate")
-        truncate_method(document_id, plan.truncate_to_span)
-        truncated = True
-        truncate_span = plan.truncate_to_span
-
-        # Truncate the append log
-        if plan.truncate_to_uuid is not None:
-            append_log.truncate_to(plan.truncate_to_uuid)
-        else:
-            # Disjoint branches - clear the state entries
-            state.entries = []
-
-    # Group UUIDs into turns and batch append with temporal metadata
-    appended_uuids: list[str] = []
-    new_span_end = 0
-    if plan.uuids_to_transcribe:
-        # Build records map once for all UUIDs
-        records_by_uuid = build_records_map(
-            transcript_path, set(plan.uuids_to_transcribe)
+    # Group UUIDs into conversation turns
+    turns = group_into_turns(uuids_to_append, records)
+    if not turns:
+        state.save(state_path)
+        return SyncResult(
+            document_id=document_id,
+            truncated=truncated,
+            truncate_span=truncate_span,
+            appended_uuids=[],
+            new_span_end=0,
         )
 
-        # Group UUIDs into conversation turns
-        turns = group_into_turns(plan.uuids_to_transcribe, records_by_uuid)
+    # Convert turns to AppendUnits and filter out empty ones
+    append_units = turns_to_append_units(turns, records)
+    non_empty = [
+        (unit, turn) for unit, turn in zip(append_units, turns) if unit.text.strip()
+    ]
 
-        if turns:
-            # Convert turns to AppendUnits with timestamps
-            append_units = turns_to_append_units(turns, records_by_uuid)
+    if not non_empty:
+        state.save(state_path)
+        return SyncResult(
+            document_id=document_id,
+            truncated=truncated,
+            truncate_span=truncate_span,
+            appended_uuids=[],
+            new_span_end=0,
+        )
 
-            # Pair units with turns, keeping only non-empty units
-            units_with_turns = [
-                (unit, turn)
-                for unit, turn in zip(append_units, turns)
-                if unit.text.strip()
-            ]
+    # Batch append all units
+    units = [unit for unit, _ in non_empty]
+    batch_append = getattr(client, "batch_append")
+    batch_append(document_id, units)
 
-            if units_with_turns:
-                non_empty_units = [unit for unit, _ in units_with_turns]
+    # Collect trackable UUIDs from appended turns
+    for _unit, turn in non_empty:
+        trackable = [uuid for uuid in turn.uuids if _is_trackable_uuid(uuid, records)]
+        appended_uuids.extend(trackable)
 
-                # Call batch_append with all units at once
-                batch_append_method = getattr(client, "batch_append")
-                batch_append_method(document_id, non_empty_units)
+    # Calculate total span from appended text
+    new_span_end = sum(len(unit.text) for unit in units)
 
-                # Determine starting span position for this batch
-                last_entry = append_log.last_entry()
-                span_start = last_entry.span_end if last_entry else 0
-
-                # Record one AppendEntry per turn with cumulative span_end
-                cumulative_span = span_start
-                for unit, turn in units_with_turns:
-                    cumulative_span += len(unit.text)
-
-                    # Collect UUIDs excluding tool results
-                    turn_uuids = [
-                        uuid
-                        for uuid in turn.uuids
-                        if uuid in records_by_uuid
-                        and not (
-                            records_by_uuid[uuid].get("type") == "user"
-                            and "toolUseResult" in records_by_uuid[uuid]
-                        )
-                    ]
-                    appended_uuids.extend(turn_uuids)
-
-                    if turn_uuids:
-                        append_log.append(
-                            AppendEntry(
-                                last_uuid=turn_uuids[-1],
-                                span_end=cumulative_span,
-                                first_uuid=turn_uuids[0],
-                            )
-                        )
-
-                # Use cumulative span for consistency with stored entries
-                # (matches what we recorded in each turn's AppendEntry)
-                new_span_end = cumulative_span
-
-    # Fall back to existing span_end if nothing was appended
-    if not appended_uuids:
-        last_entry = append_log.last_entry()
-        new_span_end = last_entry.span_end if last_entry else 0
-
-    # Save state
+    # Save state file (for backward compatibility - preserves document_id and PID)
     state.save(state_path)
 
     return SyncResult(

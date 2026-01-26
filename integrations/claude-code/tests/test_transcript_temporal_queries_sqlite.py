@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from ragzoom_claude_code.transcript_sync import execute_sync
 
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
-from ragzoom_claude_code.transcript_sync import execute_sync
 from ragzoom.config import IndexConfig, QueryConfig
 from ragzoom.contracts.embedding_model import EmbeddingProvider
 from ragzoom.retrieve import Retriever
@@ -131,6 +131,38 @@ class AppendExecutorClient:
         by the indexing runtime, not AppendExecutor.
         """
         pass
+
+    def get_document_status(self, document_id: str) -> object:
+        """Return document status for stateless sync.
+
+        Returns a minimal status indicating the document doesn't exist yet
+        (first sync case).
+        """
+        # For these tests, we always return non-existent document status
+        # to simulate first sync. Real implementations would query the backend.
+        return type(
+            "DocumentStatus",
+            (),
+            {
+                "document_id": document_id,
+                "exists": False,
+                "is_temporal": True,
+                "time_end": None,
+            },
+        )()
+
+    def truncate_from_time(self, document_id: str, cutoff_time: str) -> object:
+        """Time-based truncation for stateless sync."""
+        # For these tests, time-based truncation is not implemented
+        return type(
+            "TruncateFromTimeResult",
+            (),
+            {
+                "document_id": document_id,
+                "deleted_node_ids": [],
+                "cutoff_time": cutoff_time,
+            },
+        )()
 
 
 def _create_retriever(
