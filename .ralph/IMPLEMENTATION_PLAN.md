@@ -106,11 +106,11 @@ Unifies how Claude Code integration components discover their target document. S
 
 Add `RAGZOOM_DOCUMENT_ID` env var and `--document-id` CLI flag support to both sync script and MCP server.
 
-- [ ] Add `--document-id` option to sync CLI command
+- [x] Add `--document-id` option to sync CLI command
   - Spec: specs/unified-agent-identity.md § 3. Sync Script Identity Resolution
   - Success: `@click.option("--document-id", "-d", envvar="RAGZOOM_DOCUMENT_ID", default=None)` added to sync_cmd
   - Test: `test_sync_cli_document_id_flag`, `test_sync_cli_env_var_override`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/cli.py:25-35
+  - Location: integrations/claude-code/src/ragzoom_claude_code/cli.py:27-33
 
 - [ ] Update sync_cmd to use document_id parameter with priority order
   - Spec: specs/unified-agent-identity.md § 3. Sync Script Identity Resolution

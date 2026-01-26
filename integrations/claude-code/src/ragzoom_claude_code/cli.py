@@ -12,9 +12,6 @@ from ragzoom_claude_code.transcript_sync import (
     set_session_pid,
 )
 
-# Note: get_state_path and set_session_pid are still used by set-pid command
-# and reset command for state file management. execute_sync no longer uses state files.
-
 
 @click.group()
 def cli() -> None:
@@ -25,6 +22,12 @@ def cli() -> None:
 @cli.command("sync")
 @click.argument("jsonl_path", type=click.Path(exists=True, path_type=Path))
 @click.option(
+    "--document-id",
+    "-d",
+    envvar="RAGZOOM_DOCUMENT_ID",
+    help="Override document ID (default: JSONL filename stem)",
+)
+@click.option(
     "--server-address",
     "-s",
     envvar="RAGZOOM_SERVER_ADDRESS",
@@ -32,26 +35,32 @@ def cli() -> None:
     show_default=True,
     help="RagZoom gRPC server address",
 )
-def sync_cmd(jsonl_path: Path, server_address: str) -> None:
+def sync_cmd(jsonl_path: Path, document_id: str | None, server_address: str) -> None:
     """Sync a Claude Code JSONL log to a RagZoom document.
 
     Incrementally transcribes new conversation records and indexes them.
     Uses UUID-based ancestry tracking to detect and handle reverts.
-    Uses the session ID (JSONL filename without extension) as the document ID.
+
+    Document ID priority:
+      1. --document-id CLI flag
+      2. RAGZOOM_DOCUMENT_ID environment variable
+      3. JSONL filename stem (default)
 
     The JSONL files are typically found in:
     ~/.claude/projects/<project-path>/<session-id>.jsonl
 
     Example:
       ragzoom-claude-code sync ~/.claude/projects/.../session.jsonl
+      ragzoom-claude-code sync session.jsonl --document-id my-custom-id
+      RAGZOOM_DOCUMENT_ID=jarvis ragzoom-claude-code sync session.jsonl
     """
     from ragzoom.wrapper import RagZoom
 
-    document_id = jsonl_path.stem
+    doc_id = document_id or jsonl_path.stem
     client = RagZoom(server_address=server_address)
 
     try:
-        result = execute_sync(jsonl_path, document_id, client)
+        result = execute_sync(jsonl_path, doc_id, client)
         if result.truncated:
             click.echo(
                 f"Reverted document '{result.document_id}' "
