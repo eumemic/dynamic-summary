@@ -737,6 +737,9 @@ class GrpcRagzoomClient:
 
         Returns:
             TruncateResult with deleted node IDs and final span position
+
+        Raises:
+            RuntimeError: If document doesn't exist or span_start is invalid
         """
         request = pb2.TruncateDocumentRequest(
             document_id=document_id,
@@ -751,6 +754,43 @@ class GrpcRagzoomClient:
             document_id=response.document_id,
             deleted_node_ids=list(response.deleted_node_ids),
             span_start=response.span_start,
+        )
+
+    def truncate_from_time(
+        self,
+        *,
+        document_id: str,
+        cutoff_time: str,
+    ) -> TruncateFromTimeResult:
+        """Truncate a temporal document by deleting nodes where time_end > cutoff.
+
+        Only works on temporal documents. Removes all nodes whose time_end exceeds
+        the cutoff timestamp. Children of deleted nodes are orphaned by setting
+        their parent_id to NULL.
+
+        Args:
+            document_id: The temporal document to truncate
+            cutoff_time: ISO 8601 timestamp. Nodes with time_end > cutoff are deleted
+
+        Returns:
+            TruncateFromTimeResult with deleted node IDs and echoed cutoff time
+
+        Raises:
+            RuntimeError: If document doesn't exist, is not temporal, or cutoff is invalid
+        """
+        request = pb2.TruncateFromTimeRequest(
+            document_id=document_id,
+            cutoff_time=cutoff_time,
+        )
+        try:
+            response = self._indexer.TruncateFromTime(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        return TruncateFromTimeResult(
+            document_id=response.document_id,
+            deleted_node_ids=list(response.deleted_node_ids),
+            cutoff_time=response.cutoff_time,
         )
 
     def get_session_cursor(

@@ -304,11 +304,12 @@ Implement gRPC servicer and client methods.
   - Location: ragzoom/client/grpc_client.py:189-206
   - Implementation: Added dataclass with comprehensive docstring following existing TruncateResult pattern
 
-- [ ] Implement `truncate_from_time()` client method
+- [x] Implement `truncate_from_time()` client method
   - Spec: specs/temporal-document-apis.md § API Changes > Python Client
   - Success: Method calls RPC and returns TruncateFromTimeResult
-  - Test: `test_grpc_client_truncate_from_time`
-  - Location: ragzoom/client/grpc_client.py
+  - Test: `test_grpc_client_truncate_from_time`, `test_grpc_client_truncate_from_time_dataclass`
+  - Location: ragzoom/client/grpc_client.py:756-789
+  - Implementation: Added method following existing `truncate_document()` pattern with keyword-only args, gRPC error mapping, and strongly-typed return value
 
 ### Phase 48: Temporal Document APIs Acceptance Tests
 
