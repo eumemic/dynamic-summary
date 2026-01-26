@@ -99,11 +99,11 @@ class TestRetrievalInvariantsSQLite:
             )
             emb = EmbeddingService(mock_instance, doc_store, qcfg.embedding_model)
             cfg = IndexConfig.load()
-            # For retrieval operations, use target_embedding_context_tokens as fallback
+            # For retrieval operations, use target_embedding_tokens as fallback
             chunk_tokens = (
                 cfg.target_chunk_tokens
                 if cfg.target_chunk_tokens is not None
-                else cfg.target_embedding_context_tokens
+                else cfg.target_embedding_tokens
             )
             planner = BudgetPlanner(doc_store, chunk_tokens)
             retriever = Retriever(qcfg, doc_store, emb, planner, vi)

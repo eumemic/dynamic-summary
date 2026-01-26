@@ -149,7 +149,7 @@ async def test_cached_tokens_recorded_in_telemetry(
     chunk_tokens = (
         index_config.target_chunk_tokens
         if index_config.target_chunk_tokens is not None
-        else index_config.target_embedding_context_tokens
+        else index_config.target_embedding_tokens
     )
     data = reporter.get_telemetry_data("test_doc", chunk_tokens)
     test_node = next(n for n in data["nodes"] if n["node_id"] == "test_node")
@@ -212,7 +212,7 @@ async def test_backward_compatibility_without_cached_tokens(
     chunk_tokens = (
         index_config.target_chunk_tokens
         if index_config.target_chunk_tokens is not None
-        else index_config.target_embedding_context_tokens
+        else index_config.target_embedding_tokens
     )
     data = reporter.get_telemetry_data("test_doc", chunk_tokens)
     test_node = next(n for n in data["nodes"] if n["node_id"] == "test_node")
@@ -271,7 +271,7 @@ async def test_cached_tokens_across_multiple_retries(
     chunk_tokens = (
         index_config.target_chunk_tokens
         if index_config.target_chunk_tokens is not None
-        else index_config.target_embedding_context_tokens
+        else index_config.target_embedding_tokens
     )
     data = reporter.get_telemetry_data("test_doc", chunk_tokens)
     test_node = next(n for n in data["nodes"] if n["node_id"] == "test_node")
@@ -324,7 +324,7 @@ async def test_passthrough_summary_has_no_cached_tokens(
     chunk_tokens = (
         index_config.target_chunk_tokens
         if index_config.target_chunk_tokens is not None
-        else index_config.target_embedding_context_tokens
+        else index_config.target_embedding_tokens
     )
     data = reporter.get_telemetry_data("test_doc", chunk_tokens)
     test_node = next(n for n in data["nodes"] if n["node_id"] == "test_node")
@@ -376,7 +376,7 @@ async def test_cached_tokens_with_high_cache_rate(
     chunk_tokens = (
         index_config.target_chunk_tokens
         if index_config.target_chunk_tokens is not None
-        else index_config.target_embedding_context_tokens
+        else index_config.target_embedding_tokens
     )
     data = reporter.get_telemetry_data("test_doc", chunk_tokens)
     test_node = next(n for n in data["nodes"] if n["node_id"] == "test_node")

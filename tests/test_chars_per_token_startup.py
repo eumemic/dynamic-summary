@@ -53,7 +53,7 @@ async def test_chars_per_token_computed_on_startup(
     """
     index_config = IndexConfig.load(
         target_chunk_tokens=None,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
     )
 
     # Set up document with leaves that have 4.0 chars/token ratio

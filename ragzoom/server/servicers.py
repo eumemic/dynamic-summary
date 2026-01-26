@@ -238,12 +238,12 @@ def _build_retriever(
         timeout=state.operational_config.openai_timeout,
     )
     embedding_service = EmbeddingService(client, document_store, resolved_embedding)
-    # For retrieval operations, use target_embedding_context_tokens as fallback
+    # For retrieval operations, use target_embedding_tokens as fallback
     # when target_chunk_tokens is None (client-managed chunking mode)
     chunk_tokens = (
         state.index_config.target_chunk_tokens
         if state.index_config.target_chunk_tokens is not None
-        else state.index_config.target_embedding_context_tokens
+        else state.index_config.target_embedding_tokens
     )
     budget_planner = BudgetPlanner(document_store, chunk_tokens)
     vector_index = create_vector_index(

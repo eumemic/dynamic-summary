@@ -157,11 +157,11 @@ def test_query_performance(
         client, doc_store, query_config.embedding_model
     )
     cfg = IndexConfig.load(target_chunk_tokens=200)
-    # For retrieval operations, use target_embedding_context_tokens as fallback
+    # For retrieval operations, use target_embedding_tokens as fallback
     chunk_tokens = (
         cfg.target_chunk_tokens
         if cfg.target_chunk_tokens is not None
-        else cfg.target_embedding_context_tokens
+        else cfg.target_embedding_tokens
     )
     budget_planner = BudgetPlanner(doc_store, chunk_tokens)
 
