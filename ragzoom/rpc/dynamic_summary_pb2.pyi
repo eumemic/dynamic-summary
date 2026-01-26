@@ -387,6 +387,45 @@ class GetDocumentResponse:
 
     def __init__(self, *, status: DocumentStatus) -> None: ...
 
+
+class DocumentStatusRequest:
+    """Request for document status with completion metrics."""
+
+    document_id: str
+
+    def __init__(self, *, document_id: str) -> None: ...
+
+
+class DocumentStatusResponse:
+    """Response with document completion metrics and temporal range."""
+
+    DESCRIPTOR: ClassVar[Descriptor]
+    document_id: str
+    exists: bool
+    is_temporal: bool
+    leaf_count: int
+    node_count: int
+    complete_forest_size: int
+    completion_pct: float
+    time_start: str
+    time_end: str
+
+    def __init__(
+        self,
+        *,
+        document_id: str = ...,
+        exists: bool = ...,
+        is_temporal: bool = ...,
+        leaf_count: int = ...,
+        node_count: int = ...,
+        complete_forest_size: int = ...,
+        completion_pct: float = ...,
+        time_start: str = ...,
+        time_end: str = ...,
+    ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
+
+
 WORKER_RUN_MODE_UNTIL_IDLE: int
 
 class GetTelemetryRequest:

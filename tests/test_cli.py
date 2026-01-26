@@ -17,7 +17,7 @@ from click.testing import CliRunner
 from ragzoom.cli import cli
 from ragzoom.client.grpc_client import (
     ClearedDocumentResult,
-    DocumentStatusView,
+    DocumentWorkStatus,
     ExecuteQueryOutput,
     NodeSummary,
     RetrievalView,
@@ -136,7 +136,7 @@ def cli_mocks() -> Iterator[CliMocks]:
         grpc_client.__exit__.return_value = None
         grpc_client.append_text.return_value = index_result
         grpc_client.execute_query.return_value = execute_output
-        grpc_client.get_document_status.return_value = DocumentStatusView(
+        grpc_client.get_document_work_status.return_value = DocumentWorkStatus(
             document_id="doc-123",
             leaf_count=5,
             tree_depth=4,
@@ -207,7 +207,7 @@ def test_index_command_with_file(
     assert result.exit_code == 0
     assert "Document indexed successfully" in result.output
     cli_mocks["grpc_client"].append_text.assert_called_once()
-    cli_mocks["grpc_client"].get_document_status.assert_called_once_with("doc.txt")
+    cli_mocks["grpc_client"].get_document_work_status.assert_called_once_with("doc.txt")
     assert "Tree height: 4" in result.output
 
 
@@ -220,7 +220,7 @@ def test_index_command_without_awaiting_workers(
     assert result.exit_code == 0
     assert "Leaf ingestion queued" in result.output
     cli_mocks["grpc_client"].iter_worker_snapshots.assert_not_called()
-    cli_mocks["grpc_client"].get_document_status.assert_not_called()
+    cli_mocks["grpc_client"].get_document_work_status.assert_not_called()
 
 
 def test_index_command_rejects_telemetry_without_await(
@@ -253,7 +253,7 @@ def test_index_command_with_document_id(
     assert result.exit_code == 0
     call = cli_mocks["grpc_client"].append_text.call_args
     assert call.kwargs["document_id"] == "my-doc"
-    cli_mocks["grpc_client"].get_document_status.assert_called_once_with("my-doc")
+    cli_mocks["grpc_client"].get_document_work_status.assert_called_once_with("my-doc")
 
 
 def test_index_append_requires_document_id(

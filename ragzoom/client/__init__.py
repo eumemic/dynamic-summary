@@ -4,6 +4,7 @@ from .grpc_client import (
     ClearedDocumentResult,
     DocumentProgressSnapshot,
     DocumentStatusView,
+    DocumentWorkStatus,
     ExecuteQueryOutput,
     GrpcRagzoomClient,
     RetrievalView,
@@ -14,9 +15,10 @@ from .grpc_client import (
 
 __all__ = [
     "ClearedDocumentResult",
-    "ExecuteQueryOutput",
-    "DocumentStatusView",
     "DocumentProgressSnapshot",
+    "DocumentStatusView",
+    "DocumentWorkStatus",
+    "ExecuteQueryOutput",
     "GrpcRagzoomClient",
     "RetrievalView",
     "TelemetryExportResult",

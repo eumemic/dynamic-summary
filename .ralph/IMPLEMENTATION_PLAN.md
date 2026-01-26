@@ -169,21 +169,23 @@ Implement the new GetDocumentStatus servicer method.
   - Location: ragzoom/server/servicers.py:863-872
   - Implementation: Uses `get_temporal_range()` with `_unix_to_iso8601()` conversion
 
-### Phase 43: Document Status Client Implementation
+### Phase 43: Document Status Client Implementation (Complete)
 
 Add client method for the new GetDocumentStatus RPC.
 
-- [ ] Create `DocumentStatusView` dataclass with all spec fields
+- [x] Create `DocumentStatusView` dataclass with all spec fields
   - Spec: specs/temporal-document-apis.md § API Changes > Python Client
   - Success: Dataclass includes `document_id`, `exists`, `is_temporal`, `leaf_count`, `node_count`, `complete_forest_size`, `completion_pct`, `time_start`, `time_end`
   - Test: N/A (type definition)
-  - Location: ragzoom/client/grpc_client.py
+  - Location: ragzoom/client/grpc_client.py:227-254
+  - Implementation: New dataclass with comprehensive docstring. Renamed existing `DocumentStatusView` (for GetDocument RPC) to `DocumentWorkStatus` to avoid collision.
 
-- [ ] Implement `get_document_status()` client method calling new RPC
+- [x] Implement `get_document_status()` client method calling new RPC
   - Spec: specs/temporal-document-apis.md § API Changes > Python Client
   - Success: Method calls GetDocumentStatus RPC and returns DocumentStatusView
-  - Test: `test_grpc_client_get_document_status`
-  - Location: ragzoom/client/grpc_client.py
+  - Test: `test_grpc_client_get_document_status`, `test_grpc_client_get_document_status_nonexistent`
+  - Location: ragzoom/client/grpc_client.py:588-623
+  - Implementation: New method calling GetDocumentStatus RPC. Existing `get_document_status()` (calling GetDocument) renamed to `get_document_work_status()` for CLI usage. Updated proto stubs (.pyi files) with missing DocumentStatusRequest/Response types.
 
 ### Phase 44: Document Status CLI Command
 
