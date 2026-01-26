@@ -112,11 +112,12 @@ Add `RAGZOOM_DOCUMENT_ID` env var and `--document-id` CLI flag support to both s
   - Test: `test_sync_cli_document_id_flag`, `test_sync_cli_env_var_override`
   - Location: integrations/claude-code/src/ragzoom_claude_code/cli.py:27-33
 
-- [ ] Update sync_cmd to use document_id parameter with priority order
+- [x] Update sync_cmd to use document_id parameter with priority order
   - Spec: specs/unified-agent-identity.md § 3. Sync Script Identity Resolution
   - Success: Uses `--document-id` > `RAGZOOM_DOCUMENT_ID` env var > `jsonl_path.stem` priority
   - Test: `test_sync_cli_priority_order`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/cli.py:50
+  - Location: integrations/claude-code/src/ragzoom_claude_code/cli.py:59
+  - Implementation: `doc_id = document_id or jsonl_path.stem` combined with Click's `envvar` handles all three levels
 
 - [ ] Add env var check to MCP server `_get_session_id()` function
   - Spec: specs/unified-agent-identity.md § 4. MCP Server Identity Resolution
