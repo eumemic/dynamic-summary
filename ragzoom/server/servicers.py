@@ -64,6 +64,38 @@ else:  # pragma: no cover - typing aid only
 logger = logging.getLogger(__name__)
 
 _UNSPECIFIED_WORKER_MODE = 0
+
+
+def complete_forest_size(leaf_count: int) -> int:
+    """Calculate expected total nodes when a binary forest is fully indexed.
+
+    RagZoom builds a forest of perfect binary trees over N leaves.
+    The binary representation of N determines the forest structure:
+    - N decomposes into popcount(N) perfect binary trees
+    - Each tree with 2^k leaves has 2^k - 1 inner nodes
+    - Total inner nodes = N - popcount(N)
+    - Total nodes = N + (N - popcount(N)) = 2N - popcount(N)
+
+    Args:
+        leaf_count: Number of leaf nodes in the document.
+
+    Returns:
+        Expected total node count (leaves + inner nodes) for a complete forest.
+
+    Examples:
+        >>> complete_forest_size(8)   # 0b1000, popcount=1 → 15
+        15
+        >>> complete_forest_size(7)   # 0b111, popcount=3 → 11
+        11
+        >>> complete_forest_size(100) # 0b1100100, popcount=3 → 197
+        197
+    """
+    if leaf_count <= 0:
+        return 0
+    popcount = bin(leaf_count).count("1")
+    return 2 * leaf_count - popcount
+
+
 _UNTIL_IDLE_WORKER_MODE = getattr(pb2, "WORKER_RUN_MODE_UNTIL_IDLE", 1)
 _CONTINUOUS_WORKER_MODE = 2
 
