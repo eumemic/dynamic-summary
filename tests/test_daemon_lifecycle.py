@@ -184,10 +184,13 @@ sys.stderr.flush()
     @pytest.mark.slow_threshold(5)
     def test_daemonize_detaches_from_terminal(self, tmp_path: Path) -> None:
         """daemonize() should create new session (setsid)."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
         log_file = tmp_path / "daemon.log"
         result_file = tmp_path / "session_info"
 
-        script = f"""
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            script = f"""
 import os
 import sys
 sys.path.insert(0, "{Path.cwd()}")
@@ -196,7 +199,7 @@ from ragzoom.daemon import daemonize
 from pathlib import Path
 
 original_sid = os.getsid(0)
-daemonize(Path("{log_file}"))
+daemonize(Path("{log_file}"), ready_fd={write_fd})
 new_sid = os.getsid(0)
 new_pid = os.getpid()
 
@@ -206,14 +209,15 @@ Path("{result_file}").write_text(
     f"pid={{new_pid}}\\n"
 )
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        proc.wait(timeout=5)
-
-        time.sleep(0.5)
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            proc.wait(timeout=5)
+            wait_for_daemon_ready(read_fd)
 
         # Check that daemon has its own session
         assert result_file.exists(), "Result file should be created"
