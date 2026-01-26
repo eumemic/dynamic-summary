@@ -138,6 +138,12 @@ def _parse_timestamp(timestamp_str: str) -> datetime:
     return datetime.fromisoformat(normalized)
 
 
+def _get_parent_uuid(rec: dict[str, object]) -> str | None:
+    """Extract parentUuid as string or None from a record."""
+    parent = rec.get("parentUuid")
+    return parent if isinstance(parent, str) else None
+
+
 def find_truncation_point(
     head_uuid: str,
     records: dict[str, dict[str, object]],
@@ -182,11 +188,6 @@ def find_truncation_point(
         # First sync: no indexed content, append everything from head
         return (None, head_uuid)
 
-    def get_parent_uuid(rec: dict[str, object]) -> str | None:
-        """Extract parentUuid as string or None."""
-        parent = rec.get("parentUuid")
-        return parent if isinstance(parent, str) else None
-
     # Sliding window: S is the successor, R is the current node
     s_uuid: str | None = None  # Starts null at end of chain
     r_uuid: str | None = head_uuid
@@ -202,7 +203,7 @@ def find_truncation_point(
         if not isinstance(timestamp_str, str):
             # No timestamp - can't compare, continue walking
             s_uuid = r_uuid
-            r_uuid = get_parent_uuid(record)
+            r_uuid = _get_parent_uuid(record)
             continue
 
         try:
@@ -210,7 +211,7 @@ def find_truncation_point(
         except ValueError:
             # Invalid timestamp - continue walking
             s_uuid = r_uuid
-            r_uuid = get_parent_uuid(record)
+            r_uuid = _get_parent_uuid(record)
             continue
 
         # Check if R is within indexed range
@@ -229,11 +230,58 @@ def find_truncation_point(
 
         # Slide window backward
         s_uuid = r_uuid
-        r_uuid = get_parent_uuid(record)
+        r_uuid = _get_parent_uuid(record)
 
     # Walked entire chain without finding indexed content
     # This means complete reindex is needed
     return (None, head_uuid)
+
+
+def build_ancestry_chain(
+    head_uuid: str,
+    stop_uuid: str | None,
+    records: dict[str, dict[str, object]],
+) -> list[str]:
+    """Collect UUIDs from stop_uuid to head_uuid in chronological order.
+
+    Walks backward from head_uuid through parent links until reaching stop_uuid
+    (exclusive) or the root (parentUuid=None). Returns the collected UUIDs in
+    chronological order (oldest first).
+
+    Only UUIDs that exist in the records dict are included. If a parent UUID
+    is missing from records, the chain stops at that point.
+
+    This function is designed to work with the same records dict used by
+    find_truncation_point(), making it easy to build the ancestry chain
+    for records that need to be appended.
+
+    Args:
+        head_uuid: UUID of the endpoint (most recent record)
+        stop_uuid: UUID to stop at (exclusive), or None to include entire chain
+        records: UUID -> record mapping (must include parentUuid field)
+
+    Returns:
+        List of UUIDs from stop_uuid's successor to head_uuid, in chronological
+        order. Empty list if head_uuid == stop_uuid or head_uuid not in records.
+    """
+    if head_uuid == stop_uuid:
+        return []
+
+    # Walk backward from head, collecting UUIDs that exist in records
+    chain: list[str] = []
+    current: str | None = head_uuid
+
+    while current is not None and current != stop_uuid:
+        record = records.get(current)
+        if record is None:
+            # Current UUID not in records - can't include or trace further
+            break
+        chain.append(current)
+        current = _get_parent_uuid(record)
+
+    # Reverse to get chronological order (oldest first)
+    chain.reverse()
+    return chain
 
 
 def _should_skip_record(record: dict[str, object]) -> bool:
