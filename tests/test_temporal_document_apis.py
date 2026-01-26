@@ -623,3 +623,163 @@ class TestGetDocumentStatusServicer:
 
         with pytest.raises(ValueError, match="GetDocumentStatus requires"):
             await servicer.GetDocumentStatus(request, context)
+
+
+class TestTruncateFromTimeVectors:
+    """Tests for vector deletion during time-based truncation.
+
+    Verifies that truncate_from_time properly removes vectors from the
+    vector index for all deleted nodes.
+    """
+
+    @pytest.mark.asyncio
+    async def test_truncate_from_time_removes_vectors(
+        self, storage_backend: StorageBackend
+    ) -> None:
+        """Truncate from time should delete vectors for removed nodes.
+
+        This test verifies acceptance criterion #7 from the spec:
+        'truncate_from_time removes vectors for deleted nodes'
+        """
+        from typing import cast
+        from unittest.mock import AsyncMock, MagicMock
+
+        from ragzoom.config import IndexConfig
+        from ragzoom.contracts.vector_index import VectorIndex
+        from ragzoom.indexing.runtime import (
+            IndexerRuntime,
+            TruncateFromTimeResult,
+        )
+        from ragzoom.server.append_executor import AppendExecutor
+        from ragzoom.server.indexing_engine import IndexingEngine
+
+        doc_id = "test-truncate-vectors"
+
+        # Create a temporal document with timestamped leaves
+        doc_store = storage_backend.for_document(doc_id)
+        doc_store.set_metadata(
+            file_path="test.txt",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        doc_store._doc_repo.set_document_is_temporal(doc_id, is_temporal=True)
+
+        # Add leaves with timestamps spanning a time range
+        # leaf-0: t=1000-1100, leaf-1: t=1100-1200, leaf-2: t=1200-1300
+        nodes_data: list[NodeDataDict] = [
+            {
+                "node_id": f"{doc_id}-leaf-0",
+                "text": "First message content here",
+                "span_start": 0,
+                "span_end": 100,
+                "token_count": 5,
+                "height": 0,
+                "level_index": 0,
+                "time_start": 1000.0,
+                "time_end": 1100.0,
+            },
+            {
+                "node_id": f"{doc_id}-leaf-1",
+                "text": "Second message content here",
+                "span_start": 100,
+                "span_end": 200,
+                "token_count": 5,
+                "height": 0,
+                "level_index": 1,
+                "time_start": 1100.0,
+                "time_end": 1200.0,
+            },
+            {
+                "node_id": f"{doc_id}-leaf-2",
+                "text": "Third message content here",
+                "span_start": 200,
+                "span_end": 300,
+                "token_count": 5,
+                "height": 0,
+                "level_index": 2,
+                "time_start": 1200.0,
+                "time_end": 1300.0,
+            },
+        ]
+        doc_store.nodes.add_batch(nodes_data)
+
+        # Track vector delete calls
+        delete_calls: list[dict[str, object]] = []
+
+        class VectorIndexStub:
+            """Stub that tracks delete calls."""
+
+            def delete(
+                self,
+                filter: dict[str, object] | None = None,
+                ids: list[str] | None = None,
+            ) -> int:
+                delete_calls.append({"filter": filter, "ids": ids})
+                return len(ids) if ids else 0
+
+            def upsert(
+                self,
+                items: list[tuple[str, list[float], dict[str, object]]],
+            ) -> None:
+                pass
+
+            def search_similar(
+                self,
+                query_embedding: object,
+                k: int,
+                filters: object = None,
+            ) -> list[object]:
+                return []
+
+            def get_vectors(self, ids: list[str]) -> list[object]:
+                return []
+
+        def vector_factory(model: str) -> VectorIndexStub:
+            return VectorIndexStub()
+
+        # Create runtime with stub vector index
+        index_config = IndexConfig.load()
+        mock_append_executor = MagicMock(spec=AppendExecutor)
+        mock_indexing_engine = MagicMock(spec=IndexingEngine)
+        mock_indexing_engine.cancel_document = AsyncMock(return_value=None)
+
+        runtime = IndexerRuntime(
+            store=storage_backend,
+            index_config=index_config,
+            append_executor=cast(AppendExecutor, mock_append_executor),
+            indexing_engine=cast(IndexingEngine, mock_indexing_engine),
+            telemetry_manager=None,
+            vector_index_factory=cast(VectorIndex, vector_factory),  # type: ignore[arg-type]
+        )
+
+        # Truncate from cutoff_time=1150.0 (should delete leaf-1 and leaf-2)
+        # because their time_end > cutoff_time (1200 > 1150 and 1300 > 1150)
+        session = runtime.get_session(doc_id)
+        cutoff_time = 1150.0
+        result = await session.truncate_from_time(cutoff_time)
+
+        # Verify result type and contents
+        assert isinstance(result, TruncateFromTimeResult)
+        assert result.document_id == doc_id
+        assert result.cutoff_time == cutoff_time
+        # Should have deleted leaf-1 and leaf-2
+        assert len(result.deleted_node_ids) == 2
+        assert f"{doc_id}-leaf-1" in result.deleted_node_ids
+        assert f"{doc_id}-leaf-2" in result.deleted_node_ids
+
+        # Verify vector_index.delete was called with the deleted node IDs
+        assert len(delete_calls) == 1, "Vector index delete should be called once"
+        delete_call = delete_calls[0]
+        # The delete should use filter with node_id $in list
+        assert delete_call["filter"] is not None
+        filter_dict = cast(dict[str, object], delete_call["filter"])
+        assert "node_id" in filter_dict
+        node_id_filter = cast(dict[str, object], filter_dict["node_id"])
+        assert "$in" in node_id_filter
+        deleted_ids = set(cast(list[str], node_id_filter["$in"]))
+        assert deleted_ids == {f"{doc_id}-leaf-1", f"{doc_id}-leaf-2"}
+
+        # Verify the kept leaf (leaf-0) still exists in storage
+        remaining_leaves = list(doc_store.nodes.get_leaves())
+        assert len(remaining_leaves) == 1
+        assert remaining_leaves[0].id == f"{doc_id}-leaf-0"
