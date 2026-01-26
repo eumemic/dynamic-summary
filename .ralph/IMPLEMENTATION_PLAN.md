@@ -727,11 +727,12 @@ Convert server atexit integration tests to use ready-pipe pattern.
   - Location: tests/test_daemon_atexit.py:229
   - Implementation: Replaced fixed sleep(1.5) with polling loop that checks for pid_file and port_file removal. Test runs ~3x faster (0.71s vs 2.24s) while being more deterministic.
 
-- [ ] Migrate `test_atexit_runs_after_exception` to ready-pipe
+- [x] Migrate `test_atexit_runs_after_exception` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestStartServerAtexitIntegration
   - Success: Test uses ready-pipe, removes polling loop with `time.sleep(0.1)` and final `time.sleep(0.5)`
   - Test: `test_atexit_runs_after_exception`
-  - Location: tests/test_daemon_atexit.py
+  - Location: tests/test_daemon_atexit.py:381
+  - Implementation: Uses dual-pipe pattern: ready_fd for daemon startup (via daemonize()), done_fd for daemon about-to-raise-exception signal. Replaced marker file polling + time.sleep(0.5) with select()-based done pipe wait + EOF-wait for process exit. Test time reduced from ~3.5s to ~0.09s.
 
 ### Phase 60: Remove Remaining Sleeps and Verify
 

@@ -383,53 +383,91 @@ Path("{tmp_path / 'success'}").write_text("ok")
 
         Python's atexit handlers run on normal exit, including after
         uncaught exceptions (the exception is handled by the interpreter).
+
+        Uses the ready-pipe pattern for event-driven synchronization:
+        - Daemon signals b"R" when started (ready_fd)
+        - Daemon signals b"D" when about to raise exception (done_fd)
+        This eliminates polling loops and time.sleep() for deterministic tests.
         """
+        import os
+        import select
+
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
+        cwd = Path.cwd()
         pid_file = tmp_path / "daemon.pid"
         port_file = tmp_path / "daemon.port"
         log_file = tmp_path / "daemon.log"
 
-        script = f"""
+        done_read_fd, done_write_fd = os.pipe()
+
+        try:
+            with daemon_ready_pipe() as (read_fd, write_fd):
+                script = f"""
 import atexit
 import os
 import sys
-sys.path.insert(0, "{Path.cwd()}")
+sys.path.insert(0, "{cwd}")
 os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
 
-from ragzoom.daemon import (
-    daemonize,
-    write_port_file,
-    cleanup_stale_state,
-)
+{_load_daemon_module_code()}
 from pathlib import Path
 
-daemonize(Path("{log_file}"))
-write_port_file(50051)
+daemon.daemonize(Path("{log_file}"), ready_fd={write_fd})
+daemon.write_port_file(50051)
 
 # Register atexit cleanup
-atexit.register(cleanup_stale_state)
+atexit.register(daemon.cleanup_stale_state)
 
-# Write marker that daemon started
-Path("{tmp_path / 'started'}").write_text("started")
+# Signal done before raising exception
+os.write({done_write_fd}, b"D")
+os.close({done_write_fd})
 
 # Raise exception - atexit should still run
 raise RuntimeError("Simulated error in server")
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        proc.wait(timeout=10)
+                proc = subprocess.Popen(
+                    [sys.executable, "-c", script],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=str(cwd),
+                    pass_fds=(write_fd, done_write_fd),
+                )
+                os.close(write_fd)
 
-        # Wait for daemon process to complete
-        for _ in range(30):
-            started = tmp_path / "started"
-            if started.exists():
-                break
-            time.sleep(0.1)
+                proc.wait(timeout=10)
+                wait_for_daemon_ready(read_fd)
 
-        # Give atexit time to run
-        time.sleep(0.5)
+            # Close our copy after passing to child
+            try:
+                os.close(done_write_fd)
+            except OSError:
+                pass
+
+            # Wait for daemon to signal done (about to raise exception)
+            ready, _, _ = select.select([done_read_fd], [], [], 5.0)
+            if not ready:
+                raise TimeoutError("Daemon did not signal done within 5s")
+
+            data = os.read(done_read_fd, 1)
+            if data != b"D":
+                raise AssertionError(
+                    f"Daemon crashed before signaling done (got {data!r})"
+                )
+
+            # Wait for EOF on pipe (indicates process fully exited, atexit complete)
+            remaining = os.read(done_read_fd, 1)
+            assert remaining == b"", f"Expected EOF, got {remaining!r}"
+
+        finally:
+            try:
+                os.close(done_read_fd)
+            except OSError:
+                pass
+            try:
+                os.close(done_write_fd)
+            except OSError:
+                pass
 
         # State files should be cleaned up even after exception
         assert not pid_file.exists(), "PID file should be removed after exception"
