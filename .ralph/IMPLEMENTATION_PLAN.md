@@ -187,21 +187,23 @@ Add client method for the new GetDocumentStatus RPC.
   - Location: ragzoom/client/grpc_client.py:588-623
   - Implementation: New method calling GetDocumentStatus RPC. Existing `get_document_status()` (calling GetDocument) renamed to `get_document_work_status()` for CLI usage. Updated proto stubs (.pyi files) with missing DocumentStatusRequest/Response types.
 
-### Phase 44: Document Status CLI Command
+### Phase 44: Document Status CLI Command (Complete)
 
 Add `ragzoom document-status` CLI command.
 
-- [ ] Implement `ragzoom document-status <doc-id>` command
+- [x] Implement `ragzoom document-status <doc-id>` command
   - Spec: specs/temporal-document-apis.md § CLI
   - Success: Command outputs human-readable status format
-  - Test: `test_cli_document_status_human`
-  - Location: ragzoom/cli.py (new command)
+  - Test: `test_document_status_human_format`, `test_document_status_nonexistent_document`, `test_document_status_non_temporal_document`
+  - Location: ragzoom/cli.py:1231-1293
+  - Implementation: Uses GrpcRagzoomClient.get_document_status() with auto-start server resolution. Displays document existence, type (temporal/non-temporal), leaf count, node completion, and time range.
 
-- [ ] Add `--json` flag to document-status command
+- [x] Add `--json` flag to document-status command
   - Spec: specs/temporal-document-apis.md § CLI
   - Success: `--json` outputs JSON format matching spec example
-  - Test: `test_cli_document_status_json`
-  - Location: ragzoom/cli.py (new command)
+  - Test: `test_document_status_json_format`
+  - Location: ragzoom/cli.py:1231-1293
+  - Implementation: JSON output includes all DocumentStatusView fields with proper null handling for time_start/time_end.
 
 ### Phase 45: TruncateFromTime Proto and Messages (Complete)
 
