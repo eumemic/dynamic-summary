@@ -479,11 +479,12 @@ Replace append log logic with stateless algorithm.
 
 Remove deprecated append log classes and functions.
 
-- [ ] Remove `AppendLog` class
+- [x] Remove `AppendLog` class
   - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
   - Success: Class no longer exists in codebase
   - Test: N/A (removal)
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:357
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (removed)
+  - Implementation: Removed file-based AppendLog class. Made _SessionAppendLog a standalone class (no longer inherits from AppendLog). Added find_valid_prefix() method to _SessionAppendLog since compute_sync_plan() still uses it. Removed AppendLog from exports and updated tests to use SessionState().append_log() instead.
 
 - [ ] Remove `AppendEntry` dataclass
   - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
