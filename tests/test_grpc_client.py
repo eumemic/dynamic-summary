@@ -131,3 +131,53 @@ async def test_grpc_client_get_document_status_nonexistent(
 
     finally:
         client.close()
+
+
+@pytest.mark.asyncio
+async def test_grpc_client_truncate_from_time(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """Test truncate_from_time client method calls RPC and maps errors correctly.
+
+    Spec: specs/temporal-document-apis.md § API Changes > Python Client
+
+    Note: End-to-end truncation behavior is tested in test_temporal_document_apis.py
+    using mocked state to support temporal documents.
+    """
+
+    address, _state = grpc_test_environment
+    document_id = "truncate-time-test-nonexistent"
+    cutoff = "2024-01-01T10:30:00Z"
+
+    client = GrpcRagzoomClient(address)
+    try:
+        # Verify RPC error mapping: NOT_FOUND -> RuntimeError
+        with pytest.raises(RuntimeError, match="NOT_FOUND"):
+            await asyncio.to_thread(
+                client.truncate_from_time,
+                document_id=document_id,
+                cutoff_time=cutoff,
+            )
+
+    finally:
+        client.close()
+
+
+@pytest.mark.asyncio
+async def test_grpc_client_truncate_from_time_dataclass() -> None:
+    """Test TruncateFromTimeResult dataclass exists and has expected fields.
+
+    Spec: specs/temporal-document-apis.md § API Changes > Python Client
+    """
+    from ragzoom.client.grpc_client import TruncateFromTimeResult
+
+    # Verify the dataclass can be constructed with expected fields
+    result = TruncateFromTimeResult(
+        document_id="test-doc",
+        deleted_node_ids=["node-1", "node-2"],
+        cutoff_time="2024-01-01T12:00:00Z",
+    )
+
+    assert result.document_id == "test-doc"
+    assert result.deleted_node_ids == ["node-1", "node-2"]
+    assert result.cutoff_time == "2024-01-01T12:00:00Z"
