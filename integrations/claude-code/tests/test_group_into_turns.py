@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from ragzoom_claude_code.transcript_sync import group_into_turns
 
 
@@ -385,3 +384,168 @@ class TestGroupIntoTurnsMissingTimestamp:
         )
         with pytest.raises(ValueError, match="missing timestamp"):
             group_into_turns(["msg1"], records)
+
+
+class TestGroupIntoTurnsMetaFiltering:
+    """Tests for filtering meta records (isMeta=true).
+
+    Meta records are injected content like skill expansions, embedded PDFs,
+    and command templates - static documentation that shouldn't be indexed.
+    """
+
+    def test_filters_meta_records(self) -> None:
+        """Meta records (isMeta=true) are excluded from turns."""
+        records = _records(
+            {
+                "uuid": "msg1",
+                "type": "user",
+                "timestamp": "2024-01-21T14:30:00Z",
+                "message": {"content": "Hello"},
+            },
+            {
+                "uuid": "msg2",
+                "type": "user",
+                "timestamp": "2024-01-21T14:30:01Z",
+                "isMeta": True,
+                "message": {"content": "[Skill expansion: 20MB of docs...]"},
+            },
+            {
+                "uuid": "msg3",
+                "type": "assistant",
+                "timestamp": "2024-01-21T14:30:05Z",
+                "message": {"content": [{"type": "text", "text": "Hi!"}]},
+            },
+        )
+        result = group_into_turns(["msg1", "msg2", "msg3"], records)
+        # msg2 is filtered out, so only msg1 and msg3 remain in the turn
+        assert len(result) == 1
+        assert result[0].uuids == ["msg1", "msg3"]
+
+    def test_meta_record_between_turns_filtered(self) -> None:
+        """Meta records between turns don't disrupt turn boundaries."""
+        records = _records(
+            {
+                "uuid": "msg1",
+                "type": "user",
+                "timestamp": "2024-01-21T14:30:00Z",
+                "message": {"content": "First question"},
+            },
+            {
+                "uuid": "msg2",
+                "type": "assistant",
+                "timestamp": "2024-01-21T14:30:05Z",
+                "message": {"content": [{"type": "text", "text": "First answer"}]},
+            },
+            {
+                "uuid": "msg3",
+                "type": "user",
+                "timestamp": "2024-01-21T14:30:10Z",
+                "isMeta": True,
+                "message": {"content": "[Embedded PDF content...]"},
+            },
+            {
+                "uuid": "msg4",
+                "type": "user",
+                "timestamp": "2024-01-21T14:31:00Z",
+                "message": {"content": "Second question"},
+            },
+            {
+                "uuid": "msg5",
+                "type": "assistant",
+                "timestamp": "2024-01-21T14:31:05Z",
+                "message": {"content": [{"type": "text", "text": "Second answer"}]},
+            },
+        )
+        result = group_into_turns(["msg1", "msg2", "msg3", "msg4", "msg5"], records)
+        # Meta record (msg3) is filtered, two clean turns remain
+        assert len(result) == 2
+        assert result[0].uuids == ["msg1", "msg2"]
+        assert result[1].uuids == ["msg4", "msg5"]
+
+    def test_meta_record_at_turn_start_filtered(self) -> None:
+        """Meta record at what would be turn start is skipped."""
+        records = _records(
+            {
+                "uuid": "msg1",
+                "type": "user",
+                "timestamp": "2024-01-21T14:30:00Z",
+                "isMeta": True,
+                "message": {"content": "[Command template...]"},
+            },
+            {
+                "uuid": "msg2",
+                "type": "user",
+                "timestamp": "2024-01-21T14:30:05Z",
+                "message": {"content": "Real user message"},
+            },
+            {
+                "uuid": "msg3",
+                "type": "assistant",
+                "timestamp": "2024-01-21T14:30:10Z",
+                "message": {"content": [{"type": "text", "text": "Response"}]},
+            },
+        )
+        result = group_into_turns(["msg1", "msg2", "msg3"], records)
+        # msg1 is filtered, msg2 starts the turn
+        assert len(result) == 1
+        assert result[0].uuids == ["msg2", "msg3"]
+        assert result[0].time_start == "2024-01-21T14:30:05Z"
+
+
+class TestShouldSkipRecord:
+    """Tests for _should_skip_record helper function."""
+
+    def test_skips_compact_summary(self) -> None:
+        """Records with isCompactSummary=True should be skipped."""
+        from ragzoom_claude_code.transcript_sync import _should_skip_record
+
+        record: dict[str, object] = {
+            "uuid": "msg1",
+            "type": "assistant",
+            "isCompactSummary": True,
+        }
+        assert _should_skip_record(record) is True
+
+    def test_skips_queue_operation(self) -> None:
+        """Records with type=queue-operation should be skipped."""
+        from ragzoom_claude_code.transcript_sync import _should_skip_record
+
+        record: dict[str, object] = {
+            "uuid": "msg1",
+            "type": "queue-operation",
+        }
+        assert _should_skip_record(record) is True
+
+    def test_skips_meta_record(self) -> None:
+        """Records with isMeta=True should be skipped."""
+        from ragzoom_claude_code.transcript_sync import _should_skip_record
+
+        record: dict[str, object] = {
+            "uuid": "msg1",
+            "type": "user",
+            "isMeta": True,
+            "message": {"content": "[Skill expansion...]"},
+        }
+        assert _should_skip_record(record) is True
+
+    def test_does_not_skip_regular_user_message(self) -> None:
+        """Regular user messages should not be skipped."""
+        from ragzoom_claude_code.transcript_sync import _should_skip_record
+
+        record: dict[str, object] = {
+            "uuid": "msg1",
+            "type": "user",
+            "message": {"content": "Hello"},
+        }
+        assert _should_skip_record(record) is False
+
+    def test_does_not_skip_regular_assistant_message(self) -> None:
+        """Regular assistant messages should not be skipped."""
+        from ragzoom_claude_code.transcript_sync import _should_skip_record
+
+        record: dict[str, object] = {
+            "uuid": "msg1",
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "Hi"}]},
+        }
+        assert _should_skip_record(record) is False

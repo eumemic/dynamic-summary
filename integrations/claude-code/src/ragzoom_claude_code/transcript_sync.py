@@ -9,9 +9,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from claude_transcriber import Transcriber
-from ragzoom_claude_code.jsonl_reader import iter_jsonl, iter_jsonl_reversed
 
 from ragzoom.wrapper import AppendUnit
+from ragzoom_claude_code.jsonl_reader import iter_jsonl, iter_jsonl_reversed
 
 # Pattern to extract command name from invocation message
 _COMMAND_NAME_PATTERN = re.compile(r"<command-name>(/[\w-]+)</command-name>")
@@ -86,10 +86,19 @@ def _is_user_prompt(
 
 
 def _should_skip_record(record: dict[str, object]) -> bool:
-    """Check if record should be filtered out of turn grouping."""
+    """Check if record should be filtered out of turn grouping.
+
+    Filters:
+    - Compaction summaries (isCompactSummary=True) - already LLM-generated
+    - Queue operations (type="queue-operation") - internal Claude Code state
+    - Meta records (isMeta=True) - injected content like skill expansions,
+      embedded PDFs, command templates (static documentation that repeats)
+    """
     if record.get("isCompactSummary"):
         return True
     if record.get("type") == "queue-operation":
+        return True
+    if record.get("isMeta"):
         return True
     return False
 
@@ -107,6 +116,7 @@ def group_into_turns(
     Filters out:
     - Compaction summaries (isCompactSummary=True)
     - Queue operations (type="queue-operation")
+    - Meta records (isMeta=True) - skill expansions, PDFs, command templates
     - UUIDs not found in records_by_uuid
 
     Args:

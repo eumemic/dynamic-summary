@@ -157,20 +157,32 @@ if "OPENAI_API_KEY" not in os.environ:
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    """Add command-line options for test configuration."""
-    parser.addoption(
+    """Add command-line options for test configuration.
+
+    Uses try/except guards to avoid duplicate registration errors when tests
+    from multiple conftest paths are collected together (e.g., integration tests).
+    """
+
+    def _safe_addoption(*args: str, **kwargs: object) -> None:
+        """Add option, ignoring if already registered."""
+        try:
+            parser.addoption(*args, **kwargs)
+        except ValueError:
+            pass  # Already registered by another conftest
+
+    _safe_addoption(
         "--use-real-store",
         action="store_true",
         default=False,
         help="Use real Store instead of mock for all tests",
     )
-    parser.addoption(
+    _safe_addoption(
         "--integration-only",
         action="store_true",
         default=False,
         help="Run only integration tests with real Store",
     )
-    parser.addoption(
+    _safe_addoption(
         "--max-test-duration",
         type=float,
         default=float(os.getenv("RZ_MAX_TEST_DURATION", "2.0")),
