@@ -1,5 +1,5 @@
 ---
-status: DRAFT
+status: READY
 ---
 
 # Event-Driven Daemon Tests
