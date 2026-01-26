@@ -1,5 +1,5 @@
 ---
-description: This skill should be used when the user reports "daemon won't start", "daemon timeout", "server not responding", "timed out waiting for healthy state", "stale daemon", "failed to acquire indexer lease", "temporal documents require target_chunk_tokens", or mentions daemon troubleshooting issues.
+description: This skill should be used when the user reports "daemon won't start", "daemon timeout", "server not responding", "timed out waiting for healthy state", "stale daemon", "failed to acquire indexer lease", or mentions daemon troubleshooting issues.
 ---
 
 # Daemon Troubleshooting
@@ -12,7 +12,6 @@ Diagnose and fix ragzoom daemon state issues when commands fail with timeout or 
 - "gRPC UNAVAILABLE: Connection refused"
 - `ragzoom server status` says "Not running" but processes exist
 - Commands hang or timeout unexpectedly
-- "Temporal documents require target_chunk_tokens=null in config"
 - "Failed to acquire indexer lease after 90s"
 
 ## Diagnostic Steps
@@ -47,20 +46,6 @@ Look for:
 - "Acquiring global indexer lease" without success - server still starting
 
 ## Resolution
-
-### Starting with Config (Temporal Documents)
-
-If you get "Temporal documents require target_chunk_tokens=null":
-
-```bash
-# Check if config exists
-cat ~/.local/state/ragzoom/daemon.config.json
-
-# Start with config
-ragzoom server start --daemon --config ~/.local/state/ragzoom/daemon.config.json
-```
-
-The config file is created automatically when you first start with `--config`. For temporal documents (like Claude Code transcripts), it must contain `"target_chunk_tokens": null`.
 
 ### Clear Stale Indexer Lease
 
