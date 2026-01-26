@@ -311,63 +311,63 @@ Implement gRPC servicer and client methods.
   - Location: ragzoom/client/grpc_client.py:756-789
   - Implementation: Added method following existing `truncate_document()` pattern with keyword-only args, gRPC error mapping, and strongly-typed return value
 
-### Phase 48: Temporal Document APIs Acceptance Tests
+### Phase 48: Temporal Document APIs Acceptance Tests (Complete)
 
 Integration tests verifying all acceptance criteria.
 
-- [ ] Test: document-status returns accurate metadata for existing documents
+- [x] Test: document-status returns accurate metadata for existing documents
   - Spec: specs/temporal-document-apis.md § Acceptance Criteria #1
   - Success: All fields populated correctly for existing doc
-  - Test: `test_document_status_existing_document`
-  - Location: tests/test_temporal_document_apis.py
+  - Test: `test_get_document_status_existing_document`
+  - Location: tests/test_temporal_document_apis.py:435
 
-- [ ] Test: document-status returns exists=false for non-existent documents
+- [x] Test: document-status returns exists=false for non-existent documents
   - Spec: specs/temporal-document-apis.md § Acceptance Criteria #2
   - Success: `exists=false` for unknown document ID
-  - Test: `test_document_status_nonexistent`
-  - Location: tests/test_temporal_document_apis.py
+  - Test: `test_get_document_status_not_found`
+  - Location: tests/test_temporal_document_apis.py:414
 
-- [ ] Test: document-status includes correct time range for temporal documents
+- [x] Test: document-status includes correct time range for temporal documents
   - Spec: specs/temporal-document-apis.md § Acceptance Criteria #3
   - Success: `time_start` and `time_end` match actual leaf node timestamps
-  - Test: `test_document_status_temporal_range`
-  - Location: tests/test_temporal_document_apis.py
+  - Test: `test_get_document_status_temporal_range`
+  - Location: tests/test_temporal_document_apis.py:556
 
-- [ ] Test: completion_pct uses 2N - popcount(N) formula
+- [x] Test: completion_pct uses 2N - popcount(N) formula
   - Spec: specs/temporal-document-apis.md § Acceptance Criteria #4
   - Success: Percentage correctly reflects formula
-  - Test: `test_document_status_completion_formula`
-  - Location: tests/test_temporal_document_apis.py
+  - Test: `test_get_document_status_completion_with_inner_nodes`, `test_complete_forest_size_*`
+  - Location: tests/test_temporal_document_apis.py:477, tests/test_temporal_document_apis.py:21
 
-- [ ] Test: truncate_from_time removes all nodes where time_end > cutoff
+- [x] Test: truncate_from_time removes all nodes where time_end > cutoff
   - Spec: specs/temporal-document-apis.md § Acceptance Criteria #5
   - Success: Only nodes with time_end <= cutoff remain
-  - Test: `test_truncate_from_time_removes_nodes`
-  - Location: tests/test_temporal_document_apis.py
+  - Test: `test_truncate_from_time_servicer`, `test_truncate_from_time_removes_vectors`
+  - Location: tests/test_temporal_document_apis.py:836, tests/test_temporal_document_apis.py:639
 
-- [ ] Test: truncate_from_time correctly orphans kept children
+- [x] Test: truncate_from_time correctly orphans kept children
   - Spec: specs/temporal-document-apis.md § Acceptance Criteria #6
   - Success: Kept nodes have parent_id = NULL if parent was deleted
-  - Test: `test_truncate_from_time_orphans_children`
-  - Location: tests/test_temporal_document_apis.py
+  - Test: `test_truncate_from_time_orphans_kept_children`
+  - Location: tests/test_temporal_document_apis.py:797
 
-- [ ] Test: truncate_from_time removes vectors for deleted nodes
+- [x] Test: truncate_from_time removes vectors for deleted nodes
   - Spec: specs/temporal-document-apis.md § Acceptance Criteria #7
   - Success: Vector index entries removed for deleted nodes
   - Test: `test_truncate_from_time_removes_vectors`
-  - Location: tests/test_temporal_document_apis.py
+  - Location: tests/test_temporal_document_apis.py:639
 
-- [ ] Test: truncate_from_time errors on non-temporal documents
+- [x] Test: truncate_from_time errors on non-temporal documents
   - Spec: specs/temporal-document-apis.md § Acceptance Criteria #8
   - Success: Returns appropriate error for non-temporal doc
-  - Test: `test_truncate_from_time_non_temporal_error`
-  - Location: tests/test_temporal_document_apis.py
+  - Test: `test_truncate_from_time_non_temporal`
+  - Location: tests/test_temporal_document_apis.py:928
 
-- [ ] Test: both APIs accessible via gRPC and Python client
+- [x] Test: both APIs accessible via gRPC and Python client
   - Spec: specs/temporal-document-apis.md § Acceptance Criteria #9
   - Success: End-to-end test using GrpcRagzoomClient
-  - Test: `test_temporal_apis_client_integration`
-  - Location: tests/test_temporal_document_apis.py
+  - Test: `test_grpc_client_get_document_status`, `test_grpc_client_truncate_from_time`
+  - Location: tests/test_grpc_client.py:72, tests/test_grpc_client.py:137
 
 ---
 
