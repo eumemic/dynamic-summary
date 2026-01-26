@@ -133,11 +133,12 @@ Add `RAGZOOM_DOCUMENT_ID` env var and `--document-id` CLI flag support to both s
   - Location: integrations/claude-code/tests/test_cli.py:71-139
   - Implementation: Six tests in TestSyncDocumentIdOption class verify flag, env var, stem priority. All tests pass.
 
-- [ ] Add tests for env var identity in MCP server
+- [x] Add tests for env var identity in MCP server
   - Spec: specs/unified-agent-identity.md § Acceptance Criteria #2
   - Success: Test verifies MCP server uses `RAGZOOM_DOCUMENT_ID` when set
-  - Test: `test_mcp_env_var_identity`
-  - Location: integrations/claude-code/tests/test_mcp_server.py
+  - Test: `test_env_var_takes_priority`, `test_env_var_returns_string_not_tuple`, `test_empty_env_var_not_used`, `test_env_var_skips_state_file_lookup`
+  - Location: integrations/claude-code/tests/test_mcp_server.py:13-54
+  - Implementation: Four tests in TestMcpServerEnvVarIdentity class verify env var priority, return type, empty string handling, and state file bypass. All tests pass.
 
 ### Phase 62: PID Temp File Discovery
 
