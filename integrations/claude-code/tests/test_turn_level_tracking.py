@@ -3,8 +3,7 @@
 Each conversation turn should map to exactly one AppendUnit/leaf node.
 Verifies that turns are correctly identified, grouped, and indexed.
 
-These tests verify observable behavior (turns processed correctly) rather than
-internal state, which is compatible with both append-log and stateless sync.
+These tests verify observable behavior through the sync result and client calls.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from ragzoom_claude_code.transcript_sync import execute_sync
 from tests.conftest import FakeTranscriptClient
 
 
-class TestTurnLevelAppendEntryTracking:
+class TestTurnLevelTracking:
     """Tests that each turn is processed separately."""
 
     def test_each_turn_creates_one_append_unit(self, tmp_path: Path) -> None:

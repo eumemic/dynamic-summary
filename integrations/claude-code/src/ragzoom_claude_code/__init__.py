@@ -12,7 +12,6 @@ Components:
 """
 
 from ragzoom_claude_code.transcript_sync import (
-    AppendEntry,
     SessionState,
     SessionStateHeader,
     SyncResult,
@@ -22,7 +21,6 @@ from ragzoom_claude_code.transcript_sync import (
 )
 
 __all__ = [
-    "AppendEntry",
     "SessionState",
     "SessionStateHeader",
     "SyncResult",

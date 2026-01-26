@@ -508,24 +508,27 @@ Remove deprecated append log classes and functions.
   - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (removed)
   - Implementation: Removed `_SessionAppendLog` class and `SessionState.append_log()` method. Removed 2 tests: `test_append_log_view` and `test_append_log_truncate`.
 
-- [ ] Remove `AppendEntry` dataclass and its tests
+- [x] Remove `AppendEntry` dataclass and its tests
   - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
   - Success: Dataclass no longer exists in codebase
   - Test: N/A (removal) - Remove TestAppendEntry class
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:507
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (removed)
+  - Implementation: Removed AppendEntry dataclass (lines 506-553), TestAppendEntry test class, and all related imports/exports. Completed atomically with SessionState simplification since they were tightly coupled.
 
-- [ ] Simplify `SessionState` class (remove entries field, keep header)
+- [x] Simplify `SessionState` class (remove entries field, keep header)
   - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
   - Success: SessionState only stores header (document_id, last_pid), no entries
   - Test: Update TestSessionState to reflect simplified structure
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:557
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:506
   - Note: Keep SessionStateHeader, SessionState, get_state_path(), set_session_pid() for MCP server
+  - Implementation: Removed entries field and updated load/save methods. SessionState now only persists header for MCP server session discovery. Updated TestSessionState.test_save_and_load to test header-only behavior.
 
-- [ ] Update imports and exports in `__init__.py`
+- [x] Update imports and exports in `__init__.py`
   - Spec: specs/stateless-transcript-sync.md § API Changes
   - Success: Remove AppendEntry, compute_sync_plan exports; keep SessionState, SessionStateHeader
   - Test: N/A (cleanup)
   - Location: integrations/claude-code/src/ragzoom_claude_code/__init__.py
+  - Implementation: Removed AppendEntry from imports and __all__ list. Kept SessionState, SessionStateHeader, SyncResult, execute_sync, get_state_path, set_session_pid.
 
 ### Phase 53: Stateless Sync Integration Tests
 
