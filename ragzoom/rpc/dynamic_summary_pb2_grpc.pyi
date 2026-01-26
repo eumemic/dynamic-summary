@@ -10,6 +10,8 @@ from .dynamic_summary_pb2 import (
     AppendTextResponse,
     BatchAppendTextRequest,
     BatchAppendTextResponse,
+    DocumentStatusRequest,
+    DocumentStatusResponse,
     ExecuteQueryRequest,
     ExecuteQueryResponse,
     GetCompactionBoundaryRequest,
@@ -71,6 +73,9 @@ class WorkerServiceStub:
     def GetDocument(
         self, request: GetDocumentRequest, timeout: float | None = ...
     ) -> GetDocumentResponse: ...
+    def GetDocumentStatus(
+        self, request: DocumentStatusRequest, timeout: float | None = ...
+    ) -> DocumentStatusResponse: ...
 
 class SessionIngestionServiceStub:
     def __init__(self, channel: Channel) -> None: ...
@@ -128,6 +133,9 @@ class WorkerServiceServicer:
     def GetDocument(
         self, request: GetDocumentRequest, context: ServicerContext
     ) -> Awaitable[GetDocumentResponse]: ...
+    def GetDocumentStatus(
+        self, request: object, context: ServicerContext
+    ) -> Awaitable[object]: ...
 
 class SessionIngestionServiceServicer:
     def GetSessionCursor(

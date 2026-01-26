@@ -212,11 +212,43 @@ class CompactionBoundaryResult:
 
 
 @dataclass
-class DocumentStatusView:
+class DocumentWorkStatus:
+    """Work queue status for a document (tree depth, pending work)."""
+
     document_id: str
     leaf_count: int
     tree_depth: int
     has_pending_work: bool
+
+
+@dataclass
+class DocumentStatusView:
+    """Document status with completion metrics for stateless sync workflows.
+
+    Provides document completeness and temporal range information for sync algorithms,
+    unlike DocumentWorkStatus which focuses on work queue state.
+
+    Attributes:
+        document_id: Document identifier.
+        exists: Whether the document has any nodes.
+        is_temporal: Whether the document has temporal metadata.
+        leaf_count: Number of leaf nodes.
+        node_count: Total nodes (leaves + inner summary nodes).
+        complete_forest_size: Expected nodes when fully indexed: 2N - popcount(N).
+        completion_pct: Indexing completion (node_count / forest_size * 100).
+        time_start: Earliest content timestamp, None if non-temporal or empty.
+        time_end: Latest content timestamp, None if non-temporal or empty.
+    """
+
+    document_id: str
+    exists: bool
+    is_temporal: bool
+    leaf_count: int
+    node_count: int
+    complete_forest_size: int
+    completion_pct: float
+    time_start: str | None = None
+    time_end: str | None = None
 
 
 class GrpcRagzoomClient:
@@ -535,7 +567,7 @@ class GrpcRagzoomClient:
         except grpc.RpcError as error:  # pragma: no cover
             raise _map_rpc_error(error) from error
 
-    def get_document_status(self, document_id: str) -> DocumentStatusView:
+    def get_document_work_status(self, document_id: str) -> DocumentWorkStatus:
         request = pb2.GetDocumentRequest(document_id=document_id)
         try:
             response = self._workers.GetDocument(request, timeout=self._timeout)
@@ -546,11 +578,42 @@ class GrpcRagzoomClient:
         if status is None or not getattr(status, "document_id", ""):
             raise RuntimeError("Worker service returned empty document status")
 
-        return DocumentStatusView(
+        return DocumentWorkStatus(
             document_id=status.document_id,
             leaf_count=status.leaf_count,
             tree_depth=status.tree_depth,
             has_pending_work=status.has_pending_work,
+        )
+
+    def get_document_status(self, document_id: str) -> DocumentStatusView:
+        """Get document status with completion metrics and temporal range.
+
+        This method returns status information needed for stateless sync workflows,
+        including whether the document exists, indexing completion percentage,
+        and temporal range for documents with temporal metadata.
+
+        Args:
+            document_id: The document to get status for.
+
+        Returns:
+            DocumentStatusView with completion metrics and temporal info.
+        """
+        request = pb2.DocumentStatusRequest(document_id=document_id)
+        try:
+            response = self._workers.GetDocumentStatus(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover - network failures
+            raise _map_rpc_error(error) from error
+
+        return DocumentStatusView(
+            document_id=response.document_id,
+            exists=response.exists,
+            is_temporal=response.is_temporal,
+            leaf_count=response.leaf_count,
+            node_count=response.node_count,
+            complete_forest_size=response.complete_forest_size,
+            completion_pct=response.completion_pct,
+            time_start=response.time_start if response.HasField("time_start") else None,
+            time_end=response.time_end if response.HasField("time_end") else None,
         )
 
     def clear_document(self, document_id: str) -> ClearedDocumentResult:

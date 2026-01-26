@@ -66,3 +66,68 @@ def test_proto_summarization_guidance_is_optional() -> None:
     )
     # Should not have the field set
     assert not request.HasField("summarization_guidance")
+
+
+@pytest.mark.asyncio
+async def test_grpc_client_get_document_status(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """Test get_document_status returns DocumentStatusView with all fields.
+
+    Spec: specs/temporal-document-apis.md § API Changes > Python Client
+    """
+    from ragzoom.client.grpc_client import DocumentStatusView
+
+    address, state = grpc_test_environment
+    document_id = "status-test-doc"
+
+    client = GrpcRagzoomClient(address)
+    try:
+        await asyncio.to_thread(
+            client.append_text,
+            document_id=document_id,
+            content=b"Test content for status check.",
+            collect_telemetry=False,
+            replace_existing=True,
+        )
+        await asyncio.to_thread(client.run_workers_once)
+
+        status = await asyncio.to_thread(client.get_document_status, document_id)
+
+        assert isinstance(status, DocumentStatusView)
+        assert status.document_id == document_id
+        assert status.exists is True
+        assert status.is_temporal is False
+        assert status.leaf_count >= 1
+        assert status.node_count >= status.leaf_count
+        assert status.complete_forest_size >= status.leaf_count
+        assert 0 <= status.completion_pct <= 100
+        assert status.time_start is None
+        assert status.time_end is None
+
+    finally:
+        client.close()
+
+
+@pytest.mark.asyncio
+async def test_grpc_client_get_document_status_nonexistent(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """Test get_document_status returns exists=False for nonexistent documents."""
+    from ragzoom.client.grpc_client import DocumentStatusView
+
+    address, _state = grpc_test_environment
+
+    client = GrpcRagzoomClient(address)
+    try:
+        status = await asyncio.to_thread(
+            client.get_document_status, "nonexistent-doc-12345"
+        )
+
+        assert isinstance(status, DocumentStatusView)
+        assert status.exists is False
+        assert status.leaf_count == 0
+        assert status.node_count == 0
+
+    finally:
+        client.close()

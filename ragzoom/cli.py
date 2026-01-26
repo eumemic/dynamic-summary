@@ -21,7 +21,7 @@ import click
 from dotenv import load_dotenv
 
 from ragzoom.client import (
-    DocumentStatusView,
+    DocumentWorkStatus,
     GrpcRagzoomClient,
     WorkerRunSnapshot,
 )
@@ -361,7 +361,7 @@ def index(
         result: IndexingResult
         resolved_address = _resolve_server_address_with_autostart(server_address)
         final_snapshot: WorkerRunSnapshot | None = None
-        refreshed_status: DocumentStatusView | None = None
+        refreshed_status: DocumentWorkStatus | None = None
         refresh_error: str | None = None
 
         content_bytes = Path(file_path).read_bytes()
@@ -435,7 +435,7 @@ def index(
 
                 if should_refresh_status:
                     try:
-                        refreshed_status = client.get_document_status(
+                        refreshed_status = client.get_document_work_status(
                             target_document_id
                         )
                     except Exception as exc:  # pragma: no cover - network failures
