@@ -1228,6 +1228,72 @@ def cost(ctx: click.Context, document_id: str) -> None:
         handle_cli_error(e, "getting cost statistics")
 
 
+@cli.command("document-status")
+@click.argument("document_id")
+@click.option(
+    "--server-address",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default=None,
+    show_default=False,
+    help=GRPC_ADDRESS_HELP,
+)
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def document_status(
+    ctx: click.Context,
+    document_id: str,
+    server_address: str | None,
+    output_json: bool,
+) -> None:
+    """Display document status and completion metrics.
+
+    Shows document existence, node counts, indexing completion percentage,
+    and temporal range for documents with temporal metadata.
+
+    Examples:
+      ragzoom document-status my-document
+      ragzoom document-status session-abc123 --json
+    """
+    try:
+        resolved_address = _resolve_server_address_with_autostart(server_address)
+
+        with GrpcRagzoomClient(resolved_address) as client:
+            status = client.get_document_status(document_id)
+
+        if output_json:
+            # JSON output format matching spec
+            output = {
+                "document_id": status.document_id,
+                "exists": status.exists,
+                "is_temporal": status.is_temporal,
+                "leaf_count": status.leaf_count,
+                "node_count": status.node_count,
+                "complete_forest_size": status.complete_forest_size,
+                "completion_pct": status.completion_pct,
+                "time_start": status.time_start,
+                "time_end": status.time_end,
+            }
+            click.echo(json.dumps(output, indent=2))
+        else:
+            # Human-readable output format matching spec
+            click.echo(f"Document: {status.document_id}")
+            if not status.exists:
+                click.echo("Status: does not exist")
+            else:
+                doc_type = "temporal" if status.is_temporal else "non-temporal"
+                click.echo(f"Type: {doc_type}")
+                click.echo(f"Leaves: {status.leaf_count}")
+                click.echo(
+                    f"Nodes: {status.node_count} / {status.complete_forest_size} "
+                    f"({status.completion_pct:.1f}% complete)"
+                )
+                if status.is_temporal and status.time_start and status.time_end:
+                    click.echo(f"Time range: {status.time_start} to {status.time_end}")
+
+    except Exception as e:
+        handle_cli_error(e, "getting document status")
+
+
 @cli.command()
 @click.option(
     "--host", default="127.0.0.1", help="Host to bind to"
