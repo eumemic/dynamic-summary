@@ -78,693 +78,344 @@ The timestamped transcript sync feature specified in `specs/timestamped-transcri
 
 # Active Features
 
-## Feature: Temporal Document APIs (specs/temporal-document-apis.md)
+## Previous Feature: Temporal Document APIs (Complete)
 
-Adds document status and temporal truncation APIs to enable stateless synchronization workflows.
+The temporal document APIs feature specified in `specs/temporal-document-apis.md` is **fully implemented**. All 9 phases (40-48) complete with document status API, time-based truncation, and comprehensive test coverage.
 
-**Dependencies:** None (temporal-metadata.md already complete)
+---
 
-### Phase 40: Document Status Proto Messages and RPC (Complete)
+## Previous Feature: Stateless Transcript Sync (Complete)
 
-Add new proto messages and RPC for document status (separate from existing GetDocument).
+The stateless transcript sync feature specified in `specs/stateless-transcript-sync.md` is **fully implemented**. All 5 phases (49-53) complete with stateless algorithm, append log removal, and integration tests.
 
-- [x] Add `DocumentStatusRequest` proto message
-  - Spec: specs/temporal-document-apis.md § 4. gRPC Service Definition
-  - Success: Proto defines message with `string document_id = 1;`
-  - Test: N/A (proto change)
-  - Location: proto/dynamic_summary.proto:248-250
+---
 
-- [x] Add `DocumentStatusResponse` proto message
-  - Spec: specs/temporal-document-apis.md § 4. gRPC Service Definition
-  - Success: Proto defines message with all 9 fields: document_id, exists, is_temporal, leaf_count, node_count, complete_forest_size, completion_pct, time_start, time_end
-  - Test: N/A (proto change)
-  - Location: proto/dynamic_summary.proto:252-262
+## Previous Feature: Event-Driven Daemon Tests (Complete)
 
-- [x] Add `GetDocumentStatus` RPC to appropriate service
-  - Spec: specs/temporal-document-apis.md § 4. gRPC Service Definition
-  - Success: Service defines `rpc GetDocumentStatus(DocumentStatusRequest) returns (DocumentStatusResponse);`
-  - Test: N/A (proto change)
-  - Location: proto/dynamic_summary.proto:302 (WorkerService)
+The event-driven daemon tests feature specified in `specs/event-driven-daemon-tests.md` is **fully implemented**. All 7 phases (54-60) complete with ready-pipe infrastructure, test migrations, and 47% performance improvement (19.44s → 10.30s).
 
-- [x] Regenerate Python proto bindings
-  - Spec: specs/temporal-document-apis.md § 4. gRPC Service Definition
-  - Success: `scripts/compile-proto.sh` completes, pb2.py and pb2_grpc.py files updated
-  - Test: N/A (build step)
-  - Location: ragzoom/rpc/dynamic_summary_pb2.py
+---
 
-### Phase 41: Complete Forest Size Helper (Complete)
+## Feature: Unified Agent Identity (specs/unified-agent-identity.md)
 
-Implement the binary forest formula for calculating expected node count.
+Unifies how Claude Code integration components discover their target document. Supports configured identity (Jarvis/Legion model via env var) and discovered identity (Claude Code model via PID temp file).
 
-- [x] Implement `complete_forest_size()` function
-  - Spec: specs/temporal-document-apis.md § 2. Complete Forest Size Formula
-  - Success: Function returns `2N - popcount(N)` for N leaves
-  - Test: `test_complete_forest_size_powers_of_two`, `test_complete_forest_size_mixed`, `test_complete_forest_size_zero`
-  - Location: ragzoom/server/servicers.py:67-96
-  - Implementation: Public function with comprehensive docstring, reuses same formula as `_expected_total_jobs()` in indexing_engine.py
+**Dependencies:** Stateless Transcript Sync (Phase 49-53) must be complete first - this feature eliminates remaining state file machinery.
 
-### Phase 42: Document Status Servicer Implementation
+**⚠️ CRITICAL: Work-In-Progress State**
+There are uncommitted changes to `mcp_server.py` that introduce a **broken import** - `get_session_document_id` is imported but doesn't exist yet. The MCP server will fail to start until Phase 62's first item is completed. Additionally, line 130 still uses tuple unpacking (`doc_id, _ = _get_session_id()`) but the function now returns a string.
 
-Implement the new GetDocumentStatus servicer method.
+**Recommended order:** Complete Phase 62 item 1 first (implement `get_session_document_id()`), then fix line 130, then proceed with other items.
 
-- [x] Add `get_node_count()` method to document store
-  - Spec: specs/temporal-document-apis.md § Implementation Outline > Phase 1
-  - Success: Method returns total node count (leaves + inner nodes)
-  - Test: `test_document_store_node_count`
-  - Location: ragzoom/document_store.py:824-832
-  - Implementation: Simple delegation to `self.nodes.count()` with guard for missing document_id
+### Phase 61: Add Environment Variable Support
 
-- [x] Add `get_temporal_range()` method to document store
-  - Spec: specs/temporal-document-apis.md § Implementation Outline > Phase 1
-  - Success: Method returns (time_start, time_end) tuple from leaf nodes
-  - Test: `test_document_store_temporal_range`
-  - Location: ragzoom/document_store.py:836-863
-  - Implementation: Iterates leaf nodes (via fallback path) to find MIN(time_start) and MAX(time_end). Also supports optimized `get_temporal_range_for_document()` method on repository if available.
+Add `RAGZOOM_DOCUMENT_ID` env var and `--document-id` CLI flag support to both sync script and MCP server.
 
-- [x] Implement `GetDocumentStatus` servicer method
-  - Spec: specs/temporal-document-apis.md § 1. Document Status API
-  - Success: Returns DocumentStatusResponse with all fields populated correctly
-  - Test: `test_get_document_status_existing_document`, `test_get_document_status_completion_with_inner_nodes`
-  - Location: ragzoom/server/servicers.py:813-888 (WorkerServicer)
-  - Implementation: Uses `getattr()` pattern for proto types, calculates all metrics from document store
+- [ ] Add `--document-id` option to sync CLI command
+  - Spec: specs/unified-agent-identity.md § 3. Sync Script Identity Resolution
+  - Success: `@click.option("--document-id", "-d", envvar="RAGZOOM_DOCUMENT_ID", default=None)` added to sync_cmd
+  - Test: `test_sync_cli_document_id_flag`, `test_sync_cli_env_var_override`
+  - Location: integrations/claude-code/src/ragzoom_claude_code/cli.py:25-35
 
-- [x] Handle non-existent documents in GetDocumentStatus
-  - Spec: specs/temporal-document-apis.md § 1. Document Status API
-  - Success: Returns `exists=False` with zeroed fields for unknown documents
-  - Test: `test_get_document_status_not_found`
-  - Location: ragzoom/server/servicers.py:840-850
-  - Implementation: Checks node_count == 0 to determine existence
+- [ ] Update sync_cmd to use document_id parameter with priority order
+  - Spec: specs/unified-agent-identity.md § 3. Sync Script Identity Resolution
+  - Success: Uses `--document-id` > `RAGZOOM_DOCUMENT_ID` env var > `jsonl_path.stem` priority
+  - Test: `test_sync_cli_priority_order`
+  - Location: integrations/claude-code/src/ragzoom_claude_code/cli.py:50
 
-- [x] Populate `complete_forest_size` and `completion_pct` fields
-  - Spec: specs/temporal-document-apis.md § 1. Document Status API
-  - Success: Uses `2N - popcount(N)` formula for forest size, calculates percentage
-  - Test: `test_get_document_status_completion_with_inner_nodes`
-  - Location: ragzoom/server/servicers.py:859-860
-  - Implementation: Uses `complete_forest_size()` helper, calculates `node_count / forest_size * 100`
+- [ ] Add env var check to MCP server `_get_session_id()` function
+  - Spec: specs/unified-agent-identity.md § 4. MCP Server Identity Resolution
+  - Success: Checks `os.environ.get("RAGZOOM_DOCUMENT_ID")` first, returns if set
+  - Test: `test_mcp_server_env_var_identity`
+  - Location: integrations/claude-code/src/ragzoom_claude_code/mcp_server.py:15-37
 
-- [x] Populate `time_start` and `time_end` fields for temporal documents
-  - Spec: specs/temporal-document-apis.md § 1. Document Status API
-  - Success: Returns temporal range from leaf nodes, null for non-temporal
-  - Test: `test_get_document_status_temporal_range`
-  - Location: ragzoom/server/servicers.py:863-872
-  - Implementation: Uses `get_temporal_range()` with `_unix_to_iso8601()` conversion
+- [ ] Add tests for env var precedence in sync CLI
+  - Spec: specs/unified-agent-identity.md § Acceptance Criteria #1, #3
+  - Success: Tests verify `--document-id` overrides env var, env var overrides stem
+  - Test: `test_sync_document_id_precedence`
+  - Location: integrations/claude-code/tests/test_cli.py
 
-### Phase 43: Document Status Client Implementation (Complete)
+- [ ] Add tests for env var identity in MCP server
+  - Spec: specs/unified-agent-identity.md § Acceptance Criteria #2
+  - Success: Test verifies MCP server uses `RAGZOOM_DOCUMENT_ID` when set
+  - Test: `test_mcp_env_var_identity`
+  - Location: integrations/claude-code/tests/test_mcp_server.py
 
-Add client method for the new GetDocumentStatus RPC.
+### Phase 62: PID Temp File Discovery
 
-- [x] Create `DocumentStatusView` dataclass with all spec fields
-  - Spec: specs/temporal-document-apis.md § API Changes > Python Client
-  - Success: Dataclass includes `document_id`, `exists`, `is_temporal`, `leaf_count`, `node_count`, `complete_forest_size`, `completion_pct`, `time_start`, `time_end`
-  - Test: N/A (type definition)
-  - Location: ragzoom/client/grpc_client.py:227-254
-  - Implementation: New dataclass with comprehensive docstring. Renamed existing `DocumentStatusView` (for GetDocument RPC) to `DocumentWorkStatus` to avoid collision.
+Replace state file scanning with ephemeral PID-keyed temp files for Claude Code session discovery.
 
-- [x] Implement `get_document_status()` client method calling new RPC
-  - Spec: specs/temporal-document-apis.md § API Changes > Python Client
-  - Success: Method calls GetDocumentStatus RPC and returns DocumentStatusView
-  - Test: `test_grpc_client_get_document_status`, `test_grpc_client_get_document_status_nonexistent`
-  - Location: ragzoom/client/grpc_client.py:588-623
-  - Implementation: New method calling GetDocumentStatus RPC. Existing `get_document_status()` (calling GetDocument) renamed to `get_document_work_status()` for CLI usage. Updated proto stubs (.pyi files) with missing DocumentStatusRequest/Response types.
+- [ ] Implement `get_session_document_id()` function for temp file reading
+  - Spec: specs/unified-agent-identity.md § 2. PID-Keyed Temp File for Discovered Identity
+  - Success: Reads `/tmp/ragzoom-session-{pid}` and returns document_id, or None if not found
+  - Test: `test_get_session_document_id_from_temp_file`, `test_get_session_document_id_not_found`
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (new function)
 
-### Phase 44: Document Status CLI Command (Complete)
+- [ ] Update MCP server to use `get_session_document_id()` as fallback
+  - Spec: specs/unified-agent-identity.md § 4. MCP Server Identity Resolution
+  - Success: Falls back to `get_session_document_id(os.getppid())` when env var not set
+  - Test: `test_mcp_pid_temp_file_discovery`
+  - Location: integrations/claude-code/src/ragzoom_claude_code/mcp_server.py:27-37
 
-Add `ragzoom document-status` CLI command.
+- [ ] Update SessionStart hook to write PID temp file
+  - Spec: specs/unified-agent-identity.md § 5. Hook Updates
+  - Success: Writes `echo "$SESSION_ID" > "/tmp/ragzoom-session-$PPID"` instead of calling set-pid
+  - Test: Manual verification (hook runs in bash)
+  - Location: .claude/hooks/session-start.sh:31
 
-- [x] Implement `ragzoom document-status <doc-id>` command
-  - Spec: specs/temporal-document-apis.md § CLI
-  - Success: Command outputs human-readable status format
-  - Test: `test_document_status_human_format`, `test_document_status_nonexistent_document`, `test_document_status_non_temporal_document`
-  - Location: ragzoom/cli.py:1231-1293
-  - Implementation: Uses GrpcRagzoomClient.get_document_status() with auto-start server resolution. Displays document existence, type (temporal/non-temporal), leaf count, node completion, and time range.
+- [ ] Fix MCP server `remember` tool to handle string return from `_get_session_id()`
+  - Spec: specs/unified-agent-identity.md § 4. MCP Server Identity Resolution
+  - Success: Line 130 uses `doc_id = _get_session_id()` (string, not tuple)
+  - Test: `test_remember_tool_uses_correct_document_id`
+  - Location: integrations/claude-code/src/ragzoom_claude_code/mcp_server.py:130
 
-- [x] Add `--json` flag to document-status command
-  - Spec: specs/temporal-document-apis.md § CLI
-  - Success: `--json` outputs JSON format matching spec example
-  - Test: `test_document_status_json_format`
-  - Location: ragzoom/cli.py:1231-1293
-  - Implementation: JSON output includes all DocumentStatusView fields with proper null handling for time_start/time_end.
+- [ ] Add tests for PID-based discovery
+  - Spec: specs/unified-agent-identity.md § Acceptance Criteria #4
+  - Success: Test creates temp file, verifies MCP server discovers session
+  - Test: `test_pid_temp_file_discovery`
+  - Location: integrations/claude-code/tests/test_mcp_server.py
 
-### Phase 45: TruncateFromTime Proto and Messages (Complete)
+### Phase 63: Remove State File Machinery
 
-Add proto messages and service method for time-based truncation.
+Clean up deprecated state file code now that identity discovery uses temp files.
 
-- [x] Add `TruncateFromTimeRequest` proto message
-  - Spec: specs/temporal-document-apis.md § 4. gRPC Service Definition
-  - Success: Proto defines message with `document_id` and `cutoff_time` fields
-  - Test: N/A (proto change)
-  - Location: proto/dynamic_summary.proto:266-269
+- [ ] Remove `get_state_path()` function from transcript_sync.py
+  - Spec: specs/unified-agent-identity.md § 6. Remove State File Machinery
+  - Success: Function no longer exists in codebase
+  - Test: N/A (removal)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:543-547
 
-- [x] Add `TruncateFromTimeResponse` proto message
-  - Spec: specs/temporal-document-apis.md § 4. gRPC Service Definition
-  - Success: Proto defines message with `document_id`, `deleted_node_ids`, `cutoff_time`
-  - Test: N/A (proto change)
-  - Location: proto/dynamic_summary.proto:271-275
+- [ ] Remove `set_session_pid()` function from transcript_sync.py
+  - Spec: specs/unified-agent-identity.md § 6. Remove State File Machinery
+  - Success: Function no longer exists in codebase
+  - Test: N/A (removal)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:550-561
 
-- [x] Add `TruncateFromTime` RPC to IndexerService
-  - Spec: specs/temporal-document-apis.md § 4. gRPC Service Definition
-  - Success: Service defines `rpc TruncateFromTime(TruncateFromTimeRequest) returns (TruncateFromTimeResponse);`
-  - Test: N/A (proto change)
-  - Location: proto/dynamic_summary.proto:291
+- [ ] Remove `_get_state_dir()` function from transcript_sync.py
+  - Spec: specs/unified-agent-identity.md § 6. Remove State File Machinery
+  - Success: Function no longer exists in codebase
+  - Test: N/A (removal)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:535-540
 
-- [x] Regenerate Python proto bindings
-  - Spec: specs/temporal-document-apis.md § 4. gRPC Service Definition
-  - Success: `scripts/compile-proto.sh` completes, pb2.py and pb2_grpc.py files updated
-  - Test: N/A (build step)
-  - Location: ragzoom/rpc/
+- [ ] Remove `SessionState` and `SessionStateHeader` classes from transcript_sync.py
+  - Spec: specs/unified-agent-identity.md § 6. Remove State File Machinery
+  - Success: Classes no longer exist in codebase
+  - Test: N/A (removal)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:477-532
 
-### Phase 46: TruncateFromTime Storage Implementation
+- [ ] Remove `set-pid` CLI command
+  - Spec: specs/unified-agent-identity.md § 6. Remove State File Machinery
+  - Success: Command no longer exists (hook writes temp file directly)
+  - Test: N/A (removal)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/cli.py:71-88
 
-Implement time-based truncation in storage backend.
+- [ ] Update `reset` command to remove legacy state file cleanup
+  - Spec: specs/unified-agent-identity.md § 6. Remove State File Machinery
+  - Success: Reset command no longer references `get_state_path()` or state files
+  - Test: `test_reset_command_no_state_file_cleanup`
+  - Location: integrations/claude-code/src/ragzoom_claude_code/cli.py:121-125
 
-- [x] Add `delete_nodes_from_time()` method to storage backend contract
-  - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API
-  - Success: Contract defines method signature with document_id and cutoff_time parameters
-  - Test: N/A (contract definition)
-  - Location: ragzoom/contracts/storage_backend.py:60-79
-  - Implementation: Added method with comprehensive docstring, matching the pattern of delete_nodes_from_span
+- [ ] Update imports and exports in `__init__.py`
+  - Spec: specs/unified-agent-identity.md § API Changes
+  - Success: Remove `get_state_path`, `set_session_pid`, `SessionState`, `SessionStateHeader` exports
+  - Test: N/A (cleanup)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/__init__.py:14-30
 
-- [x] Implement `delete_nodes_from_time()` in SQLite backend
-  - Spec: specs/temporal-document-apis.md § Implementation Outline > Phase 2
-  - Success: Deletes nodes where `time_end > cutoff`, NULLs parent_id on kept children
-  - Test: `test_sqlite_delete_nodes_from_time`
-  - Location: ragzoom/backends/sqlite_repositories.py:1117-1173
-  - Implementation: Added to SqliteNodeRepository following the same pattern as delete_nodes_from_span. Backend delegates to node_repo.
+- [ ] Update cli.py imports to remove state file functions
+  - Spec: specs/unified-agent-identity.md § API Changes
+  - Success: Remove `get_state_path`, `set_session_pid` imports from cli.py
+  - Test: N/A (cleanup)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/cli.py:9-16
 
-- [x] Implement `delete_nodes_from_time()` in Postgres backend
-  - Spec: specs/temporal-document-apis.md § Implementation Outline > Phase 2
-  - Success: Deletes nodes where `time_end > cutoff`, NULLs parent_id on kept children
-  - Test: `test_postgres_delete_nodes_from_time`
-  - Location: ragzoom/repositories/document_repository.py:284-347
-  - Implementation: Added to DocumentRepository following the same pattern as delete_nodes_from_span. Backend delegates to doc_repo.
+- [ ] Delete accumulated state files in data/transcript-state/
+  - Spec: specs/unified-agent-identity.md § 7. Backward Compatibility
+  - Success: `rm -rf data/transcript-state/` removes 413+ accumulated files
+  - Test: N/A (manual cleanup)
+  - Location: data/transcript-state/
 
-- [x] Delete vectors for removed nodes in truncation
-  - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API
-  - Success: Vector index entries for deleted nodes are removed
-  - Test: `test_truncate_from_time_removes_vectors`
-  - Location: ragzoom/indexing/runtime.py:778-787 (runtime layer handles vector deletion, not backends - consistent with delete_nodes_from_span pattern)
-  - Implementation: Vector deletion happens in `DocumentIndexSession.truncate_from_time()` after backend returns deleted node IDs. Test fixed by using `AsyncMock` for `cancel_document`.
-
-### Phase 47: TruncateFromTime Servicer and Client
-
-Implement gRPC servicer and client methods.
-
-- [x] Implement `TruncateFromTime` servicer method
-  - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API
-  - Success: Method validates temporal document, performs truncation, returns deleted node IDs
-  - Test: `test_truncate_from_time_servicer`
-  - Location: ragzoom/server/servicers.py:493-560 (IndexerServicer)
-  - Implementation: Added TruncateFromTime method with full validation chain (document_id, cutoff_time parsing, existence, temporal check) before delegating to runtime.truncate_from_time(). Also updated proto stubs (.pyi files) with TruncateFromTimeRequest/Response types.
-
-- [x] Add validation: error if document doesn't exist
-  - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API > Validation
-  - Success: Returns gRPC NOT_FOUND if document doesn't exist
-  - Test: `test_truncate_from_time_not_found`
-  - Location: ragzoom/server/servicers.py:528-533
-  - Implementation: Checks node_count == 0 to determine non-existence
-
-- [x] Add validation: error if document is not temporal
-  - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API > Validation
-  - Success: Returns gRPC INVALID_ARGUMENT if `is_temporal = false`
-  - Test: `test_truncate_from_time_non_temporal`
-  - Location: ragzoom/server/servicers.py:535-545
-  - Implementation: Queries document repository for is_temporal flag
-
-- [x] Add validation: error if cutoff_time is malformed
-  - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API > Validation
-  - Success: Returns gRPC INVALID_ARGUMENT if timestamp is not valid ISO 8601
-  - Test: `test_truncate_from_time_invalid_timestamp`
-  - Location: ragzoom/server/servicers.py:517-525
-  - Implementation: Uses datetime.fromisoformat() with Z->+00:00 replacement for parsing
-
-- [x] Add `TruncateFromTimeResult` dataclass to client
-  - Spec: specs/temporal-document-apis.md § API Changes > Python Client
-  - Success: Dataclass with `document_id`, `deleted_node_ids`, `cutoff_time` fields
-  - Test: N/A (type definition)
-  - Location: ragzoom/client/grpc_client.py:189-206
-  - Implementation: Added dataclass with comprehensive docstring following existing TruncateResult pattern
-
-- [x] Implement `truncate_from_time()` client method
-  - Spec: specs/temporal-document-apis.md § API Changes > Python Client
-  - Success: Method calls RPC and returns TruncateFromTimeResult
-  - Test: `test_grpc_client_truncate_from_time`, `test_grpc_client_truncate_from_time_dataclass`
-  - Location: ragzoom/client/grpc_client.py:756-789
-  - Implementation: Added method following existing `truncate_document()` pattern with keyword-only args, gRPC error mapping, and strongly-typed return value
-
-### Phase 48: Temporal Document APIs Acceptance Tests (Complete)
+### Phase 64: Unified Agent Identity Acceptance Tests
 
 Integration tests verifying all acceptance criteria.
 
-- [x] Test: document-status returns accurate metadata for existing documents
-  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #1
-  - Success: All fields populated correctly for existing doc
-  - Test: `test_get_document_status_existing_document`
-  - Location: tests/test_temporal_document_apis.py:435
+- [ ] Test: `RAGZOOM_DOCUMENT_ID` env var works for sync script
+  - Spec: specs/unified-agent-identity.md § Acceptance Criteria #1
+  - Success: Sync script uses env var document_id regardless of JSONL filename
+  - Test: `test_sync_env_var_document_id`
+  - Location: integrations/claude-code/tests/test_unified_identity.py
 
-- [x] Test: document-status returns exists=false for non-existent documents
-  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #2
-  - Success: `exists=false` for unknown document ID
-  - Test: `test_get_document_status_not_found`
-  - Location: tests/test_temporal_document_apis.py:414
+- [ ] Test: `RAGZOOM_DOCUMENT_ID` env var works for MCP server
+  - Spec: specs/unified-agent-identity.md § Acceptance Criteria #2
+  - Success: MCP server queries document specified in env var
+  - Test: `test_mcp_env_var_document_id`
+  - Location: integrations/claude-code/tests/test_unified_identity.py
 
-- [x] Test: document-status includes correct time range for temporal documents
-  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #3
-  - Success: `time_start` and `time_end` match actual leaf node timestamps
-  - Test: `test_get_document_status_temporal_range`
-  - Location: tests/test_temporal_document_apis.py:556
+- [ ] Test: `--document-id` CLI flag overrides env var and stem
+  - Spec: specs/unified-agent-identity.md § Acceptance Criteria #3
+  - Success: CLI flag takes highest priority over all other sources
+  - Test: `test_document_id_flag_priority`
+  - Location: integrations/claude-code/tests/test_unified_identity.py
 
-- [x] Test: completion_pct uses 2N - popcount(N) formula
-  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #4
-  - Success: Percentage correctly reflects formula
-  - Test: `test_get_document_status_completion_with_inner_nodes`, `test_complete_forest_size_*`
-  - Location: tests/test_temporal_document_apis.py:477, tests/test_temporal_document_apis.py:21
+- [ ] Test: PID temp file discovery works for Claude Code
+  - Spec: specs/unified-agent-identity.md § Acceptance Criteria #4
+  - Success: MCP server discovers session via `/tmp/ragzoom-session-{ppid}` when no env var set
+  - Test: `test_pid_temp_file_discovery`
+  - Location: integrations/claude-code/tests/test_unified_identity.py
 
-- [x] Test: truncate_from_time removes all nodes where time_end > cutoff
-  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #5
-  - Success: Only nodes with time_end <= cutoff remain
-  - Test: `test_truncate_from_time_servicer`, `test_truncate_from_time_removes_vectors`
-  - Location: tests/test_temporal_document_apis.py:836, tests/test_temporal_document_apis.py:639
+- [ ] Test: No state files accumulate in data/transcript-state/
+  - Spec: specs/unified-agent-identity.md § Acceptance Criteria #5
+  - Success: After sync and MCP operations, no files exist in transcript-state directory
+  - Test: `test_no_state_file_accumulation`
+  - Location: integrations/claude-code/tests/test_unified_identity.py
 
-- [x] Test: truncate_from_time correctly orphans kept children
-  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #6
-  - Success: Kept nodes have parent_id = NULL if parent was deleted
-  - Test: `test_truncate_from_time_orphans_kept_children`
-  - Location: tests/test_temporal_document_apis.py:797
+- [ ] Test: Multiple syncs to same document work (Jarvis model)
+  - Spec: specs/unified-agent-identity.md § Acceptance Criteria #6
+  - Success: Multiple different transcripts can sync to same document_id via env var
+  - Test: `test_multiple_syncs_same_document`
+  - Location: integrations/claude-code/tests/test_unified_identity.py
 
-- [x] Test: truncate_from_time removes vectors for deleted nodes
-  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #7
-  - Success: Vector index entries removed for deleted nodes
-  - Test: `test_truncate_from_time_removes_vectors`
-  - Location: tests/test_temporal_document_apis.py:639
+- [ ] Test: MCP queries work with configured identity (Jarvis model)
+  - Spec: specs/unified-agent-identity.md § Acceptance Criteria #7
+  - Success: MCP server queries correct document when `RAGZOOM_DOCUMENT_ID` set
+  - Test: `test_mcp_configured_identity_queries`
+  - Location: integrations/claude-code/tests/test_unified_identity.py
 
-- [x] Test: truncate_from_time errors on non-temporal documents
-  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #8
-  - Success: Returns appropriate error for non-temporal doc
-  - Test: `test_truncate_from_time_non_temporal`
-  - Location: tests/test_temporal_document_apis.py:928
-
-- [x] Test: both APIs accessible via gRPC and Python client
-  - Spec: specs/temporal-document-apis.md § Acceptance Criteria #9
-  - Success: End-to-end test using GrpcRagzoomClient
-  - Test: `test_grpc_client_get_document_status`, `test_grpc_client_truncate_from_time`
-  - Location: tests/test_grpc_client.py:72, tests/test_grpc_client.py:137
+- [ ] Test: `reset` command works without state file cleanup
+  - Spec: specs/unified-agent-identity.md § Acceptance Criteria #8
+  - Success: Reset command clears document and re-syncs without referencing state files
+  - Test: `test_reset_command_stateless`
+  - Location: integrations/claude-code/tests/test_unified_identity.py
 
 ---
 
-## Feature: Stateless Transcript Sync (specs/stateless-transcript-sync.md)
-
-Refactors transcript sync to eliminate external state tracking, deriving all state from the document itself.
-
-**Dependencies:** Temporal Document APIs (Phase 40-48) must be complete first - this feature depends on `get_document_status()` and `truncate_from_time()`.
-
-### Phase 49: Core Stateless Functions
-
-Implement the core functions for stateless sync algorithm.
-
-- [x] Implement `find_truncation_point()` function
-  - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
-  - Success: Returns (R, S) tuple using sliding window algorithm
-  - Test: `test_find_truncation_point_normal_append`, `test_find_truncation_point_revert`, `test_find_truncation_point_first_sync`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:141-213
-  - Implementation: Sliding window algorithm walks backward from head, comparing timestamps to indexed_time_end. Stops at turn boundaries (user messages) to maintain atomic turn semantics.
-
-- [x] Implement `is_user_message()` helper
-  - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
-  - Success: Returns True for user messages that are not tool results
-  - Test: `test_is_user_message`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:88-119
-  - Implementation: Returns True for user type messages without toolUseResult and without command output markers.
-
-- [x] Implement `build_ancestry_chain()` function
-  - Spec: specs/stateless-transcript-sync.md § 5. Build Ancestry Chain
-  - Success: Returns UUIDs from stop_uuid to head_uuid in chronological order
-  - Test: `test_build_ancestry_chain_normal`, `test_build_ancestry_chain_from_root`, plus 5 more edge case tests
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:240-284
-  - Implementation: Walks backward from head_uuid through parentUuid links, collecting UUIDs that exist in records dict. Stops at stop_uuid (exclusive) or when a missing record is encountered. Returns chronological order (oldest first). Shares `_get_parent_uuid()` helper with `find_truncation_point()`.
-
-### Phase 50: Stateless Algorithm Unit Tests
-
-Unit tests for the core stateless sync functions.
-
-- [x] Test: normal append case (no revert)
-  - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
-  - Success: find_truncation_point returns correct connection when R.timestamp == indexed_time_end
-  - Test: `test_normal_append_same_time`
-  - Location: integrations/claude-code/tests/test_stateless_sync.py:117-136
-
-- [x] Test: revert to turn boundary
-  - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
-  - Success: Returns connection at the revert point, detecting gap
-  - Test: `test_revert_to_turn_boundary`
-  - Location: integrations/claude-code/tests/test_stateless_sync.py:169-191
-
-- [x] Test: revert mid-turn (rounds down)
-  - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
-  - Success: Sliding window continues to turn boundary when revert is mid-turn
-  - Test: `test_revert_mid_turn_rounds_down`
-  - Location: integrations/claude-code/tests/test_stateless_sync.py:193-218
-
-- [x] Test: first sync (empty document)
-  - Spec: specs/stateless-transcript-sync.md § 7. First Sync Case
-  - Success: Returns (None, head_uuid) when indexed_time_end is None
-  - Test: `test_first_sync_returns_none_head`
-  - Location: integrations/claude-code/tests/test_stateless_sync.py:101-115
-
-- [x] Test: complete reindex (no common ancestor)
-  - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
-  - Success: Returns (None, head_uuid) when entire chain is newer than indexed content
-  - Test: `test_complete_reindex_no_common_ancestor`
-  - Location: integrations/claude-code/tests/test_stateless_sync.py:220-237
-
-### Phase 51: Refactor execute_sync
-
-Replace append log logic with stateless algorithm.
-
-- [x] Refactor `execute_sync()` to use document status for indexed state
-  - Spec: specs/stateless-transcript-sync.md § 2. Use Document Status for Indexed State
-  - Success: Function calls `client.get_document_status()` instead of reading append log
-  - Test: `test_execute_sync_stateless`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:1139
-  - Implementation: Refactored execute_sync to call get_document_status() for indexed_time_end, use find_truncation_point() and build_ancestry_chain() for sync planning, and truncate_from_time() for revert detection. Updated all test fixtures (FakeTranscriptClient, MockClient, AppendExecutorClient) with get_document_status() and truncate_from_time() methods. Tests updated to verify stateless behavior.
-
-- [x] Refactor `execute_sync()` to use `find_truncation_point()`
-  - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
-  - Success: Function uses new algorithm instead of `compute_sync_plan()`
-  - Test: `test_execute_sync_stateless`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:1139
-  - Implementation: Completed as part of the above refactoring
-
-- [x] Refactor `execute_sync()` to use `truncate_from_time()` for reverts
-  - Spec: specs/stateless-transcript-sync.md § 4. Revert Detection and Truncation
-  - Success: Function calls time-based truncation instead of span-based
-  - Test: `test_execute_sync_revert_truncation`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:1139
-  - Implementation: Completed as part of the above refactoring
-
-- [x] Remove state file creation/reading from `execute_sync()`
-  - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
-  - Success: Function no longer uses `state_path` parameter for sync state
-  - Test: `test_execute_sync_no_state_file`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:1180
-  - Implementation: execute_sync() no longer reads/writes state files, deriving all state from document status API
-
-- [x] Update `SyncResult` to reflect stateless approach
-  - Spec: specs/stateless-transcript-sync.md § API Changes
-  - Success: SyncResult no longer includes UUID-based tracking
-  - Test: All execute_sync tests verify new fields work correctly
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:1111
-  - Implementation: Replaced `truncate_span`, `appended_uuids`, `new_span_end` with `truncate_cutoff_time` (str|None) and `turns_appended` (int). Updated CLI and all tests.
-
-### Phase 52: Cleanup Append Log Machinery
-
-Remove deprecated append log classes and functions.
-
-**SPEC INCONSISTENCY NOTE:** The spec (stateless-transcript-sync.md) says "MCP Server: No changes needed" but also says to remove state file handling. However, `mcp_server.py` uses `SessionState` to find the session via PID matching (lines 34-37). Resolution: Keep `SessionStateHeader`, simplified `SessionState`, `get_state_path()`, `set_session_pid()`, and `_get_state_dir()` - these are needed for MCP server session discovery (document_id ↔ PID mapping). Only remove the append log *entries* and related machinery.
-
-**REMOVAL ORDER:** Items must be removed from outer consumers inward:
-1. `compute_sync_plan()` - outermost, only used in tests
-2. `_SessionAppendLog` - used by compute_sync_plan
-3. `AppendEntry` - used by _SessionAppendLog and SessionState.entries
-4. Simplify `SessionState` - remove entries field, keep header
-
-- [x] Remove `AppendLog` class
-  - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
-  - Success: Class no longer exists in codebase
-  - Test: N/A (removal)
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (removed)
-  - Implementation: Removed file-based AppendLog class. Made _SessionAppendLog a standalone class (no longer inherits from AppendLog). Added find_valid_prefix() method to _SessionAppendLog since compute_sync_plan() still uses it. Removed AppendLog from exports and updated tests to use SessionState().append_log() instead.
-
-- [x] Remove `compute_sync_plan()` function and its tests
-  - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
-  - Success: Function no longer exists (replaced by stateless algorithm)
-  - Test: N/A (removal) - Remove TestComputeSyncPlan class
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (removed)
-  - Implementation: Removed `SyncPlan` dataclass and `compute_sync_plan()` function. Removed `SyncPlan` and `compute_sync_plan` exports from __init__.py. Removed `TestComputeSyncPlan` test class (5 tests).
-
-- [x] Remove `_SessionAppendLog` class
-  - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
-  - Success: Class no longer exists in codebase
-  - Test: N/A (removal)
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (removed)
-  - Implementation: Removed `_SessionAppendLog` class and `SessionState.append_log()` method. Removed 2 tests: `test_append_log_view` and `test_append_log_truncate`.
-
-- [x] Remove `AppendEntry` dataclass and its tests
-  - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
-  - Success: Dataclass no longer exists in codebase
-  - Test: N/A (removal) - Remove TestAppendEntry class
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (removed)
-  - Implementation: Removed AppendEntry dataclass (lines 506-553), TestAppendEntry test class, and all related imports/exports. Completed atomically with SessionState simplification since they were tightly coupled.
-
-- [x] Simplify `SessionState` class (remove entries field, keep header)
-  - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
-  - Success: SessionState only stores header (document_id, last_pid), no entries
-  - Test: Update TestSessionState to reflect simplified structure
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:506
-  - Note: Keep SessionStateHeader, SessionState, get_state_path(), set_session_pid() for MCP server
-  - Implementation: Removed entries field and updated load/save methods. SessionState now only persists header for MCP server session discovery. Updated TestSessionState.test_save_and_load to test header-only behavior.
-
-- [x] Update imports and exports in `__init__.py`
-  - Spec: specs/stateless-transcript-sync.md § API Changes
-  - Success: Remove AppendEntry, compute_sync_plan exports; keep SessionState, SessionStateHeader
-  - Test: N/A (cleanup)
-  - Location: integrations/claude-code/src/ragzoom_claude_code/__init__.py
-  - Implementation: Removed AppendEntry from imports and __all__ list. Kept SessionState, SessionStateHeader, SyncResult, execute_sync, get_state_path, set_session_pid.
-
-### Phase 53: Stateless Sync Integration Tests (Complete)
-
-Integration tests verifying acceptance criteria.
-
-- [x] Test: sync works without any local state files
-  - Spec: specs/stateless-transcript-sync.md § Acceptance Criteria #1
-  - Success: Sync completes successfully without creating/reading state files
-  - Test: `test_sync_no_state_files`
-  - Location: integrations/claude-code/tests/test_stateless_sync_integration.py
-  - Implementation: IntegrationClient wraps AppendExecutor and provides real get_document_status() from SQLite backend. Test verifies no state files are created in tmp_path.
-
-- [x] Test: normal append case - new turns appended correctly
-  - Spec: specs/stateless-transcript-sync.md § Acceptance Criteria #2
-  - Success: New content indexed after existing content
-  - Test: `test_sync_normal_append`
-  - Location: integrations/claude-code/tests/test_stateless_sync_integration.py
-  - Implementation: Tests two successive syncs with growing transcript. Verifies second sync appends new content without truncation.
-
-- [x] Test: revert case - orphaned content removed, new content appended
-  - Spec: specs/stateless-transcript-sync.md § Acceptance Criteria #3
-  - Success: Truncation followed by append produces correct state
-  - Test: `test_sync_revert_detection`
-  - Location: integrations/claude-code/tests/test_stateless_sync_integration.py
-  - Implementation: Creates transcript with original branch, then adds new branch from earlier point. Verifies truncated=True and truncate_cutoff_time set.
-
-- [x] Test: mid-turn revert - correctly rounds down to turn boundary
-  - Spec: specs/stateless-transcript-sync.md § Acceptance Criteria #4
-  - Success: Partial turn is fully removed, not partially kept
-  - Test: `test_sync_mid_turn_revert`
-  - Location: integrations/claude-code/tests/test_stateless_sync_integration.py
-  - Implementation: Creates turn with multiple assistant messages, then reverts to before the turn. Verifies entire turn is removed.
-
-- [x] Test: first sync - entire transcript indexed
-  - Spec: specs/stateless-transcript-sync.md § Acceptance Criteria #5
-  - Success: Empty document gets all content from transcript
-  - Test: `test_sync_first_sync`
-  - Location: integrations/claude-code/tests/test_stateless_sync_integration.py
-  - Implementation: Verifies document doesn't exist before sync, then after sync has content with temporal metadata.
-
-- [x] Test: idempotent - running sync twice is safe
-  - Spec: specs/stateless-transcript-sync.md § Acceptance Criteria #6
-  - Success: Second sync produces no changes or duplicates
-  - Test: `test_sync_idempotent`
-  - Location: integrations/claude-code/tests/test_stateless_sync_integration.py
-  - Implementation: Runs sync twice with same transcript. Verifies turns_appended=0 on second run and leaf count unchanged.
-
-- [x] Test: crash-safe - sync can be interrupted and resumed
-  - Spec: specs/stateless-transcript-sync.md § Acceptance Criteria #7
-  - Success: Simulated crash and restart produces correct state
-  - Test: `test_sync_crash_recovery`
-  - Location: integrations/claude-code/tests/test_stateless_sync_integration.py
-  - Implementation: Creates new executor (simulating restart) after first sync. Verifies sync resumes correctly and can append new content.
-
----
-
-## Feature: Event-Driven Daemon Tests (specs/event-driven-daemon-tests.md)
-
-Eliminates sleep-based synchronization in daemon tests by using the ready-pipe pattern for instant, deterministic daemon readiness detection.
-
-**Dependencies:** None (test infrastructure only, no production code dependencies)
-
-### Phase 54: Ready-Pipe Infrastructure
-
-Add the ready_fd parameter to daemonize() and create test utilities.
-
-- [x] Add `ready_fd` parameter to `daemonize()` function
-  - Spec: specs/event-driven-daemon-tests.md § API Addition
-  - Success: `daemonize(log_file, ready_fd=None)` accepts optional file descriptor; writes `b"R"` and closes fd after daemonization completes
-  - Test: `test_daemonize_ready_fd_signals`
-  - Location: ragzoom/daemon.py:300
-  - Implementation: Added `ready_fd: int | None = None` parameter. After writing PID file, writes `b"R"` to ready_fd and closes it if provided. Backward compatible - all existing tests pass with ready_fd=None.
-
-- [x] Implement `daemon_ready_pipe()` context manager
-  - Spec: specs/event-driven-daemon-tests.md § Test Utility
-  - Success: Creates pipe, yields `(read_fd, write_fd)`, cleans up fds on exit
-  - Test: `test_daemon_ready_pipe_cleanup`, `test_daemon_ready_pipe_cleanup_with_early_close`
-  - Location: tests/conftest.py:1221
-  - Implementation: Context manager using try/finally to ensure fd cleanup. Yields (read_fd, write_fd) tuple. Gracefully handles already-closed fds.
-
-- [x] Implement `wait_for_daemon_ready()` helper function
-  - Spec: specs/event-driven-daemon-tests.md § Test Utility
-  - Success: Blocks on read_fd with timeout, raises `TimeoutError` on timeout, raises `AssertionError` on EOF (crash)
-  - Test: `test_wait_for_daemon_ready_success`, `test_wait_for_daemon_ready_timeout`, `test_wait_for_daemon_ready_crash_detection`
-  - Location: tests/conftest.py:1255
-  - Implementation: Uses select.select() for efficient I/O multiplexing with timeout. Returns when daemon writes b"R", raises TimeoutError on timeout, raises AssertionError on EOF (crash detection).
-
-- [x] Verify backward compatibility (ready_fd=None works)
-  - Spec: specs/event-driven-daemon-tests.md § Phase 1
-  - Success: Existing tests pass without modification when ready_fd not provided
-  - Test: All 14 existing daemon tests still pass (TestDaemonizeFunction, TestDaemonizeIntegration, TestSignalHandlers)
-  - Location: ragzoom/daemon.py
-  - Implementation: All existing daemon tests verified passing - backward compatible via ready_fd=None default.
-
-### Phase 55: Migrate TestDaemonizeFunction Tests
-
-Convert the 6 tests in TestDaemonizeFunction to use ready-pipe pattern.
-
-- [x] Migrate `test_daemonize_forks_to_background` to ready-pipe
-  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction
-  - Success: Test uses `daemon_ready_pipe()` instead of `time.sleep(0.5)`
-  - Test: `test_daemonize_forks_to_background`
-  - Location: tests/test_daemon_lifecycle.py:80
-  - Implementation: Replaced `time.sleep(0.5)` with ready-pipe pattern: pass write_fd via pass_fds, use wait_for_daemon_ready() for synchronization. Test time reduced from ~1.5s to ~0.8s.
-
-- [x] Migrate `test_daemonize_writes_pid_file` to ready-pipe
-  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction
-  - Success: Test uses ready-pipe, removes `time.sleep(0.5)` after proc.wait()
-  - Test: `test_daemonize_writes_pid_file`
-  - Location: tests/test_daemon_lifecycle.py:113
-  - Implementation: Replaced `time.sleep(0.5)` and `time.sleep(0.3)` with ready-pipe pattern. Script now uses `ready_fd` parameter, test uses `wait_for_daemon_ready()` for synchronization.
-
-- [x] Migrate `test_daemonize_redirects_stdout_stderr` to ready-pipe
-  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction
-  - Success: Test uses ready-pipe, removes `time.sleep(0.5)`
-  - Test: `test_daemonize_redirects_stdout_stderr`
-  - Location: tests/test_daemon_lifecycle.py:147
-  - Implementation: Replaced `time.sleep(0.5)` with ready-pipe pattern. Script now uses `ready_fd` parameter, test uses `daemon_ready_pipe()` and `wait_for_daemon_ready()` for synchronization.
-
-- [x] Migrate `test_daemonize_detaches_from_terminal` to ready-pipe
-  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction
-  - Success: Test uses ready-pipe, removes sleep-based synchronization
-  - Test: `test_daemonize_detaches_from_terminal`
-  - Location: tests/test_daemon_lifecycle.py:185
-  - Implementation: Replaced `time.sleep(0.5)` with ready-pipe pattern: pass write_fd via pass_fds, use wait_for_daemon_ready() for synchronization.
-
-- [x] Migrate `test_daemonize_closes_stdin` to ready-pipe
-  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction
-  - Success: Test uses ready-pipe, removes sleep-based synchronization
-  - Test: `test_daemonize_closes_stdin`
-  - Location: tests/test_daemon_lifecycle.py:238
-  - Implementation: Replaced `time.sleep(0.5)` with ready-pipe pattern: pass write_fd via pass_fds, use wait_for_daemon_ready() for synchronization.
-
-- [x] Migrate `test_daemonize_log_file_created_if_missing` to ready-pipe
-  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction
-  - Success: Test uses ready-pipe, removes sleep-based synchronization
-  - Test: `test_daemonize_log_file_created_if_missing`
-  - Location: tests/test_daemon_lifecycle.py:278
-  - Implementation: Replaced `time.sleep(0.5)` with ready-pipe pattern: pass write_fd via pass_fds, use wait_for_daemon_ready() for synchronization. Test time reduced from ~1.5s to ~0.9s.
-
-### Phase 56: Migrate TestDaemonizeIntegration Test
-
-Convert the integration test to use ready-pipe pattern.
-
-- [x] Migrate `test_daemon_survives_parent_exit` to ready-pipe
-  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeIntegration
-  - Success: Test uses ready-pipe instead of `time.sleep(0.3)` in script and `time.sleep(0.8)` after
-  - Test: `test_daemon_survives_parent_exit`
-  - Location: tests/test_daemon_lifecycle.py:317
-  - Implementation: Replaced `time.sleep(0.3)` in script and `time.sleep(0.8)` after with ready-pipe pattern. Script now uses `ready_fd` parameter; test uses `daemon_ready_pipe()` and `wait_for_daemon_ready()` for synchronization. Added small poll loop (0.01s intervals) as fallback for marker file verification. Test time reduced from ~1.6s to ~0.9s.
-
-### Phase 57: Migrate TestSignalHandlers Tests
-
-Convert signal handler tests to use ready-pipe with appropriate signal handling.
-
-- [x] Migrate `test_sigterm_graceful_shutdown` to ready-pipe
-  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestSignalHandlers
-  - Success: Test uses ready-pipe for daemon startup, uses `os.waitpid()` for signal processing instead of polling loop
-  - Test: `test_sigterm_graceful_shutdown`
-  - Location: tests/test_daemon_lifecycle.py:376
-  - Implementation: Replaced file-based ready marker with daemon_ready_pipe()/wait_for_daemon_ready(). Replaced time.sleep(0.5) for cleanup wait with os.waitpid(WNOHANG) polling (falls back to os.kill(pid, 0) for double-forked daemon). Test time reduced from ~2.5s to ~0.95s.
-
-- [x] Migrate `test_sigint_graceful_shutdown` to ready-pipe
-  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestSignalHandlers
-  - Success: Test uses ready-pipe for daemon startup, uses `os.waitpid()` for signal processing
-  - Test: `test_sigint_graceful_shutdown`
-  - Location: tests/test_daemon_lifecycle.py:448
-  - Implementation: Replaced file-based ready marker with daemon_ready_pipe()/wait_for_daemon_ready(). Replaced time.sleep(0.1) polling and time.sleep(0.5) cleanup wait with os.waitpid(WNOHANG) polling. Test time reduced from ~2.3s to ~0.91s.
-
-### Phase 58: Migrate TestAtexitCleanup Tests
-
-Convert atexit cleanup tests to use ready-pipe pattern.
-
-- [x] Migrate `test_normal_exit_cleans_up_state_files` to ready-pipe
-  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestAtexitCleanup
-  - Success: Test uses ready-pipe, removes polling loop with `time.sleep(0.1)` and final `time.sleep(0.5)`
-  - Test: `test_normal_exit_cleans_up_state_files`
-  - Location: tests/test_daemon_atexit.py:29
-  - Implementation: Uses dual-pipe pattern: ready_fd for daemon startup (via daemonize()), done_fd for daemon about-to-exit signal. Replaced marker file polling + time.sleep(0.5) with select()-based done pipe wait + brief poll for file cleanup. Test time reduced from ~3.5s to ~0.05s.
-
-- [x] Migrate `test_without_atexit_files_remain` to ready-pipe
-  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestAtexitCleanup
-  - Success: Test uses ready-pipe, removes polling loop with `time.sleep(0.1)` and final `time.sleep(0.5)`
-  - Test: `test_without_atexit_files_remain`
-  - Location: tests/test_daemon_atexit.py:138
-  - Implementation: Uses dual-pipe pattern matching test_normal_exit_cleans_up_state_files: ready_fd for daemon startup (via daemonize()), done_fd for daemon about-to-exit signal. Replaced marker file creation + polling loop + time.sleep(0.5) with select()-based done pipe wait + EOF-wait for process exit. Test time reduced from ~3.5s to ~0.1s.
-
-### Phase 59: Migrate TestStartServerAtexitIntegration Tests
-
-Convert server atexit integration tests to use ready-pipe pattern.
-
-- [x] Migrate `test_start_server_daemon_mode_cleans_up_on_normal_exit` to ready-pipe
-  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestStartServerAtexitIntegration
-  - Success: Test uses event-driven polling for state file cleanup instead of `time.sleep(1.5)`. Since CLI/CliRunner doesn't expose ready_fd, polls for expected outcome (state files removed) with tight intervals.
-  - Test: `test_start_server_daemon_mode_cleans_up_on_normal_exit`
-  - Location: tests/test_daemon_atexit.py:229
-  - Implementation: Replaced fixed sleep(1.5) with polling loop that checks for pid_file and port_file removal. Test runs ~3x faster (0.71s vs 2.24s) while being more deterministic.
-
-- [x] Migrate `test_atexit_runs_after_exception` to ready-pipe
-  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestStartServerAtexitIntegration
-  - Success: Test uses ready-pipe, removes polling loop with `time.sleep(0.1)` and final `time.sleep(0.5)`
-  - Test: `test_atexit_runs_after_exception`
-  - Location: tests/test_daemon_atexit.py:381
-  - Implementation: Uses dual-pipe pattern: ready_fd for daemon startup (via daemonize()), done_fd for daemon about-to-raise-exception signal. Replaced marker file polling + time.sleep(0.5) with select()-based done pipe wait + EOF-wait for process exit. Test time reduced from ~3.5s to ~0.09s.
-
-### Phase 60: Remove Remaining Sleeps and Verify
-
-Final cleanup and verification.
-
-- [x] Remove all `time.sleep()` calls from `test_daemon_lifecycle.py`
-  - Spec: specs/event-driven-daemon-tests.md § Phase 3
-  - Success: `grep -c "time.sleep" tests/test_daemon_lifecycle.py` returns 0
-  - Test: N/A (cleanup verification)
-  - Location: tests/test_daemon_lifecycle.py
-  - Implementation: Replaced `time.sleep(10)` in signal handler test scripts with `signal.pause()` for efficient signal waiting. Replaced `time.sleep(0.01)` polling loops with `select.select([], [], [], 0.01)` for event-driven waiting. Converted marker file polling in `test_daemon_survives_parent_exit` to dual-pipe pattern. All 19 tests pass.
-
-- [x] Remove all `time.sleep()` calls from `test_daemon_atexit.py`
-  - Spec: specs/event-driven-daemon-tests.md § Phase 3
-  - Success: `grep -c "time.sleep" tests/test_daemon_atexit.py` returns 0 (only comments mention it)
-  - Test: N/A (cleanup verification)
-  - Location: tests/test_daemon_atexit.py
-  - Implementation: Replaced `time.sleep(0.1)` in polling loop with `select.select([], [], [], 0.1)` for event-driven consistency. Removed `import time`. All 5 tests pass.
-
-- [x] Verify daemon test suite performance improvement
-  - Spec: specs/event-driven-daemon-tests.md § Acceptance Criteria
-  - Success: Test suite time reduced from 19.44s to 10.30s (47% improvement). The spec's <5s target was unrealistic given unavoidable subprocess overhead (~0.7-0.8s per test for Python startup/imports). All sleep-based synchronization eliminated as specified.
-  - Test: N/A (performance verification)
-  - Location: tests/test_daemon_lifecycle.py, tests/test_daemon_atexit.py
-  - Implementation: Measured baseline (19.44s) vs current (10.30s). Individual test times dropped from 1.4-2.3s to 0.8-1.0s. Remaining time is inherent subprocess overhead, not sleep-based waits. The spec's non-goals explicitly exclude test parallelization and daemon mocking, which would be the only ways to reach <5s.
-
-- [x] Verify crash detection works (daemon crash → immediate test failure)
-  - Spec: specs/event-driven-daemon-tests.md § Testing the Tests
-  - Success: Daemon crash detected in 0.12s instead of 5s timeout. When daemon exits before writing to ready_fd, EOF on pipe is detected immediately by select()/read().
-  - Test: `test_wait_for_daemon_ready_crash_detection` + manual verification
-  - Location: tests/conftest.py:1256-1279 (wait_for_daemon_ready function)
-  - Implementation: Verified by creating test script that exits before signaling ready. Crash detected in 0.12s, proving event-driven crash detection works as designed.
+## Feature: Transcript Summarization Guidance (specs/transcript-summarization-guidance.md)
+
+Adds conversation-specific summarization guidance to batch append operations, improving summary quality for Claude Code transcripts by preserving narrative structure, identity/agency, and decision outcomes.
+
+**Dependencies:** Custom Prompt Config (COMPLETE), Timestamped Transcript Sync (COMPLETE)
+
+### Phase 65: Proto and Server
+
+Add `summarization_guidance` field to batch append and thread through servicer.
+
+- [ ] Add `summarization_guidance` field to `BatchAppendTextRequest` proto
+  - Spec: specs/transcript-summarization-guidance.md § 1. Add summarization_guidance to BatchAppendTextRequest
+  - Success: Proto defines `optional string summarization_guidance = 4;` in BatchAppendTextRequest
+  - Test: N/A (proto change)
+  - Location: proto/dynamic_summary.proto:63-67
+
+- [ ] Regenerate Python proto bindings
+  - Spec: specs/transcript-summarization-guidance.md § Phase 1
+  - Success: `scripts/compile-proto.sh` completes, pb2.py files updated with new field
+  - Test: N/A (build step)
+  - Location: ragzoom/rpc/dynamic_summary_pb2.py
+
+- [ ] Update servicer to extract and pass guidance to runtime
+  - Spec: specs/transcript-summarization-guidance.md § Phase 1
+  - Success: BatchAppendText servicer extracts `summarization_guidance` from request and passes to session
+  - Test: `test_batch_append_text_passes_summarization_guidance`
+  - Location: ragzoom/server/servicers.py:404-468
+
+- [ ] Add `summarization_guidance` parameter to `DocumentIndexSession.batch_append_text()`
+  - Spec: specs/transcript-summarization-guidance.md § Phase 1
+  - Success: Method accepts `summarization_guidance: str | None = None` and stores on document
+  - Test: `test_runtime_batch_append_text_with_guidance`
+  - Location: ragzoom/indexing/runtime.py:457-463
+
+- [ ] Add `summarization_guidance` parameter to `AppendExecutor.append_batch()`
+  - Spec: specs/transcript-summarization-guidance.md § Phase 1
+  - Success: Method accepts and threads guidance to document storage
+  - Test: `test_append_executor_batch_with_guidance`
+  - Location: ragzoom/server/append_executor.py:426-436
+
+### Phase 66: Client Stack
+
+Thread `summarization_guidance` through gRPC client and wrapper.
+
+- [ ] Add `summarization_guidance` parameter to `GrpcRagzoomClient.batch_append_text()`
+  - Spec: specs/transcript-summarization-guidance.md § 2. Thread Through gRPC Client
+  - Success: Method accepts `summarization_guidance: str | None = None` and sets on request proto
+  - Test: `test_grpc_client_batch_append_text_with_guidance`
+  - Location: ragzoom/client/grpc_client.py:376-427
+
+- [ ] Add `summarization_guidance` parameter to `RagZoom.batch_append()` (sync)
+  - Spec: specs/transcript-summarization-guidance.md § 3. Thread Through Wrapper
+  - Success: Method accepts and passes `summarization_guidance` to runtime/client
+  - Test: `test_wrapper_batch_append_with_guidance`
+  - Location: ragzoom/wrapper.py:244-287
+
+- [ ] Add `summarization_guidance` parameter to `AsyncRagZoom.batch_append()` (async)
+  - Spec: specs/transcript-summarization-guidance.md § 3. Thread Through Wrapper
+  - Success: Async method accepts and passes `summarization_guidance` to runtime/client
+  - Test: `test_async_wrapper_batch_append_with_guidance`
+  - Location: ragzoom/wrapper.py:588-630
+
+- [ ] Update `DocumentSession` protocol to include `summarization_guidance` in `batch_append_text`
+  - Spec: specs/transcript-summarization-guidance.md § Phase 2
+  - Success: Protocol signature includes the new parameter
+  - Test: N/A (type definition)
+  - Location: ragzoom/wrapper.py:144-150
+
+### Phase 67: Transcript Sync Integration
+
+Add conversation-specific guidance constant and pass to batch_append.
+
+- [ ] Add `CONVERSATION_SUMMARIZATION_GUIDANCE` constant
+  - Spec: specs/transcript-summarization-guidance.md § 4. Hardcoded Guidance for Conversation Transcripts
+  - Success: Constant defined with guidance text preserving identity, decisions, causality, and chronology
+  - Test: `test_conversation_guidance_constant_defined`
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (near top, after imports)
+
+- [ ] Update `execute_sync()` to pass guidance to `batch_append()`
+  - Spec: specs/transcript-summarization-guidance.md § 5. Pass Guidance in execute_sync
+  - Success: `batch_append()` call includes `summarization_guidance=CONVERSATION_SUMMARIZATION_GUIDANCE`
+  - Test: `test_execute_sync_passes_summarization_guidance`
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:995-996
+
+- [ ] Update test fixtures to accept `summarization_guidance` parameter
+  - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #6
+  - Success: FakeTranscriptClient, MockClient, and integration test clients accept the parameter
+  - Test: All existing execute_sync tests pass without modification
+  - Location: integrations/claude-code/tests/test_stateless_sync.py:640, tests/conftest.py:1157
+
+### Phase 68: Transcript Summarization Guidance Acceptance Tests
+
+Integration tests verifying all acceptance criteria.
+
+- [ ] Test: `BatchAppendTextRequest` proto has `summarization_guidance` field
+  - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #1
+  - Success: Proto field accessible and serializes correctly
+  - Test: `test_batch_append_request_has_guidance_field`
+  - Location: tests/test_transcript_summarization_guidance.py
+
+- [ ] Test: `GrpcRagzoomClient.batch_append_text()` accepts `summarization_guidance`
+  - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #2
+  - Success: Client method compiles and sets field on request
+  - Test: `test_grpc_client_batch_append_accepts_guidance`
+  - Location: tests/test_transcript_summarization_guidance.py
+
+- [ ] Test: `RagZoom.batch_append()` accepts `summarization_guidance`
+  - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #3
+  - Success: Wrapper method compiles and threads to underlying implementation
+  - Test: `test_wrapper_batch_append_accepts_guidance`
+  - Location: tests/test_transcript_summarization_guidance.py
+
+- [ ] Test: Guidance is threaded to the summarizer
+  - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #4
+  - Success: Document record contains `summarization_guidance` after batch append with guidance
+  - Test: `test_guidance_stored_on_document`
+  - Location: tests/test_transcript_summarization_guidance.py
+
+- [ ] Test: `execute_sync()` passes conversation-specific guidance
+  - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #5
+  - Success: Integration test verifies guidance is set on synced document
+  - Test: `test_execute_sync_sets_conversation_guidance`
+  - Location: integrations/claude-code/tests/test_transcript_summarization_guidance.py
+
+- [ ] Test: Existing tests pass (no regression)
+  - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #6
+  - Success: All batch_append and execute_sync tests pass without modification
+  - Test: `pytest tests/ integrations/claude-code/tests/` passes
+  - Location: N/A (full test suite)
 
 ---
 
@@ -775,3 +426,4 @@ Final cleanup and verification.
 - Backward compatibility is important - old configs/databases should continue working
 - Stateless Transcript Sync (Phase 49-53) MUST wait for Temporal Document APIs (Phase 40-48) to complete
 - Event-Driven Daemon Tests (Phase 54-60) has no dependencies and can be implemented in parallel with other features
+- Transcript Summarization Guidance (Phase 65-68) has no dependencies and can be implemented in parallel with Unified Agent Identity (Phase 61-64)
