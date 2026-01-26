@@ -342,11 +342,12 @@ Add retrieval-optimized embedding text preparation to summary_utils.py, followin
   - Location: `ragzoom/services/summary_utils.py:236-306`
   - **DONE**: Implemented function following the existing pattern (prepare_contextualization_inputs). Takes preceding_context, leaf_text, and target_tokens. Returns SummaryPreparation with system prompt optimized for semantic search (preserves key terms, named entities, searchable concepts) and user prompt that prioritizes target over context. 6 tests added.
 
-- [ ] Create `run_embedding_text_workflow` function with callback pattern
+- [x] Create `run_embedding_text_workflow` function with callback pattern
   - Spec: specs/embedding-text-optimization.md § Behavior > Embedding Text Generation
   - Success: Function signature matches `run_summary_workflow` pattern with `call_llm` callback
-  - Test: `tests/test_summary_utils.py::test_run_embedding_text_workflow`
-  - Location: `ragzoom/services/summary_utils.py`
+  - Test: `tests/test_summary_utils.py::TestRunEmbeddingTextWorkflow`
+  - Location: `ragzoom/services/summary_utils.py:920-1067`
+  - **DONE**: Implemented following the `run_contextualization_workflow` pattern. Takes preceding_context, leaf_text, target_tokens, config, and call_llm callback. Uses `prepare_embedding_text_inputs` to build prompts. Returns SummaryResult with accumulated usage. Also added `run_embedding_text_from_config` and `run_embedding_text_request` convenience wrappers. 10 tests added covering passthrough, LLM compression, retries, usage tracking, and edge cases.
 
 - [ ] Implement passthrough logic for small content
   - Spec: specs/embedding-text-optimization.md § Behavior > Embedding Text Generation
