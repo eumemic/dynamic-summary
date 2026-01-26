@@ -904,3 +904,207 @@ async def run_contextualization_request(
         reporter=request["reporter"],
         call_llm=call_llm,
     )
+
+
+class EmbeddingTextRequest(TypedDict):
+    """Request for embedding text optimization workflow."""
+
+    preceding_context: str
+    leaf_text: str
+    target_tokens: int
+    parent_id: str | None
+    reporter: TelemetryCollector | None
+
+
+async def run_embedding_text_workflow(
+    *,
+    preceding_context: str,
+    leaf_text: str,
+    target_tokens: int,
+    parent_id: str | None = None,
+    reporter: TelemetryCollector | None = None,
+    config: SummaryWorkflowConfig,
+    call_llm: SummaryCall,
+) -> SummaryResult:
+    """Execute embedding text workflow: generate retrieval-optimized text.
+
+    Per specs/embedding-text-optimization.md: produces text optimized for semantic
+    search matching. When combined input exceeds target_tokens, LLM generates a
+    retrieval-optimized summary preserving key terms, entities, and concepts.
+
+    Unlike summarization which preserves all information, this focuses on
+    creating text that will produce effective embeddings for cosine similarity
+    search against user queries.
+
+    Args:
+        preceding_context: Background text providing context for the leaf
+        leaf_text: The target content to be embedded
+        target_tokens: Maximum tokens for the output text
+        parent_id: Node ID for telemetry tracking
+        reporter: Optional telemetry collector
+        config: Workflow configuration (retries, model, etc.)
+        call_llm: Callback for LLM invocation
+
+    Returns:
+        SummaryResult containing the optimized text, retry count, token count,
+        and accumulated usage across all LLM attempts for cost calculation.
+    """
+    preparation = prepare_embedding_text_inputs(
+        preceding_context=preceding_context,
+        leaf_text=leaf_text,
+        target_tokens=target_tokens,
+    )
+
+    # Passthrough when: (1) target <= 0 (signal from dynamic targets), OR
+    # (2) content already fits within target
+    if target_tokens <= 0 or preparation.combined_tokens <= target_tokens:
+        record_passthrough_attempt(
+            reporter,
+            parent_id,
+            target_tokens=target_tokens,
+            combined_tokens=preparation.combined_tokens,
+        )
+        return SummaryResult(
+            summary=preparation.combined_text,
+            retry_count=0,
+            summary_tokens=preparation.combined_tokens,
+            usage=AccumulatedUsage(),
+        )
+
+    node_id = parent_id or ""
+    accumulated_usage = AccumulatedUsage()
+
+    # jscpd:ignore-start - Parallel structure to run_contextualization_workflow intentional
+    async def telemetry_recorder(
+        usage: UsageInfo,
+        input_text_tokens: int,
+        actual_tokens: int,
+        start_time: float,
+    ) -> None:
+        await record_summary_attempt(
+            reporter,
+            parent_id,
+            usage=usage,
+            target_tokens=target_tokens,
+            input_text_tokens=input_text_tokens,
+            actual_tokens=actual_tokens,
+            start_time=start_time,
+            default_model=config.summary_model,
+        )
+
+    # jscpd:ignore-end
+
+    start_time = time.time()
+    optimized_text, usage = await call_llm(
+        preparation.messages,
+        target_tokens,
+        node_id,
+        reporter,
+    )
+    optimized_tokens = tokenizer.count_tokens(optimized_text)
+
+    # Accumulate initial attempt usage
+    accumulated_usage.add_llm_usage(usage)
+
+    await telemetry_recorder(
+        usage,
+        preparation.input_text_tokens,
+        optimized_tokens,
+        start_time,
+    )
+
+    if not should_retry_summary(
+        optimized_text,
+        optimized_tokens,
+        target_tokens,
+        config.retry_threshold,
+    ):
+        mark_accepted_attempt(reporter, parent_id, 0)
+        return SummaryResult(
+            summary=optimized_text,
+            retry_count=0,
+            summary_tokens=optimized_tokens,
+            usage=accumulated_usage,
+        )
+
+    # jscpd:ignore-start - Parallel structure to run_contextualization_workflow intentional
+    if config.max_retries > 0:
+        final_text, retry_count, best_attempt_index = await retry_summary_correction(
+            base_messages=preparation.messages,
+            initial_summary=optimized_text,
+            initial_tokens=optimized_tokens,
+            target_tokens=target_tokens,
+            max_retries=config.max_retries,
+            retry_threshold=config.retry_threshold,
+            node_id=node_id,
+            reporter=reporter,
+            call_summary=call_llm,
+            record_attempt=telemetry_recorder,
+            accumulated_usage=accumulated_usage,
+        )
+        mark_accepted_attempt(reporter, parent_id, best_attempt_index)
+        return SummaryResult(
+            summary=final_text,
+            retry_count=retry_count,
+            summary_tokens=tokenizer.count_tokens(final_text),
+            usage=accumulated_usage,
+        )
+
+    mark_accepted_attempt(reporter, parent_id, 0)
+    return SummaryResult(
+        summary=optimized_text,
+        retry_count=0,
+        summary_tokens=optimized_tokens,
+        usage=accumulated_usage,
+    )
+    # jscpd:ignore-end
+
+
+async def run_embedding_text_from_config(
+    *,
+    index_config: IndexConfig,
+    preceding_context: str,
+    leaf_text: str,
+    target_tokens: int,
+    parent_id: str | None = None,
+    reporter: TelemetryCollector | None = None,
+    call_llm: SummaryCall,
+) -> SummaryResult:
+    """Convenience wrapper building workflow config from IndexConfig."""
+
+    config_snapshot = SummaryWorkflowConfig(
+        summary_model=index_config.summary_model,
+        use_anti_verbatim_vaccine=index_config.use_anti_verbatim_vaccine,
+        max_retries=index_config.max_retries,
+        retry_threshold=index_config.retry_threshold,
+        summarization_guidance=index_config.summarization_guidance,
+    )
+
+    return await run_embedding_text_workflow(
+        preceding_context=preceding_context,
+        leaf_text=leaf_text,
+        target_tokens=target_tokens,
+        parent_id=parent_id,
+        reporter=reporter,
+        config=config_snapshot,
+        call_llm=call_llm,
+    )
+
+
+async def run_embedding_text_request(
+    *,
+    index_config: IndexConfig,
+    request: EmbeddingTextRequest,
+    call_llm: SummaryCall,
+) -> SummaryResult:
+    """Execute embedding text workflow using a packaged request payload."""
+
+    return await run_embedding_text_from_config(
+        index_config=index_config,
+        preceding_context=request["preceding_context"],
+        leaf_text=request["leaf_text"],
+        target_tokens=request["target_tokens"],
+        parent_id=request["parent_id"],
+        reporter=request["reporter"],
+        call_llm=call_llm,
+    )
