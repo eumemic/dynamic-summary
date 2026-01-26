@@ -316,15 +316,19 @@ class TestDaemonizeIntegration:
     @pytest.mark.slow_threshold(5)
     def test_daemon_survives_parent_exit(self, tmp_path: Path) -> None:
         """Daemon should keep running after parent process exits."""
+        import select
+
         from ragzoom.daemon import read_pid_file
-        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
 
         log_file = tmp_path / "daemon.log"
         marker_file = tmp_path / "still_running"
 
-        with daemon_ready_pipe() as (read_fd, write_fd):
-            # The daemon signals ready, then writes "started", then writes "still_running"
-            # We use a second ready signal (b"2") to know when "still_running" is complete
+        # Use two pipes: ready_pipe for daemonization, done_pipe for marker completion
+        ready_read_fd, ready_write_fd = os.pipe()
+        done_read_fd, done_write_fd = os.pipe()
+
+        try:
+            # The daemon signals ready via ready_fd, writes marker, then signals done via done_fd
             script = f"""
 import os
 import sys
@@ -333,27 +337,48 @@ os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
 from ragzoom.daemon import daemonize
 from pathlib import Path
 
-daemonize(Path("{log_file}"), ready_fd={write_fd})
+daemonize(Path("{log_file}"), ready_fd={ready_write_fd})
 Path("{marker_file}").write_text("started")
 # Signal phase 2 complete by writing "still_running" marker
 Path("{marker_file}").write_text("still_running")
+# Signal done via second pipe
+os.write({done_write_fd}, b"D")
+os.close({done_write_fd})
 """
             proc = subprocess.Popen(
                 [sys.executable, "-c", script],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                pass_fds=(write_fd,),
+                pass_fds=(ready_write_fd, done_write_fd),
             )
-            os.close(write_fd)
-            proc.wait(timeout=5)  # Parent exits
-            wait_for_daemon_ready(read_fd)
+            # Close our copies of write ends
+            os.close(ready_write_fd)
+            ready_write_fd = -1
+            os.close(done_write_fd)
+            done_write_fd = -1
 
-        # Daemon signaled ready - now poll for "still_running" marker
-        # This should be nearly instant since daemon already started
-        for _ in range(50):
-            if marker_file.exists() and marker_file.read_text() == "still_running":
-                break
-            time.sleep(0.01)
+            proc.wait(timeout=5)  # Parent exits
+
+            # Wait for daemon ready signal
+            ready, _, _ = select.select([ready_read_fd], [], [], 5.0)
+            assert ready, "Daemon should signal ready"
+            data = os.read(ready_read_fd, 1)
+            assert data == b"R", f"Expected b'R' but got {data!r}"
+
+            # Wait for done signal (marker file written)
+            ready, _, _ = select.select([done_read_fd], [], [], 5.0)
+            assert ready, "Daemon should signal done"
+            data = os.read(done_read_fd, 1)
+            assert data == b"D", f"Expected b'D' but got {data!r}"
+
+        finally:
+            # Clean up file descriptors
+            for fd in [ready_read_fd, ready_write_fd, done_read_fd, done_write_fd]:
+                if fd != -1:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
 
         assert marker_file.exists()
         assert marker_file.read_text() == "still_running"
@@ -401,8 +426,9 @@ def on_shutdown():
 
 install_shutdown_handlers(cleanup_callback=on_shutdown)
 
-# Wait for signal (up to 10 seconds)
-time.sleep(10)
+# Block until signal received (signal.pause is more efficient than sleeping)
+import signal as sig_module
+sig_module.pause()
 """
             proc = subprocess.Popen(
                 [sys.executable, "-c", script],
@@ -423,7 +449,9 @@ time.sleep(10)
         os.kill(pid, signal.SIGTERM)
 
         # Wait for daemon to exit using os.waitpid with polling
-        # This is more deterministic than time.sleep()
+        # Use select() with short timeout instead of time.sleep() for event-driven waiting
+        import select as sel
+
         for _ in range(50):
             try:
                 result, _ = os.waitpid(pid, os.WNOHANG)
@@ -435,7 +463,8 @@ time.sleep(10)
                     os.kill(pid, 0)
                 except OSError:
                     break  # Process exited
-            time.sleep(0.01)
+            # Use select() with timeout as a non-busy wait (10ms)
+            sel.select([], [], [], 0.01)
 
         # Cleanup callback should have run
         assert cleanup_marker.exists(), "Cleanup callback should have run"
@@ -471,8 +500,9 @@ def on_shutdown():
 
 install_shutdown_handlers(cleanup_callback=on_shutdown)
 
-# Wait for signal (up to 10 seconds)
-time.sleep(10)
+# Block until signal received (signal.pause is more efficient than sleeping)
+import signal as sig_module
+sig_module.pause()
 """
             proc = subprocess.Popen(
                 [sys.executable, "-c", script],
@@ -493,7 +523,9 @@ time.sleep(10)
         os.kill(pid, signal.SIGINT)
 
         # Wait for daemon to exit using os.waitpid with polling
-        # This is more deterministic than time.sleep()
+        # Use select() with short timeout instead of time.sleep() for event-driven waiting
+        import select as sel
+
         for _ in range(50):
             try:
                 result, _ = os.waitpid(pid, os.WNOHANG)
@@ -505,7 +537,8 @@ time.sleep(10)
                     os.kill(pid, 0)
                 except OSError:
                     break  # Process exited
-            time.sleep(0.01)
+            # Use select() with timeout as a non-busy wait (10ms)
+            sel.select([], [], [], 0.01)
 
         assert cleanup_marker.exists(), "Cleanup callback should have run"
         assert not pid_file.exists(), "PID file should be removed"
