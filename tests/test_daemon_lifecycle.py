@@ -549,3 +549,74 @@ class TestGetProcessUptime:
             # Test negative uptime (clock skew) returns "unknown"
             mock_process.create_time.return_value = time.time() + 100  # Future time
             assert get_process_uptime(1234) == "unknown"
+
+
+class TestDaemonReadyPipe:
+    """Tests for the daemon_ready_pipe() context manager and wait_for_daemon_ready()."""
+
+    def test_daemon_ready_pipe_cleanup(self) -> None:
+        """daemon_ready_pipe() should clean up file descriptors on exit."""
+        from tests.conftest import daemon_ready_pipe
+
+        # Get fds and verify they're valid during context
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            # Both fds should be valid (can write/read)
+            os.write(write_fd, b"X")
+            data = os.read(read_fd, 1)
+            assert data == b"X"
+
+            # Store fds to check after context exits
+            stored_read_fd = read_fd
+            stored_write_fd = write_fd
+
+        # After context exits, fds should be closed
+        # Attempting to use them should raise OSError (Bad file descriptor)
+        with pytest.raises(OSError):
+            os.read(stored_read_fd, 1)
+
+        with pytest.raises(OSError):
+            os.write(stored_write_fd, b"Y")
+
+    def test_daemon_ready_pipe_cleanup_with_early_close(self) -> None:
+        """daemon_ready_pipe() should handle already-closed fds gracefully."""
+        from tests.conftest import daemon_ready_pipe
+
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            # Close fds manually before context exits (simulates typical usage)
+            os.close(write_fd)
+            os.close(read_fd)
+            # Context manager should handle this gracefully on exit (no exception)
+
+    def test_wait_for_daemon_ready_success(self) -> None:
+        """wait_for_daemon_ready() should return when daemon signals ready."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            # Simulate daemon signaling ready
+            os.write(write_fd, b"R")
+            os.close(write_fd)
+
+            # Should return without exception
+            wait_for_daemon_ready(read_fd, timeout=1.0)
+
+    def test_wait_for_daemon_ready_timeout(self) -> None:
+        """wait_for_daemon_ready() should raise TimeoutError when daemon doesn't signal."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            # Don't write anything - simulate slow daemon
+            # Use very short timeout to avoid slow tests
+            with pytest.raises(TimeoutError, match="did not signal ready within"):
+                wait_for_daemon_ready(read_fd, timeout=0.01)
+
+    def test_wait_for_daemon_ready_crash_detection(self) -> None:
+        """wait_for_daemon_ready() should raise AssertionError when daemon crashes (EOF)."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            # Close write end without writing b"R" - simulates daemon crash
+            os.close(write_fd)
+
+            # Should detect crash via EOF
+            with pytest.raises(AssertionError, match="crashed before signaling ready"):
+                wait_for_daemon_ready(read_fd, timeout=1.0)
