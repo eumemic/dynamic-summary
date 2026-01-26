@@ -1493,7 +1493,7 @@ class IndexingEngine:
                 start_time=embed_start_time,
             )
 
-        # Compute and store leaf cost (embedding + contextualization if present)
+        # Compute and store leaf cost (embedding + embedding text optimization if present)
         from ragzoom.config import get_embedding_cost, get_llm_costs
         from ragzoom.cost import (
             calculate_completion_cost,
