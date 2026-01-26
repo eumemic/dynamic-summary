@@ -808,6 +808,88 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
             except asyncio.CancelledError:  # pragma: no cover - cooperative shutdown
                 return
 
+    async def GetDocumentStatus(  # noqa: N802
+        self,
+        request: object,
+        context: ServicerContextProto,
+    ) -> object:
+        """Return document status with completion metrics.
+
+        Unlike GetDocument which focuses on work queue state, this method
+        returns document completeness and temporal range information for
+        stateless sync workflows.
+
+        See specs/temporal-document-apis.md for full specification.
+        """
+        document_id = getattr(request, "document_id", "")
+        if not document_id:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="GetDocumentStatus requires `document_id`.",
+            )
+
+        # Check if document exists
+        document_store = self._state.store.for_document(document_id)
+        leaf_count = document_store.nodes.leaf_count()
+        node_count = document_store.get_node_count()
+
+        # Document doesn't exist if it has no nodes
+        exists = node_count > 0
+
+        response_cls = getattr(pb2, "DocumentStatusResponse")
+
+        if not exists:
+            # Return empty response for non-existent documents
+            return response_cls(
+                document_id=document_id,
+                exists=False,
+                is_temporal=False,
+                leaf_count=0,
+                node_count=0,
+                complete_forest_size=0,
+                completion_pct=0.0,
+            )
+
+        # Get temporal status from document repository
+        is_temporal_result = document_store._doc_repo.get_document_is_temporal(
+            document_id
+        )
+        is_temporal = (
+            bool(is_temporal_result) if is_temporal_result is not None else False
+        )
+
+        # Calculate completion metrics using binary forest formula
+        forest_size = complete_forest_size(leaf_count)
+        completion_pct = (node_count / forest_size * 100.0) if forest_size > 0 else 0.0
+
+        # Get temporal range if document is temporal
+        time_start_iso: str | None = None
+        time_end_iso: str | None = None
+        if is_temporal:
+            time_start, time_end = document_store.get_temporal_range()
+            if time_start is not None:
+                time_start_iso = _unix_to_iso8601(time_start)
+            if time_end is not None:
+                time_end_iso = _unix_to_iso8601(time_end)
+
+        response = response_cls(
+            document_id=document_id,
+            exists=True,
+            is_temporal=is_temporal,
+            leaf_count=leaf_count,
+            node_count=node_count,
+            complete_forest_size=forest_size,
+            completion_pct=completion_pct,
+        )
+        # Set optional fields if present
+        if time_start_iso is not None:
+            response.time_start = time_start_iso
+        if time_end_iso is not None:
+            response.time_end = time_end_iso
+
+        return response
+
     async def GetDocument(  # noqa: N802
         self,
         request: pb2.GetDocumentRequest,
