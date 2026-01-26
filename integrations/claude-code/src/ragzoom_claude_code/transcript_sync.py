@@ -6,6 +6,7 @@ import json
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from claude_transcriber import Transcriber
@@ -83,6 +84,156 @@ def _is_user_prompt(
     if _is_command_output_or_expansion(record, records_by_uuid):
         return False
     return True
+
+
+def is_user_message(record: dict[str, object]) -> bool:
+    """Check if record is a real user message (starts a turn).
+
+    A user message starts a new turn if it's a user type message that is NOT:
+    - A tool result (has toolUseResult field)
+    - A command output (contains <local-command-stdout>)
+
+    Unlike _is_user_prompt(), this doesn't check for command expansion since
+    that requires access to the parent record. For the stateless truncation
+    point algorithm, we only need to identify turn boundaries, and command
+    expansions still mark turn boundaries from the user's perspective.
+
+    Args:
+        record: The JSONL record to check
+
+    Returns:
+        True if the record is a user message that starts a turn
+    """
+    if record.get("type") != "user":
+        return False
+    if "toolUseResult" in record:
+        return False
+
+    # Check for command output marker
+    message = record.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, str) and "<local-command-stdout>" in content:
+            return False
+
+    return True
+
+
+def _parse_timestamp(timestamp_str: str) -> datetime:
+    """Parse an ISO 8601 timestamp string to datetime.
+
+    Handles both 'Z' suffix and '+00:00' timezone formats.
+
+    Args:
+        timestamp_str: ISO 8601 timestamp string
+
+    Returns:
+        datetime object (timezone-aware if input has timezone)
+
+    Raises:
+        ValueError: If timestamp format is invalid
+    """
+    # Replace 'Z' with '+00:00' for Python's fromisoformat
+    normalized = timestamp_str.replace("Z", "+00:00")
+    return datetime.fromisoformat(normalized)
+
+
+def find_truncation_point(
+    head_uuid: str,
+    records: dict[str, dict[str, object]],
+    indexed_time_end: datetime | None,
+) -> tuple[str | None, str | None]:
+    """Find the connection point between current transcript and indexed content.
+
+    Uses a sliding window algorithm to walk backward from head_uuid, finding
+    where the current transcript connects to previously indexed content. The
+    algorithm ensures we stop at a turn boundary (user message) to maintain
+    atomic turn semantics.
+
+    The function returns (R, S) where:
+    - R is the connection point UUID (last record in indexed content)
+    - S is the first record to append (successor of R in the chain)
+
+    Cases:
+    - First sync (indexed_time_end is None): Returns (None, head_uuid)
+      meaning "no indexed content, append from head back to root"
+    - Normal append: R.timestamp == indexed_time_end (approximately)
+      meaning "continue from where we left off"
+    - Revert detected: R.timestamp < indexed_time_end
+      meaning "truncate orphaned content, then append from S"
+
+    The sliding window ensures we always stop at a turn boundary:
+    1. R.timestamp <= indexed_time_end (R is within indexed range)
+    2. S is a user message OR S is None (turn boundary)
+
+    Args:
+        head_uuid: UUID of the current transcript head
+        records: UUID -> record mapping (must include parentUuid and timestamp)
+        indexed_time_end: Last indexed timestamp, or None if empty document.
+            Must be timezone-aware if provided, as record timestamps are parsed
+            as timezone-aware datetimes.
+
+    Returns:
+        (R, S) tuple where:
+        - R: UUID of connection point, or None for first sync / complete reindex
+        - S: UUID of first record to append, or None if nothing to append
+    """
+    if indexed_time_end is None:
+        # First sync: no indexed content, append everything from head
+        return (None, head_uuid)
+
+    def get_parent_uuid(rec: dict[str, object]) -> str | None:
+        """Extract parentUuid as string or None."""
+        parent = rec.get("parentUuid")
+        return parent if isinstance(parent, str) else None
+
+    # Sliding window: S is the successor, R is the current node
+    s_uuid: str | None = None  # Starts null at end of chain
+    r_uuid: str | None = head_uuid
+
+    while r_uuid is not None:
+        record = records.get(r_uuid)
+        if record is None:
+            # Record not found - treat as end of chain
+            break
+
+        # Get timestamp from record
+        timestamp_str = record.get("timestamp")
+        if not isinstance(timestamp_str, str):
+            # No timestamp - can't compare, continue walking
+            s_uuid = r_uuid
+            r_uuid = get_parent_uuid(record)
+            continue
+
+        try:
+            record_time = _parse_timestamp(timestamp_str)
+        except ValueError:
+            # Invalid timestamp - continue walking
+            s_uuid = r_uuid
+            r_uuid = get_parent_uuid(record)
+            continue
+
+        # Check if R is within indexed range
+        if record_time <= indexed_time_end:
+            # R is in indexed content - check if S is a turn boundary
+            if s_uuid is None:
+                # S is None means we're at the end of chain - valid boundary
+                return (r_uuid, s_uuid)
+
+            s_record = records.get(s_uuid)
+            if s_record is not None and is_user_message(s_record):
+                # S is a user message - valid turn boundary
+                return (r_uuid, s_uuid)
+
+            # S is not a turn boundary - continue sliding to find one
+
+        # Slide window backward
+        s_uuid = r_uuid
+        r_uuid = get_parent_uuid(record)
+
+    # Walked entire chain without finding indexed content
+    # This means complete reindex is needed
+    return (None, head_uuid)
 
 
 def _should_skip_record(record: dict[str, object]) -> bool:

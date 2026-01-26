@@ -381,17 +381,19 @@ Refactors transcript sync to eliminate external state tracking, deriving all sta
 
 Implement the core functions for stateless sync algorithm.
 
-- [ ] Implement `find_truncation_point()` function
+- [x] Implement `find_truncation_point()` function
   - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
   - Success: Returns (R, S) tuple using sliding window algorithm
   - Test: `test_find_truncation_point_normal_append`, `test_find_truncation_point_revert`, `test_find_truncation_point_first_sync`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:141-213
+  - Implementation: Sliding window algorithm walks backward from head, comparing timestamps to indexed_time_end. Stops at turn boundaries (user messages) to maintain atomic turn semantics.
 
-- [ ] Implement `is_user_message()` helper
+- [x] Implement `is_user_message()` helper
   - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
   - Success: Returns True for user messages that are not tool results
   - Test: `test_is_user_message`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:88-119
+  - Implementation: Returns True for user type messages without toolUseResult and without command output markers.
 
 - [ ] Implement `build_ancestry_chain()` function
   - Spec: specs/stateless-transcript-sync.md § 5. Build Ancestry Chain
@@ -403,35 +405,35 @@ Implement the core functions for stateless sync algorithm.
 
 Unit tests for the core stateless sync functions.
 
-- [ ] Test: normal append case (no revert)
+- [x] Test: normal append case (no revert)
   - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
   - Success: find_truncation_point returns correct connection when R.timestamp == indexed_time_end
-  - Test: `test_find_truncation_point_normal_append`
-  - Location: integrations/claude-code/tests/test_stateless_sync.py
+  - Test: `test_normal_append_same_time`
+  - Location: integrations/claude-code/tests/test_stateless_sync.py:117-136
 
-- [ ] Test: revert to turn boundary
+- [x] Test: revert to turn boundary
   - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
   - Success: Returns connection at the revert point, detecting gap
-  - Test: `test_find_truncation_point_revert_turn_boundary`
-  - Location: integrations/claude-code/tests/test_stateless_sync.py
+  - Test: `test_revert_to_turn_boundary`
+  - Location: integrations/claude-code/tests/test_stateless_sync.py:169-191
 
-- [ ] Test: revert mid-turn (rounds down)
+- [x] Test: revert mid-turn (rounds down)
   - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
   - Success: Sliding window continues to turn boundary when revert is mid-turn
-  - Test: `test_find_truncation_point_revert_mid_turn`
-  - Location: integrations/claude-code/tests/test_stateless_sync.py
+  - Test: `test_revert_mid_turn_rounds_down`
+  - Location: integrations/claude-code/tests/test_stateless_sync.py:193-218
 
-- [ ] Test: first sync (empty document)
+- [x] Test: first sync (empty document)
   - Spec: specs/stateless-transcript-sync.md § 7. First Sync Case
   - Success: Returns (None, head_uuid) when indexed_time_end is None
-  - Test: `test_find_truncation_point_first_sync`
-  - Location: integrations/claude-code/tests/test_stateless_sync.py
+  - Test: `test_first_sync_returns_none_head`
+  - Location: integrations/claude-code/tests/test_stateless_sync.py:101-115
 
-- [ ] Test: complete reindex (no common ancestor)
+- [x] Test: complete reindex (no common ancestor)
   - Spec: specs/stateless-transcript-sync.md § 3. Connection Point Algorithm
   - Success: Returns (None, head_uuid) when entire chain is newer than indexed content
-  - Test: `test_find_truncation_point_complete_reindex`
-  - Location: integrations/claude-code/tests/test_stateless_sync.py
+  - Test: `test_complete_reindex_no_common_ancestor`
+  - Location: integrations/claude-code/tests/test_stateless_sync.py:220-237
 
 ### Phase 51: Refactor execute_sync
 
