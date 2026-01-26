@@ -584,3 +584,144 @@ async def test_embed_leaf_includes_level_index_in_vector_metadata() -> None:
         f"coord_version should be 1 (valid coordinates), got {metadata.get('coord_version')}. "
         "coord_version=0 causes coverage builder to ignore the metadata."
     )
+
+
+@pytest.mark.asyncio
+async def test_stores_optimized_text() -> None:
+    """Test that _embed_leaf stores retrieval-optimized text in preceding_context_summary.
+
+    Per specs/embedding-text-optimization.md § Storage:
+    - Leaf text in database: Unchanged (original verbatim text preserved)
+    - Embedding vector: Based on retrieval-optimized text
+    - preceding_context_summary field: Repurposed to store the retrieval-optimized text
+
+    This allows inspection/debugging of what text was actually embedded.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from ragzoom.server.indexing_engine import EmbeddingJob, IndexingEngine
+
+    # Create mocks
+    mock_store = MagicMock()
+    mock_doc_store = MagicMock()
+    mock_store.for_document.return_value = mock_doc_store
+
+    # Create a leaf with some text
+    leaf_text = "This is the original leaf text content."
+    mock_leaf = MagicMock()
+    mock_leaf.text = leaf_text
+    mock_leaf.id = "test-leaf-id"
+    mock_leaf.span_start = 1000  # Non-zero to trigger context retrieval
+    mock_leaf.span_end = 1100
+    mock_leaf.level_index = 0
+    mock_leaf.coord_version = 1
+    mock_leaf.parent_id = "parent-123"
+    mock_doc_store.nodes.get.return_value = mock_leaf
+
+    # Track update_preceding_context_summary calls
+    update_summary_calls: list[tuple[str, str | None]] = []
+
+    def capture_update_summary(node_id: str, summary: str | None) -> None:
+        update_summary_calls.append((node_id, summary))
+
+    mock_doc_store.nodes._repo.update_preceding_context_summary = capture_update_summary
+    mock_doc_store.nodes._repo.update_preceding_context = MagicMock()
+
+    config = IndexConfig.load().replace(target_embedding_tokens=500)
+
+    # Create mock LLM service
+    mock_llm_service = MagicMock()
+
+    from ragzoom.contracts.embedding_model import EmbeddingResult
+
+    async def mock_embed_texts_with_usage(texts: list[str]) -> EmbeddingResult:
+        return {
+            "embeddings": [[0.1] * 1536 for _ in texts],
+            "usage": {"total_tokens": 50, "model": "text-embedding-3-small"},
+        }
+
+    mock_llm_service.embed_texts_with_usage = mock_embed_texts_with_usage
+
+    # Mock _prepare_embedding_text to return distinct optimized text
+    # This simulates LLM optimization producing different text than the original
+    from ragzoom.services.summary_utils import AccumulatedUsage, SummaryResult
+
+    optimized_text = "OPTIMIZED: leaf text about content"
+
+    async def mock_prepare_embedding_text(
+        preceding_context: str,
+        leaf_text: str,
+        target_tokens: int,
+        *,
+        parent_id: str | None = None,
+        reporter: object = None,
+    ) -> SummaryResult:
+        # Return distinct optimized text to verify it's stored, not the original
+        return SummaryResult(
+            summary=optimized_text,
+            retry_count=0,
+            summary_tokens=50,
+            usage=AccumulatedUsage(),
+        )
+
+    mock_llm_service._prepare_embedding_text = mock_prepare_embedding_text
+
+    # Mock _get_preceding_context to return some context
+    from ragzoom.server.indexing_engine import PrecedingContextResult
+
+    mock_context_node = MagicMock()
+    mock_context_node.id = "context-node"
+    mock_context_node.span_start = 0
+    mock_context_node.span_end = 1000
+    mock_context_node.height = 1
+    mock_context_node.token_count = 100
+    mock_context_node.text = "Some preceding context"
+
+    async def mock_get_preceding_context(
+        store: object,
+        document_id: str,
+        span_start: int,
+        config: object,
+        query_text: str | None,
+        query_embedding: list[float] | None = None,
+    ) -> PrecedingContextResult:
+        return PrecedingContextResult(
+            tiling_ids=["context-node"],
+            nodes={"context-node": mock_context_node},
+            tiling_tokens=100,
+        )
+
+    # Create engine
+    engine = IndexingEngine(
+        store=mock_store,
+        llm_service=mock_llm_service,
+        index_config=config,
+        openai_client=AsyncMock(),
+    )
+
+    # Create mock vector index
+    mock_vector_index = MagicMock()
+
+    # Run _embed_leaf
+    with patch.object(
+        engine, "_get_preceding_context", side_effect=mock_get_preceding_context
+    ):
+        with patch.object(engine, "_get_vector_index", return_value=mock_vector_index):
+            job = EmbeddingJob(document_id="test-doc", leaf_id="test-leaf-id")
+            await engine._embed_leaf(job)
+
+    # Verify update_preceding_context_summary was called with the optimized text
+    assert len(update_summary_calls) == 1, (
+        "update_preceding_context_summary should have been called once. "
+        f"Got {len(update_summary_calls)} calls."
+    )
+
+    node_id, stored_summary = update_summary_calls[0]
+    assert (
+        node_id == "test-leaf-id"
+    ), f"Expected node_id 'test-leaf-id', got '{node_id}'"
+    assert stored_summary == optimized_text, (
+        f"Expected optimized text '{optimized_text}' to be stored in "
+        f"preceding_context_summary, but got '{stored_summary}'. "
+        "The retrieval-optimized text should be stored for debugging/inspection."
+    )
