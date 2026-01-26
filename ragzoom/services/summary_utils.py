@@ -233,6 +233,77 @@ def prepare_summary_inputs(
     )
 
 
+def prepare_embedding_text_inputs(
+    *,
+    preceding_context: str,
+    leaf_text: str,
+    target_tokens: int,
+) -> SummaryPreparation:
+    """Prepare prompt messages for retrieval-optimized embedding text generation.
+
+    Per specs/embedding-text-optimization.md: produces text optimized for semantic
+    search matching via cosine similarity. Preserves key terms, named entities,
+    and searchable concepts rather than just compressing.
+
+    Args:
+        preceding_context: Background text that provides context for the leaf
+        leaf_text: The target content to be embedded
+        target_tokens: Maximum tokens for the output text
+
+    Returns:
+        SummaryPreparation with messages for LLM-based retrieval optimization
+    """
+    context_stripped = preceding_context.strip()
+    leaf_stripped = leaf_text.strip()
+
+    combined_text = (
+        f"{context_stripped}\n{leaf_stripped}" if context_stripped else leaf_stripped
+    )
+    combined_tokens = tokenizer.count_tokens(combined_text)
+    target_words = tokens_to_words(target_tokens)
+
+    # Build prompt: prioritize leaf content over context when space is limited
+    if context_stripped:
+        prompt_parts: list[str] = [
+            f"Summarize the following into a retrieval-optimized text of at most "
+            f"{target_words} words. Prioritize content from TARGET over CONTEXT.",
+            "\n<CONTEXT>",
+            context_stripped,
+            "</CONTEXT>",
+            "\n<TARGET>",
+            leaf_stripped,
+            "</TARGET>",
+        ]
+    else:
+        prompt_parts = [
+            f"Summarize the following into a retrieval-optimized text of at most "
+            f"{target_words} words.",
+            "\n<TARGET>",
+            leaf_stripped,
+            "</TARGET>",
+        ]
+
+    messages: list[dict[str, str]] = [
+        {
+            "role": "system",
+            "content": (
+                "You produce text optimized for semantic search. Your output will be "
+                "embedded and matched against user queries via cosine similarity. "
+                "Preserve key terms, named entities, and searchable concepts. "
+                "Output ONLY the optimized text - nothing else."
+            ),
+        },
+        {"role": "user", "content": "\n".join(prompt_parts)},
+    ]
+
+    return SummaryPreparation(
+        combined_text=combined_text,
+        combined_tokens=combined_tokens,
+        input_text_tokens=combined_tokens,
+        messages=messages,
+    )
+
+
 def prepare_contextualization_inputs(
     *,
     preceding_context: str,

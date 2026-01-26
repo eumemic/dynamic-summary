@@ -220,3 +220,124 @@ class TestSummaryWorkflowConfigSummarizationGuidance:
             raise AssertionError("Should have raised FrozenInstanceError")
         except AttributeError:
             pass  # Expected - frozen dataclass
+
+
+class TestPrepareEmbeddingTextInputs:
+    """Tests for prepare_embedding_text_inputs function.
+
+    Per specs/embedding-text-optimization.md: produces retrieval-optimized text
+    for embedding. The prompt should preserve key terms, named entities, and
+    concepts that users might query via cosine similarity search.
+    """
+
+    def test_prepare_embedding_text_inputs_returns_summary_preparation(self) -> None:
+        """Returns a SummaryPreparation with messages for LLM."""
+        from ragzoom.services.summary_utils import (
+            SummaryPreparation,
+            prepare_embedding_text_inputs,
+        )
+
+        result = prepare_embedding_text_inputs(
+            preceding_context="User discussed authentication issues.",
+            leaf_text="Then user asked about JWT tokens and OAuth.",
+            target_tokens=200,
+        )
+
+        assert isinstance(result, SummaryPreparation)
+        assert result.messages is not None
+        assert len(result.messages) >= 2  # At least system and user messages
+
+    def test_prepare_embedding_text_inputs_system_prompt_for_retrieval(self) -> None:
+        """System prompt instructs LLM to optimize for semantic search."""
+        from ragzoom.services.summary_utils import prepare_embedding_text_inputs
+
+        result = prepare_embedding_text_inputs(
+            preceding_context="Background context here.",
+            leaf_text="Main content about authentication.",
+            target_tokens=100,
+        )
+
+        system_message = next(
+            (m for m in result.messages if m["role"] == "system"), None
+        )
+        assert system_message is not None
+
+        content = system_message["content"].lower()
+        # Prompt should mention semantic search / retrieval optimization
+        assert "semantic search" in content or "retrieval" in content
+        # Prompt should mention preserving key concepts
+        assert "key" in content or "concept" in content or "term" in content
+
+    def test_prepare_embedding_text_inputs_user_prompt_structure(self) -> None:
+        """User prompt includes context, target text, and word limit."""
+        from ragzoom.services.summary_utils import prepare_embedding_text_inputs
+
+        result = prepare_embedding_text_inputs(
+            preceding_context="User discussed Python programming.",
+            leaf_text="Then user asked about decorators and generators.",
+            target_tokens=100,
+        )
+
+        user_message = next((m for m in result.messages if m["role"] == "user"), None)
+        assert user_message is not None
+
+        content = user_message["content"]
+        # Should contain both context and target text
+        assert "Python programming" in content
+        assert "decorators and generators" in content
+        # Should have word limit instruction
+        assert "word" in content.lower()
+
+    def test_prepare_embedding_text_inputs_prioritizes_target_over_context(
+        self,
+    ) -> None:
+        """Prompt instructs LLM to prioritize target (leaf) over context."""
+        from ragzoom.services.summary_utils import prepare_embedding_text_inputs
+
+        result = prepare_embedding_text_inputs(
+            preceding_context="Some background context.",
+            leaf_text="The actual important content.",
+            target_tokens=100,
+        )
+
+        user_message = next((m for m in result.messages if m["role"] == "user"), None)
+        assert user_message is not None
+
+        content = user_message["content"].lower()
+        # Should instruct prioritization of target/leaf content
+        assert "prioritize" in content or "priority" in content or "target" in content
+
+    def test_prepare_embedding_text_inputs_combined_tokens_count(self) -> None:
+        """combined_tokens reflects the combined input size."""
+        from ragzoom.services.summary_utils import prepare_embedding_text_inputs
+        from ragzoom.utils.tokenization import tokenizer
+
+        context = "Short context."
+        leaf = "Short leaf text."
+
+        result = prepare_embedding_text_inputs(
+            preceding_context=context,
+            leaf_text=leaf,
+            target_tokens=100,
+        )
+
+        # Combined tokens should be approximately the sum
+        expected_combined = tokenizer.count_tokens(f"{context}\n{leaf}")
+        assert result.combined_tokens == expected_combined
+
+    def test_prepare_embedding_text_inputs_no_context(self) -> None:
+        """Works correctly when preceding_context is empty."""
+        from ragzoom.services.summary_utils import prepare_embedding_text_inputs
+
+        result = prepare_embedding_text_inputs(
+            preceding_context="",
+            leaf_text="Just the leaf content about API design.",
+            target_tokens=100,
+        )
+
+        # Should still produce valid messages
+        assert len(result.messages) >= 2
+
+        user_message = next((m for m in result.messages if m["role"] == "user"), None)
+        assert user_message is not None
+        assert "API design" in user_message["content"]
