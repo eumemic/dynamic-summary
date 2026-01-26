@@ -591,12 +591,12 @@ def create_retriever(
     # Get chunk tokens from IndexConfig if not provided
     if target_chunk_tokens is None:
         index_cfg = IndexConfig.load()
-        # For retrieval operations, use target_embedding_context_tokens as fallback
+        # For retrieval operations, use target_embedding_tokens as fallback
         # when target_chunk_tokens is None (client-managed chunking mode)
         chunk_tokens_value = (
             index_cfg.target_chunk_tokens
             if index_cfg.target_chunk_tokens is not None
-            else index_cfg.target_embedding_context_tokens
+            else index_cfg.target_embedding_tokens
         )
     else:
         chunk_tokens_value = target_chunk_tokens

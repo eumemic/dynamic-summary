@@ -19,7 +19,7 @@ def test_summarization_guidance_field() -> None:
 
     config = IndexConfig(
         target_chunk_tokens=200,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
         max_parallelism=4,
         summary_model="gpt-4o-mini",
         embedding_model="text-embedding-3-small",
@@ -42,7 +42,7 @@ def test_summarization_guidance_defaults_to_none() -> None:
     """
     config = IndexConfig(
         target_chunk_tokens=200,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
         max_parallelism=4,
         summary_model="gpt-4o-mini",
         embedding_model="text-embedding-3-small",
@@ -77,7 +77,7 @@ def test_index_config_replace_with_summarization_guidance() -> None:
     """
     config = IndexConfig(
         target_chunk_tokens=200,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
         max_parallelism=4,
         summary_model="gpt-4o-mini",
         embedding_model="text-embedding-3-small",
@@ -105,7 +105,7 @@ def test_deprecated_summary_system_prompt_property_get() -> None:
     """
     config = IndexConfig(
         target_chunk_tokens=200,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
         max_parallelism=4,
         summary_model="gpt-4o-mini",
         embedding_model="text-embedding-3-small",
@@ -136,7 +136,7 @@ def test_deprecated_summary_system_prompt_property_set() -> None:
     """
     config = IndexConfig(
         target_chunk_tokens=200,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
         max_parallelism=4,
         summary_model="gpt-4o-mini",
         embedding_model="text-embedding-3-small",
@@ -261,7 +261,6 @@ def test_target_embedding_tokens_field() -> None:
     """
     config = IndexConfig(
         target_chunk_tokens=200,
-        target_embedding_context_tokens=200,
         target_embedding_tokens=500,
         max_parallelism=4,
         summary_model="gpt-4o-mini",
@@ -284,7 +283,6 @@ def test_target_embedding_tokens_default_value() -> None:
     """
     config = IndexConfig(
         target_chunk_tokens=200,
-        target_embedding_context_tokens=200,
         max_parallelism=4,
         summary_model="gpt-4o-mini",
         embedding_model="text-embedding-3-small",
@@ -310,7 +308,6 @@ def test_target_embedding_tokens_validation() -> None:
     with pytest.raises(ValueError, match="target_embedding_tokens must be positive"):
         IndexConfig(
             target_chunk_tokens=200,
-            target_embedding_context_tokens=200,
             target_embedding_tokens=0,
             max_parallelism=4,
             summary_model="gpt-4o-mini",
@@ -326,7 +323,6 @@ def test_target_embedding_tokens_validation() -> None:
     with pytest.raises(ValueError, match="target_embedding_tokens must be positive"):
         IndexConfig(
             target_chunk_tokens=200,
-            target_embedding_context_tokens=200,
             target_embedding_tokens=-100,
             max_parallelism=4,
             summary_model="gpt-4o-mini",
@@ -400,7 +396,6 @@ def test_replace_target_embedding_tokens() -> None:
     """
     config = IndexConfig(
         target_chunk_tokens=200,
-        target_embedding_context_tokens=200,
         target_embedding_tokens=500,
         max_parallelism=4,
         summary_model="gpt-4o-mini",
@@ -453,3 +448,27 @@ def test_deprecated_target_embedding_context_tokens_error() -> None:
     assert "target_embedding_tokens" in error_message
     # Error should be helpful - explain it was removed
     assert "removed" in error_message.lower() or "deprecated" in error_message.lower()
+
+
+def test_no_target_embedding_context_tokens_field() -> None:
+    """Test that IndexConfig no longer has target_embedding_context_tokens attribute.
+
+    Spec: specs/embedding-text-optimization.md § Configuration > Removed Parameter
+    Success: IndexConfig no longer has target_embedding_context_tokens attribute
+    """
+    config = IndexConfig(
+        target_chunk_tokens=200,
+        max_parallelism=4,
+        summary_model="gpt-4o-mini",
+        embedding_model="text-embedding-3-small",
+        retry_threshold=0.5,
+        max_retries=3,
+        embedding_batch_size=100,
+        use_anti_verbatim_vaccine=True,
+        processing_strategy="bottom_to_top",
+    )
+
+    # The old field should not exist on the config object
+    assert not hasattr(config, "target_embedding_context_tokens")
+    # But the new field should exist
+    assert hasattr(config, "target_embedding_tokens")

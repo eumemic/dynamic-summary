@@ -45,12 +45,12 @@ def test_summarized_context_and_leaf_within_embedding_limit() -> None:
     """Test that context_summary + leaf_text stays under the embedding limit.
 
     The embedding text is composed of:
-    - context_summary: summary of preceding context (target: target_embedding_context_tokens)
+    - context_summary: summary of preceding context (target: target_embedding_tokens)
     - leaf_text: the leaf chunk itself (target: target_chunk_tokens)
 
     Note: preceding_context_budget controls how much context is retrieved for
     summarization (sent to the LLM), NOT what gets embedded. The context is
-    summarized down to target_embedding_context_tokens before being prepended to the leaf.
+    summarized down to target_embedding_tokens before being prepended to the leaf.
     """
     config = IndexConfig.load()
     # This test is for fixed-chunking mode
@@ -75,10 +75,10 @@ def test_summarized_context_and_leaf_within_embedding_limit() -> None:
 
 @pytest.mark.asyncio
 async def test_embed_leaf_uses_embedding_context_tokens() -> None:
-    """Test that _embed_leaf uses target_embedding_context_tokens for contextualization.
+    """Test that _embed_leaf uses target_embedding_tokens for contextualization.
 
     Verifies that when contextualizing preceding context for embedding, the engine
-    uses config.target_embedding_context_tokens instead of config.target_chunk_tokens.
+    uses config.target_embedding_tokens instead of config.target_chunk_tokens.
     This allows client-managed chunking (target_chunk_tokens=None) while still having
     sensible embedding context summarization.
     """
@@ -101,10 +101,10 @@ async def test_embed_leaf_uses_embedding_context_tokens() -> None:
     mock_leaf.span_end = 1100
     mock_doc_store.nodes.get.return_value = mock_leaf
 
-    # Create config with custom target_embedding_context_tokens
+    # Create config with custom target_embedding_tokens
     config = IndexConfig.load().replace(
         target_chunk_tokens=None,  # Client-managed chunking mode
-        target_embedding_context_tokens=300,  # Custom embedding context target
+        target_embedding_tokens=300,  # Custom embedding target
     )
 
     # Create mock LLM service
@@ -186,15 +186,15 @@ async def test_embed_leaf_uses_embedding_context_tokens() -> None:
             job = EmbeddingJob(document_id="test-doc", leaf_id="test-leaf-id")
             await engine._embed_leaf(job)
 
-    # Verify _contextualize_text was called with target_embedding_context_tokens
+    # Verify _contextualize_text was called with target_embedding_tokens
     assert (
         len(contextualize_calls) == 1
     ), "_contextualize_text should have been called once"
     assert contextualize_calls[0] == 300, (
-        f"_contextualize_text should use target_embedding_context_tokens (300), "
+        f"_contextualize_text should use target_embedding_tokens (300), "
         f"but was called with {contextualize_calls[0]}. "
         f"This is the bug: it's using target_chunk_tokens instead of "
-        f"target_embedding_context_tokens for embedding contextualization."
+        f"target_embedding_tokens for embedding contextualization."
     )
 
 
