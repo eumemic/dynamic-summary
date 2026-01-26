@@ -586,10 +586,6 @@ class SessionState:
         lines.extend(json.dumps(entry.to_json()) for entry in self.entries)
         path.write_text("\n".join(lines) + "\n")
 
-    def append_log(self) -> _SessionAppendLog:
-        """Get an in-memory append log backed by this state's entries."""
-        return _SessionAppendLog(self)
-
 
 def _get_state_dir() -> Path:
     """Get the transcript state directory from environment or default."""
@@ -618,100 +614,6 @@ def set_session_pid(document_id: str, pid: int) -> None:
         state = SessionState(header=SessionStateHeader(document_id=document_id))
     state.header.last_pid = pid
     state.save(state_path)
-
-
-class _SessionAppendLog:
-    """In-memory append log backed by SessionState entries.
-
-    This class provides the same interface as the removed AppendLog class
-    but operates entirely in memory through a SessionState instance.
-    """
-
-    def __init__(self, state: SessionState) -> None:
-        self._state = state
-
-    def append(self, entry: AppendEntry) -> None:
-        self._state.entries.append(entry)
-
-    def last_entry(self) -> AppendEntry | None:
-        if not self._state.entries:
-            return None
-        return self._state.entries[-1]
-
-    def truncate_to(self, last_uuid: str) -> None:
-        for i, entry in enumerate(self._state.entries):
-            if entry.last_uuid == last_uuid:
-                self._state.entries = self._state.entries[: i + 1]
-                return
-        raise ValueError(f"uuid {last_uuid!r} not found in append log")
-
-    def find_valid_prefix(
-        self, current_head: str, parent_map: dict[str, str | None]
-    ) -> AppendEntry | None:
-        """Find the last entry whose uuid is an ancestor of current_head.
-
-        Walks backwards through the append log, checking each entry's last_uuid
-        against the ancestor chain of current_head.
-
-        For turn-level tracking: if the common ancestor falls WITHIN a turn
-        (between first_uuid and last_uuid) rather than at a turn boundary
-        (at last_uuid), we return the PREVIOUS turn's entry. This ensures
-        we truncate to before the partially-matching turn.
-
-        Returns None if the log is empty, signaling the caller should transcribe
-        the entire ancestor chain from root to current_head.
-        """
-        entries = list(self)
-        if not entries:
-            return None
-
-        # Get the last indexed uuid
-        last_indexed = entries[-1].last_uuid
-
-        # Find common ancestor between last_indexed and current_head
-        common = find_common_ancestor(last_indexed, current_head, parent_map)
-
-        # No common ancestor means completely disjoint branches - user reverted
-        # to before anything we indexed, so start fresh
-        if common is None:
-            return None
-
-        # Walk backwards through entries to find one whose last_uuid is an ancestor
-        # of the common ancestor (meaning the turn ended at or before the common point)
-        common_ancestors = _get_ancestors(common, parent_map)
-        common_ancestors.add(common)
-
-        for i, entry in enumerate(reversed(entries)):
-            if entry.last_uuid in common_ancestors:
-                # Check if common ancestor is WITHIN this turn (not at its boundary)
-                # This only applies to turn-level entries that have first_uuid set
-                if entry.first_uuid is not None and entry.last_uuid != common:
-                    # Common ancestor is within this turn, not at its end.
-                    # Check if common is actually within this turn's UUID range.
-                    # Get all UUIDs from first_uuid to last_uuid (the turn's range)
-                    turn_ancestors = _get_ancestors(entry.last_uuid, parent_map)
-                    turn_ancestors.add(entry.last_uuid)
-
-                    # If the common ancestor is in the turn's range but not at the end,
-                    # we need to return the previous entry (before this turn)
-                    if common in turn_ancestors and common != entry.last_uuid:
-                        # Find the first_uuid's ancestors to determine turn boundary
-                        first_ancestors = _get_ancestors(entry.first_uuid, parent_map)
-                        # If common is an ancestor of first_uuid (before this turn),
-                        # this entry is still valid
-                        if common in first_ancestors:
-                            return entry
-                        # Common is within this turn - return previous entry
-                        actual_idx = len(entries) - 1 - i
-                        if actual_idx > 0:
-                            return entries[actual_idx - 1]
-                        return None
-                return entry
-
-        return None
-
-    def __iter__(self) -> Iterator[AppendEntry]:
-        return iter(self._state.entries)
 
 
 def build_parent_map(transcript_path: Path) -> dict[str, str | None]:

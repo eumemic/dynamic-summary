@@ -501,11 +501,12 @@ Remove deprecated append log classes and functions.
   - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (removed)
   - Implementation: Removed `SyncPlan` dataclass and `compute_sync_plan()` function. Removed `SyncPlan` and `compute_sync_plan` exports from __init__.py. Removed `TestComputeSyncPlan` test class (5 tests).
 
-- [ ] Remove `_SessionAppendLog` class
+- [x] Remove `_SessionAppendLog` class
   - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log
   - Success: Class no longer exists in codebase
   - Test: N/A (removal)
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:623
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (removed)
+  - Implementation: Removed `_SessionAppendLog` class and `SessionState.append_log()` method. Removed 2 tests: `test_append_log_view` and `test_append_log_truncate`.
 
 - [ ] Remove `AppendEntry` dataclass and its tests
   - Spec: specs/stateless-transcript-sync.md § 1. Eliminate the Append Log

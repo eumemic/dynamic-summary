@@ -328,52 +328,6 @@ class TestSessionState:
         state = SessionState.load(tmp_path / "missing.jsonl")
         assert state is None
 
-    def test_append_log_view(self, tmp_path: Path) -> None:
-        """append_log() should return working _SessionAppendLog."""
-        from ragzoom_claude_code.transcript_sync import (
-            AppendEntry,
-            SessionState,
-            SessionStateHeader,
-        )
-
-        state = SessionState(
-            header=SessionStateHeader(document_id="doc-123"),
-            entries=[AppendEntry("msg1", 100)],
-        )
-
-        log = state.append_log()
-        log.append(AppendEntry("msg2", 200))
-
-        assert len(state.entries) == 2
-        assert state.entries[1].last_uuid == "msg2"
-
-        last = log.last_entry()
-        assert last is not None
-        assert last.last_uuid == "msg2"
-
-    def test_append_log_truncate(self, tmp_path: Path) -> None:
-        """append_log().truncate_to() should modify state entries."""
-        from ragzoom_claude_code.transcript_sync import (
-            AppendEntry,
-            SessionState,
-            SessionStateHeader,
-        )
-
-        state = SessionState(
-            header=SessionStateHeader(document_id="doc-123"),
-            entries=[
-                AppendEntry("msg1", 100),
-                AppendEntry("msg2", 200),
-                AppendEntry("msg3", 300),
-            ],
-        )
-
-        log = state.append_log()
-        log.truncate_to("msg2")
-
-        assert len(state.entries) == 2
-        assert state.entries[-1].last_uuid == "msg2"
-
 
 class TestGetCurrentHead:
     """Tests for getting current head UUID from transcript."""
