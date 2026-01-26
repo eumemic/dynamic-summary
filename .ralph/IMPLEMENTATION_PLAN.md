@@ -335,11 +335,12 @@ Remove the old config field and update all references atomically to prevent type
 
 Add retrieval-optimized embedding text preparation to summary_utils.py, following the existing callback pattern.
 
-- [ ] Create `prepare_embedding_text_inputs` function for prompt preparation
+- [x] Create `prepare_embedding_text_inputs` function for prompt preparation
   - Spec: specs/embedding-text-optimization.md § Behavior > LLM Prompt Design
   - Success: Function prepares messages for retrieval-optimized summarization
-  - Test: `tests/test_summary_utils.py::test_prepare_embedding_text_inputs`
-  - Location: `ragzoom/services/summary_utils.py`
+  - Test: `tests/test_summary_utils.py::TestPrepareEmbeddingTextInputs`
+  - Location: `ragzoom/services/summary_utils.py:236-306`
+  - **DONE**: Implemented function following the existing pattern (prepare_contextualization_inputs). Takes preceding_context, leaf_text, and target_tokens. Returns SummaryPreparation with system prompt optimized for semantic search (preserves key terms, named entities, searchable concepts) and user prompt that prioritizes target over context. 6 tests added.
 
 - [ ] Create `run_embedding_text_workflow` function with callback pattern
   - Spec: specs/embedding-text-optimization.md § Behavior > Embedding Text Generation
