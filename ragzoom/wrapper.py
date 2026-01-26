@@ -9,8 +9,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ParamSpec, Protocol, TypeVar
 
 from ragzoom.client.grpc_client import (
+    DocumentStatusView,
     ExecuteQueryOutput,
     GrpcRagzoomClient,
+    TruncateFromTimeResult,
     TruncateResult,
 )
 from ragzoom.constants import DEFAULT_GRPC_ADDRESS
@@ -360,6 +362,44 @@ class RagZoom:
             return client.truncate_document(
                 document_id=document_id,
                 span_start=span_start,
+            )
+
+    def get_document_status(self, document_id: str) -> DocumentStatusView:
+        """Get document status with completion metrics and temporal range.
+
+        Args:
+            document_id: The document to get status for.
+
+        Returns:
+            DocumentStatusView with completion metrics and temporal info.
+        """
+        if not document_id:
+            raise ValueError("document_id is required")
+
+        with self._client() as client:
+            return client.get_document_status(document_id)
+
+    def truncate_from_time(
+        self, document_id: str, cutoff_time: str
+    ) -> TruncateFromTimeResult:
+        """Truncate a temporal document by deleting nodes where time_end > cutoff.
+
+        Args:
+            document_id: The temporal document to truncate.
+            cutoff_time: ISO 8601 timestamp. Nodes with time_end > cutoff are deleted.
+
+        Returns:
+            TruncateFromTimeResult with deleted node IDs and echoed cutoff time.
+        """
+        if not document_id:
+            raise ValueError("document_id is required")
+        if not cutoff_time:
+            raise ValueError("cutoff_time is required")
+
+        with self._client() as client:
+            return client.truncate_from_time(
+                document_id=document_id,
+                cutoff_time=cutoff_time,
             )
 
     # ------------------------------------------------------------------
