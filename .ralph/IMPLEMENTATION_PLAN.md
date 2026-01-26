@@ -258,11 +258,12 @@ Implement time-based truncation in storage backend.
   - Location: ragzoom/repositories/document_repository.py:284-347
   - Implementation: Added to DocumentRepository following the same pattern as delete_nodes_from_span. Backend delegates to doc_repo.
 
-- [ ] Delete vectors for removed nodes in truncation
+- [x] Delete vectors for removed nodes in truncation
   - Spec: specs/temporal-document-apis.md § 3. Truncate from Time API
   - Success: Vector index entries for deleted nodes are removed
   - Test: `test_truncate_from_time_removes_vectors`
-  - Location: ragzoom/backends/sqlite_backend.py, ragzoom/backends/postgres_backend.py
+  - Location: ragzoom/indexing/runtime.py:778-787 (runtime layer handles vector deletion, not backends - consistent with delete_nodes_from_span pattern)
+  - Implementation: Vector deletion happens in `DocumentIndexSession.truncate_from_time()` after backend returns deleted node IDs. Test fixed by using `AsyncMock` for `cancel_document`.
 
 ### Phase 47: TruncateFromTime Servicer and Client
 

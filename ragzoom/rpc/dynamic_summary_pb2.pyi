@@ -387,14 +387,12 @@ class GetDocumentResponse:
 
     def __init__(self, *, status: DocumentStatus) -> None: ...
 
-
 class DocumentStatusRequest:
     """Request for document status with completion metrics."""
 
     document_id: str
 
     def __init__(self, *, document_id: str) -> None: ...
-
 
 class DocumentStatusResponse:
     """Response with document completion metrics and temporal range."""
@@ -424,7 +422,6 @@ class DocumentStatusResponse:
         time_end: str = ...,
     ) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
-
 
 WORKER_RUN_MODE_UNTIL_IDLE: int
 
