@@ -627,11 +627,12 @@ Add the ready_fd parameter to daemonize() and create test utilities.
 
 Convert the 6 tests in TestDaemonizeFunction to use ready-pipe pattern.
 
-- [ ] Migrate `test_daemonize_forks_to_background` to ready-pipe
+- [x] Migrate `test_daemonize_forks_to_background` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction
   - Success: Test uses `daemon_ready_pipe()` instead of `time.sleep(0.5)`
   - Test: `test_daemonize_forks_to_background`
-  - Location: tests/test_daemon_lifecycle.py
+  - Location: tests/test_daemon_lifecycle.py:80
+  - Implementation: Replaced `time.sleep(0.5)` with ready-pipe pattern: pass write_fd via pass_fds, use wait_for_daemon_ready() for synchronization. Test time reduced from ~1.5s to ~0.8s.
 
 - [ ] Migrate `test_daemonize_writes_pid_file` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction

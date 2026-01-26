@@ -79,11 +79,13 @@ Path("{flag_file}").write_text(f"daemon pid: {{os.getpid()}}")
     @pytest.mark.slow_threshold(5)
     def test_daemonize_forks_to_background(self, tmp_path: Path) -> None:
         """daemonize() should fork process to background and write flag."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
         log_file = tmp_path / "daemon.log"
         flag_file = tmp_path / "daemon_ran"
 
-        # Run a subprocess that calls daemonize
-        script = f"""
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            script = f"""
 import os
 import sys
 sys.path.insert(0, "{Path.cwd()}")
@@ -91,25 +93,21 @@ os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
 from ragzoom.daemon import daemonize
 from pathlib import Path
 
-daemonize(Path("{log_file}"))
-# If we get here, we're in the daemon process
+daemonize(Path("{log_file}"), ready_fd={write_fd})
 Path("{flag_file}").write_text(f"daemon pid: {{os.getpid()}}")
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        # Parent process should exit quickly
-        proc.wait(timeout=5)
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            proc.wait(timeout=5)
+            wait_for_daemon_ready(read_fd)
 
-        # Give daemon time to write flag
-        time.sleep(0.5)
-
-        # Daemon should have written the flag file
         assert flag_file.exists(), "Daemon process should have run"
-        content = flag_file.read_text()
-        assert content.startswith("daemon pid:")
+        assert flag_file.read_text().startswith("daemon pid:")
 
     @pytest.mark.slow_threshold(5)
     def test_daemonize_writes_pid_file(self, tmp_path: Path) -> None:
