@@ -134,11 +134,12 @@ Implement the new GetDocumentStatus servicer method.
   - Location: ragzoom/document_store.py:824-832
   - Implementation: Simple delegation to `self.nodes.count()` with guard for missing document_id
 
-- [ ] Add `get_temporal_range()` method to document store
+- [x] Add `get_temporal_range()` method to document store
   - Spec: specs/temporal-document-apis.md § Implementation Outline > Phase 1
   - Success: Method returns (time_start, time_end) tuple from leaf nodes
   - Test: `test_document_store_temporal_range`
-  - Location: ragzoom/document_store.py
+  - Location: ragzoom/document_store.py:836-863
+  - Implementation: Iterates leaf nodes (via fallback path) to find MIN(time_start) and MAX(time_end). Also supports optimized `get_temporal_range_for_document()` method on repository if available.
 
 - [ ] Implement `GetDocumentStatus` servicer method
   - Spec: specs/temporal-document-apis.md § 1. Document Status API

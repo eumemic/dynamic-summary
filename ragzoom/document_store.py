@@ -831,6 +831,36 @@ class DocumentStore:
             return 0
         return self.nodes.count()
 
+    def get_temporal_range(self) -> tuple[float | None, float | None]:
+        """Get the temporal range (min time_start, max time_end) from leaf nodes.
+
+        Only considers leaf nodes (height=0) with temporal metadata.
+        Used by GetDocumentStatus API to return time_start and time_end fields.
+
+        Returns:
+            Tuple of (time_start, time_end) as Unix timestamps, or (None, None)
+            if document is empty, has no document_id, or is non-temporal.
+        """
+        if not self.document_id:
+            return (None, None)
+
+        getter = getattr(self._node_repo, "get_temporal_range_for_document", None)
+        if callable(getter):
+            result: tuple[float | None, float | None] = getter(self.document_id)
+            return result
+
+        # Fallback: iterate leaves (less efficient)
+        min_time: float | None = None
+        max_time: float | None = None
+        for leaf in self.nodes.iter_leaves():
+            if leaf.time_start is not None:
+                if min_time is None or leaf.time_start < min_time:
+                    min_time = leaf.time_start
+            if leaf.time_end is not None:
+                if max_time is None or leaf.time_end > max_time:
+                    max_time = leaf.time_end
+        return (min_time, max_time)
+
     def get_avg_leaf_tokens(self) -> int | None:
         """Get average token count for leaf nodes in this document.
 

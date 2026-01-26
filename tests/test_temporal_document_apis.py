@@ -200,3 +200,174 @@ class TestDocumentStoreNodeCount:
 
         # 4 leaves + 2 inner + 1 root = 7 total nodes
         assert doc_store.get_node_count() == 7
+
+
+class TestDocumentStoreTemporalRange:
+    """Tests for DocumentStore.get_temporal_range() method.
+
+    Verifies that the document store correctly returns the temporal range
+    (min time_start, max time_end) from leaf nodes only.
+    """
+
+    @pytest.fixture
+    def doc_store(self, storage_backend: StorageBackend) -> DocumentStore:
+        """Create a document store with test metadata."""
+        doc_store = storage_backend.for_document("test-temporal-doc")
+        doc_store.set_metadata(
+            file_path="test.txt",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        return doc_store
+
+    def test_temporal_range_empty_document(self, doc_store: DocumentStore) -> None:
+        """Empty document returns (None, None) for temporal range."""
+        result = doc_store.get_temporal_range()
+        assert result == (None, None)
+
+    def test_temporal_range_non_temporal_document(
+        self, doc_store: DocumentStore
+    ) -> None:
+        """Document with leaves but no timestamps returns (None, None)."""
+        # Add leaves without timestamps
+        nodes_data: list[NodeDataDict] = [
+            {
+                "node_id": f"leaf-{i}",
+                "text": f"Leaf text {i}",
+                "span_start": i * 10,
+                "span_end": (i + 1) * 10,
+                "token_count": 5,
+                "height": 0,
+                "level_index": i,
+            }
+            for i in range(3)
+        ]
+        doc_store.nodes.add_batch(nodes_data)
+
+        result = doc_store.get_temporal_range()
+        assert result == (None, None)
+
+    def test_temporal_range_leaves_only(self, doc_store: DocumentStore) -> None:
+        """Document with temporal leaves returns correct min/max range."""
+        # Create leaves with timestamps
+        nodes_data: list[NodeDataDict] = [
+            {
+                "node_id": "leaf-0",
+                "text": "First message",
+                "span_start": 0,
+                "span_end": 10,
+                "token_count": 5,
+                "height": 0,
+                "level_index": 0,
+                "time_start": 1000.0,
+                "time_end": 1100.0,
+            },
+            {
+                "node_id": "leaf-1",
+                "text": "Second message",
+                "span_start": 10,
+                "span_end": 20,
+                "token_count": 5,
+                "height": 0,
+                "level_index": 1,
+                "time_start": 1100.0,
+                "time_end": 1200.0,
+            },
+            {
+                "node_id": "leaf-2",
+                "text": "Third message",
+                "span_start": 20,
+                "span_end": 30,
+                "token_count": 5,
+                "height": 0,
+                "level_index": 2,
+                "time_start": 1200.0,
+                "time_end": 1300.0,
+            },
+        ]
+        doc_store.nodes.add_batch(nodes_data)
+
+        time_start, time_end = doc_store.get_temporal_range()
+        assert time_start == 1000.0
+        assert time_end == 1300.0
+
+    def test_temporal_range_with_inner_nodes(self, doc_store: DocumentStore) -> None:
+        """Temporal range only considers leaves, not inner nodes."""
+        # Create leaves with timestamps
+        leaves: list[NodeDataDict] = [
+            {
+                "node_id": "leaf-0",
+                "text": "First",
+                "span_start": 0,
+                "span_end": 10,
+                "token_count": 5,
+                "height": 0,
+                "level_index": 0,
+                "time_start": 1000.0,
+                "time_end": 1050.0,
+            },
+            {
+                "node_id": "leaf-1",
+                "text": "Second",
+                "span_start": 10,
+                "span_end": 20,
+                "token_count": 5,
+                "height": 0,
+                "level_index": 1,
+                "time_start": 1050.0,
+                "time_end": 1100.0,
+            },
+        ]
+        doc_store.nodes.add_batch(leaves)
+
+        # Create inner node spanning both leaves (with wider time range)
+        inner: list[NodeDataDict] = [
+            {
+                "node_id": "inner-0",
+                "text": "Summary",
+                "span_start": 0,
+                "span_end": 20,
+                "token_count": 8,
+                "height": 1,
+                "level_index": 0,
+                "left_child_id": "leaf-0",
+                "right_child_id": "leaf-1",
+                "time_start": 900.0,  # Wider range than leaves (shouldn't be used)
+                "time_end": 1200.0,
+            },
+        ]
+        doc_store.nodes.add_batch(inner)
+
+        # Should only use leaf timestamps
+        time_start, time_end = doc_store.get_temporal_range()
+        assert time_start == 1000.0
+        assert time_end == 1100.0
+
+    def test_temporal_range_single_leaf(self, doc_store: DocumentStore) -> None:
+        """Single temporal leaf returns that leaf's time range."""
+        nodes_data: list[NodeDataDict] = [
+            {
+                "node_id": "leaf-0",
+                "text": "Only message",
+                "span_start": 0,
+                "span_end": 10,
+                "token_count": 5,
+                "height": 0,
+                "level_index": 0,
+                "time_start": 1500.0,
+                "time_end": 1600.0,
+            },
+        ]
+        doc_store.nodes.add_batch(nodes_data)
+
+        time_start, time_end = doc_store.get_temporal_range()
+        assert time_start == 1500.0
+        assert time_end == 1600.0
+
+    def test_temporal_range_no_document_id(
+        self, storage_backend: StorageBackend
+    ) -> None:
+        """Document store without document_id returns (None, None)."""
+        doc_store = storage_backend.for_document(None)
+        result = doc_store.get_temporal_range()
+        assert result == (None, None)
