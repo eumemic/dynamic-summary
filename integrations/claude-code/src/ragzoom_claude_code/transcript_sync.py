@@ -553,46 +553,97 @@ class AppendEntry:
         return cls(last_uuid=last_uuid, span_end=span_end, first_uuid=first_uuid)
 
 
-class AppendLog:
-    """JSONL-based log of append operations."""
+@dataclass
+class SessionState:
+    """Session state with header and append log."""
 
-    def __init__(self, path: Path) -> None:
-        self._path = path
+    header: SessionStateHeader
+    entries: list[AppendEntry] = field(default_factory=list)
+
+    @classmethod
+    def load(cls, path: Path) -> SessionState | None:
+        """Load session state from JSONL file.
+
+        Returns None if file doesn't exist.
+        """
+        if not path.exists():
+            return None
+
+        lines = path.read_text().strip().split("\n")
+        if not lines or not lines[0]:
+            return None
+
+        header = SessionStateHeader.from_json(json.loads(lines[0]))
+        entries = [
+            AppendEntry.from_json(json.loads(line)) for line in lines[1:] if line
+        ]
+        return cls(header=header, entries=entries)
+
+    def save(self, path: Path) -> None:
+        """Save session state to JSONL file."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [json.dumps(self.header.to_json())]
+        lines.extend(json.dumps(entry.to_json()) for entry in self.entries)
+        path.write_text("\n".join(lines) + "\n")
+
+    def append_log(self) -> _SessionAppendLog:
+        """Get an in-memory append log backed by this state's entries."""
+        return _SessionAppendLog(self)
+
+
+def _get_state_dir() -> Path:
+    """Get the transcript state directory from environment or default."""
+    import os
+
+    state_dir_str = os.environ.get("RAGZOOM_STATE_DIR", "data/transcript-state")
+    return Path(state_dir_str)
+
+
+def get_state_path(document_id: str) -> Path:
+    """Get the path to the state file for a document."""
+    state_dir = _get_state_dir()
+    state_dir.mkdir(parents=True, exist_ok=True)
+    return state_dir / f"{document_id}.jsonl"
+
+
+def set_session_pid(document_id: str, pid: int) -> None:
+    """Set the PID for a session, creating state file if needed.
+
+    Called by SessionStart hook to register the Claude Code PID before
+    any tool calls. Preserves existing state fields if the file exists.
+    """
+    state_path = get_state_path(document_id)
+    state = SessionState.load(state_path)
+    if state is None:
+        state = SessionState(header=SessionStateHeader(document_id=document_id))
+    state.header.last_pid = pid
+    state.save(state_path)
+
+
+class _SessionAppendLog:
+    """In-memory append log backed by SessionState entries.
+
+    This class provides the same interface as the removed AppendLog class
+    but operates entirely in memory through a SessionState instance.
+    """
+
+    def __init__(self, state: SessionState) -> None:
+        self._state = state
 
     def append(self, entry: AppendEntry) -> None:
-        """Append an entry to the log."""
-        with open(self._path, "a") as f:
-            f.write(json.dumps(entry.to_json()) + "\n")
+        self._state.entries.append(entry)
 
     def last_entry(self) -> AppendEntry | None:
-        """Get the last entry, or None if empty."""
-        if not self._path.exists():
+        if not self._state.entries:
             return None
-
-        # Read last line efficiently
-        content = self._path.read_text().rstrip("\n")
-        if not content:
-            return None
-
-        last_line = content.rsplit("\n", 1)[-1]
-        return AppendEntry.from_json(json.loads(last_line))
+        return self._state.entries[-1]
 
     def truncate_to(self, last_uuid: str) -> None:
-        """Remove all entries after the one with the given uuid."""
-        entries = list(self)
-        found_idx = None
-        for i, entry in enumerate(entries):
+        for i, entry in enumerate(self._state.entries):
             if entry.last_uuid == last_uuid:
-                found_idx = i
-                break
-
-        if found_idx is None:
-            raise ValueError(f"uuid {last_uuid!r} not found in append log")
-
-        # Rewrite file with only entries up to and including found_idx
-        with open(self._path, "w") as f:
-            for entry in entries[: found_idx + 1]:
-                f.write(json.dumps(entry.to_json()) + "\n")
+                self._state.entries = self._state.entries[: i + 1]
+                return
+        raise ValueError(f"uuid {last_uuid!r} not found in append log")
 
     def find_valid_prefix(
         self, current_head: str, parent_map: dict[str, str | None]
@@ -658,105 +709,6 @@ class AppendLog:
                 return entry
 
         return None
-
-    def __iter__(self) -> Iterator[AppendEntry]:
-        """Iterate over all entries."""
-        if not self._path.exists():
-            return
-
-        for record, _ in iter_jsonl(self._path):
-            yield AppendEntry.from_json(record)
-
-
-@dataclass
-class SessionState:
-    """Session state with header and append log."""
-
-    header: SessionStateHeader
-    entries: list[AppendEntry] = field(default_factory=list)
-
-    @classmethod
-    def load(cls, path: Path) -> SessionState | None:
-        """Load session state from JSONL file.
-
-        Returns None if file doesn't exist.
-        """
-        if not path.exists():
-            return None
-
-        lines = path.read_text().strip().split("\n")
-        if not lines or not lines[0]:
-            return None
-
-        header = SessionStateHeader.from_json(json.loads(lines[0]))
-        entries = [
-            AppendEntry.from_json(json.loads(line)) for line in lines[1:] if line
-        ]
-        return cls(header=header, entries=entries)
-
-    def save(self, path: Path) -> None:
-        """Save session state to JSONL file."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        lines = [json.dumps(self.header.to_json())]
-        lines.extend(json.dumps(entry.to_json()) for entry in self.entries)
-        path.write_text("\n".join(lines) + "\n")
-
-    def append_log(self) -> AppendLog:
-        """Get an AppendLog view backed by this state's entries."""
-        return _SessionAppendLog(self)
-
-
-def _get_state_dir() -> Path:
-    """Get the transcript state directory from environment or default."""
-    import os
-
-    state_dir_str = os.environ.get("RAGZOOM_STATE_DIR", "data/transcript-state")
-    return Path(state_dir_str)
-
-
-def get_state_path(document_id: str) -> Path:
-    """Get the path to the state file for a document."""
-    state_dir = _get_state_dir()
-    state_dir.mkdir(parents=True, exist_ok=True)
-    return state_dir / f"{document_id}.jsonl"
-
-
-def set_session_pid(document_id: str, pid: int) -> None:
-    """Set the PID for a session, creating state file if needed.
-
-    Called by SessionStart hook to register the Claude Code PID before
-    any tool calls. Preserves existing state fields if the file exists.
-    """
-    state_path = get_state_path(document_id)
-    state = SessionState.load(state_path)
-    if state is None:
-        state = SessionState(header=SessionStateHeader(document_id=document_id))
-    state.header.last_pid = pid
-    state.save(state_path)
-
-
-class _SessionAppendLog(AppendLog):
-    """AppendLog backed by SessionState entries (in-memory)."""
-
-    def __init__(self, state: SessionState) -> None:
-        # Dummy path - not used for in-memory operations
-        super().__init__(Path("/dev/null"))
-        self._state = state
-
-    def append(self, entry: AppendEntry) -> None:
-        self._state.entries.append(entry)
-
-    def last_entry(self) -> AppendEntry | None:
-        if not self._state.entries:
-            return None
-        return self._state.entries[-1]
-
-    def truncate_to(self, last_uuid: str) -> None:
-        for i, entry in enumerate(self._state.entries):
-            if entry.last_uuid == last_uuid:
-                self._state.entries = self._state.entries[: i + 1]
-                return
-        raise ValueError(f"uuid {last_uuid!r} not found in append log")
 
     def __iter__(self) -> Iterator[AppendEntry]:
         return iter(self._state.entries)
@@ -912,7 +864,7 @@ class SyncPlan:
 
 def compute_sync_plan(
     current_head: str,
-    append_log: AppendLog,
+    append_log: _SessionAppendLog,
     parent_map: dict[str, str | None],
 ) -> SyncPlan:
     """Compute what operations are needed to sync transcript to document.
