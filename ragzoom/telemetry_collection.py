@@ -681,11 +681,11 @@ class TelemetryCollector:
             self.memory_end_mb = self.peak_memory_mb
 
         # Return telemetry data in standard format
-        # For telemetry, use target_embedding_context_tokens as fallback
+        # For telemetry, use target_embedding_tokens as fallback
         chunk_tokens = (
             self.config.target_chunk_tokens
             if self.config.target_chunk_tokens is not None
-            else self.config.target_embedding_context_tokens
+            else self.config.target_embedding_tokens
         )
         return self.get_telemetry_data(self.document_id, chunk_tokens)
 

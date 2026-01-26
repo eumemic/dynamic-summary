@@ -324,7 +324,7 @@ async def test_passthrough_for_text_under_target(
     chunk_tokens = (
         config.target_chunk_tokens
         if config.target_chunk_tokens is not None
-        else config.target_embedding_context_tokens
+        else config.target_embedding_tokens
     )
     data = reporter.get_telemetry_data("test_doc", chunk_tokens)
     attempts = data["nodes"][0]["summary_attempts"]

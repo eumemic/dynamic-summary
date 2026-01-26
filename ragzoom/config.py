@@ -30,7 +30,7 @@ class IndexConfigDict(TypedDict, total=False):
     """Type definition for IndexConfig dictionary representation."""
 
     target_chunk_tokens: int | None
-    target_embedding_context_tokens: int
+    target_embedding_tokens: int
     max_parallelism: int
     summary_model: str
     embedding_model: str
@@ -288,7 +288,6 @@ class IndexConfig:
     """
 
     target_chunk_tokens: int | None
-    target_embedding_context_tokens: int
     max_parallelism: int
     summary_model: str
     embedding_model: str
@@ -310,6 +309,15 @@ class IndexConfig:
 
     Use this to provide domain context that improves summary quality
     for specific content types (legal, medical, code, etc.).
+    """
+    target_embedding_tokens: int = 500
+    """Target token count for text sent to embedding.
+
+    When combined input (preceding context + leaf text) exceeds this target,
+    an LLM generates retrieval-optimized text to fit within the budget.
+    When input fits within target, it passes through unchanged.
+
+    Default: 500 tokens (optimal for focused, high-quality embeddings).
     """
 
     @property
@@ -345,6 +353,10 @@ class IndexConfig:
         if self.target_chunk_tokens is not None and self.target_chunk_tokens <= 0:
             raise ValueError(
                 f"target_chunk_tokens must be positive when set, got {self.target_chunk_tokens}"
+            )
+        if self.target_embedding_tokens <= 0:
+            raise ValueError(
+                f"target_embedding_tokens must be positive, got {self.target_embedding_tokens}"
             )
         if not 0.0 <= self.retry_threshold <= 1.0:
             raise ValueError(
@@ -382,6 +394,14 @@ class IndexConfig:
         nested_dict: PrecedingContextSettingsDict = raw_nested
         preceding_context = PrecedingContextSettings.from_dict(nested_dict)
 
+        # Reject deprecated field with helpful error
+        if "target_embedding_context_tokens" in config_dict:
+            raise ValueError(
+                "target_embedding_context_tokens has been removed. "
+                "Use target_embedding_tokens instead. "
+                "See specs/embedding-text-optimization.md for migration details."
+            )
+
         # Get optional summary_reasoning_level (may be str or None)
         raw_reasoning = config_dict.get("summary_reasoning_level")
         summary_reasoning_level: str | None = (
@@ -417,9 +437,6 @@ class IndexConfig:
 
         return cls(
             target_chunk_tokens=target_chunk_tokens_value,
-            target_embedding_context_tokens=int(
-                config_dict.get("target_embedding_context_tokens", 200)
-            ),
             max_parallelism=int(config_dict.get("max_parallelism", 30)),
             summary_model=str(config_dict["summary_model"]),
             embedding_model=str(config_dict["embedding_model"]),
@@ -435,6 +452,9 @@ class IndexConfig:
             preceding_context=preceding_context,
             summary_reasoning_level=summary_reasoning_level,
             summarization_guidance=summarization_guidance,
+            target_embedding_tokens=int(
+                config_dict.get("target_embedding_tokens", 500)
+            ),
         )
 
     @classmethod
@@ -460,7 +480,6 @@ class IndexConfig:
     def replace(
         self,
         target_chunk_tokens: int | None = None,
-        target_embedding_context_tokens: int | None = None,
         max_parallelism: int | None = None,
         summary_model: str | None = None,
         embedding_model: str | None = None,
@@ -472,6 +491,7 @@ class IndexConfig:
         preceding_context: PrecedingContextSettings | None = None,
         summary_reasoning_level: str | None = None,
         summarization_guidance: str | None = None,
+        target_embedding_tokens: int | None = None,
     ) -> "IndexConfig":
         """Create a new IndexConfig with some fields changed."""
         from dataclasses import replace
@@ -482,11 +502,6 @@ class IndexConfig:
                 target_chunk_tokens
                 if target_chunk_tokens is not None
                 else self.target_chunk_tokens
-            ),
-            target_embedding_context_tokens=(
-                target_embedding_context_tokens
-                if target_embedding_context_tokens is not None
-                else self.target_embedding_context_tokens
             ),
             max_parallelism=(
                 max_parallelism if max_parallelism is not None else self.max_parallelism
@@ -531,6 +546,11 @@ class IndexConfig:
                 if summarization_guidance is not None
                 else self.summarization_guidance
             ),
+            target_embedding_tokens=(
+                target_embedding_tokens
+                if target_embedding_tokens is not None
+                else self.target_embedding_tokens
+            ),
         )
 
     # Maximum budget for preceding context retrieval.
@@ -549,7 +569,7 @@ class IndexConfig:
         - System prompt and formatting (~1000 tokens)
 
         When target_chunk_tokens is None (client-managed chunking), uses
-        target_embedding_context_tokens as the basis for overhead calculation.
+        target_embedding_tokens as the basis for overhead calculation.
 
         Capped at _MAX_PRECEDING_CONTEXT_BUDGET to prevent performance issues
         when num_seeds is calculated from budget (budget // chunk_tokens).
@@ -557,11 +577,11 @@ class IndexConfig:
         from ragzoom.model_info import ModelInfo
 
         context_window = ModelInfo().get_context_window(self.summary_model)
-        # Use target_embedding_context_tokens as fallback when target_chunk_tokens is None
+        # Use target_embedding_tokens as fallback when target_chunk_tokens is None
         chunk_size = (
             self.target_chunk_tokens
             if self.target_chunk_tokens is not None
-            else self.target_embedding_context_tokens
+            else self.target_embedding_tokens
         )
         overhead = chunk_size * 2 + 1000
         uncapped = max(context_window - overhead, chunk_size)

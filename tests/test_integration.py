@@ -313,7 +313,7 @@ class TestIntegration:
         """
         index_config = IndexConfig.load(
             target_chunk_tokens=None,
-            target_embedding_context_tokens=200,
+            target_embedding_tokens=200,
         )
         vector_index = RecordingVectorIndex()
         self._bind_vector_index(indexer_runtime_harness, vector_index)
@@ -360,7 +360,7 @@ class TestIntegration:
         """
         index_config = IndexConfig.load(
             target_chunk_tokens=None,
-            target_embedding_context_tokens=200,
+            target_embedding_tokens=200,
         )
         vector_index = RecordingVectorIndex()
         self._bind_vector_index(indexer_runtime_harness, vector_index)
@@ -440,7 +440,7 @@ class TestIntegration:
         """
         index_config = IndexConfig.load(
             target_chunk_tokens=None,
-            target_embedding_context_tokens=200,
+            target_embedding_tokens=200,
         )
         vector_index = RecordingVectorIndex()
         self._bind_vector_index(indexer_runtime_harness, vector_index)
@@ -518,7 +518,7 @@ class TestIntegration:
         target_chunk_tokens = 200
         index_config = IndexConfig.load(
             target_chunk_tokens=target_chunk_tokens,
-            target_embedding_context_tokens=target_chunk_tokens,
+            target_embedding_tokens=target_chunk_tokens,
         )
         vector_index = RecordingVectorIndex()
         self._bind_vector_index(indexer_runtime_harness, vector_index)
@@ -590,7 +590,7 @@ class TestIntegration:
 
         index_config = IndexConfig.load(
             target_chunk_tokens=None,
-            target_embedding_context_tokens=200,
+            target_embedding_tokens=200,
         )
         vector_index = RecordingVectorIndex()
         self._bind_vector_index(indexer_runtime_harness, vector_index)
@@ -652,7 +652,7 @@ class TestIntegration:
         """
         index_config = IndexConfig.load(
             target_chunk_tokens=None,
-            target_embedding_context_tokens=200,
+            target_embedding_tokens=200,
         )
         vector_index = RecordingVectorIndex()
         self._bind_vector_index(indexer_runtime_harness, vector_index)

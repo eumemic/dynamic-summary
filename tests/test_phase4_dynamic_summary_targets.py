@@ -56,7 +56,7 @@ async def test_summarize_pair_uses_dynamic_target_when_none(
     # Configure with target_chunk_tokens=None to activate client-managed chunking
     index_config = IndexConfig.load(
         target_chunk_tokens=None,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
     )
     vector_index = RecordingVectorIndex()
 
@@ -128,7 +128,7 @@ async def test_summarize_pair_uses_dynamic_target_when_none(
 
     # Verify that dynamic targets were computed (not fixed values)
     # When target_chunk_tokens=None, we should NOT see the fixed 200 value
-    # (target_embedding_context_tokens) being used for inner node summarization
+    # (target_embedding_tokens) being used for inner node summarization
 
     # Verify dynamic targets are being calculated
     # target=0 is valid (signals passthrough when below 50-token floor)
@@ -140,7 +140,7 @@ async def test_summarize_pair_uses_dynamic_target_when_none(
 
     # The key test: when target_chunk_tokens=None, we should be calling
     # get_summary_target(), which means we won't see the fixed 200 value
-    # (target_embedding_context_tokens) for ALL calls
+    # (target_embedding_tokens) for ALL calls
     if 200 in captured_targets:
         # Check if ALL targets are 200 (old behavior) or if some vary (new behavior)
         assert not all(
@@ -159,7 +159,7 @@ async def test_summarize_pair_uses_fixed_target_when_set(
     fixed_target = 150
     index_config = IndexConfig.load(
         target_chunk_tokens=fixed_target,
-        target_embedding_context_tokens=200,
+        target_embedding_tokens=200,
     )
     vector_index = RecordingVectorIndex()
 

@@ -207,9 +207,301 @@ Fix critical bugs discovered during implementation verification that prevent bas
 
 ---
 
+## Feature: Embedding Text Optimization (Priority: HIGH)
+
+**Spec**: `specs/embedding-text-optimization.md`
+
+Replace the two-step embedding process (summarize context, concatenate with leaf) with a single-step process that produces retrieval-optimized text. This enables embedding of large leaves (9000+ tokens) that currently fail, and improves retrieval quality by producing focused embedding text.
+
+### Phase 34: Configuration Changes
+
+- [x] Add `target_embedding_tokens` field to IndexConfig dataclass
+  - Spec: specs/embedding-text-optimization.md § Configuration > New Parameter
+  - Success: `IndexConfig(target_embedding_tokens=500)` instantiates without error
+  - Test: `tests/test_index_config.py::test_target_embedding_tokens_field`
+  - Location: `ragzoom/config.py:291` (IndexConfig dataclass)
+  - **DONE**: Added field with default=500 and validation in __post_init__. Tests verify field access, default value, and rejection of non-positive values.
+
+- [x] Update IndexConfigDict TypedDict with new field
+  - Spec: specs/embedding-text-optimization.md § Configuration > New Parameter
+  - Success: Type checker accepts `target_embedding_tokens` in config dicts
+  - Test: (type checking)
+  - Location: `ragzoom/config.py:29` (IndexConfigDict)
+  - **DONE**: Added `target_embedding_tokens: int` to IndexConfigDict TypedDict. Type checker validates successfully.
+
+- [x] Update IndexConfig.from_dict to parse new field
+  - Spec: specs/embedding-text-optimization.md § Configuration > IndexConfig Changes
+  - Success: `IndexConfig.from_dict({"target_embedding_tokens": 500, ...})` works
+  - Test: `tests/test_index_config.py::test_from_dict_with_target_embedding_tokens`
+  - Location: `ragzoom/config.py:366` (from_dict method)
+  - **DONE**: Added `target_embedding_tokens=int(config_dict.get("target_embedding_tokens", 500))` to from_dict return statement. Tests verify parsing custom values and default fallback.
+
+- [x] Update IndexConfig.replace with new field
+  - Spec: specs/embedding-text-optimization.md § Configuration > IndexConfig Changes
+  - Success: `config.replace(target_embedding_tokens=600)` returns new config
+  - Test: `tests/test_index_config.py::test_replace_target_embedding_tokens`
+  - Location: `ragzoom/config.py:460` (replace method)
+  - **DONE**: Added `target_embedding_tokens` parameter to replace() method signature and included it in the dataclasses.replace() call.
+
+- [x] Update default_config.json with new field
+  - Spec: specs/embedding-text-optimization.md § default_config.json
+  - Success: default_config.json contains `"target_embedding_tokens": 500`
+  - Test: `tests/test_config.py::test_default_config_has_target_embedding_tokens`
+  - Location: `ragzoom/default_config.json`
+  - **DONE**: Added `"target_embedding_tokens": 500` to default_config.json. Test `test_default_config_has_target_embedding_tokens` verifies the field exists with the correct default value.
+
+### Phase 35: Deprecation Handling and Codebase-Wide Migration
+
+Remove the old config field and update all references atomically to prevent type errors.
+
+- [x] Add deprecation error for `target_embedding_context_tokens` in from_dict
+  - Spec: specs/embedding-text-optimization.md § Migration
+  - Success: Config with `target_embedding_context_tokens` raises ValueError with helpful message
+  - Test: `tests/test_index_config.py::test_deprecated_target_embedding_context_tokens_error`
+  - Location: `ragzoom/config.py:398` (from_dict method)
+  - **DONE**: Added check in from_dict that raises ValueError with helpful message when deprecated field is present. Error explains to use `target_embedding_tokens` instead and references spec.
+
+- [x] Remove `target_embedding_context_tokens` from IndexConfig fields
+  - Spec: specs/embedding-text-optimization.md § Configuration > Removed Parameter
+  - Success: `IndexConfig` no longer has `target_embedding_context_tokens` attribute
+  - Test: `tests/test_index_config.py::test_no_target_embedding_context_tokens_field`
+  - Location: `ragzoom/config.py:291` (IndexConfig dataclass)
+  - **DONE**: Removed field from IndexConfig dataclass. All usages updated to use `target_embedding_tokens`.
+
+- [x] Remove `target_embedding_context_tokens` from IndexConfigDict
+  - Spec: specs/embedding-text-optimization.md § Configuration > Removed Parameter
+  - Success: TypedDict no longer declares the field
+  - Test: (type checking)
+  - Location: `ragzoom/config.py:29` (IndexConfigDict)
+  - **DONE**: Removed field from IndexConfigDict TypedDict.
+
+- [x] Remove `target_embedding_context_tokens` from default_config.json
+  - Spec: specs/embedding-text-optimization.md § Migration
+  - Success: File no longer contains `target_embedding_context_tokens`
+  - Test: `tests/test_config.py::test_default_config_no_deprecated_fields`
+  - Location: `ragzoom/default_config.json`
+  - **DONE**: Removed field from default_config.json. This was necessary alongside the from_dict deprecation error since load() uses from_dict internally.
+
+- [x] Update `ragzoom/services/query_service.py` to use new config field
+  - Spec: specs/embedding-text-optimization.md § Migration
+  - Success: Uses `target_embedding_tokens` for fallback calculations
+  - Test: `tests/test_query_service.py` passes
+  - Location: `ragzoom/services/query_service.py:108-113`
+  - **DONE**: Updated to use `target_embedding_tokens`.
+
+- [x] Update `ragzoom/server/servicers.py` to use new config field
+  - Spec: specs/embedding-text-optimization.md § Migration
+  - Success: Uses `target_embedding_tokens` for retrieval operations
+  - Test: `tests/test_servicers.py` passes
+  - Location: `ragzoom/server/servicers.py:241-246`
+  - **DONE**: Updated to use `target_embedding_tokens`.
+
+- [x] Update `ragzoom/telemetry_collection.py` to use new config field
+  - Spec: specs/embedding-text-optimization.md § Migration
+  - Success: Telemetry uses new field for fallback calculations
+  - Test: `tests/test_cached_token_telemetry.py` passes
+  - Location: `ragzoom/telemetry_collection.py:684-688`
+  - **DONE**: Updated to use `target_embedding_tokens`.
+
+- [x] Update `ragzoom/server/indexing_engine.py` to use new config field
+  - Spec: specs/embedding-text-optimization.md § Migration
+  - Success: All uses of old config field replaced with new
+  - Test: No grep matches for `target_embedding_context_tokens` in indexing_engine.py
+  - Location: `ragzoom/server/indexing_engine.py:1459, 1957, 1962`
+  - **DONE**: Updated both occurrences to use `target_embedding_tokens`.
+
+- [x] Update `tests/conftest.py` to use new config field
+  - Spec: specs/embedding-text-optimization.md § Migration
+  - Success: Test fixtures use `target_embedding_tokens`
+  - Test: All tests pass
+  - Location: `tests/conftest.py:83-88`
+  - **DONE**: Updated fallback pattern to use `target_embedding_tokens`.
+
+- [x] Update `tests/utils.py` to use new config field
+  - Spec: specs/embedding-text-optimization.md § Migration
+  - Success: Test utilities use new field
+  - Test: All tests pass
+  - Location: `tests/utils.py:594-599`
+  - **DONE**: Updated fallback pattern to use `target_embedding_tokens`.
+
+- [x] Update all test fixtures using `target_embedding_context_tokens`
+  - Spec: specs/embedding-text-optimization.md § Migration
+  - Success: All tests pass with new config field name
+  - Test: Full test suite passes
+  - Location: Multiple test files (see grep results)
+  - **DONE**: Updated all test files: test_config.py, test_index_config.py, test_clear_orphaned_nodes.py, test_integration.py, test_phase4_dynamic_summary_targets.py, test_chars_per_token_*.py, test_embedding_token_limit.py, test_cached_token_telemetry.py, test_retrieval_invariants_sqlite.py, test_retry_conversation_continuation.py, test_query_performance.py.
+
+### Phase 36: Core Implementation
+
+Add retrieval-optimized embedding text preparation to summary_utils.py, following the existing callback pattern.
+
+- [x] Create `prepare_embedding_text_inputs` function for prompt preparation
+  - Spec: specs/embedding-text-optimization.md § Behavior > LLM Prompt Design
+  - Success: Function prepares messages for retrieval-optimized summarization
+  - Test: `tests/test_summary_utils.py::TestPrepareEmbeddingTextInputs`
+  - Location: `ragzoom/services/summary_utils.py:236-306`
+  - **DONE**: Implemented function following the existing pattern (prepare_contextualization_inputs). Takes preceding_context, leaf_text, and target_tokens. Returns SummaryPreparation with system prompt optimized for semantic search (preserves key terms, named entities, searchable concepts) and user prompt that prioritizes target over context. 6 tests added.
+
+- [x] Create `run_embedding_text_workflow` function with callback pattern
+  - Spec: specs/embedding-text-optimization.md § Behavior > Embedding Text Generation
+  - Success: Function signature matches `run_summary_workflow` pattern with `call_llm` callback
+  - Test: `tests/test_summary_utils.py::TestRunEmbeddingTextWorkflow`
+  - Location: `ragzoom/services/summary_utils.py:920-1067`
+  - **DONE**: Implemented following the `run_contextualization_workflow` pattern. Takes preceding_context, leaf_text, target_tokens, config, and call_llm callback. Uses `prepare_embedding_text_inputs` to build prompts. Returns SummaryResult with accumulated usage. Also added `run_embedding_text_from_config` and `run_embedding_text_request` convenience wrappers. 10 tests added covering passthrough, LLM compression, retries, usage tracking, and edge cases.
+
+- [x] Implement passthrough logic for small content
+  - Spec: specs/embedding-text-optimization.md § Behavior > Embedding Text Generation
+  - Success: When `combined_tokens <= target_tokens`, returns combined text without LLM call
+  - Test: `tests/test_summary_utils.py::TestRunEmbeddingTextWorkflow::test_run_embedding_text_workflow_passthrough_small_content`
+  - Location: `ragzoom/services/summary_utils.py:958-972`
+  - **DONE**: Implemented in `run_embedding_text_workflow`. When `target_tokens <= 0` or `combined_tokens <= target_tokens`, returns combined text directly without LLM call. Tests verify no LLM invocation and correct passthrough behavior.
+
+- [x] Design and implement retrieval-optimization LLM prompt
+  - Spec: specs/embedding-text-optimization.md § Behavior > LLM Prompt Design
+  - Success: Prompt instructs LLM to preserve key terms, entities, and searchable concepts
+  - Test: `tests/test_summary_utils.py::TestPrepareEmbeddingTextInputs::test_prepare_embedding_text_inputs_system_prompt_for_retrieval`
+  - Location: `ragzoom/services/summary_utils.py:286-297`
+  - **DONE**: System prompt explicitly instructs: "You produce text optimized for semantic search. Your output will be embedded and matched against user queries via cosine similarity. Preserve key terms, named entities, and searchable concepts." User prompt prioritizes TARGET over CONTEXT.
+
+- [x] Implement LLM-based compression for oversized content
+  - Spec: specs/embedding-text-optimization.md § Behavior > Embedding Text Generation
+  - Success: When combined tokens exceed target, LLM generates retrieval-optimized summary
+  - Test: `tests/test_summary_utils.py::TestRunEmbeddingTextWorkflow::test_run_embedding_text_workflow_calls_llm_for_large_content`
+  - Location: `ragzoom/services/summary_utils.py:997-1060`
+  - **DONE**: When passthrough conditions are not met, LLM is called with prepared messages. Includes retry logic via `retry_summary_correction` when output exceeds target.
+
+- [x] Add `prepare_for_embedding` method to Summarizer class
+  - Spec: specs/embedding-text-optimization.md § Behavior
+  - Success: `Summarizer.prepare_for_embedding(context, leaf, target)` delegates to workflow
+  - Test: `tests/test_summarizer.py::test_prepare_for_embedding`
+  - Location: `ragzoom/services/summarizer.py`
+  - **SKIPPED**: Implementation uses function-based pattern (`run_embedding_text_workflow`) following existing `run_summary_workflow` pattern. Direct function calls preferred over Summarizer method delegation. Phase 37 will call workflow functions directly from IndexingEngine.
+
+- [x] Add `_prepare_embedding_text` method to LLMService
+  - Spec: specs/embedding-text-optimization.md § Behavior
+  - Success: `LLMService._prepare_embedding_text(context, leaf, target)` delegates to Summarizer
+  - Test: `tests/test_llm_service.py::test_prepare_embedding_text`
+  - Location: `ragzoom/services/llm_service.py`
+  - **SKIPPED**: Implementation uses function-based pattern. `run_embedding_text_from_config` builds config from IndexConfig and calls workflow directly. Phase 37 will integrate at IndexingEngine level.
+
+- [x] Handle edge case: no preceding context
+  - Spec: specs/embedding-text-optimization.md § Edge Cases
+  - Success: When preceding_context is empty, optimizes leaf text alone
+  - Test: `tests/test_summary_utils.py::TestRunEmbeddingTextWorkflow::test_run_embedding_text_workflow_no_context`, `tests/test_summary_utils.py::TestPrepareEmbeddingTextInputs::test_prepare_embedding_text_inputs_no_context`
+  - Location: `ragzoom/services/summary_utils.py:259-261, 277-284`
+  - **DONE**: When `context_stripped` is empty, `combined_text` is just `leaf_stripped`. User prompt uses simplified format without CONTEXT section. Two tests verify both prompt preparation and full workflow.
+
+- [x] Handle edge case: empty leaf
+  - Spec: specs/embedding-text-optimization.md § Edge Cases
+  - Success: When leaf is empty, returns empty string (existing behavior)
+  - Test: `tests/test_summary_utils.py::TestRunEmbeddingTextWorkflow::test_embedding_text_empty_leaf`, `test_embedding_text_empty_leaf_and_context`
+  - Location: `ragzoom/services/summary_utils.py:958-972`
+  - **DONE**: Empty leaf results in low token count, triggering passthrough. Returns context (or empty string if both empty) without LLM call. Added 2 tests: empty leaf with context, empty leaf and context.
+
+- [x] Handle edge case: leaf alone exceeds target
+  - Spec: specs/embedding-text-optimization.md § Edge Cases
+  - Success: When leaf alone exceeds target, compresses leaf to fit
+  - Test: `tests/test_summary_utils.py::TestRunEmbeddingTextWorkflow::test_embedding_text_leaf_exceeds_target`
+  - Location: `ragzoom/services/summary_utils.py:997-1060`
+  - **DONE**: Large leaf with no context triggers LLM compression. Prompt includes only TARGET section. Test verifies LLM is called and receives leaf content for compression.
+
+### Phase 37: Indexing Engine Integration
+
+- [x] Update `_embed_leaf` to use new `_prepare_embedding_text` method
+  - Spec: specs/embedding-text-optimization.md § Behavior
+  - Success: `_embed_leaf` calls `self._llm_service._prepare_embedding_text()` instead of `_contextualize_text` + concatenation
+  - Test: `tests/test_embedding_token_limit.py::test_embed_leaf_uses_embedding_context_tokens`
+  - Location: `ragzoom/server/indexing_engine.py:1449-1475`
+  - **DONE**: Added `_prepare_embedding_text` method to LLMService that delegates to `run_embedding_text_from_config`. Updated `_embed_leaf` to call this method instead of `_contextualize_text` + concatenation. The method returns the complete text ready for embedding (either passthrough for small content or LLM-optimized for large content). Updated cost calculation to use `embedding_text_result.usage`. Updated 4 tests to mock the new method.
+
+- [x] Remove `_contextualize_text` calls from embedding path
+  - Spec: specs/embedding-text-optimization.md § Solution
+  - Success: Embedding no longer uses two-step process
+  - Test: `tests/test_embedding_token_limit.py::test_embed_leaf_uses_embedding_context_tokens`
+  - Location: `ragzoom/server/indexing_engine.py`
+  - **DONE**: The embedding path now uses `_prepare_embedding_text` which is a single-step process. No `_contextualize_text` calls remain in the embedding path.
+
+- [x] Remove `_contextualize_text` method from LLMService (now unused)
+  - Spec: specs/embedding-text-optimization.md § Solution
+  - Success: Method no longer exists, grep returns no matches
+  - Test: (code inspection)
+  - Location: `ragzoom/services/llm_service.py`
+  - **DONE**: Removed the `_contextualize_text` method from LLMService. The method was previously used for the two-step embedding process (contextualize + concatenate) but is now replaced by `_prepare_embedding_text` which handles the unified embedding text optimization workflow.
+
+- [x] Remove `contextualize` method from Summarizer (now unused)
+  - Spec: specs/embedding-text-optimization.md § Solution
+  - Success: Method no longer exists
+  - Test: (code inspection)
+  - Location: `ragzoom/services/summarizer.py`
+  - **DONE**: Removed the `contextualize` method from Summarizer class. The method was previously used for the two-step embedding process but is now replaced by the unified `run_embedding_text_workflow` function-based pattern. No callers existed anywhere in the codebase.
+
+- [x] Remove `run_contextualization_workflow` and related functions (now unused)
+  - Spec: specs/embedding-text-optimization.md § Solution
+  - Success: Functions no longer exist in summary_utils.py
+  - Test: (code inspection)
+  - Location: `ragzoom/services/summary_utils.py`
+  - **DONE**: Removed `prepare_contextualization_inputs`, `ContextualizationRequest`, `run_contextualization_workflow`, `run_contextualization_from_config`, and `run_contextualization_request` from summary_utils.py. Updated test_summary_passthrough.py to remove obsolete test. Updated jscpd comments in run_embedding_text_workflow to reference run_summary_workflow. Updated comments in indexing_engine.py and test_embedding_token_limit.py to reflect new terminology.
+
+- [x] Store retrieval-optimized text in `preceding_context_summary` field
+  - Spec: specs/embedding-text-optimization.md § Storage
+  - Success: Database stores the optimized text for inspection/debugging
+  - Test: `tests/test_embedding_token_limit.py::test_stores_optimized_text`
+  - Location: `ragzoom/server/indexing_engine.py`
+  - **DONE**: Implementation already existed at line 1465 in `_embed_leaf`: `store.nodes._repo.update_preceding_context_summary(job.leaf_id, text_to_embed)`. Added test that verifies `update_preceding_context_summary` is called with the retrieval-optimized text returned from `_prepare_embedding_text`. Test uses distinct mock optimized text to ensure the correct value is stored.
+
+### Phase 38: Acceptance Tests
+
+- [x] Test that oversized leaves (9000+ tokens) embed successfully
+  - Spec: specs/embedding-text-optimization.md § Acceptance Criteria > 1
+  - Success: Leaf with 9000+ tokens produces valid embedding vector
+  - Test: `tests/test_embedding_text.py::test_oversized_leaf_embeds_successfully`
+  - Location: `tests/test_embedding_text.py`
+  - **DONE**: Created `tests/test_embedding_text.py` with acceptance test that verifies oversized leaves (10000 tokens) are compressed by `_prepare_embedding_text` and successfully embedded. Test mocks the LLM service to simulate compression and verifies the vector is upserted.
+
+- [x] Test passthrough behavior (no LLM call for small content)
+  - Spec: specs/embedding-text-optimization.md § Acceptance Criteria > 2
+  - Success: Combined content under target_embedding_tokens passes through without LLM
+  - Test: `tests/test_embedding_text.py::test_passthrough_no_llm_call`
+  - Location: `tests/test_embedding_text.py`
+  - **DONE**: Created acceptance test verifying that when combined context + leaf text is under target_embedding_tokens (500), the workflow returns the combined text without invoking the LLM. Test mocks _prepare_embedding_text to track passthrough behavior via zero AccumulatedUsage.
+
+- [x] Test config deprecation error message quality
+  - Spec: specs/embedding-text-optimization.md § Acceptance Criteria > 4
+  - Success: Error message explains what to use instead
+  - Test: `tests/test_index_config.py::test_deprecation_error_message_helpful`
+  - Location: `tests/test_index_config.py`
+  - **DONE**: Added acceptance test that verifies the deprecation error message: (1) names the problematic field, (2) explains it was removed, (3) tells user which field to use instead, and (4) provides actionable guidance.
+
+- [x] Test original text preservation in database
+  - Spec: specs/embedding-text-optimization.md § Acceptance Criteria > 5
+  - Success: Leaf text in database is unchanged; only embedding uses optimized version
+  - Test: `tests/test_embedding_text.py::test_original_text_preserved`
+  - Location: `tests/test_embedding_text.py`
+  - **DONE**: Added acceptance test that verifies: (1) original leaf text is unchanged after embedding, (2) embedding uses optimized text not original, and (3) optimized text is stored in preceding_context_summary for debugging.
+
+---
+
+## Dependencies
+
+### Existing Dependencies
+- **Phase 30** (schema migration) must complete before **Phase 31** (field rename) to ensure DB column exists
+- **Phase 29** (exit cleanup) can run in parallel with other phases
+- **Phase 32** (config persistence) can run after Phase 31 since it uses the new field names
+- **Phase 33** (temporal UX) is independent
+
+### Embedding Text Optimization Dependencies
+- **Phase 34** (config changes) must complete before **Phase 35** (deprecation + migration)
+- **Phase 35** (deprecation + migration) must complete before **Phase 36** (core implementation)
+- **Phase 36** (core implementation) must complete before **Phase 37** (indexing integration)
+- **Phase 37** (indexing integration) must complete before **Phase 38** (acceptance tests)
+- Phases 34-38 are independent of Phases 29-33 (can run in parallel)
+
+---
+
 ## Notes
 
 - All phases include test requirements - no code should merge without passing tests
 - Schema migration must be idempotent and safe to run multiple times
 - Backward compatibility is important - old configs/databases should continue working
 - These fixes are blocking for production use of the memzoom plugin
+- **Embedding Text Optimization**: This feature is additive - existing embeddings remain valid, only new embeddings use the optimized logic
