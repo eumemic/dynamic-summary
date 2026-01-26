@@ -6,7 +6,16 @@ specs/temporal-document-apis.md.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+import pytest
+
 from ragzoom.server.servicers import complete_forest_size
+
+if TYPE_CHECKING:
+    from ragzoom.contracts.node_repository import NodeDataDict
+    from ragzoom.contracts.storage_backend import StorageBackend
+    from ragzoom.document_store import DocumentStore
 
 
 class TestCompleteForestSize:
@@ -82,3 +91,112 @@ class TestCompleteForestSize:
             assert (
                 actual == expected
             ), f"Failed for n={n}: expected {expected}, got {actual}"
+
+
+class TestDocumentStoreNodeCount:
+    """Tests for DocumentStore.get_node_count() method.
+
+    Verifies that the document store correctly returns the total count
+    of nodes (leaves + inner nodes) for a document.
+    """
+
+    @pytest.fixture
+    def doc_store(self, storage_backend: StorageBackend) -> DocumentStore:
+        """Create a document store with test metadata."""
+
+        doc_store = storage_backend.for_document("test-doc")
+        doc_store.set_metadata(
+            file_path="test.txt",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        return doc_store
+
+    def test_document_store_node_count_empty(self, doc_store: DocumentStore) -> None:
+        """Empty document returns 0 node count."""
+        assert doc_store.get_node_count() == 0
+
+    def test_document_store_node_count_leaves_only(
+        self, doc_store: DocumentStore
+    ) -> None:
+        """Document with only leaves returns leaf count."""
+        nodes_data: list[NodeDataDict] = [
+            {
+                "node_id": f"leaf-{i}",
+                "text": f"Leaf text {i}",
+                "span_start": i * 10,
+                "span_end": (i + 1) * 10,
+                "token_count": 5,
+                "height": 0,
+                "level_index": i,
+            }
+            for i in range(5)
+        ]
+        doc_store.nodes.add_batch(nodes_data)
+
+        assert doc_store.get_node_count() == 5
+
+    def test_document_store_node_count_with_inner_nodes(
+        self, doc_store: DocumentStore
+    ) -> None:
+        """Document with leaves and inner nodes returns total count."""
+        # Create 4 leaves
+        leaves: list[NodeDataDict] = [
+            {
+                "node_id": f"leaf-{i}",
+                "text": f"Leaf text {i}",
+                "span_start": i * 10,
+                "span_end": (i + 1) * 10,
+                "token_count": 5,
+                "height": 0,
+                "level_index": i,
+            }
+            for i in range(4)
+        ]
+        doc_store.nodes.add_batch(leaves)
+
+        # Create 2 inner nodes at height 1
+        inner_h1: list[NodeDataDict] = [
+            {
+                "node_id": "inner-0",
+                "text": "Summary of leaves 0-1",
+                "span_start": 0,
+                "span_end": 20,
+                "token_count": 10,
+                "height": 1,
+                "level_index": 0,
+                "left_child_id": "leaf-0",
+                "right_child_id": "leaf-1",
+            },
+            {
+                "node_id": "inner-1",
+                "text": "Summary of leaves 2-3",
+                "span_start": 20,
+                "span_end": 40,
+                "token_count": 10,
+                "height": 1,
+                "level_index": 1,
+                "left_child_id": "leaf-2",
+                "right_child_id": "leaf-3",
+            },
+        ]
+        doc_store.nodes.add_batch(inner_h1)
+
+        # Create 1 root at height 2
+        root: list[NodeDataDict] = [
+            {
+                "node_id": "root",
+                "text": "Summary of all",
+                "span_start": 0,
+                "span_end": 40,
+                "token_count": 15,
+                "height": 2,
+                "level_index": 0,
+                "left_child_id": "inner-0",
+                "right_child_id": "inner-1",
+            },
+        ]
+        doc_store.nodes.add_batch(root)
+
+        # 4 leaves + 2 inner + 1 root = 7 total nodes
+        assert doc_store.get_node_count() == 7

@@ -127,11 +127,12 @@ Implement the binary forest formula for calculating expected node count.
 
 Implement the new GetDocumentStatus servicer method.
 
-- [ ] Add `get_node_count()` method to document store
+- [x] Add `get_node_count()` method to document store
   - Spec: specs/temporal-document-apis.md § Implementation Outline > Phase 1
   - Success: Method returns total node count (leaves + inner nodes)
   - Test: `test_document_store_node_count`
-  - Location: ragzoom/document_store.py
+  - Location: ragzoom/document_store.py:824-832
+  - Implementation: Simple delegation to `self.nodes.count()` with guard for missing document_id
 
 - [ ] Add `get_temporal_range()` method to document store
   - Spec: specs/temporal-document-apis.md § Implementation Outline > Phase 1
@@ -591,16 +592,16 @@ Convert the 6 tests in TestDaemonizeFunction to use ready-pipe pattern.
   - Test: `test_daemonize_writes_pid_file`
   - Location: tests/test_daemon_lifecycle.py
 
-- [ ] Migrate `test_daemonize_redirects_output` to ready-pipe
+- [ ] Migrate `test_daemonize_redirects_stdout_stderr` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction
   - Success: Test uses ready-pipe, removes `time.sleep(0.5)`
-  - Test: `test_daemonize_redirects_output`
+  - Test: `test_daemonize_redirects_stdout_stderr`
   - Location: tests/test_daemon_lifecycle.py
 
-- [ ] Migrate `test_daemonize_creates_new_session` to ready-pipe
+- [ ] Migrate `test_daemonize_detaches_from_terminal` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction
   - Success: Test uses ready-pipe, removes sleep-based synchronization
-  - Test: `test_daemonize_creates_new_session`
+  - Test: `test_daemonize_detaches_from_terminal`
   - Location: tests/test_daemon_lifecycle.py
 
 - [ ] Migrate `test_daemonize_closes_stdin` to ready-pipe
@@ -609,10 +610,10 @@ Convert the 6 tests in TestDaemonizeFunction to use ready-pipe pattern.
   - Test: `test_daemonize_closes_stdin`
   - Location: tests/test_daemon_lifecycle.py
 
-- [ ] Migrate `test_daemonize_with_custom_log_file` to ready-pipe
+- [ ] Migrate `test_daemonize_log_file_created_if_missing` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestDaemonizeFunction
   - Success: Test uses ready-pipe, removes sleep-based synchronization
-  - Test: `test_daemonize_with_custom_log_file`
+  - Test: `test_daemonize_log_file_created_if_missing`
   - Location: tests/test_daemon_lifecycle.py
 
 ### Phase 56: Migrate TestDaemonizeIntegration Test
@@ -629,54 +630,48 @@ Convert the integration test to use ready-pipe pattern.
 
 Convert signal handler tests to use ready-pipe with appropriate signal handling.
 
-- [ ] Migrate `test_sigterm_triggers_graceful_shutdown` to ready-pipe
+- [ ] Migrate `test_sigterm_graceful_shutdown` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestSignalHandlers
   - Success: Test uses ready-pipe for daemon startup, uses `os.waitpid()` for signal processing instead of polling loop
-  - Test: `test_sigterm_triggers_graceful_shutdown`
+  - Test: `test_sigterm_graceful_shutdown`
   - Location: tests/test_daemon_lifecycle.py
 
-- [ ] Migrate `test_sigint_triggers_graceful_shutdown` to ready-pipe
+- [ ] Migrate `test_sigint_graceful_shutdown` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestSignalHandlers
   - Success: Test uses ready-pipe for daemon startup, uses `os.waitpid()` for signal processing
-  - Test: `test_sigint_triggers_graceful_shutdown`
+  - Test: `test_sigint_graceful_shutdown`
   - Location: tests/test_daemon_lifecycle.py
 
 ### Phase 58: Migrate TestAtexitCleanup Tests
 
 Convert atexit cleanup tests to use ready-pipe pattern.
 
-- [ ] Migrate `test_atexit_cleanup_on_normal_exit` to ready-pipe
+- [ ] Migrate `test_normal_exit_cleans_up_state_files` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestAtexitCleanup
   - Success: Test uses ready-pipe, removes polling loop with `time.sleep(0.1)` and final `time.sleep(0.5)`
-  - Test: `test_atexit_cleanup_on_normal_exit`
+  - Test: `test_normal_exit_cleans_up_state_files`
   - Location: tests/test_daemon_atexit.py
 
-- [ ] Migrate `test_atexit_cleanup_on_exception` to ready-pipe
+- [ ] Migrate `test_without_atexit_files_remain` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestAtexitCleanup
-  - Success: Test uses ready-pipe, removes sleep-based synchronization
-  - Test: `test_atexit_cleanup_on_exception`
+  - Success: Test uses ready-pipe, removes polling loop with `time.sleep(0.1)` and final `time.sleep(0.5)`
+  - Test: `test_without_atexit_files_remain`
   - Location: tests/test_daemon_atexit.py
 
 ### Phase 59: Migrate TestStartServerAtexitIntegration Tests
 
 Convert server atexit integration tests to use ready-pipe pattern.
 
-- [ ] Migrate `test_start_server_registers_atexit` to ready-pipe
+- [ ] Migrate `test_start_server_daemon_mode_cleans_up_on_normal_exit` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestStartServerAtexitIntegration
   - Success: Test uses ready-pipe instead of `time.sleep(1.5)` for daemon startup
-  - Test: `test_start_server_registers_atexit`
+  - Test: `test_start_server_daemon_mode_cleans_up_on_normal_exit`
   - Location: tests/test_daemon_atexit.py
 
-- [ ] Migrate `test_start_server_atexit_cleans_pid_file` to ready-pipe
+- [ ] Migrate `test_atexit_runs_after_exception` to ready-pipe
   - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestStartServerAtexitIntegration
-  - Success: Test uses ready-pipe instead of `time.sleep(1.5)`
-  - Test: `test_start_server_atexit_cleans_pid_file`
-  - Location: tests/test_daemon_atexit.py
-
-- [ ] Migrate `test_start_server_atexit_releases_lock` to ready-pipe
-  - Spec: specs/event-driven-daemon-tests.md § Phase 2 > TestStartServerAtexitIntegration
-  - Success: Test uses ready-pipe instead of `time.sleep(1.5)`
-  - Test: `test_start_server_atexit_releases_lock`
+  - Success: Test uses ready-pipe, removes polling loop with `time.sleep(0.1)` and final `time.sleep(0.5)`
+  - Test: `test_atexit_runs_after_exception`
   - Location: tests/test_daemon_atexit.py
 
 ### Phase 60: Remove Remaining Sleeps and Verify

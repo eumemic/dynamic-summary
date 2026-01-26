@@ -821,6 +821,16 @@ class DocumentStore:
 
         return self._doc_repo.get_document_embedding_model(self.document_id)
 
+    def get_node_count(self) -> int:
+        """Get total count of nodes (leaves + inner nodes) for this document.
+
+        Returns:
+            Total node count, or 0 if document is empty or has no document_id
+        """
+        if not self.document_id:
+            return 0
+        return self.nodes.count()
+
     def get_avg_leaf_tokens(self) -> int | None:
         """Get average token count for leaf nodes in this document.
 
