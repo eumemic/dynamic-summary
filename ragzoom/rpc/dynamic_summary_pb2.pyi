@@ -490,6 +490,29 @@ class TruncateDocumentResponse:
         span_start: int,
     ) -> None: ...
 
+class TruncateFromTimeRequest:
+    """Request for time-based truncation of temporal documents."""
+
+    document_id: str
+    cutoff_time: str  # ISO 8601 timestamp
+
+    def __init__(self, *, document_id: str, cutoff_time: str) -> None: ...
+
+class TruncateFromTimeResponse:
+    """Response from time-based truncation."""
+
+    document_id: str
+    deleted_node_ids: Sequence[str]
+    cutoff_time: str
+
+    def __init__(
+        self,
+        *,
+        document_id: str,
+        deleted_node_ids: Iterable[str],
+        cutoff_time: str,
+    ) -> None: ...
+
 class ExportTelemetryRequest:
     document_id: str
 

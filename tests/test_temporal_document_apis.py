@@ -376,6 +376,9 @@ class TestDocumentStoreTemporalRange:
 class _MockServicerContext:
     """Mock gRPC servicer context for testing."""
 
+    def invocation_metadata(self) -> list[tuple[str, str]] | None:
+        return None
+
     async def abort(self, code: object, details: str) -> NoReturn:
         raise ValueError(f"Aborted with {code}: {details}")
 
@@ -783,3 +786,247 @@ class TestTruncateFromTimeVectors:
         remaining_leaves = list(doc_store.nodes.get_leaves())
         assert len(remaining_leaves) == 1
         assert remaining_leaves[0].id == f"{doc_id}-leaf-0"
+
+
+class TestTruncateFromTimeServicer:
+    """Tests for the TruncateFromTime gRPC servicer method.
+
+    Verifies that the servicer correctly validates requests and delegates
+    to the runtime for time-based truncation of temporal documents.
+    """
+
+    @pytest.fixture
+    def mock_state(self, storage_backend: StorageBackend) -> object:
+        """Create a mock ServerState with the storage backend and runtime."""
+        from typing import cast
+        from unittest.mock import AsyncMock, MagicMock
+
+        from ragzoom.config import IndexConfig
+        from ragzoom.indexing.runtime import IndexerRuntime
+        from ragzoom.server.append_executor import AppendExecutor
+        from ragzoom.server.indexing_engine import IndexingEngine
+
+        # Create a real runtime for proper integration testing
+        index_config = IndexConfig.load()
+        mock_append_executor = MagicMock(spec=AppendExecutor)
+        mock_indexing_engine = MagicMock(spec=IndexingEngine)
+        mock_indexing_engine.cancel_document = AsyncMock(return_value=None)
+
+        def noop_vector_factory(model: str) -> object:
+            """Vector factory that returns a stub with no-op methods."""
+            stub = MagicMock()
+            stub.delete = MagicMock(return_value=0)
+            return stub
+
+        runtime = IndexerRuntime(
+            store=storage_backend,
+            index_config=index_config,
+            append_executor=cast(AppendExecutor, mock_append_executor),
+            indexing_engine=cast(IndexingEngine, mock_indexing_engine),
+            telemetry_manager=None,
+            vector_index_factory=noop_vector_factory,  # type: ignore[arg-type]
+        )
+
+        state = MagicMock()
+        state.store = storage_backend
+        state.index_runtime = runtime
+        return state
+
+    @pytest.mark.asyncio
+    async def test_truncate_from_time_servicer(
+        self, mock_state: object, storage_backend: StorageBackend
+    ) -> None:
+        """TruncateFromTime servicer delegates to runtime and returns result."""
+        from ragzoom.rpc import dynamic_summary_pb2 as pb2
+        from ragzoom.server.servicers import IndexerServicer
+
+        doc_id = "test-truncate-servicer"
+
+        # Create a temporal document with timestamped leaves
+        doc_store = storage_backend.for_document(doc_id)
+        doc_store.set_metadata(
+            file_path="test.txt",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        doc_store._doc_repo.set_document_is_temporal(doc_id, is_temporal=True)
+
+        # Add leaves: t=1000-1100, t=1100-1200, t=1200-1300
+        nodes_data: list[NodeDataDict] = [
+            {
+                "node_id": f"{doc_id}-leaf-0",
+                "text": "First message",
+                "span_start": 0,
+                "span_end": 100,
+                "token_count": 5,
+                "height": 0,
+                "level_index": 0,
+                "time_start": 1000.0,
+                "time_end": 1100.0,
+            },
+            {
+                "node_id": f"{doc_id}-leaf-1",
+                "text": "Second message",
+                "span_start": 100,
+                "span_end": 200,
+                "token_count": 5,
+                "height": 0,
+                "level_index": 1,
+                "time_start": 1100.0,
+                "time_end": 1200.0,
+            },
+            {
+                "node_id": f"{doc_id}-leaf-2",
+                "text": "Third message",
+                "span_start": 200,
+                "span_end": 300,
+                "token_count": 5,
+                "height": 0,
+                "level_index": 2,
+                "time_start": 1200.0,
+                "time_end": 1300.0,
+            },
+        ]
+        doc_store.nodes.add_batch(nodes_data)
+
+        servicer = IndexerServicer(mock_state)  # type: ignore[arg-type]
+        # Truncate at cutoff_time=1150 (1970-01-01T00:19:10Z)
+        # Should delete leaf-1 and leaf-2 (time_end > 1150)
+        request = pb2.TruncateFromTimeRequest(
+            document_id=doc_id,
+            cutoff_time="1970-01-01T00:19:10Z",  # Unix timestamp 1150
+        )
+        context = _MockServicerContext()
+
+        response = await servicer.TruncateFromTime(request, context)
+
+        assert getattr(response, "document_id") == doc_id
+        assert getattr(response, "cutoff_time") == "1970-01-01T00:19:10Z"
+        # Should have deleted leaf-1 and leaf-2
+        deleted_ids = list(getattr(response, "deleted_node_ids"))
+        assert len(deleted_ids) == 2
+        assert f"{doc_id}-leaf-1" in deleted_ids
+        assert f"{doc_id}-leaf-2" in deleted_ids
+
+    @pytest.mark.asyncio
+    async def test_truncate_from_time_not_found(self, mock_state: object) -> None:
+        """TruncateFromTime returns NOT_FOUND for non-existent documents."""
+        from ragzoom.rpc import dynamic_summary_pb2 as pb2
+        from ragzoom.server.servicers import IndexerServicer
+
+        servicer = IndexerServicer(mock_state)  # type: ignore[arg-type]
+        request = pb2.TruncateFromTimeRequest(
+            document_id="nonexistent-doc",
+            cutoff_time="2025-01-26T00:00:00Z",
+        )
+        context = _MockServicerContext()
+
+        with pytest.raises(ValueError, match="NOT_FOUND"):
+            await servicer.TruncateFromTime(request, context)
+
+    @pytest.mark.asyncio
+    async def test_truncate_from_time_non_temporal(
+        self, mock_state: object, storage_backend: StorageBackend
+    ) -> None:
+        """TruncateFromTime returns INVALID_ARGUMENT for non-temporal documents."""
+        from ragzoom.rpc import dynamic_summary_pb2 as pb2
+        from ragzoom.server.servicers import IndexerServicer
+
+        doc_id = "test-non-temporal"
+
+        # Create a NON-temporal document (no timestamps)
+        doc_store = storage_backend.for_document(doc_id)
+        doc_store.set_metadata(
+            file_path="test.txt",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        # is_temporal defaults to False, don't set it
+
+        # Add a leaf without timestamps
+        nodes_data: list[NodeDataDict] = [
+            {
+                "node_id": f"{doc_id}-leaf-0",
+                "text": "Non-temporal content",
+                "span_start": 0,
+                "span_end": 100,
+                "token_count": 10,
+                "height": 0,
+                "level_index": 0,
+            },
+        ]
+        doc_store.nodes.add_batch(nodes_data)
+
+        servicer = IndexerServicer(mock_state)  # type: ignore[arg-type]
+        request = pb2.TruncateFromTimeRequest(
+            document_id=doc_id,
+            cutoff_time="2025-01-26T00:00:00Z",
+        )
+        context = _MockServicerContext()
+
+        with pytest.raises(ValueError, match="INVALID_ARGUMENT"):
+            await servicer.TruncateFromTime(request, context)
+
+    @pytest.mark.asyncio
+    async def test_truncate_from_time_invalid_timestamp(
+        self, mock_state: object, storage_backend: StorageBackend
+    ) -> None:
+        """TruncateFromTime returns INVALID_ARGUMENT for malformed timestamps."""
+        from ragzoom.rpc import dynamic_summary_pb2 as pb2
+        from ragzoom.server.servicers import IndexerServicer
+
+        doc_id = "test-invalid-timestamp"
+
+        # Create a temporal document
+        doc_store = storage_backend.for_document(doc_id)
+        doc_store.set_metadata(
+            file_path="test.txt",
+            embedding_model="text-embedding-3-small",
+            summary_model="gpt-4o-mini",
+        )
+        doc_store._doc_repo.set_document_is_temporal(doc_id, is_temporal=True)
+
+        # Add a leaf with timestamps
+        nodes_data: list[NodeDataDict] = [
+            {
+                "node_id": f"{doc_id}-leaf-0",
+                "text": "Temporal content",
+                "span_start": 0,
+                "span_end": 100,
+                "token_count": 10,
+                "height": 0,
+                "level_index": 0,
+                "time_start": 1000.0,
+                "time_end": 1100.0,
+            },
+        ]
+        doc_store.nodes.add_batch(nodes_data)
+
+        servicer = IndexerServicer(mock_state)  # type: ignore[arg-type]
+        # Use an invalid timestamp format
+        request = pb2.TruncateFromTimeRequest(
+            document_id=doc_id,
+            cutoff_time="not-a-valid-timestamp",
+        )
+        context = _MockServicerContext()
+
+        with pytest.raises(ValueError, match="INVALID_ARGUMENT"):
+            await servicer.TruncateFromTime(request, context)
+
+    @pytest.mark.asyncio
+    async def test_truncate_from_time_requires_document_id(
+        self, mock_state: object
+    ) -> None:
+        """TruncateFromTime returns error when document_id is empty."""
+        from ragzoom.rpc import dynamic_summary_pb2 as pb2
+        from ragzoom.server.servicers import IndexerServicer
+
+        servicer = IndexerServicer(mock_state)  # type: ignore[arg-type]
+        request = pb2.TruncateFromTimeRequest(
+            document_id="",
+            cutoff_time="2025-01-26T00:00:00Z",
+        )
+        context = _MockServicerContext()
+
+        with pytest.raises(ValueError, match="TruncateFromTime requires"):
+            await servicer.TruncateFromTime(request, context)

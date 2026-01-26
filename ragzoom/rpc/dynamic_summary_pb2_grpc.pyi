@@ -32,6 +32,8 @@ from .dynamic_summary_pb2 import (
     RunWorkersResponse,
     TruncateDocumentRequest,
     TruncateDocumentResponse,
+    TruncateFromTimeRequest,
+    TruncateFromTimeResponse,
 )
 
 Channel = object
@@ -55,6 +57,9 @@ class IndexerServiceStub:
     def TruncateDocument(
         self, request: TruncateDocumentRequest, timeout: float | None = ...
     ) -> TruncateDocumentResponse: ...
+    def TruncateFromTime(
+        self, request: TruncateFromTimeRequest, timeout: float | None = ...
+    ) -> TruncateFromTimeResponse: ...
 
 class RetrievalServiceStub:
     def __init__(self, channel: Channel) -> None: ...
@@ -117,6 +122,9 @@ class IndexerServiceServicer:
     def TruncateDocument(
         self, request: TruncateDocumentRequest, context: ServicerContext
     ) -> Awaitable[TruncateDocumentResponse]: ...
+    def TruncateFromTime(
+        self, request: object, context: ServicerContext
+    ) -> Awaitable[object]: ...
 
 class RetrievalServiceServicer:
     def Retrieve(
