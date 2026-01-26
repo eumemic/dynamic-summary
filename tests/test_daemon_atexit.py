@@ -233,6 +233,11 @@ class TestStartServerAtexitIntegration:
 
         This tests the actual CLI command (through subprocess) to verify
         that atexit cleanup is properly registered.
+
+        Uses event-driven polling for state file cleanup instead of fixed sleep.
+        Since this test goes through CliRunner which doesn't expose ready_fd,
+        we poll for the expected outcome (state files removed) rather than
+        sleeping blindly.
         """
         cwd = Path.cwd()
         state_dir = tmp_path / "state"
@@ -253,10 +258,8 @@ from pathlib import Path
 
 def mock_run_server(options):
     """Simulate server running briefly then exiting normally."""
-    import time
     Path("{tmp_path / 'run_server_called'}").write_text("yes")
-    time.sleep(0.1)  # Brief "server run"
-    # Normal return - triggers atexit path
+    # No sleep needed - just return immediately to trigger atexit
 
 # Patch run_server before importing cli to avoid heavy imports
 with patch.dict("sys.modules", {{"ragzoom.server.app": MagicMock()}}):
@@ -287,15 +290,22 @@ with patch.dict("sys.modules", {{"ragzoom.server.app": MagicMock()}}):
         )
         stdout, stderr = proc.communicate(timeout=15)
 
-        # Wait for any background daemon processes to complete
-        time.sleep(1.5)
+        # Check if run_server was called (sanity check)
+        run_server_marker = tmp_path / "run_server_called"
+
+        # Poll for state file cleanup (replaces time.sleep(1.5))
+        # We poll for the expected outcome rather than sleeping blindly.
+        # Use short intervals to detect cleanup as soon as it happens.
+        cleanup_detected = False
+        for _ in range(150):  # 15 second timeout with 0.1s intervals
+            if not pid_file.exists() and not port_file.exists():
+                cleanup_detected = True
+                break
+            time.sleep(0.1)
 
         # Debug output
         debug_files = list(tmp_path.iterdir())
         state_files = list(state_dir.iterdir()) if state_dir.exists() else []
-
-        # Check if run_server was called (sanity check)
-        run_server_marker = tmp_path / "run_server_called"
 
         # The key assertion: state files should be cleaned up
         # Note: With daemon mode, the parent process exits and the daemon
@@ -308,6 +318,10 @@ with patch.dict("sys.modules", {{"ragzoom.server.app": MagicMock()}}):
         if run_server_marker.exists():
             # run_server was called, so daemon mode started
             # Files should be cleaned up if atexit is registered
+            assert cleanup_detected, (
+                f"Timeout waiting for state file cleanup. "
+                f"State files: {state_files}, tmp files: {debug_files}"
+            )
             assert not pid_file.exists(), (
                 f"PID file should be removed. "
                 f"State files: {state_files}, tmp files: {debug_files}"
