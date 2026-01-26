@@ -390,29 +390,31 @@ class TestFindTruncationPoint:
 class TestBuildAncestryChain:
     """Tests for build_ancestry_chain() function."""
 
-    def _make_records(
+    def _make_records_and_parent_map(
         self, chain: list[tuple[str, str | None]]
-    ) -> dict[str, dict[str, object]]:
-        """Build records dict from chain spec.
+    ) -> tuple[dict[str, dict[str, object]], dict[str, str | None]]:
+        """Build records dict and parent_map from chain spec.
 
         Args:
             chain: List of (uuid, parent_uuid) tuples
 
         Returns:
-            UUID -> record mapping
+            Tuple of (UUID -> record mapping, UUID -> parent mapping)
         """
         records: dict[str, dict[str, object]] = {}
+        parent_map: dict[str, str | None] = {}
         for uuid, parent in chain:
             records[uuid] = {
                 "uuid": uuid,
                 "parentUuid": parent,
             }
-        return records
+            parent_map[uuid] = parent
+        return records, parent_map
 
     def test_build_ancestry_chain_normal(self) -> None:
         """Builds chain from stop_uuid to head_uuid in chronological order."""
         # Chain: msg1 -> msg2 -> msg3 -> msg4
-        records = self._make_records(
+        records, parent_map = self._make_records_and_parent_map(
             [
                 ("msg1", None),
                 ("msg2", "msg1"),
@@ -422,7 +424,7 @@ class TestBuildAncestryChain:
         )
 
         # Get chain from msg1 to msg4 (excluding msg1)
-        result = build_ancestry_chain("msg4", "msg1", records)
+        result = build_ancestry_chain("msg4", "msg1", records, parent_map)
 
         # Should return [msg2, msg3, msg4] in chronological order
         assert result == ["msg2", "msg3", "msg4"]
@@ -430,7 +432,7 @@ class TestBuildAncestryChain:
     def test_build_ancestry_chain_from_root(self) -> None:
         """Builds entire chain when stop_uuid is None."""
         # Chain: msg1 -> msg2 -> msg3
-        records = self._make_records(
+        records, parent_map = self._make_records_and_parent_map(
             [
                 ("msg1", None),
                 ("msg2", "msg1"),
@@ -439,7 +441,7 @@ class TestBuildAncestryChain:
         )
 
         # Get entire chain from root (stop_uuid=None)
-        result = build_ancestry_chain("msg3", None, records)
+        result = build_ancestry_chain("msg3", None, records, parent_map)
 
         # Should return [msg1, msg2, msg3] in chronological order
         assert result == ["msg1", "msg2", "msg3"]
@@ -447,7 +449,7 @@ class TestBuildAncestryChain:
     def test_build_ancestry_chain_adjacent(self) -> None:
         """Builds chain when stop_uuid is immediate parent of head."""
         # Chain: msg1 -> msg2
-        records = self._make_records(
+        records, parent_map = self._make_records_and_parent_map(
             [
                 ("msg1", None),
                 ("msg2", "msg1"),
@@ -455,14 +457,14 @@ class TestBuildAncestryChain:
         )
 
         # Get chain from msg1 to msg2 (excluding msg1)
-        result = build_ancestry_chain("msg2", "msg1", records)
+        result = build_ancestry_chain("msg2", "msg1", records, parent_map)
 
         # Should return [msg2]
         assert result == ["msg2"]
 
     def test_build_ancestry_chain_empty_when_same(self) -> None:
         """Returns empty list when stop_uuid equals head_uuid."""
-        records = self._make_records(
+        records, parent_map = self._make_records_and_parent_map(
             [
                 ("msg1", None),
                 ("msg2", "msg1"),
@@ -470,21 +472,21 @@ class TestBuildAncestryChain:
         )
 
         # Get chain from msg2 to msg2
-        result = build_ancestry_chain("msg2", "msg2", records)
+        result = build_ancestry_chain("msg2", "msg2", records, parent_map)
 
         # Should return empty list
         assert result == []
 
     def test_build_ancestry_chain_single_root(self) -> None:
         """Handles single message at root."""
-        records = self._make_records(
+        records, parent_map = self._make_records_and_parent_map(
             [
                 ("msg1", None),
             ]
         )
 
         # Get entire chain
-        result = build_ancestry_chain("msg1", None, records)
+        result = build_ancestry_chain("msg1", None, records, parent_map)
 
         # Should return [msg1]
         assert result == ["msg1"]
@@ -494,13 +496,18 @@ class TestBuildAncestryChain:
         # Chain with missing intermediate record
         records: dict[str, dict[str, object]] = {
             "msg1": {"uuid": "msg1", "parentUuid": None},
-            # msg2 is missing
+            # msg2 is missing from records
             "msg3": {"uuid": "msg3", "parentUuid": "msg2"},  # Points to missing
         }
+        # parent_map still has the link to msg2
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg3": "msg2",
+        }
 
-        # Get chain from msg1 to msg3 - but msg2 is missing
-        # Should stop when it can't find msg2
-        result = build_ancestry_chain("msg3", "msg1", records)
+        # Get chain from msg1 to msg3 - but msg2 is missing from records
+        # Should stop when it can't find msg2 in records
+        result = build_ancestry_chain("msg3", "msg1", records, parent_map)
 
         # Should return [msg3] since it can't trace further back
         assert result == ["msg3"]
@@ -509,7 +516,7 @@ class TestBuildAncestryChain:
         """Returns chain to root when stop_uuid is not an ancestor."""
         # Chain: msg1 -> msg2 -> msg3
         # msg99 is not in the ancestry chain
-        records = self._make_records(
+        records, parent_map = self._make_records_and_parent_map(
             [
                 ("msg1", None),
                 ("msg2", "msg1"),
@@ -519,7 +526,7 @@ class TestBuildAncestryChain:
         )
 
         # Try to get chain stopping at msg99 (not an ancestor of msg3)
-        result = build_ancestry_chain("msg3", "msg99", records)
+        result = build_ancestry_chain("msg3", "msg99", records, parent_map)
 
         # Should return entire chain since stop_uuid was never found
         assert result == ["msg1", "msg2", "msg3"]

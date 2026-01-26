@@ -129,6 +129,39 @@ remember(query="cost per node", time_start="15:00:00", time_end="15:30:00")
 
 5. **Time ranges compound with query terms**: The query seeds expansion toward matching content; tight time windows ensure you get verbatim nodes
 
+## Managing Your Memory Document
+
+The session ID and transcript path are injected on every session start.
+
+### Check Document Status
+
+To see what's indexed (node count, time range, completion):
+
+```bash
+ragzoom document-status <session-id>
+```
+
+Example output:
+```
+Document: 31d97397-5ee6-4189-8cd6-f9e2b0f7ea42
+Type: temporal
+Leaves: 208
+Nodes: 229 / 413 (55.4% complete)
+Time range: 2026-01-25T22:47:42Z to 2026-01-26T17:42:56Z
+```
+
+### Reset Memory
+
+To clear and re-sync your memory document:
+
+```bash
+# Wipe and re-sync from transcript
+ragzoom-claude-code reset <transcript-path>
+
+# Wipe only (no re-sync)
+ragzoom-claude-code reset <transcript-path> --no-resync
+```
+
 ## Continuous Improvement
 
 These guidelines are a living document. After each retrieval:

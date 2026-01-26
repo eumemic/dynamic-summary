@@ -90,6 +90,7 @@ ragzoom documents
 2. **State file mismatch** - PID/port files don't match actual running processes
 3. **Lease acquisition** - After restart, server needs 5-10s to acquire the indexer lease before gRPC listens
 4. **Health check timing** - Auto-start checks health before server is fully ready
+5. **Stale code** - All ragzoom operations (including `ragzoom-claude-code sync`) go through gRPC to the daemon. With editable installs, the daemon doesn't pick up source changes until restarted.
 
 ### Prevention
 
