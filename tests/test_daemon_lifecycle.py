@@ -317,33 +317,43 @@ class TestDaemonizeIntegration:
     def test_daemon_survives_parent_exit(self, tmp_path: Path) -> None:
         """Daemon should keep running after parent process exits."""
         from ragzoom.daemon import read_pid_file
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
 
         log_file = tmp_path / "daemon.log"
         marker_file = tmp_path / "still_running"
 
-        script = f"""
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            # The daemon signals ready, then writes "started", then writes "still_running"
+            # We use a second ready signal (b"2") to know when "still_running" is complete
+            script = f"""
 import os
 import sys
-import time
 sys.path.insert(0, "{Path.cwd()}")
 os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
 from ragzoom.daemon import daemonize
 from pathlib import Path
 
-daemonize(Path("{log_file}"))
+daemonize(Path("{log_file}"), ready_fd={write_fd})
 Path("{marker_file}").write_text("started")
-time.sleep(0.3)
+# Signal phase 2 complete by writing "still_running" marker
 Path("{marker_file}").write_text("still_running")
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        proc.wait(timeout=5)  # Parent exits
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            proc.wait(timeout=5)  # Parent exits
+            wait_for_daemon_ready(read_fd)
 
-        # Wait for daemon to update marker (shorter than 2s test timeout)
-        time.sleep(0.8)
+        # Daemon signaled ready - now poll for "still_running" marker
+        # This should be nearly instant since daemon already started
+        for _ in range(50):
+            if marker_file.exists() and marker_file.read_text() == "still_running":
+                break
+            time.sleep(0.01)
 
         assert marker_file.exists()
         assert marker_file.read_text() == "still_running"
