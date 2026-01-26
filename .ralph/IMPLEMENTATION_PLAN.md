@@ -126,11 +126,12 @@ Add `RAGZOOM_DOCUMENT_ID` env var and `--document-id` CLI flag support to both s
   - Location: integrations/claude-code/src/ragzoom_claude_code/mcp_server.py:15-37
   - Implementation: Function now checks `RAGZOOM_DOCUMENT_ID` env var first. Changed return type from `tuple[str, SessionState]` to `str`. Updated `remember` tool to use new string return type.
 
-- [ ] Add tests for env var precedence in sync CLI
+- [x] Add tests for env var precedence in sync CLI
   - Spec: specs/unified-agent-identity.md § Acceptance Criteria #1, #3
   - Success: Tests verify `--document-id` overrides env var, env var overrides stem
-  - Test: `test_sync_document_id_precedence`
-  - Location: integrations/claude-code/tests/test_cli.py
+  - Test: `test_env_var_used_when_no_flag`, `test_flag_takes_priority_over_env_var`, `test_priority_order`
+  - Location: integrations/claude-code/tests/test_cli.py:71-139
+  - Implementation: Six tests in TestSyncDocumentIdOption class verify flag, env var, stem priority. All tests pass.
 
 - [ ] Add tests for env var identity in MCP server
   - Spec: specs/unified-agent-identity.md § Acceptance Criteria #2
