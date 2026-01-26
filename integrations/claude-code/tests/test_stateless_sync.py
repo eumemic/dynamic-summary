@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from ragzoom_claude_code.transcript_sync import (
+    build_ancestry_chain,
     find_truncation_point,
     is_user_message,
 )
@@ -378,3 +379,141 @@ class TestFindTruncationPoint:
         # msg3.ts=10:02 <= 10:02, s=msg4 is user (real), boundary, stop
         assert r == "msg3"
         assert s == "msg4"
+
+
+class TestBuildAncestryChain:
+    """Tests for build_ancestry_chain() function."""
+
+    def _make_records(
+        self, chain: list[tuple[str, str | None]]
+    ) -> dict[str, dict[str, object]]:
+        """Build records dict from chain spec.
+
+        Args:
+            chain: List of (uuid, parent_uuid) tuples
+
+        Returns:
+            UUID -> record mapping
+        """
+        records: dict[str, dict[str, object]] = {}
+        for uuid, parent in chain:
+            records[uuid] = {
+                "uuid": uuid,
+                "parentUuid": parent,
+            }
+        return records
+
+    def test_build_ancestry_chain_normal(self) -> None:
+        """Builds chain from stop_uuid to head_uuid in chronological order."""
+        # Chain: msg1 -> msg2 -> msg3 -> msg4
+        records = self._make_records(
+            [
+                ("msg1", None),
+                ("msg2", "msg1"),
+                ("msg3", "msg2"),
+                ("msg4", "msg3"),
+            ]
+        )
+
+        # Get chain from msg1 to msg4 (excluding msg1)
+        result = build_ancestry_chain("msg4", "msg1", records)
+
+        # Should return [msg2, msg3, msg4] in chronological order
+        assert result == ["msg2", "msg3", "msg4"]
+
+    def test_build_ancestry_chain_from_root(self) -> None:
+        """Builds entire chain when stop_uuid is None."""
+        # Chain: msg1 -> msg2 -> msg3
+        records = self._make_records(
+            [
+                ("msg1", None),
+                ("msg2", "msg1"),
+                ("msg3", "msg2"),
+            ]
+        )
+
+        # Get entire chain from root (stop_uuid=None)
+        result = build_ancestry_chain("msg3", None, records)
+
+        # Should return [msg1, msg2, msg3] in chronological order
+        assert result == ["msg1", "msg2", "msg3"]
+
+    def test_build_ancestry_chain_adjacent(self) -> None:
+        """Builds chain when stop_uuid is immediate parent of head."""
+        # Chain: msg1 -> msg2
+        records = self._make_records(
+            [
+                ("msg1", None),
+                ("msg2", "msg1"),
+            ]
+        )
+
+        # Get chain from msg1 to msg2 (excluding msg1)
+        result = build_ancestry_chain("msg2", "msg1", records)
+
+        # Should return [msg2]
+        assert result == ["msg2"]
+
+    def test_build_ancestry_chain_empty_when_same(self) -> None:
+        """Returns empty list when stop_uuid equals head_uuid."""
+        records = self._make_records(
+            [
+                ("msg1", None),
+                ("msg2", "msg1"),
+            ]
+        )
+
+        # Get chain from msg2 to msg2
+        result = build_ancestry_chain("msg2", "msg2", records)
+
+        # Should return empty list
+        assert result == []
+
+    def test_build_ancestry_chain_single_root(self) -> None:
+        """Handles single message at root."""
+        records = self._make_records(
+            [
+                ("msg1", None),
+            ]
+        )
+
+        # Get entire chain
+        result = build_ancestry_chain("msg1", None, records)
+
+        # Should return [msg1]
+        assert result == ["msg1"]
+
+    def test_build_ancestry_chain_missing_parent_stops(self) -> None:
+        """Stops at missing parent gracefully."""
+        # Chain with missing intermediate record
+        records: dict[str, dict[str, object]] = {
+            "msg1": {"uuid": "msg1", "parentUuid": None},
+            # msg2 is missing
+            "msg3": {"uuid": "msg3", "parentUuid": "msg2"},  # Points to missing
+        }
+
+        # Get chain from msg1 to msg3 - but msg2 is missing
+        # Should stop when it can't find msg2
+        result = build_ancestry_chain("msg3", "msg1", records)
+
+        # Should return [msg3] since it can't trace further back
+        assert result == ["msg3"]
+
+    def test_build_ancestry_chain_stop_not_ancestor(self) -> None:
+        """Returns chain to root when stop_uuid is not an ancestor."""
+        # Chain: msg1 -> msg2 -> msg3
+        # msg99 is not in the ancestry chain
+        records = self._make_records(
+            [
+                ("msg1", None),
+                ("msg2", "msg1"),
+                ("msg3", "msg2"),
+                ("msg99", None),  # Separate root
+            ]
+        )
+
+        # Try to get chain stopping at msg99 (not an ancestor of msg3)
+        result = build_ancestry_chain("msg3", "msg99", records)
+
+        # Should return entire chain since stop_uuid was never found
+        assert result == ["msg1", "msg2", "msg3"]

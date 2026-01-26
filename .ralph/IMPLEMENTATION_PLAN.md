@@ -395,11 +395,12 @@ Implement the core functions for stateless sync algorithm.
   - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:88-119
   - Implementation: Returns True for user type messages without toolUseResult and without command output markers.
 
-- [ ] Implement `build_ancestry_chain()` function
+- [x] Implement `build_ancestry_chain()` function
   - Spec: specs/stateless-transcript-sync.md § 5. Build Ancestry Chain
   - Success: Returns UUIDs from stop_uuid to head_uuid in chronological order
-  - Test: `test_build_ancestry_chain_normal`, `test_build_ancestry_chain_from_root`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py
+  - Test: `test_build_ancestry_chain_normal`, `test_build_ancestry_chain_from_root`, plus 5 more edge case tests
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:240-284
+  - Implementation: Walks backward from head_uuid through parentUuid links, collecting UUIDs that exist in records dict. Stops at stop_uuid (exclusive) or when a missing record is encountered. Returns chronological order (oldest first). Shares `_get_parent_uuid()` helper with `find_truncation_point()`.
 
 ### Phase 50: Stateless Algorithm Unit Tests
 
