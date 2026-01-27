@@ -121,9 +121,9 @@ class TestMcpServerPidTempFileDiscovery:
 
 
 class TestRememberToolDocumentId:
-    """Tests for remember tool document ID handling."""
+    """Tests for recall tool document ID handling."""
 
-    def test_remember_tool_uses_correct_document_id(self) -> None:
+    def test_recall_tool_uses_correct_document_id(self) -> None:
         """Remember tool uses string doc_id from _get_session_id(), not tuple."""
         expected_doc_id = "test-session-doc"
 
@@ -144,9 +144,9 @@ class TestRememberToolDocumentId:
             mock_retrieval = MagicMock(tiling_ids=["node1"], nodes={"node1": mock_node})
             mock_client.execute_query.return_value = MagicMock(retrieval=mock_retrieval)
 
-            from ragzoom_claude_code.mcp_server import remember
+            from ragzoom_claude_code.mcp_server import recall
 
-            result = remember(query="test query", token_budget=1000)
+            result = recall(query="test query", token_budget=1000)
 
             # Verify execute_query was called with string document_id
             mock_client.execute_query.assert_called_once()

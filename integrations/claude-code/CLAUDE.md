@@ -8,7 +8,7 @@ This package provides Claude Code with access to pre-compaction conversation his
 |--------|---------|
 | `jsonl_reader.py` | Streaming JSONL parser with forward/reverse iteration |
 | `transcript_sync.py` | Stateless revert-aware sync using RagZoom document status |
-| `mcp_server.py` | MCP `remember` tool for querying historical context |
+| `mcp_server.py` | MCP `recall` tool for querying historical context |
 | `cli.py` | Command-line interface for sync operations |
 
 ## Key Concepts
@@ -29,10 +29,10 @@ Turn-level tracking means if a revert falls *within* a turn (not at a boundary),
 
 ### MCP Server
 
-The MCP server exposes a `remember` tool that Claude Code can use to query pre-compaction history:
+The MCP server exposes a `recall` tool that Claude Code can use to query pre-compaction history:
 
 ```python
-remember(query="authentication bug", token_budget=2000)
+recall(query="authentication bug", token_budget=2000)
 ```
 
 The server finds its session by reading a PID temp file written by the SessionStart hook.
