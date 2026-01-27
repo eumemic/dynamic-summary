@@ -573,20 +573,24 @@ def index(
 
 
 @cli.command()
+@click.option(
+    "--server-address",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default=None,
+    show_default=False,
+    help=GRPC_ADDRESS_HELP,
+)
 @click.pass_context
-def documents(ctx: click.Context) -> None:
-    """List all indexed documents."""
-    try:
-        # Create services for this command
-        operational_config = ctx.obj["operational_config"]
-        index_config = ctx.obj["index_config"]
-        store = create_store_with_docker(
-            operational_config, embedding_model=index_config.embedding_model
-        )
-        document_service = DocumentService(store)
+def documents(ctx: click.Context, server_address: str | None) -> None:
+    """List all indexed documents.
 
-        # Get all documents
-        docs = document_service.list_documents()
+    Spec: specs/grpc-cli-architecture.md § Commands Requiring Migration
+    """
+    try:
+        resolved_address = _resolve_server_address_with_autostart(server_address)
+
+        with GrpcRagzoomClient(resolved_address) as client:
+            docs = client.list_documents()
 
         if not docs:
             click.echo("No documents indexed yet.")
@@ -597,15 +601,14 @@ def documents(ctx: click.Context) -> None:
 
         for doc in docs:
             click.echo(f"\nDocument ID: {doc.document_id}")
-            if doc.file_path:
-                click.echo(f"File: {doc.file_path}")
-            click.echo(f"Indexed: {doc.indexed_at}")
+            doc_type = "temporal" if doc.is_temporal else "non-temporal"
+            click.echo(f"Type: {doc_type}")
             click.echo(f"Total nodes: {doc.node_count}")
-
-            # Calculate leaf count via DocumentStore
-            doc_store = store.for_document(doc.document_id)
-            leaf_count = len(doc_store.nodes.get_leaves())
-            click.echo(f"Leaf nodes: {leaf_count}")
+            click.echo(f"Leaf nodes: {doc.leaf_count}")
+            if doc.completion_pct is not None:
+                click.echo(f"Completion: {doc.completion_pct:.1f}%")
+            if doc.is_temporal and doc.time_start and doc.time_end:
+                click.echo(f"Time range: {doc.time_start} to {doc.time_end}")
 
     except Exception as e:
         handle_cli_error(e, "listing documents")

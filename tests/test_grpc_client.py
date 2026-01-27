@@ -455,3 +455,128 @@ async def test_grpc_client_get_system_status_empty(
 
     finally:
         client.close()
+
+
+@pytest.mark.asyncio
+async def test_grpc_client_get_cost_stats(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """Test get_cost_stats returns CostStatsView list for specific document.
+
+    Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+    """
+    from ragzoom.client.grpc_client import CostStatsView
+
+    address, _state = grpc_test_environment
+    document_id = "cost-stats-test-doc"
+
+    client = GrpcRagzoomClient(address)
+    try:
+        # Create a document
+        await asyncio.to_thread(
+            client.append_text,
+            document_id=document_id,
+            content=b"Test content for cost stats.",
+            collect_telemetry=False,
+            replace_existing=True,
+        )
+        await asyncio.to_thread(client.run_workers_once)
+
+        # Get cost stats for the specific document
+        stats_list = await asyncio.to_thread(
+            client.get_cost_stats, document_id=document_id
+        )
+
+        assert isinstance(stats_list, list)
+        assert len(stats_list) == 1
+
+        stats = stats_list[0]
+        assert isinstance(stats, CostStatsView)
+        assert stats.document_id == document_id
+        assert stats.total_cost >= 0.0
+        assert stats.total_nodes >= 1
+        assert stats.leaf_nodes >= 1
+        assert stats.summary_nodes >= 0
+        assert stats.total_nodes == stats.leaf_nodes + stats.summary_nodes
+
+    finally:
+        client.close()
+
+
+@pytest.mark.asyncio
+async def test_grpc_client_get_cost_stats_all_documents(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """Test get_cost_stats returns stats for all documents when no document_id specified.
+
+    Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+    """
+    from ragzoom.client.grpc_client import CostStatsView
+
+    address, _state = grpc_test_environment
+    doc1 = "cost-stats-all-doc1"
+    doc2 = "cost-stats-all-doc2"
+
+    client = GrpcRagzoomClient(address)
+    try:
+        # Clear and create two documents
+        await asyncio.to_thread(client.clear_all_documents)
+
+        await asyncio.to_thread(
+            client.append_text,
+            document_id=doc1,
+            content=b"First document content.",
+            collect_telemetry=False,
+            replace_existing=True,
+        )
+        await asyncio.to_thread(
+            client.append_text,
+            document_id=doc2,
+            content=b"Second document content.",
+            collect_telemetry=False,
+            replace_existing=True,
+        )
+        await asyncio.to_thread(client.run_workers_once)
+
+        # Get cost stats for all documents (no document_id)
+        stats_list = await asyncio.to_thread(client.get_cost_stats)
+
+        assert isinstance(stats_list, list)
+        assert len(stats_list) == 2
+
+        doc_ids = {s.document_id for s in stats_list}
+        assert doc1 in doc_ids
+        assert doc2 in doc_ids
+
+        for stats in stats_list:
+            assert isinstance(stats, CostStatsView)
+            assert stats.total_nodes >= 1
+            assert stats.total_nodes == stats.leaf_nodes + stats.summary_nodes
+
+    finally:
+        client.close()
+
+
+@pytest.mark.asyncio
+async def test_grpc_client_get_cost_stats_empty(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """Test get_cost_stats returns empty list when no documents exist.
+
+    Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+    """
+    address, _state = grpc_test_environment
+
+    client = GrpcRagzoomClient(address)
+    try:
+        # Clear all documents first
+        await asyncio.to_thread(client.clear_all_documents)
+
+        # Get cost stats for all documents
+        stats_list = await asyncio.to_thread(client.get_cost_stats)
+
+        assert isinstance(stats_list, list)
+        assert len(stats_list) == 0
+
+    finally:
+        client.close()
