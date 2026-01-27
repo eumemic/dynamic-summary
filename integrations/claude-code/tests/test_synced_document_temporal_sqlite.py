@@ -10,11 +10,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from ragzoom_claude_code.transcript_sync import execute_sync
+
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
-from ragzoom_claude_code.transcript_sync import (
-    SessionState,
-    execute_sync,
-)
 from ragzoom.config import IndexConfig
 from ragzoom.contracts.embedding_model import EmbeddingProvider
 from ragzoom.server.append_executor import AppendExecutor, AppendOutcome
@@ -94,6 +92,7 @@ class AppendExecutorClient:
         self,
         document_id: str,
         units: list[AppendUnit],
+        summarization_guidance: str | None = None,
     ) -> AppendResult:
         """Batch append multiple units to document.
 
@@ -143,6 +142,38 @@ class AppendExecutorClient:
         # For testing purposes, we just track this was called.
         pass
 
+    def get_document_status(self, document_id: str) -> object:
+        """Return document status for stateless sync.
+
+        Returns a minimal status indicating the document doesn't exist yet
+        (first sync case).
+        """
+        # For these tests, we always return non-existent document status
+        # to simulate first sync. Real implementations would query the backend.
+        return type(
+            "DocumentStatus",
+            (),
+            {
+                "document_id": document_id,
+                "exists": False,
+                "is_temporal": True,
+                "time_end": None,
+            },
+        )()
+
+    def truncate_from_time(self, document_id: str, cutoff_time: str) -> object:
+        """Time-based truncation for stateless sync."""
+        # For these tests, time-based truncation is not implemented
+        return type(
+            "TruncateFromTimeResult",
+            (),
+            {
+                "document_id": document_id,
+                "deleted_node_ids": [],
+                "cutoff_time": cutoff_time,
+            },
+        )()
+
 
 class TestSyncedDocumentIsTemporal:
     """Tests that execute_sync creates temporal documents when timestamps present."""
@@ -156,7 +187,7 @@ class TestSyncedDocumentIsTemporal:
         client = AppendExecutorClient(sqlite_backend, executor)
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # Create transcript with timestamps (like real Claude Code transcripts)
         transcript_path.write_text(
@@ -193,11 +224,11 @@ class TestSyncedDocumentIsTemporal:
         )
 
         # Execute sync
-        result = execute_sync(transcript_path, state_path, client)
+        result = execute_sync(transcript_path, document_id, client)
 
         # Verify document was created and is temporal
         assert result.document_id == "transcript"
-        assert len(result.appended_uuids) >= 1
+        assert result.turns_appended >= 1
 
         # Check the is_temporal flag
         is_temporal = sqlite_backend.doc_repo.get_document_is_temporal(
@@ -216,7 +247,7 @@ class TestSyncedDocumentIsTemporal:
         client = AppendExecutorClient(sqlite_backend, executor)
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # Create transcript with distinct timestamps
         transcript_path.write_text(
@@ -248,7 +279,7 @@ class TestSyncedDocumentIsTemporal:
         )
 
         # Execute sync
-        result = execute_sync(transcript_path, state_path, client)
+        result = execute_sync(transcript_path, document_id, client)
 
         # Get leaf nodes and check timestamps
         store = sqlite_backend.for_document(result.document_id)
@@ -271,7 +302,7 @@ class TestSyncedDocumentIsTemporal:
         client = AppendExecutorClient(sqlite_backend, executor)
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # First sync with one message
         transcript_path.write_text(
@@ -286,7 +317,7 @@ class TestSyncedDocumentIsTemporal:
             )
             + "\n"
         )
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         # Verify document is temporal after first sync
         is_temporal_after_first = sqlite_backend.doc_repo.get_document_is_temporal(
@@ -322,7 +353,7 @@ class TestSyncedDocumentIsTemporal:
             )
             + "\n"
         )
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
         # Should still be temporal
         is_temporal_after_second = sqlite_backend.doc_repo.get_document_is_temporal(
@@ -330,7 +361,7 @@ class TestSyncedDocumentIsTemporal:
         )
         assert is_temporal_after_second is True
 
-        # Load state to verify entries
-        state = SessionState.load(state_path)
-        assert state is not None
-        assert len(state.entries) >= 1
+        # Verify content was appended by checking leaf count
+        store = sqlite_backend.for_document("transcript")
+        leaves = list(store.nodes.iter_leaves())
+        assert len(leaves) >= 1, "Should have at least one leaf after incremental sync"

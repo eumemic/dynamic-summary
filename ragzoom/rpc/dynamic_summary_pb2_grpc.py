@@ -68,6 +68,12 @@ class IndexerServiceStub(object):
             response_deserializer=dynamic__summary__pb2.TruncateDocumentResponse.FromString,
             _registered_method=True,
         )
+        self.TruncateFromTime = channel.unary_unary(
+            "/ragzoom.rpc.IndexerService/TruncateFromTime",
+            request_serializer=dynamic__summary__pb2.TruncateFromTimeRequest.SerializeToString,
+            response_deserializer=dynamic__summary__pb2.TruncateFromTimeResponse.FromString,
+            _registered_method=True,
+        )
 
 
 class IndexerServiceServicer(object):
@@ -97,6 +103,12 @@ class IndexerServiceServicer(object):
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
 
+    def TruncateFromTime(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
 
 def add_IndexerServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -119,6 +131,11 @@ def add_IndexerServiceServicer_to_server(servicer, server):
             servicer.TruncateDocument,
             request_deserializer=dynamic__summary__pb2.TruncateDocumentRequest.FromString,
             response_serializer=dynamic__summary__pb2.TruncateDocumentResponse.SerializeToString,
+        ),
+        "TruncateFromTime": grpc.unary_unary_rpc_method_handler(
+            servicer.TruncateFromTime,
+            request_deserializer=dynamic__summary__pb2.TruncateFromTimeRequest.FromString,
+            response_serializer=dynamic__summary__pb2.TruncateFromTimeResponse.SerializeToString,
         ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -243,6 +260,36 @@ class IndexerService(object):
             "/ragzoom.rpc.IndexerService/TruncateDocument",
             dynamic__summary__pb2.TruncateDocumentRequest.SerializeToString,
             dynamic__summary__pb2.TruncateDocumentResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def TruncateFromTime(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/ragzoom.rpc.IndexerService/TruncateFromTime",
+            dynamic__summary__pb2.TruncateFromTimeRequest.SerializeToString,
+            dynamic__summary__pb2.TruncateFromTimeResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -402,6 +449,12 @@ class WorkerServiceStub(object):
             response_deserializer=dynamic__summary__pb2.GetDocumentResponse.FromString,
             _registered_method=True,
         )
+        self.GetDocumentStatus = channel.unary_unary(
+            "/ragzoom.rpc.WorkerService/GetDocumentStatus",
+            request_serializer=dynamic__summary__pb2.DocumentStatusRequest.SerializeToString,
+            response_deserializer=dynamic__summary__pb2.DocumentStatusResponse.FromString,
+            _registered_method=True,
+        )
         self.GetTelemetry = channel.unary_unary(
             "/ragzoom.rpc.WorkerService/GetTelemetry",
             request_serializer=dynamic__summary__pb2.GetTelemetryRequest.SerializeToString,
@@ -437,6 +490,12 @@ class WorkerServiceServicer(object):
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
 
+    def GetDocumentStatus(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
     def GetTelemetry(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -467,6 +526,11 @@ def add_WorkerServiceServicer_to_server(servicer, server):
             servicer.GetDocument,
             request_deserializer=dynamic__summary__pb2.GetDocumentRequest.FromString,
             response_serializer=dynamic__summary__pb2.GetDocumentResponse.SerializeToString,
+        ),
+        "GetDocumentStatus": grpc.unary_unary_rpc_method_handler(
+            servicer.GetDocumentStatus,
+            request_deserializer=dynamic__summary__pb2.DocumentStatusRequest.FromString,
+            response_serializer=dynamic__summary__pb2.DocumentStatusResponse.SerializeToString,
         ),
         "GetTelemetry": grpc.unary_unary_rpc_method_handler(
             servicer.GetTelemetry,
@@ -546,6 +610,36 @@ class WorkerService(object):
             "/ragzoom.rpc.WorkerService/GetDocument",
             dynamic__summary__pb2.GetDocumentRequest.SerializeToString,
             dynamic__summary__pb2.GetDocumentResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def GetDocumentStatus(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/ragzoom.rpc.WorkerService/GetDocumentStatus",
+            dynamic__summary__pb2.DocumentStatusRequest.SerializeToString,
+            dynamic__summary__pb2.DocumentStatusResponse.FromString,
             options,
             channel_credentials,
             insecure,

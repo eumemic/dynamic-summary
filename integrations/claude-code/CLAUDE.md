@@ -7,8 +7,8 @@ This package provides Claude Code with access to pre-compaction conversation his
 | Module | Purpose |
 |--------|---------|
 | `jsonl_reader.py` | Streaming JSONL parser with forward/reverse iteration |
-| `transcript_sync.py` | Revert-aware sync with UUID→span tracking |
-| `mcp_server.py` | MCP `remember` tool for querying historical context |
+| `transcript_sync.py` | Stateless revert-aware sync using RagZoom document status |
+| `mcp_server.py` | MCP `recall` tool for querying historical context |
 | `cli.py` | Command-line interface for sync operations |
 
 ## Key Concepts
@@ -29,13 +29,13 @@ Turn-level tracking means if a revert falls *within* a turn (not at a boundary),
 
 ### MCP Server
 
-The MCP server exposes a `remember` tool that Claude Code can use to query pre-compaction history:
+The MCP server exposes a `recall` tool that Claude Code can use to query pre-compaction history:
 
 ```python
-remember(query="authentication bug", token_budget=2000)
+recall(query="authentication bug", token_budget=2000)
 ```
 
-The server finds its session by matching the parent PID to state files written by the sync hook.
+The server finds its session by reading a PID temp file written by the SessionStart hook.
 
 ## CLI Usage
 
@@ -43,21 +43,15 @@ The server finds its session by matching the parent PID to state files written b
 # Sync a transcript
 ragzoom-claude-code sync ~/.claude/projects/.../session.jsonl
 
-# Set session PID (called by SessionStart hook)
-ragzoom-claude-code set-pid <document_id> <pid>
-
 # Start MCP server (usually via scripts/start-mcp-server)
 ragzoom-claude-code mcp-server
 ```
 
-## State Files
+## Session Discovery
 
-Sync state is stored in `$RAGZOOM_STATE_DIR/<document_id>.jsonl` (default: `data/transcript-state/`):
+The MCP server discovers its session document ID via PID temp files:
 
-```json
-{"document_id": "abc123", "last_pid": 12345}
-{"last_uuid": "uuid1", "span_end": 1000, "first_uuid": "uuid1"}
-{"last_uuid": "uuid2", "span_end": 2500, "first_uuid": "uuid2"}
-```
+1. The SessionStart hook writes the document ID to `/tmp/ragzoom-session-{pid}`
+2. The MCP server reads this file using its parent PID to find the session
 
-Line 1 is the header with document ID and optional PID. Subsequent lines are append log entries tracking which UUIDs map to which document spans.
+The sync algorithm itself is stateless, deriving all state from the transcript and RagZoom document status API.

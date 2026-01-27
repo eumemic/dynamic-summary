@@ -85,8 +85,9 @@ Temporal documents REQUIRE client-controlled chunking (`target_chunk_tokens=None
 **At query time:**
 - Time-windowed query on non-temporal document → Error (clear message)
 - `time_end < time_start` in query → Error
+- Query time window with no overlapping data → Return empty tiling (not an error)
 
-**Rationale**: Fail fast with clear errors. No silent fallbacks or dummy values.
+**Rationale**: Fail fast with clear errors for invalid inputs. However, a valid query with no matching data should return empty results—not an error—because callers cannot know the document's time range in advance.
 
 ## API Changes
 

@@ -3,9 +3,10 @@
 #
 # - Installs dependencies (gh CLI, Python packages) on first run in remote environments
 # - Registers Claude Code session PID for MCP server lookup
+# - Injects session ID and transcript path into context
 #
-# Input: JSON on stdin with session info including session_id
-# Output: Silent on success
+# Input: JSON on stdin with session info including session_id, cwd, trigger
+# Output: JSON with systemMessage containing session info
 
 set -euo pipefail
 
@@ -20,10 +21,37 @@ if [[ "${CLAUDE_CODE_REMOTE:-}" == "true" ]]; then
     "$GIT_ROOT/scripts/install-dev-dependencies.sh"
 fi
 
-# Extract session ID from JSON
+# Extract fields from JSON
 SESSION_ID=$(echo "$JSON" | jq -r '.session_id // ""')
+CWD=$(echo "$JSON" | jq -r '.cwd // ""')
+TRIGGER=$(echo "$JSON" | jq -r '.trigger // ""')
 
 if [[ -n "$SESSION_ID" ]]; then
-    # Register the PID (PPID is Claude Code's PID)
-    ragzoom-claude-code set-pid "$SESSION_ID" "$PPID"
+    # Write session ID to PID-keyed temp file for MCP server lookup
+    # Uses PPID (Claude Code's PID) so MCP server can find session via os.getppid()
+    echo "$SESSION_ID" > "/tmp/ragzoom-session-$PPID"
+
+    # Derive transcript path: ~/.claude/projects/<encoded-cwd>/<session-id>.jsonl
+    # CWD like /Users/tom/code/foo -> -Users-tom-code-foo
+    ENCODED_CWD=$(echo "$CWD" | sed 's|/|-|g')
+    TRANSCRIPT_PATH="$HOME/.claude/projects/$ENCODED_CWD/$SESSION_ID.jsonl"
+
+    # Build system message
+    MSG="Session ID: $SESSION_ID
+Transcript path: $TRANSCRIPT_PATH"
+
+    # Add memory tool reminder on compaction
+    if [[ "$TRIGGER" == "compact" ]]; then
+        MSG="$MSG
+
+Context was just compacted. Use the \`remember\` tool to retrieve relevant context from earlier in this conversation. Start with a broad query about what you were working on, then zoom into specific areas of interest."
+    fi
+
+    # Output JSON with additionalContext in the correct format
+    jq -n --arg msg "$MSG" '{
+      "hookSpecificOutput": {
+        "hookEventName": "SessionStart",
+        "additionalContext": $msg
+      }
+    }'
 fi

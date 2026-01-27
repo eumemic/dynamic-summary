@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from ragzoom_claude_code.transcript_sync import execute_sync
 
 from ragzoom.backends.sqlite_backend import SQLiteStorageBackend
-from ragzoom_claude_code.transcript_sync import execute_sync
 from ragzoom.config import IndexConfig, QueryConfig
 from ragzoom.contracts.embedding_model import EmbeddingProvider
 from ragzoom.retrieve import Retriever
@@ -90,6 +90,7 @@ class AppendExecutorClient:
         self,
         document_id: str,
         units: list[AppendUnit],
+        summarization_guidance: str | None = None,
     ) -> AppendResult:
         """Batch append multiple units to document."""
         import asyncio
@@ -131,6 +132,38 @@ class AppendExecutorClient:
         by the indexing runtime, not AppendExecutor.
         """
         pass
+
+    def get_document_status(self, document_id: str) -> object:
+        """Return document status for stateless sync.
+
+        Returns a minimal status indicating the document doesn't exist yet
+        (first sync case).
+        """
+        # For these tests, we always return non-existent document status
+        # to simulate first sync. Real implementations would query the backend.
+        return type(
+            "DocumentStatus",
+            (),
+            {
+                "document_id": document_id,
+                "exists": False,
+                "is_temporal": True,
+                "time_end": None,
+            },
+        )()
+
+    def truncate_from_time(self, document_id: str, cutoff_time: str) -> object:
+        """Time-based truncation for stateless sync."""
+        # For these tests, time-based truncation is not implemented
+        return type(
+            "TruncateFromTimeResult",
+            (),
+            {
+                "document_id": document_id,
+                "deleted_node_ids": [],
+                "cutoff_time": cutoff_time,
+            },
+        )()
 
 
 def _create_retriever(
@@ -223,7 +256,7 @@ class TestTimeWindowedQueryOnSyncedTranscript:
         client = AppendExecutorClient(sqlite_backend, executor)
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # Create a transcript with 3 distinct turns at different times:
         # Turn 1: 14:00:00 - 14:00:30 (asks about breakfast)
@@ -306,11 +339,11 @@ class TestTimeWindowedQueryOnSyncedTranscript:
         )
 
         # Execute sync
-        result = execute_sync(transcript_path, state_path, client)
+        result = execute_sync(transcript_path, document_id, client)
 
         # Verify document was created
         assert result.document_id == "transcript"
-        assert len(result.appended_uuids) >= 3
+        assert result.turns_appended >= 3
 
         # Verify document is temporal
         is_temporal = sqlite_backend.doc_repo.get_document_is_temporal(
@@ -445,7 +478,7 @@ class TestTimeWindowedQueryOnSyncedTranscript:
         client = AppendExecutorClient(sqlite_backend, executor)
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # Create a transcript with one turn spanning 14:00 - 14:05
         transcript_path.write_text(
@@ -478,7 +511,7 @@ class TestTimeWindowedQueryOnSyncedTranscript:
             + "\n"
         )
 
-        result = execute_sync(transcript_path, state_path, client)
+        result = execute_sync(transcript_path, document_id, client)
 
         # Get leaves for mock setup
         doc_store = sqlite_backend.for_document(result.document_id)
@@ -527,7 +560,7 @@ class TestTimeWindowedQueryOnSyncedTranscript:
         client = AppendExecutorClient(sqlite_backend, executor)
 
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # Create a transcript with a compaction summary in the middle
         transcript_path.write_text(
@@ -604,7 +637,7 @@ class TestTimeWindowedQueryOnSyncedTranscript:
         )
 
         # Execute sync
-        result = execute_sync(transcript_path, state_path, client)
+        result = execute_sync(transcript_path, document_id, client)
 
         # Verify document was created
         assert result.document_id == "transcript"

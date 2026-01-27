@@ -64,6 +64,7 @@ message BatchAppendTextRequest {
   string document_id = 1;
   repeated AppendUnit units = 2;  // Self-contained units with bundled text and optional timestamps
   bool collect_telemetry = 3;
+  optional string summarization_guidance = 4;  // Additional guidance for summary generation
 }
 
 message BatchAppendTextResponse {
@@ -242,6 +243,38 @@ message TruncateDocumentResponse {
   int32 span_start = 3;
 }
 
+// Document status with completion metrics for stateless sync workflows.
+// Unlike GetDocument/DocumentStatus which focuses on work queue state,
+// this provides document completeness and temporal range information.
+message DocumentStatusRequest {
+  string document_id = 1;
+}
+
+message DocumentStatusResponse {
+  string document_id = 1;
+  bool exists = 2;
+  bool is_temporal = 3;
+  int32 leaf_count = 4;
+  int32 node_count = 5;
+  int32 complete_forest_size = 6;  // Expected nodes when fully indexed: 2N - popcount(N)
+  float completion_pct = 7;         // node_count / complete_forest_size * 100
+  optional string time_start = 8;   // ISO 8601: earliest content (null if non-temporal or empty)
+  optional string time_end = 9;     // ISO 8601: latest content (null if non-temporal or empty)
+}
+
+// Time-based truncation for temporal documents.
+// Removes all nodes where time_end > cutoff_time.
+message TruncateFromTimeRequest {
+  string document_id = 1;
+  string cutoff_time = 2;  // ISO 8601 timestamp
+}
+
+message TruncateFromTimeResponse {
+  string document_id = 1;
+  repeated string deleted_node_ids = 2;
+  string cutoff_time = 3;  // Echo back the cutoff
+}
+
 message ExportTelemetryRequest {
   string document_id = 1;
 }
@@ -256,6 +289,7 @@ service IndexerService {
   rpc AppendText(AppendTextRequest) returns (AppendTextResponse);
   rpc BatchAppendText(BatchAppendTextRequest) returns (BatchAppendTextResponse);
   rpc TruncateDocument(TruncateDocumentRequest) returns (TruncateDocumentResponse);
+  rpc TruncateFromTime(TruncateFromTimeRequest) returns (TruncateFromTimeResponse);
 }
 
 service RetrievalService {
@@ -266,6 +300,7 @@ service RetrievalService {
 service WorkerService {
   rpc RunWorkers(RunWorkersRequest) returns (stream RunWorkersResponse);
   rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse);
+  rpc GetDocumentStatus(DocumentStatusRequest) returns (DocumentStatusResponse);
   rpc GetTelemetry(GetTelemetryRequest) returns (GetTelemetryResponse);
   rpc ClearDocument(ClearDocumentRequest) returns (ClearDocumentResponse);
   rpc ExportTelemetry(ExportTelemetryRequest) returns (ExportTelemetryResponse);

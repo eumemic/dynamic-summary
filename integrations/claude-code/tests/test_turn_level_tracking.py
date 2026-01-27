@@ -1,10 +1,9 @@
-"""Tests for turn-level AppendEntry tracking in transcript sync.
+"""Tests for turn-level tracking in transcript sync.
 
-Each conversation turn should map to exactly one leaf node, and
-each turn should have its own AppendEntry in the append log.
-This enables revert detection at turn granularity.
+Each conversation turn should map to exactly one AppendUnit/leaf node.
+Verifies that turns are correctly identified, grouped, and indexed.
 
-Spec: specs/timestamped-transcript-sync.md § AppendEntry Tracking
+These tests verify observable behavior through the sync result and client calls.
 """
 
 from __future__ import annotations
@@ -12,24 +11,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ragzoom_claude_code.transcript_sync import (
-    SessionState,
-    execute_sync,
-)
+from ragzoom_claude_code.transcript_sync import execute_sync
+
 from tests.conftest import FakeTranscriptClient
 
 
-class TestTurnLevelAppendEntryTracking:
-    """Tests that each turn creates a separate AppendEntry."""
+class TestTurnLevelTracking:
+    """Tests that each turn is processed separately."""
 
-    def test_each_turn_creates_one_append_entry(self, tmp_path: Path) -> None:
-        """Each conversation turn should create exactly one AppendEntry.
-
-        The spec requires: "Each turn's AppendEntry.last_uuid = the last
-        message UUID in that turn."
-        """
+    def test_each_turn_creates_one_append_unit(self, tmp_path: Path) -> None:
+        """Each conversation turn should create exactly one AppendUnit."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         # Create transcript with 3 turns:
         # Turn 1: msg1 (user) -> msg2 (assistant)
@@ -96,27 +89,20 @@ class TestTurnLevelAppendEntryTracking:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        result = execute_sync(transcript_path, document_id, client)
 
-        # Load state and check entries
-        state = SessionState.load(state_path)
-        assert state is not None
+        # Should have batch_append called once with 3 units (one per turn)
+        assert len(client.batch_append_calls) == 1
+        _, units = client.batch_append_calls[0]
+        assert len(units) == 3, f"Expected 3 units (one per turn), got {len(units)}"
 
-        # Should have 3 AppendEntries (one per turn)
-        assert len(state.entries) == 3, (
-            f"Expected 3 entries (one per turn), got {len(state.entries)}. "
-            f"Entries: {[(e.last_uuid, e.span_end) for e in state.entries]}"
-        )
+        # All turns should have been appended
+        assert result.turns_appended == 3
 
-        # Each entry should have the last UUID of its turn
-        assert state.entries[0].last_uuid == "msg2", "Turn 1's last UUID should be msg2"
-        assert state.entries[1].last_uuid == "msg4", "Turn 2's last UUID should be msg4"
-        assert state.entries[2].last_uuid == "msg5", "Turn 3's last UUID should be msg5"
-
-    def test_turn_entries_have_monotonic_span_ends(self, tmp_path: Path) -> None:
-        """Each turn's span_end should be greater than the previous turn's."""
+    def test_turn_units_have_correct_timestamps(self, tmp_path: Path) -> None:
+        """Each turn's AppendUnit should have correct timestamps."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
@@ -154,20 +140,25 @@ class TestTurnLevelAppendEntryTracking:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
-        state = SessionState.load(state_path)
-        assert state is not None
-        assert len(state.entries) == 2  # Two turns
+        # Should have 2 units (two turns)
+        assert len(client.batch_append_calls) == 1
+        _, units = client.batch_append_calls[0]
+        assert len(units) == 2
 
-        # span_end values should be monotonically increasing
-        assert state.entries[0].span_end > 0
-        assert state.entries[1].span_end > state.entries[0].span_end
+        # First turn: msg1->msg2
+        assert units[0].time_start == "2024-01-01T10:00:00Z"
+        assert units[0].time_end == "2024-01-01T10:01:00Z"
 
-    def test_tool_results_grouped_in_same_turn_entry(self, tmp_path: Path) -> None:
+        # Second turn: msg3 (standalone)
+        assert units[1].time_start == "2024-01-01T10:02:00Z"
+        assert units[1].time_end == "2024-01-01T10:02:00Z"
+
+    def test_tool_results_grouped_in_same_turn(self, tmp_path: Path) -> None:
         """Tool results should be in the same turn as their user message."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
@@ -231,23 +222,20 @@ class TestTurnLevelAppendEntryTracking:
         )
 
         client = FakeTranscriptClient()
-        execute_sync(transcript_path, state_path, client)
+        result = execute_sync(transcript_path, document_id, client)
 
-        state = SessionState.load(state_path)
-        assert state is not None
+        # Should have only 1 unit (all msgs are one turn)
+        assert len(client.batch_append_calls) == 1
+        _, units = client.batch_append_calls[0]
+        assert len(units) == 1
 
-        # Should have only 1 turn (msg1 through msg4 are all one turn)
-        assert len(state.entries) == 1
+        # One turn was appended
+        assert result.turns_appended == 1
 
-        # The entry's last_uuid should be msg4 (last message in the turn)
-        # Note: Tool result UUID (msg3) is excluded from appended_uuids but
-        # the turn still ends with msg4
-        assert state.entries[0].last_uuid == "msg4"
-
-    def test_incremental_sync_adds_new_turn_entries(self, tmp_path: Path) -> None:
-        """Incremental sync should add new entries for new turns."""
+    def test_incremental_sync_adds_new_turn(self, tmp_path: Path) -> None:
+        """Incremental sync should add new turns correctly."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
         client = FakeTranscriptClient()
 
         # Initial sync with one turn
@@ -278,13 +266,14 @@ class TestTurnLevelAppendEntryTracking:
             )
             + "\n"
         )
-        execute_sync(transcript_path, state_path, client)
+        result1 = execute_sync(transcript_path, document_id, client)
 
-        state = SessionState.load(state_path)
-        assert state is not None
-        assert len(state.entries) == 1
-        first_entry = state.entries[0]
-        assert first_entry.last_uuid == "msg2"
+        # First sync should append 1 turn
+        assert len(client.batch_append_calls) == 1
+        assert result1.turns_appended == 1
+
+        # Reset tracking
+        client.batch_append_calls.clear()
 
         # Add another turn and sync again
         transcript_path.write_text(
@@ -334,14 +323,8 @@ class TestTurnLevelAppendEntryTracking:
             )
             + "\n"
         )
-        execute_sync(transcript_path, state_path, client)
+        result2 = execute_sync(transcript_path, document_id, client)
 
-        state = SessionState.load(state_path)
-        assert state is not None
-
-        # Should have 2 entries now
-        assert len(state.entries) == 2
-        assert state.entries[0].last_uuid == "msg2"
-        assert state.entries[1].last_uuid == "msg4"
-        # Second entry's span_end should be greater
-        assert state.entries[1].span_end > state.entries[0].span_end
+        # Second sync should append only the new turn
+        assert len(client.batch_append_calls) == 1
+        assert result2.turns_appended == 1

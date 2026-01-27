@@ -9,8 +9,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, ParamSpec, Protocol, TypeVar
 
 from ragzoom.client.grpc_client import (
+    DocumentStatusView,
     ExecuteQueryOutput,
     GrpcRagzoomClient,
+    TruncateFromTimeResult,
     TruncateResult,
 )
 from ragzoom.constants import DEFAULT_GRPC_ADDRESS
@@ -145,6 +147,7 @@ class _SessionProtocol(Protocol):
         *,
         collect_telemetry: bool,
         timestamps: list[str | tuple[str, str]] | None = None,
+        summarization_guidance: str | None = None,
     ) -> IndexingResult: ...
 
     async def clear(self) -> ClearedDocumentResult: ...
@@ -246,6 +249,7 @@ class RagZoom:
         *,
         collect_telemetry: bool = False,
         timestamps: list[str | tuple[str, str]] | None = None,
+        summarization_guidance: str | None = None,
     ) -> IndexingResult:
         """Append multiple text units with forced split boundaries between them.
 
@@ -263,6 +267,8 @@ class RagZoom:
                 Each entry can be a single string (used for both start and end)
                 or a tuple of (start, end) strings. Must be None when units
                 contains AppendUnit objects.
+            summarization_guidance: Optional guidance for summary generation,
+                stored on document at creation time and used by the summarizer.
         """
         if not document_id:
             raise ValueError("document_id is required")
@@ -281,6 +287,7 @@ class RagZoom:
                     text_units,
                     collect_telemetry=collect_telemetry,
                     timestamps=effective_timestamps,
+                    summarization_guidance=summarization_guidance,
                 )
             )
 
@@ -290,6 +297,7 @@ class RagZoom:
                 units=text_units,
                 collect_telemetry=collect_telemetry,
                 timestamps=effective_timestamps,
+                summarization_guidance=summarization_guidance,
             )
 
     def _append(
@@ -360,6 +368,44 @@ class RagZoom:
             return client.truncate_document(
                 document_id=document_id,
                 span_start=span_start,
+            )
+
+    def get_document_status(self, document_id: str) -> DocumentStatusView:
+        """Get document status with completion metrics and temporal range.
+
+        Args:
+            document_id: The document to get status for.
+
+        Returns:
+            DocumentStatusView with completion metrics and temporal info.
+        """
+        if not document_id:
+            raise ValueError("document_id is required")
+
+        with self._client() as client:
+            return client.get_document_status(document_id)
+
+    def truncate_from_time(
+        self, document_id: str, cutoff_time: str
+    ) -> TruncateFromTimeResult:
+        """Truncate a temporal document by deleting nodes where time_end > cutoff.
+
+        Args:
+            document_id: The temporal document to truncate.
+            cutoff_time: ISO 8601 timestamp. Nodes with time_end > cutoff are deleted.
+
+        Returns:
+            TruncateFromTimeResult with deleted node IDs and echoed cutoff time.
+        """
+        if not document_id:
+            raise ValueError("document_id is required")
+        if not cutoff_time:
+            raise ValueError("cutoff_time is required")
+
+        with self._client() as client:
+            return client.truncate_from_time(
+                document_id=document_id,
+                cutoff_time=cutoff_time,
             )
 
     # ------------------------------------------------------------------
@@ -552,6 +598,7 @@ class AsyncRagZoom:
         *,
         collect_telemetry: bool = False,
         timestamps: list[str | tuple[str, str]] | None = None,
+        summarization_guidance: str | None = None,
     ) -> IndexingResult:
         """Append multiple text units with forced split boundaries between them.
 
@@ -569,6 +616,8 @@ class AsyncRagZoom:
                 Each entry can be a single string (used for both start and end)
                 or a tuple of (start, end) strings. Must be None when units
                 contains AppendUnit objects.
+            summarization_guidance: Optional guidance for summary generation,
+                stored on document at creation time and used by the summarizer.
         """
         if not document_id:
             raise ValueError("document_id is required")
@@ -587,6 +636,7 @@ class AsyncRagZoom:
                 text_units,
                 collect_telemetry=collect_telemetry,
                 timestamps=effective_timestamps,
+                summarization_guidance=summarization_guidance,
             )
 
         # gRPC client is sync - run in thread to avoid blocking event loop
@@ -597,6 +647,7 @@ class AsyncRagZoom:
                     units=text_units,
                     collect_telemetry=collect_telemetry,
                     timestamps=effective_timestamps,
+                    summarization_guidance=summarization_guidance,
                 )
 
         return await asyncio.to_thread(_do_batch_append)
