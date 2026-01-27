@@ -240,6 +240,35 @@ def test_ragzoom_batch_append_with_summarization_guidance() -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_wrapper_batch_append_with_guidance() -> None:
+    """AsyncRagZoom.batch_append() passes summarization_guidance to runtime session.
+
+    Spec: specs/transcript-summarization-guidance.md § 3. Thread Through Wrapper
+    Test: tests/test_wrapper_runtime.py::test_async_wrapper_batch_append_with_guidance
+    """
+    expected = IndexingResult(
+        document_id="doc",
+        chunks_created=2,
+        tree_depth=1,
+    )
+    session = _StubSession(expected)
+    runtime = _StubRuntime(session)
+
+    guidance = "Preserve identity and agency. Focus on decisions."
+
+    with patch("ragzoom.wrapper.GrpcRagzoomClient") as client_mock:
+        wrapper = AsyncRagZoom(runtime=runtime)
+        result = await wrapper.batch_append(
+            "doc", ["unit1", "unit2"], summarization_guidance=guidance
+        )
+
+    assert result == expected
+    assert not client_mock.called
+    assert len(session.append_calls) == 1
+    assert session.append_calls[0]["summarization_guidance"] == guidance
+
+
+@pytest.mark.asyncio
 async def test_async_ragzoom_uses_runtime() -> None:
     expected = IndexingResult(
         document_id="doc",

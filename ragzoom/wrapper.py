@@ -598,6 +598,7 @@ class AsyncRagZoom:
         *,
         collect_telemetry: bool = False,
         timestamps: list[str | tuple[str, str]] | None = None,
+        summarization_guidance: str | None = None,
     ) -> IndexingResult:
         """Append multiple text units with forced split boundaries between them.
 
@@ -615,6 +616,8 @@ class AsyncRagZoom:
                 Each entry can be a single string (used for both start and end)
                 or a tuple of (start, end) strings. Must be None when units
                 contains AppendUnit objects.
+            summarization_guidance: Optional guidance for summary generation,
+                stored on document at creation time and used by the summarizer.
         """
         if not document_id:
             raise ValueError("document_id is required")
@@ -633,6 +636,7 @@ class AsyncRagZoom:
                 text_units,
                 collect_telemetry=collect_telemetry,
                 timestamps=effective_timestamps,
+                summarization_guidance=summarization_guidance,
             )
 
         # gRPC client is sync - run in thread to avoid blocking event loop
@@ -643,6 +647,7 @@ class AsyncRagZoom:
                     units=text_units,
                     collect_telemetry=collect_telemetry,
                     timestamps=effective_timestamps,
+                    summarization_guidance=summarization_guidance,
                 )
 
         return await asyncio.to_thread(_do_batch_append)
