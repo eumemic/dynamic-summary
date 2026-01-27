@@ -1,5 +1,5 @@
 ---
-status: READY
+status: COMPLETE
 ---
 
 # Embedding Text Optimization

@@ -6,10 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-
 from ragzoom_claude_code.transcript_sync import (
-    AppendEntry,
-    AppendLog,
     build_parent_map,
     find_common_ancestor,
 )
@@ -204,193 +201,6 @@ class TestFindCommonAncestor:
             find_common_ancestor("unknown", "msg2", parent_map)
 
 
-class TestAppendEntry:
-    """Tests for AppendEntry dataclass."""
-
-    def test_to_json(self) -> None:
-        """Should serialize to JSON dict."""
-        entry = AppendEntry(last_uuid="abc123", span_end=1523)
-
-        assert entry.to_json() == {"last_uuid": "abc123", "span_end": 1523}
-
-    def test_from_json(self) -> None:
-        """Should deserialize from JSON dict."""
-        data = {"last_uuid": "abc123", "span_end": 1523}
-
-        entry = AppendEntry.from_json(data)
-
-        assert entry.last_uuid == "abc123"
-        assert entry.span_end == 1523
-
-
-class TestAppendLog:
-    """Tests for AppendLog class."""
-
-    def test_append_and_iterate(self, tmp_path: Path) -> None:
-        """Should append entries and iterate them."""
-        log_path = tmp_path / "append.log"
-        log = AppendLog(log_path)
-
-        log.append(AppendEntry("msg1", 100))
-        log.append(AppendEntry("msg2", 200))
-        log.append(AppendEntry("msg3", 300))
-
-        entries = list(log)
-        assert len(entries) == 3
-        assert entries[0].last_uuid == "msg1"
-        assert entries[2].last_uuid == "msg3"
-
-    def test_last_entry(self, tmp_path: Path) -> None:
-        """Should return last entry efficiently."""
-        log_path = tmp_path / "append.log"
-        log = AppendLog(log_path)
-
-        log.append(AppendEntry("msg1", 100))
-        log.append(AppendEntry("msg2", 200))
-
-        last = log.last_entry()
-        assert last is not None
-        assert last.last_uuid == "msg2"
-        assert last.span_end == 200
-
-    def test_last_entry_empty_log(self, tmp_path: Path) -> None:
-        """Should return None for empty log."""
-        log_path = tmp_path / "append.log"
-        log = AppendLog(log_path)
-
-        assert log.last_entry() is None
-
-    def test_truncate_to(self, tmp_path: Path) -> None:
-        """Should remove entries after the specified one."""
-        log_path = tmp_path / "append.log"
-        log = AppendLog(log_path)
-
-        log.append(AppendEntry("msg1", 100))
-        log.append(AppendEntry("msg2", 200))
-        log.append(AppendEntry("msg3", 300))
-        log.append(AppendEntry("msg4", 400))
-
-        # Keep entries up to and including msg2
-        log.truncate_to("msg2")
-
-        entries = list(log)
-        assert len(entries) == 2
-        assert entries[-1].last_uuid == "msg2"
-
-    def test_truncate_to_nonexistent_raises(self, tmp_path: Path) -> None:
-        """Should raise if truncation uuid not found."""
-        log_path = tmp_path / "append.log"
-        log = AppendLog(log_path)
-
-        log.append(AppendEntry("msg1", 100))
-
-        with pytest.raises(ValueError, match="not found"):
-            log.truncate_to("nonexistent")
-
-    def test_persistence(self, tmp_path: Path) -> None:
-        """Should persist entries across instances."""
-        log_path = tmp_path / "append.log"
-
-        log1 = AppendLog(log_path)
-        log1.append(AppendEntry("msg1", 100))
-        log1.append(AppendEntry("msg2", 200))
-
-        log2 = AppendLog(log_path)
-        entries = list(log2)
-
-        assert len(entries) == 2
-        assert entries[0].last_uuid == "msg1"
-        assert entries[1].last_uuid == "msg2"
-
-    def test_find_valid_prefix(self, tmp_path: Path) -> None:
-        """Should find last entry that's an ancestor of target."""
-        log_path = tmp_path / "append.log"
-        log = AppendLog(log_path)
-
-        log.append(AppendEntry("msg1", 100))
-        log.append(AppendEntry("msg2", 200))
-        log.append(AppendEntry("msg3", 300))
-        log.append(AppendEntry("msg4", 400))
-
-        # msg1 -> msg2 -> msg3 -> msg4 (indexed)
-        #              \-> msg3' -> msg4' (current branch)
-        parent_map = {
-            "msg1": None,
-            "msg2": "msg1",
-            "msg3": "msg2",
-            "msg4": "msg3",
-            "msg3-alt": "msg2",
-            "msg4-alt": "msg3-alt",
-        }
-
-        # Common ancestor of msg4 and msg4-alt is msg2
-        valid_entry = log.find_valid_prefix("msg4-alt", parent_map)
-
-        assert valid_entry is not None
-        assert valid_entry.last_uuid == "msg2"
-        assert valid_entry.span_end == 200
-
-    def test_find_valid_prefix_no_revert(self, tmp_path: Path) -> None:
-        """When no revert, should return last entry."""
-        log_path = tmp_path / "append.log"
-        log = AppendLog(log_path)
-
-        log.append(AppendEntry("msg1", 100))
-        log.append(AppendEntry("msg2", 200))
-
-        # Linear chain, msg3 continues from msg2
-        parent_map = {
-            "msg1": None,
-            "msg2": "msg1",
-            "msg3": "msg2",
-        }
-
-        valid_entry = log.find_valid_prefix("msg3", parent_map)
-
-        assert valid_entry is not None
-        assert valid_entry.last_uuid == "msg2"
-
-    def test_find_valid_prefix_empty_log(self, tmp_path: Path) -> None:
-        """Empty log returns None, signaling 'transcribe from root to head'."""
-        log_path = tmp_path / "append.log"
-        log = AppendLog(log_path)
-
-        # Transcript exists with messages, but we haven't indexed anything
-        parent_map: dict[str, str | None] = {
-            "msg1": None,
-            "msg2": "msg1",
-            "msg3": "msg2",
-        }
-
-        # None means: no valid prefix, caller should transcribe ancestor chain
-        # from root (msg1) to current head (msg3)
-        assert log.find_valid_prefix("msg3", parent_map) is None
-
-    def test_find_valid_prefix_disjoint_branches(self, tmp_path: Path) -> None:
-        """Disjoint branches return None, signaling 'transcribe from root'."""
-        log_path = tmp_path / "append.log"
-        log = AppendLog(log_path)
-
-        # We indexed msg1 -> msg2 -> msg3
-        log.append(AppendEntry("msg1", 100))
-        log.append(AppendEntry("msg2", 200))
-        log.append(AppendEntry("msg3", 300))
-
-        # User reverted to before msg1 and started completely fresh
-        # alt1 -> alt2 (no shared ancestry with msg1-3)
-        parent_map: dict[str, str | None] = {
-            "msg1": None,
-            "msg2": "msg1",
-            "msg3": "msg2",
-            "alt1": None,
-            "alt2": "alt1",
-        }
-
-        # None means: no valid prefix, caller should transcribe ancestor chain
-        # from root (alt1) to current head (alt2), and truncate entire document
-        assert log.find_valid_prefix("alt2", parent_map) is None
-
-
 class TestGetAncestorChain:
     """Tests for getting ordered ancestor chain between two nodes."""
 
@@ -460,239 +270,6 @@ class TestGetAncestorChain:
 
         with pytest.raises(ValueError, match="not an ancestor"):
             get_ancestor_chain("msg2", "other", parent_map)
-
-
-class TestComputeSyncPlan:
-    """Tests for computing what sync operations are needed."""
-
-    def test_no_op_when_already_synced(self, tmp_path: Path) -> None:
-        """When transcript head matches last indexed, nothing to do."""
-        from ragzoom_claude_code.transcript_sync import (
-            AppendEntry,
-            AppendLog,
-            compute_sync_plan,
-        )
-
-        log_path = tmp_path / "append.log"
-        log = AppendLog(log_path)
-        log.append(AppendEntry("msg3", 300))
-
-        parent_map: dict[str, str | None] = {
-            "msg1": None,
-            "msg2": "msg1",
-            "msg3": "msg2",
-        }
-
-        plan = compute_sync_plan(
-            current_head="msg3",
-            append_log=log,
-            parent_map=parent_map,
-        )
-
-        assert plan.uuids_to_transcribe == []
-        assert plan.truncate_to_span is None
-
-    def test_append_new_messages(self, tmp_path: Path) -> None:
-        """When new messages added, transcribe them."""
-        from ragzoom_claude_code.transcript_sync import (
-            AppendEntry,
-            AppendLog,
-            compute_sync_plan,
-        )
-
-        log_path = tmp_path / "append.log"
-        log = AppendLog(log_path)
-        log.append(AppendEntry("msg2", 200))
-
-        parent_map: dict[str, str | None] = {
-            "msg1": None,
-            "msg2": "msg1",
-            "msg3": "msg2",
-            "msg4": "msg3",
-        }
-
-        plan = compute_sync_plan(
-            current_head="msg4",
-            append_log=log,
-            parent_map=parent_map,
-        )
-
-        assert plan.uuids_to_transcribe == ["msg3", "msg4"]
-        assert plan.truncate_to_span is None
-
-    def test_revert_and_new_branch(self, tmp_path: Path) -> None:
-        """When user reverted and continued, truncate and re-transcribe."""
-        from ragzoom_claude_code.transcript_sync import (
-            AppendEntry,
-            AppendLog,
-            compute_sync_plan,
-        )
-
-        log_path = tmp_path / "append.log"
-        log = AppendLog(log_path)
-        log.append(AppendEntry("msg1", 100))
-        log.append(AppendEntry("msg2", 200))
-        log.append(AppendEntry("msg3", 300))
-        log.append(AppendEntry("msg4", 400))
-
-        # msg1 -> msg2 -> msg3 -> msg4 (indexed)
-        #              \-> msg3' -> msg4' (current)
-        parent_map: dict[str, str | None] = {
-            "msg1": None,
-            "msg2": "msg1",
-            "msg3": "msg2",
-            "msg4": "msg3",
-            "msg3-alt": "msg2",
-            "msg4-alt": "msg3-alt",
-        }
-
-        plan = compute_sync_plan(
-            current_head="msg4-alt",
-            append_log=log,
-            parent_map=parent_map,
-        )
-
-        # Should truncate to msg2's span_end and transcribe the new branch
-        assert plan.truncate_to_span == 200
-        assert plan.truncate_to_uuid == "msg2"
-        assert plan.uuids_to_transcribe == ["msg3-alt", "msg4-alt"]
-
-    def test_empty_log_transcribes_full_chain(self, tmp_path: Path) -> None:
-        """When append log is empty, transcribe from root."""
-        from ragzoom_claude_code.transcript_sync import AppendLog, compute_sync_plan
-
-        log_path = tmp_path / "append.log"
-        log = AppendLog(log_path)
-
-        parent_map: dict[str, str | None] = {
-            "msg1": None,
-            "msg2": "msg1",
-            "msg3": "msg2",
-        }
-
-        plan = compute_sync_plan(
-            current_head="msg3",
-            append_log=log,
-            parent_map=parent_map,
-        )
-
-        assert plan.uuids_to_transcribe == ["msg1", "msg2", "msg3"]
-        assert plan.truncate_to_span is None
-
-    def test_disjoint_branches_truncates_all(self, tmp_path: Path) -> None:
-        """When branches are disjoint, truncate everything and start fresh."""
-        from ragzoom_claude_code.transcript_sync import (
-            AppendEntry,
-            AppendLog,
-            compute_sync_plan,
-        )
-
-        log_path = tmp_path / "append.log"
-        log = AppendLog(log_path)
-        log.append(AppendEntry("msg1", 100))
-        log.append(AppendEntry("msg2", 200))
-
-        # Completely separate conversation tree
-        parent_map: dict[str, str | None] = {
-            "msg1": None,
-            "msg2": "msg1",
-            "alt1": None,
-            "alt2": "alt1",
-        }
-
-        plan = compute_sync_plan(
-            current_head="alt2",
-            append_log=log,
-            parent_map=parent_map,
-        )
-
-        # Should truncate from span 0 (delete everything) and transcribe new chain
-        assert plan.truncate_to_span == 0
-        assert plan.truncate_to_uuid is None
-        assert plan.uuids_to_transcribe == ["alt1", "alt2"]
-
-
-class TestSessionState:
-    """Tests for SessionState JSONL format."""
-
-    def test_save_and_load(self, tmp_path: Path) -> None:
-        """Should persist and restore state."""
-        from ragzoom_claude_code.transcript_sync import (
-            AppendEntry,
-            SessionState,
-            SessionStateHeader,
-        )
-
-        state_path = tmp_path / "session.jsonl"
-        state = SessionState(
-            header=SessionStateHeader(document_id="doc-123"),
-            entries=[
-                AppendEntry("msg1", 100),
-                AppendEntry("msg2", 200),
-            ],
-        )
-
-        state.save(state_path)
-        loaded = SessionState.load(state_path)
-
-        assert loaded is not None
-        assert loaded.header.document_id == "doc-123"
-        assert len(loaded.entries) == 2
-        assert loaded.entries[0].last_uuid == "msg1"
-        assert loaded.entries[1].span_end == 200
-
-    def test_load_nonexistent_returns_none(self, tmp_path: Path) -> None:
-        """Should return None for missing file."""
-        from ragzoom_claude_code.transcript_sync import SessionState
-
-        state = SessionState.load(tmp_path / "missing.jsonl")
-        assert state is None
-
-    def test_append_log_view(self, tmp_path: Path) -> None:
-        """append_log() should return working AppendLog."""
-        from ragzoom_claude_code.transcript_sync import (
-            AppendEntry,
-            SessionState,
-            SessionStateHeader,
-        )
-
-        state = SessionState(
-            header=SessionStateHeader(document_id="doc-123"),
-            entries=[AppendEntry("msg1", 100)],
-        )
-
-        log = state.append_log()
-        log.append(AppendEntry("msg2", 200))
-
-        assert len(state.entries) == 2
-        assert state.entries[1].last_uuid == "msg2"
-
-        last = log.last_entry()
-        assert last is not None
-        assert last.last_uuid == "msg2"
-
-    def test_append_log_truncate(self, tmp_path: Path) -> None:
-        """append_log().truncate_to() should modify state entries."""
-        from ragzoom_claude_code.transcript_sync import (
-            AppendEntry,
-            SessionState,
-            SessionStateHeader,
-        )
-
-        state = SessionState(
-            header=SessionStateHeader(document_id="doc-123"),
-            entries=[
-                AppendEntry("msg1", 100),
-                AppendEntry("msg2", 200),
-                AppendEntry("msg3", 300),
-            ],
-        )
-
-        log = state.append_log()
-        log.truncate_to("msg2")
-
-        assert len(state.entries) == 2
-        assert state.entries[-1].last_uuid == "msg2"
 
 
 class TestGetCurrentHead:
@@ -850,3 +427,42 @@ class TestTranscribeUuidsFromMap:
 
         text = transcribe_uuids_from_map(["msg1", "missing", "also-missing"], records)
         assert "Hello" in text
+
+
+class TestConversationSummarizationGuidance:
+    """Tests for CONVERSATION_SUMMARIZATION_GUIDANCE constant."""
+
+    def test_conversation_guidance_constant_defined(self) -> None:
+        """Should have guidance constant for conversation transcripts."""
+        from ragzoom_claude_code.transcript_sync import (
+            CONVERSATION_SUMMARIZATION_GUIDANCE,
+        )
+
+        # Constant should be a non-empty string
+        assert isinstance(CONVERSATION_SUMMARIZATION_GUIDANCE, str)
+        assert len(CONVERSATION_SUMMARIZATION_GUIDANCE) > 0
+
+    def test_guidance_preserves_key_aspects(self) -> None:
+        """Guidance should mention identity, decisions, causality, and chronology."""
+        from ragzoom_claude_code.transcript_sync import (
+            CONVERSATION_SUMMARIZATION_GUIDANCE,
+        )
+
+        guidance = CONVERSATION_SUMMARIZATION_GUIDANCE.lower()
+
+        # Key aspects from spec
+        assert "identity" in guidance
+        assert "decision" in guidance
+        assert "cause" in guidance or "why" in guidance
+        assert "chronolog" in guidance or "temporal" in guidance
+
+    def test_guidance_mentions_technical_preservation(self) -> None:
+        """Guidance should instruct to preserve technical terms."""
+        from ragzoom_claude_code.transcript_sync import (
+            CONVERSATION_SUMMARIZATION_GUIDANCE,
+        )
+
+        guidance = CONVERSATION_SUMMARIZATION_GUIDANCE.lower()
+
+        # Should preserve exact technical details
+        assert "file path" in guidance or "function name" in guidance

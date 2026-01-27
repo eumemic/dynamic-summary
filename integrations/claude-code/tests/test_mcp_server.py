@@ -1,0 +1,157 @@
+"""Tests for MCP server identity resolution."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+from ragzoom_claude_code.mcp_server import _get_session_id
+
+
+class TestMcpServerEnvVarIdentity:
+    """Tests for RAGZOOM_DOCUMENT_ID env var support in MCP server."""
+
+    def test_env_var_takes_priority(self, tmp_path: Path) -> None:
+        """RAGZOOM_DOCUMENT_ID env var is used when set."""
+        # Patch environment to set RAGZOOM_DOCUMENT_ID
+        with patch.dict(os.environ, {"RAGZOOM_DOCUMENT_ID": "jarvis-user-123"}):
+            result = _get_session_id()
+
+        assert result == "jarvis-user-123"
+
+    def test_env_var_returns_string_not_tuple(self) -> None:
+        """When env var is set, return type is str not tuple."""
+        with patch.dict(os.environ, {"RAGZOOM_DOCUMENT_ID": "configured-doc"}):
+            result = _get_session_id()
+
+        # Should be a string, not a tuple
+        assert isinstance(result, str)
+        assert result == "configured-doc"
+
+    def test_empty_env_var_not_used(self, tmp_path: Path) -> None:
+        """Empty RAGZOOM_DOCUMENT_ID is treated as not set."""
+        # Empty string should not be used as document ID
+        with (
+            patch.dict(os.environ, {"RAGZOOM_DOCUMENT_ID": ""}),
+            pytest.raises(ValueError, match="No session found"),
+        ):
+            _get_session_id()
+
+    def test_env_var_skips_pid_temp_file_lookup(self, tmp_path: Path) -> None:
+        """When env var is set, PID temp file is not consulted."""
+        # This verifies get_session_document_id() is not called when env var is set
+        with (
+            patch.dict(os.environ, {"RAGZOOM_DOCUMENT_ID": "skip-temp-file-lookup"}),
+            patch(
+                "ragzoom_claude_code.mcp_server.get_session_document_id"
+            ) as mock_get_session,
+        ):
+            result = _get_session_id()
+
+        assert result == "skip-temp-file-lookup"
+        mock_get_session.assert_not_called()
+
+
+class TestMcpServerPidTempFileDiscovery:
+    """Tests for PID temp file discovery in MCP server."""
+
+    def test_pid_temp_file_discovery(self, tmp_path: Path) -> None:
+        """MCP server discovers session via PID temp file when env var not set.
+
+        This is a unit test that verifies the MCP server calls get_session_document_id
+        with the correct parent PID.
+        """
+        expected_doc_id = "discovered-session-abc123"
+        parent_pid = 12345
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("os.getppid", return_value=parent_pid),
+            patch(
+                "ragzoom_claude_code.mcp_server.get_session_document_id"
+            ) as mock_get_session,
+        ):
+            mock_get_session.return_value = expected_doc_id
+            result = _get_session_id()
+
+        assert result == expected_doc_id
+        mock_get_session.assert_called_once_with(parent_pid)
+
+    def test_pid_temp_file_discovery_end_to_end(self, tmp_path: Path) -> None:
+        """End-to-end test: creates temp file, verifies MCP server discovers session.
+
+        This test actually writes to a temp file and verifies the full discovery flow
+        without mocking get_session_document_id(). Per acceptance criteria #4:
+        "PID temp file discovery works for Claude Code sessions"
+        """
+        expected_doc_id = "e2e-discovered-session-xyz789"
+        parent_pid = 54321
+
+        # Write temp file simulating what SessionStart hook does
+        temp_file = tmp_path / f"ragzoom-session-{parent_pid}"
+        temp_file.write_text(expected_doc_id)
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("os.getppid", return_value=parent_pid),
+            # Patch _get_temp_dir in transcript_sync to use our test directory
+            patch(
+                "ragzoom_claude_code.transcript_sync._get_temp_dir",
+                return_value=tmp_path,
+            ),
+        ):
+            result = _get_session_id()
+
+        assert result == expected_doc_id
+
+    def test_pid_temp_file_not_found_raises_error(self) -> None:
+        """Error raised when PID temp file doesn't exist and no env var."""
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("os.getppid", return_value=99999),
+            patch(
+                "ragzoom_claude_code.mcp_server.get_session_document_id",
+                return_value=None,
+            ),
+            pytest.raises(ValueError, match="No session found for PID 99999"),
+        ):
+            _get_session_id()
+
+
+class TestRememberToolDocumentId:
+    """Tests for recall tool document ID handling."""
+
+    def test_recall_tool_uses_correct_document_id(self) -> None:
+        """Remember tool uses string doc_id from _get_session_id(), not tuple."""
+        expected_doc_id = "test-session-doc"
+
+        with (
+            patch.dict(os.environ, {"RAGZOOM_DOCUMENT_ID": expected_doc_id}),
+            patch(
+                "ragzoom_claude_code.mcp_server.GrpcRagzoomClient"
+            ) as mock_client_class,
+        ):
+            # Set up mock client (context manager pattern)
+            mock_client = MagicMock()
+            mock_client_class.return_value.__enter__.return_value = mock_client
+
+            # Set up mock response
+            mock_node = MagicMock(
+                text="test summary", time_start=None, time_end=None, height=0
+            )
+            mock_retrieval = MagicMock(tiling_ids=["node1"], nodes={"node1": mock_node})
+            mock_client.execute_query.return_value = MagicMock(retrieval=mock_retrieval)
+
+            from ragzoom_claude_code.mcp_server import recall
+
+            result = recall(query="test query", token_budget=1000)
+
+            # Verify execute_query was called with string document_id
+            mock_client.execute_query.assert_called_once()
+            call_kwargs = mock_client.execute_query.call_args.kwargs
+            assert call_kwargs["document_id"] == expected_doc_id
+            assert isinstance(call_kwargs["document_id"], str)
+
+            assert "test summary" in result

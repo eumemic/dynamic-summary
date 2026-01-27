@@ -38,6 +38,7 @@ A turn contains the full interaction cycle: user asks → assistant responds →
 **Excluded from turns:**
 - Compaction summaries (`isCompactSummary: true`) - already LLM-generated
 - Queue operations (`type: "queue-operation"`) - internal Claude Code state
+- Meta records (`isMeta: true`) - injected content like skill expansions, embedded PDFs, command templates (20+ MB of static documentation that repeats across sessions)
 
 **Edge cases:**
 - Standalone user message with no assistant response (e.g., `/command`) → valid single-message turn
@@ -90,7 +91,7 @@ def group_into_turns(
 ```
 
 **Algorithm:**
-1. Filter to user/assistant messages (exclude compaction summaries, queue ops)
+1. Filter to user/assistant messages (exclude compaction summaries, queue ops, meta records)
 2. Walk through in order
 3. Start new turn on each UserMessage (user without `toolUseResult`)
 4. Accumulate AssistantMessages and ToolResults into current turn
@@ -206,6 +207,7 @@ No CLI changes - sync command behavior unchanged, just adds timestamps internall
 7. ⬚ Revert detection works at turn granularity
 8. ⬚ Compaction summaries are not indexed (skipped)
 9. ⬚ Uses `claude-transcriber` library for JSONL→text conversion
+10. ⬚ Meta records (`isMeta: true`) are not indexed (skill expansions, PDFs, command templates)
 
 ## Non-Goals
 

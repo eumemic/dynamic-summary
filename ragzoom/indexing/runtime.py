@@ -45,6 +45,19 @@ class TruncateResult:
 
 
 @dataclass
+class TruncateFromTimeResult:
+    """Outcome from truncating a temporal document at a cutoff time.
+
+    Used for time-based truncation where all nodes with time_end > cutoff_time
+    are deleted. This is the temporal analog of TruncateResult (span-based).
+    """
+
+    document_id: str
+    deleted_node_ids: list[str]
+    cutoff_time: float
+
+
+@dataclass
 class ProgressEvent:
     """Snapshot of worker progress for a document."""
 
@@ -447,6 +460,7 @@ class DocumentIndexSession:
         *,
         collect_telemetry: bool = False,
         timestamps: list[str | tuple[str, str]] | None = None,
+        summarization_guidance: str | None = None,
     ) -> IndexingResult:
         """Append multiple text units with forced split boundaries between them.
 
@@ -461,6 +475,8 @@ class DocumentIndexSession:
             timestamps: Optional list of timestamps parallel to units. Each entry
                 can be an ISO 8601 string (used for both start and end) or a tuple
                 of (start, end) strings.
+            summarization_guidance: Optional guidance for summary generation.
+                Stored on document at creation time and used by the summarizer.
 
         Returns:
             IndexingResult with combined stats for all appended units
@@ -502,6 +518,7 @@ class DocumentIndexSession:
                         file_path=resolved_path,
                         embedding_model=embedding_model,
                         summary_model=summary_model,
+                        summarization_guidance=summarization_guidance,
                     )
                     doc_record = store.get_document_by_id(self._document_id)
 
@@ -719,6 +736,65 @@ class DocumentIndexSession:
             document_id=self._document_id,
             deleted_node_ids=deleted_node_ids,
             span_start=span_start,
+        )
+
+    async def truncate_from_time(self, cutoff_time: float) -> TruncateFromTimeResult:
+        """Delete all nodes with time_end > cutoff_time.
+
+        Used for rolling back a temporal document to a specific point in time.
+        Cancels any in-flight indexing, deletes nodes from storage,
+        and removes corresponding vectors from the vector index.
+
+        This is the temporal analog of truncate_from_span.
+
+        Args:
+            cutoff_time: Delete all nodes where node.time_end > this value
+                        (Unix timestamp in seconds)
+
+        Returns:
+            TruncateFromTimeResult with document_id, deleted node IDs, and cutoff_time
+        """
+        await self._runtime._indexing_engine.cancel_document(self._document_id)
+
+        store = self._runtime._store
+        lock_cm = self._lock_document(store)
+        deleted_node_ids: list[str] = []
+
+        with lock_cm:
+            doc_record = store.get_document_by_id(self._document_id)
+            if doc_record is None:
+                return TruncateFromTimeResult(
+                    document_id=self._document_id,
+                    deleted_node_ids=[],
+                    cutoff_time=cutoff_time,
+                )
+
+            embedding_model = (
+                getattr(doc_record, "embedding_model", None)
+                or self._runtime._index_config.embedding_model
+            )
+
+            # Delete nodes from storage
+            deleted_node_ids = store.delete_nodes_from_time(
+                self._document_id, cutoff_time
+            )
+
+            # Delete vectors for those nodes
+            if deleted_node_ids:
+                try:
+                    vector_index = self._runtime._vector_index_factory(embedding_model)
+                    vector_index.delete(filter={"node_id": {"$in": deleted_node_ids}})
+                except Exception:
+                    logger.exception(
+                        "Failed to delete vectors for time-truncated nodes in document %s",
+                        self._document_id,
+                    )
+
+        await self._runtime._emit_status(self._document_id)
+        return TruncateFromTimeResult(
+            document_id=self._document_id,
+            deleted_node_ids=deleted_node_ids,
+            cutoff_time=cutoff_time,
         )
 
     def register_progress_listener(self, callback: ProgressCallback) -> ProgressHandle:

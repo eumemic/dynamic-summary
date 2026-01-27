@@ -6,6 +6,12 @@
 
 set -euo pipefail
 
+# Skip hooks when sync is disabled (e.g., RAGZOOM_DISABLE_SYNC=1 ralph build)
+if [[ "${RAGZOOM_DISABLE_SYNC:-}" == "1" ]]; then
+    cat > /dev/null  # consume stdin
+    exit 0
+fi
+
 # Read JSON input from stdin
 JSON=$(cat)
 

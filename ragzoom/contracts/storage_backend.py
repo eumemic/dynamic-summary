@@ -57,6 +57,27 @@ class StorageBackend(Protocol):
         self, document_id: str, span_start: int
     ) -> list[str]: ...
 
+    def delete_nodes_from_time(self, document_id: str, cutoff_time: float) -> list[str]:
+        """Delete nodes whose time_end exceeds the cutoff time.
+
+        For temporal documents, removes all nodes (leaves and summaries) where
+        time_end > cutoff_time. Kept nodes whose parents are deleted get
+        parent_id = NULL (orphaned). Nodes with NULL time_end are preserved.
+
+        Args:
+            document_id: The document to truncate.
+            cutoff_time: Unix timestamp. Nodes with time_end > cutoff_time are deleted.
+
+        Returns:
+            List of deleted node IDs. Empty list if document doesn't exist or
+            has no nodes matching the criteria.
+
+        Note:
+            Document existence and temporal validation should be performed by
+            the calling layer (e.g., servicer) before invoking this method.
+        """
+        ...
+
     def get_document_by_id(self, document_id: str) -> Document | None: ...
 
     def get_document_by_path(self, file_path: str) -> Document | None: ...

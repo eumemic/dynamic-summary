@@ -123,6 +123,7 @@ class BatchAppendTextRequest:
     document_id: str
     units: Sequence[AppendUnit]
     collect_telemetry: bool
+    summarization_guidance: str
 
     def __init__(
         self,
@@ -130,7 +131,9 @@ class BatchAppendTextRequest:
         document_id: str,
         units: Iterable[AppendUnit] = ...,
         collect_telemetry: bool = ...,
+        summarization_guidance: str = ...,
     ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
 
 class BatchAppendTextResponse:
     stats: DocumentStats
@@ -387,6 +390,42 @@ class GetDocumentResponse:
 
     def __init__(self, *, status: DocumentStatus) -> None: ...
 
+class DocumentStatusRequest:
+    """Request for document status with completion metrics."""
+
+    document_id: str
+
+    def __init__(self, *, document_id: str) -> None: ...
+
+class DocumentStatusResponse:
+    """Response with document completion metrics and temporal range."""
+
+    DESCRIPTOR: ClassVar[Descriptor]
+    document_id: str
+    exists: bool
+    is_temporal: bool
+    leaf_count: int
+    node_count: int
+    complete_forest_size: int
+    completion_pct: float
+    time_start: str
+    time_end: str
+
+    def __init__(
+        self,
+        *,
+        document_id: str = ...,
+        exists: bool = ...,
+        is_temporal: bool = ...,
+        leaf_count: int = ...,
+        node_count: int = ...,
+        complete_forest_size: int = ...,
+        completion_pct: float = ...,
+        time_start: str = ...,
+        time_end: str = ...,
+    ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
+
 WORKER_RUN_MODE_UNTIL_IDLE: int
 
 class GetTelemetryRequest:
@@ -452,6 +491,29 @@ class TruncateDocumentResponse:
         document_id: str,
         deleted_node_ids: Iterable[str],
         span_start: int,
+    ) -> None: ...
+
+class TruncateFromTimeRequest:
+    """Request for time-based truncation of temporal documents."""
+
+    document_id: str
+    cutoff_time: str  # ISO 8601 timestamp
+
+    def __init__(self, *, document_id: str, cutoff_time: str) -> None: ...
+
+class TruncateFromTimeResponse:
+    """Response from time-based truncation."""
+
+    document_id: str
+    deleted_node_ids: Sequence[str]
+    cutoff_time: str
+
+    def __init__(
+        self,
+        *,
+        document_id: str,
+        deleted_node_ids: Iterable[str],
+        cutoff_time: str,
     ) -> None: ...
 
 class ExportTelemetryRequest:

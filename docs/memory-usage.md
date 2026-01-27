@@ -1,6 +1,6 @@
 # Memory Usage Guide
 
-This guide covers effective use of the `remember` memory tool for recalling information from earlier in the conversation after compaction.
+This guide covers effective use of the `recall` memory tool for recalling information from earlier in the conversation after compaction.
 
 ## Continuously Improve These Guidelines
 
@@ -29,7 +29,7 @@ The memory tool is designed for iterative exploration, not single-shot queries.
 Start broad to get the span layout:
 
 ```python
-remember(query="authentication bug", token_budget=2000)
+recall(query="authentication bug", token_budget=2000)
 
 # Returns summaries + node spans like:
 # [0-349459] height=9
@@ -43,7 +43,7 @@ remember(query="authentication bug", token_budget=2000)
 Drill into the relevant span for more detail:
 
 ```python
-remember(query="authentication bug", token_budget=2000,
+recall(query="authentication bug", token_budget=2000,
          span_start=522506, span_end=564383)
 
 # Same budget, smaller region = more verbatim content
@@ -71,9 +71,9 @@ If results are all high-level summaries (high heights), either:
 **Don't do this:**
 ```python
 # BAD: Multiple queries all hitting the same high-level summaries
-remember(query="summarization hints", token_budget=3000)
-remember(query="structured node data", token_budget=3000)
-remember(query="cost per node", token_budget=3000)
+recall(query="summarization hints", token_budget=3000)
+recall(query="structured node data", token_budget=3000)
+recall(query="cost per node", token_budget=3000)
 # ... all return redundant old summaries
 ```
 
@@ -82,11 +82,11 @@ This wastes tokens on the same high-level summaries repeated across queries.
 **Do this instead:**
 ```python
 # GOOD: Survey once, then zoom into the relevant region
-remember(query="brainstorm session", token_budget=2000)
+recall(query="brainstorm session", token_budget=2000)
 # Notice discussion is in spans 580000-650000
 
-remember(query="summarization hints", span_start=580000, span_end=650000)
-remember(query="cost per node", span_start=580000, span_end=650000)
+recall(query="summarization hints", span_start=580000, span_end=650000)
+recall(query="cost per node", span_start=580000, span_end=650000)
 # Now these hit verbatim content from the actual discussion
 ```
 

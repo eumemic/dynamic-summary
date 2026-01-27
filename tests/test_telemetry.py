@@ -651,7 +651,12 @@ class TestTelemetryIntegration:
 
 
 class TestTelemetryCapturesCustomSummaryPrompt:
-    """Test that telemetry captures the actual summary system prompt used."""
+    """Test that telemetry captures the actual summary system prompt used.
+
+    The telemetry must record the FULL constructed prompt (with guidance appended
+    under the "# Summarization Guidance" header), not just the raw guidance value.
+    This is essential for reproducibility.
+    """
 
     def test_telemetry_captures_default_prompt_when_none_configured(self) -> None:
         """When no custom prompt is configured, telemetry captures the default prompt."""
@@ -668,8 +673,32 @@ class TestTelemetryCapturesCustomSummaryPrompt:
 
         assert system_prompts["summary_system_prompt"] == DEFAULT_SUMMARY_SYSTEM_PROMPT
 
-    def test_telemetry_captures_custom_prompt_when_configured(self) -> None:
-        """When a custom prompt is configured, telemetry captures it."""
+    def test_telemetry_records_full_constructed_prompt(self) -> None:
+        """Telemetry should record the full prompt, not just raw guidance.
+
+        The summarization_guidance is appended to the default system prompt under
+        a "# Summarization Guidance" header. Telemetry must capture this full
+        constructed prompt for reproducibility.
+        """
+        guidance = "Preserve legal terminology exactly."
+        config = IndexConfig.load(summarization_guidance=guidance)
+
+        collector = TelemetryCollector(
+            document_id="test-doc",
+            source_tokens=1000,
+            config=config,
+        )
+
+        prompts = collector._get_system_prompts()
+
+        # Should contain the FULL constructed prompt, matching summary_utils.py
+        expected = (
+            f"{DEFAULT_SUMMARY_SYSTEM_PROMPT}\n\n# Summarization Guidance\n{guidance}"
+        )
+        assert prompts["summary_system_prompt"] == expected
+
+    def test_telemetry_captures_full_prompt_when_configured(self) -> None:
+        """When a custom prompt is configured, telemetry captures the full prompt."""
         custom_guidance = (
             "You are a legal document summarizer. Preserve exact legal terminology."
         )
@@ -684,11 +713,15 @@ class TestTelemetryCapturesCustomSummaryPrompt:
 
         system_prompts = collector._get_system_prompts()
 
-        # Should capture the custom guidance, not the default
-        assert system_prompts["summary_system_prompt"] == custom_guidance
+        # Should capture the FULL constructed prompt with guidance appended
+        expected_prompt = (
+            f"{DEFAULT_SUMMARY_SYSTEM_PROMPT}\n\n"
+            f"# Summarization Guidance\n{custom_guidance}"
+        )
+        assert system_prompts["summary_system_prompt"] == expected_prompt
 
-    def test_telemetry_data_includes_custom_prompt(self) -> None:
-        """The full telemetry data dict should include custom prompt in system_prompts."""
+    def test_telemetry_data_includes_full_prompt(self) -> None:
+        """The full telemetry data dict should include full prompt in system_prompts."""
         custom_guidance = "You are a medical note summarizer."
         config = IndexConfig.load(summarization_guidance=custom_guidance)
 
@@ -701,6 +734,10 @@ class TestTelemetryCapturesCustomSummaryPrompt:
         telemetry_data = collector.get_telemetry_data("test-doc", chunk_size=100)
 
         assert "system_prompts" in telemetry_data
+        expected_prompt = (
+            f"{DEFAULT_SUMMARY_SYSTEM_PROMPT}\n\n"
+            f"# Summarization Guidance\n{custom_guidance}"
+        )
         assert (
-            telemetry_data["system_prompts"]["summary_system_prompt"] == custom_guidance
+            telemetry_data["system_prompts"]["summary_system_prompt"] == expected_prompt
         )

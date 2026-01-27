@@ -16,12 +16,14 @@ class TestDaemonizeFunction:
     """Tests for the daemonize() function. Skipped in CI - subprocess forking is flaky."""
 
     @pytest.mark.slow_threshold(5)
-    def test_daemonize_forks_to_background(self, tmp_path: Path) -> None:
-        """daemonize() should fork process to background and write flag."""
+    def test_daemonize_ready_fd_signals(self, tmp_path: Path) -> None:
+        """daemonize() should write b'R' to ready_fd after completing daemonization."""
         log_file = tmp_path / "daemon.log"
         flag_file = tmp_path / "daemon_ran"
 
-        # Run a subprocess that calls daemonize
+        # Create a pipe - parent reads, child writes
+        read_fd, write_fd = os.pipe()
+
         script = f"""
 import os
 import sys
@@ -30,56 +32,112 @@ os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
 from ragzoom.daemon import daemonize
 from pathlib import Path
 
-daemonize(Path("{log_file}"))
-# If we get here, we're in the daemon process
+# The write_fd is passed via pass_fds
+daemonize(Path("{log_file}"), ready_fd={write_fd})
+# If we get here, we're in the daemon process and have signaled ready
 Path("{flag_file}").write_text(f"daemon pid: {{os.getpid()}}")
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        # Parent process should exit quickly
-        proc.wait(timeout=5)
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            # Close our copy of write_fd - only the child should have it
+            os.close(write_fd)
+            write_fd = -1  # Mark as closed
 
-        # Give daemon time to write flag
-        time.sleep(0.5)
+            # Parent process should exit quickly
+            proc.wait(timeout=5)
 
-        # Daemon should have written the flag file
+            # Read from pipe - should get b"R" when daemon is ready
+            import select
+
+            ready, _, _ = select.select([read_fd], [], [], 5.0)
+            assert ready, "Pipe should be readable within timeout"
+
+            data = os.read(read_fd, 1)
+            assert data == b"R", f"Expected b'R' but got {data!r}"
+
+            # Daemon should have written the flag file
+            assert flag_file.exists(), "Daemon process should have run"
+            content = flag_file.read_text()
+            assert content.startswith("daemon pid:")
+        finally:
+            # Clean up file descriptors
+            if write_fd != -1:
+                try:
+                    os.close(write_fd)
+                except OSError:
+                    pass
+            try:
+                os.close(read_fd)
+            except OSError:
+                pass
+
+    @pytest.mark.slow_threshold(5)
+    def test_daemonize_forks_to_background(self, tmp_path: Path) -> None:
+        """daemonize() should fork process to background and write flag."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
+        log_file = tmp_path / "daemon.log"
+        flag_file = tmp_path / "daemon_ran"
+
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            script = f"""
+import os
+import sys
+sys.path.insert(0, "{Path.cwd()}")
+os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
+from ragzoom.daemon import daemonize
+from pathlib import Path
+
+daemonize(Path("{log_file}"), ready_fd={write_fd})
+Path("{flag_file}").write_text(f"daemon pid: {{os.getpid()}}")
+"""
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            proc.wait(timeout=5)
+            wait_for_daemon_ready(read_fd)
+
         assert flag_file.exists(), "Daemon process should have run"
-        content = flag_file.read_text()
-        assert content.startswith("daemon pid:")
+        assert flag_file.read_text().startswith("daemon pid:")
 
     @pytest.mark.slow_threshold(5)
     def test_daemonize_writes_pid_file(self, tmp_path: Path) -> None:
         """daemonize() should write daemon PID to state file."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
         log_file = tmp_path / "daemon.log"
         pid_file = tmp_path / "daemon.pid"
 
-        script = f"""
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            script = f"""
 import os
 import sys
-import time
 sys.path.insert(0, "{Path.cwd()}")
 os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
 from ragzoom.daemon import daemonize
 from pathlib import Path
 
-daemonize(Path("{log_file}"))
-Path("{tmp_path / 'ran'}").write_text("yes")
-time.sleep(0.3)
+daemonize(Path("{log_file}"), ready_fd={write_fd})
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        proc.wait(timeout=5)
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            proc.wait(timeout=5)
+            wait_for_daemon_ready(read_fd)
 
-        # Give daemon time to start
-        time.sleep(0.5)
-
-        # PID file should exist and contain a valid PID
         assert pid_file.exists(), "PID file should be created"
         pid_content = pid_file.read_text().strip()
         pid = int(pid_content)
@@ -88,9 +146,12 @@ time.sleep(0.3)
     @pytest.mark.slow_threshold(5)
     def test_daemonize_redirects_stdout_stderr(self, tmp_path: Path) -> None:
         """daemonize() should redirect stdout/stderr to log file."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
         log_file = tmp_path / "daemon.log"
 
-        script = f"""
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            script = f"""
 import os
 import sys
 sys.path.insert(0, "{Path.cwd()}")
@@ -98,21 +159,21 @@ os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
 from ragzoom.daemon import daemonize
 from pathlib import Path
 
-daemonize(Path("{log_file}"))
+daemonize(Path("{log_file}"), ready_fd={write_fd})
 print("stdout message")
 print("stderr message", file=sys.stderr)
 sys.stdout.flush()
 sys.stderr.flush()
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        proc.wait(timeout=5)
-
-        # Give daemon time to write
-        time.sleep(0.5)
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            proc.wait(timeout=5)
+            wait_for_daemon_ready(read_fd)
 
         # Log file should contain the messages
         assert log_file.exists(), "Log file should be created"
@@ -123,10 +184,13 @@ sys.stderr.flush()
     @pytest.mark.slow_threshold(5)
     def test_daemonize_detaches_from_terminal(self, tmp_path: Path) -> None:
         """daemonize() should create new session (setsid)."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
         log_file = tmp_path / "daemon.log"
         result_file = tmp_path / "session_info"
 
-        script = f"""
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            script = f"""
 import os
 import sys
 sys.path.insert(0, "{Path.cwd()}")
@@ -135,7 +199,7 @@ from ragzoom.daemon import daemonize
 from pathlib import Path
 
 original_sid = os.getsid(0)
-daemonize(Path("{log_file}"))
+daemonize(Path("{log_file}"), ready_fd={write_fd})
 new_sid = os.getsid(0)
 new_pid = os.getpid()
 
@@ -145,14 +209,15 @@ Path("{result_file}").write_text(
     f"pid={{new_pid}}\\n"
 )
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        proc.wait(timeout=5)
-
-        time.sleep(0.5)
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            proc.wait(timeout=5)
+            wait_for_daemon_ready(read_fd)
 
         # Check that daemon has its own session
         assert result_file.exists(), "Result file should be created"
@@ -172,10 +237,13 @@ Path("{result_file}").write_text(
     @pytest.mark.slow_threshold(5)
     def test_daemonize_closes_stdin(self, tmp_path: Path) -> None:
         """daemonize() should close stdin (redirect to /dev/null)."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
         log_file = tmp_path / "daemon.log"
         result_file = tmp_path / "stdin_info"
 
-        script = f"""
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            script = f"""
 import os
 import sys
 sys.path.insert(0, "{Path.cwd()}")
@@ -183,21 +251,22 @@ os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
 from ragzoom.daemon import daemonize
 from pathlib import Path
 
-daemonize(Path("{log_file}"))
+daemonize(Path("{log_file}"), ready_fd={write_fd})
 try:
     data = sys.stdin.read(1)
     Path("{result_file}").write_text(f"read: {{repr(data)}}")
 except Exception as e:
     Path("{result_file}").write_text(f"error: {{e}}")
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        proc.wait(timeout=5)
-
-        time.sleep(0.5)
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            proc.wait(timeout=5)
+            wait_for_daemon_ready(read_fd)
 
         # stdin should be redirected to /dev/null (empty read)
         assert result_file.exists()
@@ -208,9 +277,12 @@ except Exception as e:
     @pytest.mark.slow_threshold(5)
     def test_daemonize_log_file_created_if_missing(self, tmp_path: Path) -> None:
         """daemonize() should create log file and parent dirs if they don't exist."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
         log_file = tmp_path / "subdir" / "daemon.log"
 
-        script = f"""
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            script = f"""
 import os
 import sys
 sys.path.insert(0, "{Path.cwd()}")
@@ -218,18 +290,19 @@ os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
 from ragzoom.daemon import daemonize
 from pathlib import Path
 
-daemonize(Path("{log_file}"))
+daemonize(Path("{log_file}"), ready_fd={write_fd})
 print("log message")
 sys.stdout.flush()
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        proc.wait(timeout=5)
-
-        time.sleep(0.5)
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            proc.wait(timeout=5)
+            wait_for_daemon_ready(read_fd)
 
         # Log file and parent directory should be created
         assert log_file.parent.exists()
@@ -243,34 +316,69 @@ class TestDaemonizeIntegration:
     @pytest.mark.slow_threshold(5)
     def test_daemon_survives_parent_exit(self, tmp_path: Path) -> None:
         """Daemon should keep running after parent process exits."""
+        import select
+
         from ragzoom.daemon import read_pid_file
 
         log_file = tmp_path / "daemon.log"
         marker_file = tmp_path / "still_running"
 
-        script = f"""
+        # Use two pipes: ready_pipe for daemonization, done_pipe for marker completion
+        ready_read_fd, ready_write_fd = os.pipe()
+        done_read_fd, done_write_fd = os.pipe()
+
+        try:
+            # The daemon signals ready via ready_fd, writes marker, then signals done via done_fd
+            script = f"""
 import os
 import sys
-import time
 sys.path.insert(0, "{Path.cwd()}")
 os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
 from ragzoom.daemon import daemonize
 from pathlib import Path
 
-daemonize(Path("{log_file}"))
+daemonize(Path("{log_file}"), ready_fd={ready_write_fd})
 Path("{marker_file}").write_text("started")
-time.sleep(0.3)
+# Signal phase 2 complete by writing "still_running" marker
 Path("{marker_file}").write_text("still_running")
+# Signal done via second pipe
+os.write({done_write_fd}, b"D")
+os.close({done_write_fd})
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        proc.wait(timeout=5)  # Parent exits
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(ready_write_fd, done_write_fd),
+            )
+            # Close our copies of write ends
+            os.close(ready_write_fd)
+            ready_write_fd = -1
+            os.close(done_write_fd)
+            done_write_fd = -1
 
-        # Wait for daemon to update marker (shorter than 2s test timeout)
-        time.sleep(0.8)
+            proc.wait(timeout=5)  # Parent exits
+
+            # Wait for daemon ready signal
+            ready, _, _ = select.select([ready_read_fd], [], [], 5.0)
+            assert ready, "Daemon should signal ready"
+            data = os.read(ready_read_fd, 1)
+            assert data == b"R", f"Expected b'R' but got {data!r}"
+
+            # Wait for done signal (marker file written)
+            ready, _, _ = select.select([done_read_fd], [], [], 5.0)
+            assert ready, "Daemon should signal done"
+            data = os.read(done_read_fd, 1)
+            assert data == b"D", f"Expected b'D' but got {data!r}"
+
+        finally:
+            # Clean up file descriptors
+            for fd in [ready_read_fd, ready_write_fd, done_read_fd, done_write_fd]:
+                if fd != -1:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
 
         assert marker_file.exists()
         assert marker_file.read_text() == "still_running"
@@ -293,22 +401,24 @@ class TestSignalHandlers:
     def test_sigterm_graceful_shutdown(self, tmp_path: Path) -> None:
         """SIGTERM should trigger graceful shutdown and cleanup state files."""
         from ragzoom.daemon import read_pid_file
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
 
         log_file = tmp_path / "daemon.log"
         pid_file = tmp_path / "daemon.pid"
         cleanup_marker = tmp_path / "cleanup_ran"
 
-        # Script starts daemon with signal handlers and waits for signal
-        script = f"""
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            # Script starts daemon with signal handlers and waits for signal
+            script = f"""
 import os
 import sys
 import time
 sys.path.insert(0, "{Path.cwd()}")
 os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
-from ragzoom.daemon import daemonize, install_shutdown_handlers, remove_pid_file
+from ragzoom.daemon import daemonize, install_shutdown_handlers
 from pathlib import Path
 
-daemonize(Path("{log_file}"))
+daemonize(Path("{log_file}"), ready_fd={write_fd})
 
 # Install signal handlers with a cleanup callback
 def on_shutdown():
@@ -316,26 +426,19 @@ def on_shutdown():
 
 install_shutdown_handlers(cleanup_callback=on_shutdown)
 
-# Write marker indicating daemon is ready
-Path("{tmp_path / 'ready'}").write_text("ready")
-
-# Wait for signal (up to 10 seconds)
-time.sleep(10)
+# Block until signal received (signal.pause is more efficient than sleeping)
+import signal as sig_module
+sig_module.pause()
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        proc.wait(timeout=5)  # Parent exits
-
-        # Wait for daemon to be ready
-        ready_file = tmp_path / "ready"
-        for _ in range(20):
-            if ready_file.exists():
-                break
-            time.sleep(0.1)
-        assert ready_file.exists(), "Daemon should signal ready"
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            proc.wait(timeout=5)  # Parent exits
+            wait_for_daemon_ready(read_fd)
 
         # Get daemon PID and verify it's running
         with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
@@ -345,8 +448,23 @@ time.sleep(10)
         # Send SIGTERM
         os.kill(pid, signal.SIGTERM)
 
-        # Wait for cleanup
-        time.sleep(0.5)
+        # Wait for daemon to exit using os.waitpid with polling
+        # Use select() with short timeout instead of time.sleep() for event-driven waiting
+        import select as sel
+
+        for _ in range(50):
+            try:
+                result, _ = os.waitpid(pid, os.WNOHANG)
+                if result != 0:
+                    break
+            except ChildProcessError:
+                # Not our child - use kill(pid, 0) to check if process exists
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    break  # Process exited
+            # Use select() with timeout as a non-busy wait (10ms)
+            sel.select([], [], [], 0.01)
 
         # Cleanup callback should have run
         assert cleanup_marker.exists(), "Cleanup callback should have run"
@@ -359,12 +477,14 @@ time.sleep(10)
     def test_sigint_graceful_shutdown(self, tmp_path: Path) -> None:
         """SIGINT should trigger graceful shutdown like SIGTERM."""
         from ragzoom.daemon import read_pid_file
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
 
         log_file = tmp_path / "daemon.log"
         pid_file = tmp_path / "daemon.pid"
         cleanup_marker = tmp_path / "cleanup_ran"
 
-        script = f"""
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            script = f"""
 import os
 import sys
 import time
@@ -373,37 +493,52 @@ os.environ["RAGZOOM_STATE_DIR"] = "{tmp_path}"
 from ragzoom.daemon import daemonize, install_shutdown_handlers
 from pathlib import Path
 
-daemonize(Path("{log_file}"))
+daemonize(Path("{log_file}"), ready_fd={write_fd})
 
 def on_shutdown():
     Path("{cleanup_marker}").write_text("cleanup_ran")
 
 install_shutdown_handlers(cleanup_callback=on_shutdown)
-Path("{tmp_path / 'ready'}").write_text("ready")
-time.sleep(10)
+
+# Block until signal received (signal.pause is more efficient than sleeping)
+import signal as sig_module
+sig_module.pause()
 """
-        proc = subprocess.Popen(
-            [sys.executable, "-c", script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        proc.wait(timeout=5)
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            proc.wait(timeout=5)  # Parent exits
+            wait_for_daemon_ready(read_fd)
 
-        ready_file = tmp_path / "ready"
-        for _ in range(20):
-            if ready_file.exists():
-                break
-            time.sleep(0.1)
-        assert ready_file.exists()
-
+        # Get daemon PID and verify it's running
         with patch.dict(os.environ, {"RAGZOOM_STATE_DIR": str(tmp_path)}):
             pid = read_pid_file()
-        assert pid is not None
+        assert pid is not None, "PID file should exist"
 
         # Send SIGINT instead of SIGTERM
         os.kill(pid, signal.SIGINT)
 
-        time.sleep(0.5)
+        # Wait for daemon to exit using os.waitpid with polling
+        # Use select() with short timeout instead of time.sleep() for event-driven waiting
+        import select as sel
+
+        for _ in range(50):
+            try:
+                result, _ = os.waitpid(pid, os.WNOHANG)
+                if result != 0:
+                    break
+            except ChildProcessError:
+                # Not our child - use kill(pid, 0) to check if process exists
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    break  # Process exited
+            # Use select() with timeout as a non-busy wait (10ms)
+            sel.select([], [], [], 0.01)
 
         assert cleanup_marker.exists(), "Cleanup callback should have run"
         assert not pid_file.exists(), "PID file should be removed"
@@ -488,3 +623,74 @@ class TestGetProcessUptime:
             # Test negative uptime (clock skew) returns "unknown"
             mock_process.create_time.return_value = time.time() + 100  # Future time
             assert get_process_uptime(1234) == "unknown"
+
+
+class TestDaemonReadyPipe:
+    """Tests for the daemon_ready_pipe() context manager and wait_for_daemon_ready()."""
+
+    def test_daemon_ready_pipe_cleanup(self) -> None:
+        """daemon_ready_pipe() should clean up file descriptors on exit."""
+        from tests.conftest import daemon_ready_pipe
+
+        # Get fds and verify they're valid during context
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            # Both fds should be valid (can write/read)
+            os.write(write_fd, b"X")
+            data = os.read(read_fd, 1)
+            assert data == b"X"
+
+            # Store fds to check after context exits
+            stored_read_fd = read_fd
+            stored_write_fd = write_fd
+
+        # After context exits, fds should be closed
+        # Attempting to use them should raise OSError (Bad file descriptor)
+        with pytest.raises(OSError):
+            os.read(stored_read_fd, 1)
+
+        with pytest.raises(OSError):
+            os.write(stored_write_fd, b"Y")
+
+    def test_daemon_ready_pipe_cleanup_with_early_close(self) -> None:
+        """daemon_ready_pipe() should handle already-closed fds gracefully."""
+        from tests.conftest import daemon_ready_pipe
+
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            # Close fds manually before context exits (simulates typical usage)
+            os.close(write_fd)
+            os.close(read_fd)
+            # Context manager should handle this gracefully on exit (no exception)
+
+    def test_wait_for_daemon_ready_success(self) -> None:
+        """wait_for_daemon_ready() should return when daemon signals ready."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            # Simulate daemon signaling ready
+            os.write(write_fd, b"R")
+            os.close(write_fd)
+
+            # Should return without exception
+            wait_for_daemon_ready(read_fd, timeout=1.0)
+
+    def test_wait_for_daemon_ready_timeout(self) -> None:
+        """wait_for_daemon_ready() should raise TimeoutError when daemon doesn't signal."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            # Don't write anything - simulate slow daemon
+            # Use very short timeout to avoid slow tests
+            with pytest.raises(TimeoutError, match="did not signal ready within"):
+                wait_for_daemon_ready(read_fd, timeout=0.01)
+
+    def test_wait_for_daemon_ready_crash_detection(self) -> None:
+        """wait_for_daemon_ready() should raise AssertionError when daemon crashes (EOF)."""
+        from tests.conftest import daemon_ready_pipe, wait_for_daemon_ready
+
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            # Close write end without writing b"R" - simulates daemon crash
+            os.close(write_fd)
+
+            # Should detect crash via EOF
+            with pytest.raises(AssertionError, match="crashed before signaling ready"):
+                wait_for_daemon_ready(read_fd, timeout=1.0)

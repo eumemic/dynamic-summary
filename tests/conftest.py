@@ -4,8 +4,10 @@ import asyncio
 import logging
 import math
 import os
+import select
 import signal
-from collections.abc import AsyncIterator, Callable, Generator, Sequence
+from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -157,20 +159,32 @@ if "OPENAI_API_KEY" not in os.environ:
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    """Add command-line options for test configuration."""
-    parser.addoption(
+    """Add command-line options for test configuration.
+
+    Uses try/except guards to avoid duplicate registration errors when tests
+    from multiple conftest paths are collected together (e.g., integration tests).
+    """
+
+    def _safe_addoption(*args: str, **kwargs: object) -> None:
+        """Add option, ignoring if already registered."""
+        try:
+            parser.addoption(*args, **kwargs)
+        except ValueError:
+            pass  # Already registered by another conftest
+
+    _safe_addoption(
         "--use-real-store",
         action="store_true",
         default=False,
         help="Use real Store instead of mock for all tests",
     )
-    parser.addoption(
+    _safe_addoption(
         "--integration-only",
         action="store_true",
         default=False,
         help="Run only integration tests with real Store",
     )
-    parser.addoption(
+    _safe_addoption(
         "--max-test-duration",
         type=float,
         default=float(os.getenv("RZ_MAX_TEST_DURATION", "2.0")),
@@ -1057,6 +1071,21 @@ class FakeAppendResult:
     chunks_created: int = 1
 
 
+@dataclass
+class FakeDocumentStatus:
+    """Fake document status for stateless sync testing."""
+
+    document_id: str
+    exists: bool = False
+    is_temporal: bool = True
+    leaf_count: int = 0
+    node_count: int = 0
+    complete_forest_size: int = 0
+    completion_pct: float = 0.0
+    time_start: str | None = None
+    time_end: str | None = None
+
+
 class FakeTranscriptClient:
     """Fake client for transcript sync tests that tracks appends and truncations."""
 
@@ -1064,7 +1093,48 @@ class FakeTranscriptClient:
         self.appends: list[tuple[str, str]] = []
         self.timestamps: list[tuple[str, str] | None] = []
         self.truncates: list[tuple[str, int]] = []
+        self.truncate_from_time_calls: list[tuple[str, str]] = []
+        self.batch_append_calls: list[tuple[str, list[object]]] = []
         self._current_span: int = 0
+        self._document_status: FakeDocumentStatus | None = None
+        self._last_time_end: str | None = None
+
+    def get_document_status(self, document_id: str) -> FakeDocumentStatus:
+        """Return document status for stateless sync.
+
+        Returns configured status or auto-generated based on appends.
+        """
+        if self._document_status is not None:
+            return self._document_status
+
+        # Auto-generate status based on what's been appended
+        if self._last_time_end is not None:
+            return FakeDocumentStatus(
+                document_id=document_id,
+                exists=True,
+                is_temporal=True,
+                leaf_count=len(self.appends),
+                node_count=len(self.appends),
+                time_end=self._last_time_end,
+            )
+
+        # Default: non-existent document
+        return FakeDocumentStatus(document_id=document_id, exists=False)
+
+    def truncate_from_time(self, document_id: str, cutoff_time: str) -> object:
+        """Track time-based truncation calls."""
+        self.truncate_from_time_calls.append((document_id, cutoff_time))
+        # Update internal state to reflect truncation
+        self._last_time_end = cutoff_time
+        return type(
+            "TruncateFromTimeResult",
+            (),
+            {
+                "document_id": document_id,
+                "deleted_node_ids": [],
+                "cutoff_time": cutoff_time,
+            },
+        )()
 
     def append(
         self,
@@ -1084,32 +1154,55 @@ class FakeTranscriptClient:
             chunks_created=1,
         )
 
-    def batch_append(self, document_id: str, units: list[object]) -> FakeAppendResult:
+    def batch_append(
+        self,
+        document_id: str,
+        units: list[object],
+        summarization_guidance: str | None = None,
+    ) -> FakeAppendResult:
         """Batch append multiple units and return span positions.
 
         Args:
             document_id: Document to append to
-            units: Either list of strings or list of AppendUnit objects
+            units: List of AppendUnit objects or strings
+            summarization_guidance: Optional guidance for summarization
         """
+        self.batch_append_calls.append((document_id, units))
         span_start = self._current_span
+
         for unit in units:
-            # Support both string units and AppendUnit objects
+            # Extract text and timestamp from AppendUnit or treat as string
             if hasattr(unit, "text"):
-                text = unit.text  # AppendUnit
-                timestamp = None
-                if hasattr(unit, "time_start") and hasattr(unit, "time_end"):
-                    if unit.time_start is not None and unit.time_end is not None:
-                        timestamp = (unit.time_start, unit.time_end)
-                self.timestamps.append(timestamp)
+                text = unit.text
+                timestamp = self._extract_timestamp(unit)
             else:
                 text = str(unit)
+                timestamp = None
+
             self.appends.append((document_id, text))
+            self.timestamps.append(timestamp)
             self._current_span += len(text)
+
         return FakeAppendResult(
             span_start=span_start,
             span_end=self._current_span,
             chunks_created=len(units),
         )
+
+    def _extract_timestamp(self, unit: object) -> tuple[str, str] | None:
+        """Extract timestamp tuple from AppendUnit if present."""
+        if not hasattr(unit, "time_start") or not hasattr(unit, "time_end"):
+            return None
+
+        time_start = getattr(unit, "time_start")
+        time_end = getattr(unit, "time_end")
+
+        if time_start is None or time_end is None:
+            return None
+
+        # Track last time_end for auto-generated document status
+        self._last_time_end = time_end
+        return (time_start, time_end)
 
     def truncate(self, document_id: str, span_start: int) -> None:
         """Truncate document to span."""
@@ -1121,3 +1214,72 @@ class FakeTranscriptClient:
 def fake_transcript_client() -> FakeTranscriptClient:
     """Create a fake client for transcript sync tests."""
     return FakeTranscriptClient()
+
+
+# ============================================================================
+# Daemon Test Utilities
+# ============================================================================
+# These utilities implement the ready-pipe pattern for event-driven daemon
+# synchronization in tests, eliminating sleep-based polling.
+# ============================================================================
+
+
+@contextmanager
+def daemon_ready_pipe() -> Iterator[tuple[int, int]]:
+    """Context manager that creates a ready-signal pipe for daemon synchronization.
+
+    Implements the ready-pipe pattern for event-driven daemon startup detection.
+    The write_fd should be passed to the daemon process via subprocess.Popen's
+    pass_fds parameter. The daemon writes b"R" to signal readiness.
+
+    Yields:
+        tuple[int, int]: (read_fd, write_fd) file descriptors.
+            - read_fd: Use with wait_for_daemon_ready() to block until ready
+            - write_fd: Pass to daemon via pass_fds, daemon writes b"R" when ready
+
+    Example:
+        with daemon_ready_pipe() as (read_fd, write_fd):
+            proc = subprocess.Popen(
+                [sys.executable, "-c", script],
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)  # Close our copy after child inherits it
+            wait_for_daemon_ready(read_fd)
+            # Daemon is now guaranteed ready - no sleep needed
+    """
+    read_fd, write_fd = os.pipe()
+    try:
+        yield read_fd, write_fd
+    finally:
+        # Clean up any unclosed file descriptors
+        for fd in (read_fd, write_fd):
+            try:
+                os.close(fd)
+            except OSError:
+                pass  # Already closed
+
+
+def wait_for_daemon_ready(read_fd: int, timeout: float = 5.0) -> None:
+    """Block until daemon signals ready or timeout/crash.
+
+    Uses select() to efficiently wait for the daemon to write b"R" to the
+    ready pipe. Detects daemon crashes immediately via EOF (pipe closes
+    when daemon dies without writing).
+
+    Args:
+        read_fd: Read end of the ready pipe from daemon_ready_pipe().
+        timeout: Maximum seconds to wait for daemon ready signal.
+
+    Raises:
+        TimeoutError: If daemon doesn't signal ready within timeout.
+        AssertionError: If daemon crashes before signaling ready (EOF on pipe).
+    """
+    ready, _, _ = select.select([read_fd], [], [], timeout)
+    if not ready:
+        raise TimeoutError(f"Daemon did not signal ready within {timeout}s")
+
+    data = os.read(read_fd, 1)
+    if data != b"R":
+        raise AssertionError(
+            f"Daemon crashed before signaling ready (got {data!r} instead of b'R')"
+        )

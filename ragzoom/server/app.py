@@ -18,6 +18,7 @@ from ragzoom.config import (
 )
 from ragzoom.constants import DEFAULT_GRPC_HOST, DEFAULT_GRPC_PORT
 from ragzoom.contracts.storage_backend import StorageBackend
+from ragzoom.daemon import write_port_file
 from ragzoom.server.lease import LeaseConfig
 from ragzoom.server.servicers import serve
 from ragzoom.server.state import ServerState
@@ -211,6 +212,11 @@ async def _run_with_lease(
     if not await lease.acquire():
         logger.critical("Failed to acquire indexer lease - exiting")
         sys.exit(1)  # Container orchestrator will restart us
+
+    # Write port file AFTER lease acquisition succeeds.
+    # This ensures clients only connect once the daemon is truly ready to serve.
+    # (Fixes Issue #6: race condition where port file existed before lease)
+    write_port_file(options.port)
 
     try:
         state = build_state(options, store=store, operational_cfg=operational_cfg)

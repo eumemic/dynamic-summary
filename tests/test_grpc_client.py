@@ -66,3 +66,168 @@ def test_proto_summarization_guidance_is_optional() -> None:
     )
     # Should not have the field set
     assert not request.HasField("summarization_guidance")
+
+
+def test_batch_append_proto_has_summarization_guidance_field() -> None:
+    """Verify BatchAppendTextRequest proto has summarization_guidance field."""
+    request = pb2.BatchAppendTextRequest(
+        document_id="test",
+        units=[pb2.AppendUnit(content=b"unit 1")],
+        summarization_guidance="Batch guidance",
+    )
+    assert request.summarization_guidance == "Batch guidance"
+
+
+def test_batch_append_proto_summarization_guidance_is_optional() -> None:
+    """Verify summarization_guidance field is optional in BatchAppendTextRequest."""
+    request = pb2.BatchAppendTextRequest(
+        document_id="test",
+        units=[pb2.AppendUnit(content=b"unit 1")],
+    )
+    assert not request.HasField("summarization_guidance")
+
+
+@pytest.mark.asyncio
+async def test_batch_append_text_with_summarization_guidance(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """Verify batch_append_text passes summarization_guidance to server.
+
+    Spec: specs/transcript-summarization-guidance.md § 2. Thread Through gRPC Client
+    """
+    address, state = grpc_test_environment
+    custom_guidance = "This is conversation transcript. Preserve identity and agency."
+
+    client = GrpcRagzoomClient(address)
+    try:
+        result = await asyncio.to_thread(
+            client.batch_append_text,
+            document_id="batch-guidance-test",
+            units=["Turn 1: Hello", "Turn 2: World"],
+            summarization_guidance=custom_guidance,
+        )
+        assert result is not None
+
+        # Verify document was created and guidance stored
+        doc = state.store.get_document_by_id("batch-guidance-test")
+        assert doc is not None, "Document should be created"
+        assert (
+            doc.summarization_guidance == custom_guidance
+        ), f"Expected guidance stored, got: {doc.summarization_guidance!r}"
+    finally:
+        client.close()
+
+
+@pytest.mark.asyncio
+async def test_grpc_client_get_document_status(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """Test get_document_status returns DocumentStatusView with all fields.
+
+    Spec: specs/temporal-document-apis.md § API Changes > Python Client
+    """
+    from ragzoom.client.grpc_client import DocumentStatusView
+
+    address, state = grpc_test_environment
+    document_id = "status-test-doc"
+
+    client = GrpcRagzoomClient(address)
+    try:
+        await asyncio.to_thread(
+            client.append_text,
+            document_id=document_id,
+            content=b"Test content for status check.",
+            collect_telemetry=False,
+            replace_existing=True,
+        )
+        await asyncio.to_thread(client.run_workers_once)
+
+        status = await asyncio.to_thread(client.get_document_status, document_id)
+
+        assert isinstance(status, DocumentStatusView)
+        assert status.document_id == document_id
+        assert status.exists is True
+        assert status.is_temporal is False
+        assert status.leaf_count >= 1
+        assert status.node_count >= status.leaf_count
+        assert status.complete_forest_size >= status.leaf_count
+        assert 0 <= status.completion_pct <= 100
+        assert status.time_start is None
+        assert status.time_end is None
+
+    finally:
+        client.close()
+
+
+@pytest.mark.asyncio
+async def test_grpc_client_get_document_status_nonexistent(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """Test get_document_status returns exists=False for nonexistent documents."""
+    from ragzoom.client.grpc_client import DocumentStatusView
+
+    address, _state = grpc_test_environment
+
+    client = GrpcRagzoomClient(address)
+    try:
+        status = await asyncio.to_thread(
+            client.get_document_status, "nonexistent-doc-12345"
+        )
+
+        assert isinstance(status, DocumentStatusView)
+        assert status.exists is False
+        assert status.leaf_count == 0
+        assert status.node_count == 0
+
+    finally:
+        client.close()
+
+
+@pytest.mark.asyncio
+async def test_grpc_client_truncate_from_time(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """Test truncate_from_time client method calls RPC and maps errors correctly.
+
+    Spec: specs/temporal-document-apis.md § API Changes > Python Client
+
+    Note: End-to-end truncation behavior is tested in test_temporal_document_apis.py
+    using mocked state to support temporal documents.
+    """
+
+    address, _state = grpc_test_environment
+    document_id = "truncate-time-test-nonexistent"
+    cutoff = "2024-01-01T10:30:00Z"
+
+    client = GrpcRagzoomClient(address)
+    try:
+        # Verify RPC error mapping: NOT_FOUND -> RuntimeError
+        with pytest.raises(RuntimeError, match="NOT_FOUND"):
+            await asyncio.to_thread(
+                client.truncate_from_time,
+                document_id=document_id,
+                cutoff_time=cutoff,
+            )
+
+    finally:
+        client.close()
+
+
+@pytest.mark.asyncio
+async def test_grpc_client_truncate_from_time_dataclass() -> None:
+    """Test TruncateFromTimeResult dataclass exists and has expected fields.
+
+    Spec: specs/temporal-document-apis.md § API Changes > Python Client
+    """
+    from ragzoom.client.grpc_client import TruncateFromTimeResult
+
+    # Verify the dataclass can be constructed with expected fields
+    result = TruncateFromTimeResult(
+        document_id="test-doc",
+        deleted_node_ids=["node-1", "node-2"],
+        cutoff_time="2024-01-01T12:00:00Z",
+    )
+
+    assert result.document_id == "test-doc"
+    assert result.deleted_node_ids == ["node-1", "node-2"]
+    assert result.cutoff_time == "2024-01-01T12:00:00Z"

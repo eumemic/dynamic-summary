@@ -1,13 +1,10 @@
 """Tests for revert detection at turn granularity.
 
-When using turn-level AppendEntry tracking, revert detection must understand
-turn boundaries. If a common ancestor falls in the middle of a turn (not at
-a turn boundary), we need to truncate to *before* that turn.
+Tests that reverts are detected correctly and trigger appropriate truncation.
+With stateless sync, truncation is time-based rather than span-based.
 
-Spec: specs/timestamped-transcript-sync.md § AppendEntry Tracking:
-"On revert detection:
-- Common ancestor found in middle of a turn → truncate to before that turn
-- Re-index from the turn boundary"
+The sliding window algorithm in find_truncation_point() ensures we always
+stop at turn boundaries, so mid-turn reverts are handled correctly.
 """
 
 from __future__ import annotations
@@ -15,28 +12,30 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ragzoom_claude_code.transcript_sync import (
-    SessionState,
-    execute_sync,
-)
+from ragzoom_claude_code.transcript_sync import execute_sync
+
 from tests.conftest import FakeTranscriptClient
 
 
 class TestRevertDetectionAtTurnGranularity:
-    """Tests for revert detection when AppendEntries track turn boundaries."""
+    """Tests for revert detection at turn boundaries using stateless sync.
+
+    With stateless sync, reverts are detected by comparing connection point
+    timestamps with indexed_time_end. Truncation uses time-based truncation
+    instead of span-based.
+    """
 
     def test_revert_within_turn_truncates_to_before_turn(self, tmp_path: Path) -> None:
-        """If user reverts to a message WITHIN an indexed turn, truncate to
-        before that turn and re-index from the turn boundary.
+        """If user reverts within an indexed turn, truncate to turn boundary.
 
         Scenario:
         - Indexed: Turn 1 (msg1->msg2), Turn 2 (msg3->msg4)
         - User reverts to msg3 (start of Turn 2) and continues differently
-        - Common ancestor is msg3, which is within Turn 2
-        - Should truncate to Turn 1's span_end and re-index from msg3
+        - The sliding window finds connection at msg2 (turn boundary before msg3)
+        - Should truncate and re-index from msg3
         """
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
         client = FakeTranscriptClient()
 
         # Initial sync: 2 turns
@@ -89,20 +88,14 @@ class TestRevertDetectionAtTurnGranularity:
             )
             + "\n"
         )
-        result1 = execute_sync(transcript_path, state_path, client)
+        result1 = execute_sync(transcript_path, document_id, client)
         assert not result1.truncated, "Initial sync should not truncate"
+        assert len(client.batch_append_calls) == 1, "Should batch append 2 turns"
 
-        # Verify initial state: 2 entries (one per turn)
-        state = SessionState.load(state_path)
-        assert state is not None
-        assert len(state.entries) == 2
-        turn1_span = state.entries[0].span_end
-        turn2_span = state.entries[1].span_end
-        assert turn2_span > turn1_span
-
-        # Reset client for tracking
-        client.truncates.clear()
+        # Reset client for tracking but preserve indexed state
+        client.truncate_from_time_calls.clear()
         client.appends.clear()
+        client.batch_append_calls.clear()
 
         # Now user reverts to msg3 (start of Turn 2) and continues differently
         # Claude Code transcripts are append-only, so old messages remain
@@ -126,45 +119,36 @@ class TestRevertDetectionAtTurnGranularity:
                 )
                 + "\n"
             )
-        result2 = execute_sync(transcript_path, state_path, client)
+        result2 = execute_sync(transcript_path, document_id, client)
 
         # Should have truncated because msg4-alt branches from msg3
         assert result2.truncated, (
             "Should detect revert and truncate. "
-            f"Result: truncated={result2.truncated}, truncate_span={result2.truncate_span}"
+            f"Result: truncated={result2.truncated}"
         )
 
-        # The common ancestor is msg3, which is the START of Turn 2
-        # But Turn 2's AppendEntry has last_uuid=msg4
-        # Since msg3 is WITHIN Turn 2, we should truncate to Turn 1's boundary
-        assert result2.truncate_span == turn1_span, (
-            f"Should truncate to Turn 1's span_end ({turn1_span}), "
-            f"not Turn 2's ({turn2_span}). "
-            f"Got truncate_span={result2.truncate_span}"
-        )
+        # With stateless sync, truncation uses time-based (truncate_from_time)
+        # The connection point is msg2 (end of Turn 1), so truncate to its timestamp
+        assert len(client.truncate_from_time_calls) == 1
+        truncate_doc, truncate_time = client.truncate_from_time_calls[0]
+        assert truncate_doc == "transcript"
+        assert truncate_time == "2024-01-01T10:01:00Z"  # msg2's timestamp
 
-        # Client should have been told to truncate to Turn 1's span
-        assert len(client.truncates) == 1
-        assert client.truncates[0][1] == turn1_span
-
-        # After truncation, we re-index from Turn 2's start
-        # So msg3 and msg4-alt should be in the appended content
-        assert "msg3" in result2.appended_uuids
-        # msg4-alt should be there since it replaces msg4
-        assert "msg4-alt" in result2.appended_uuids
+        # After truncation, we re-index Turn 2
+        assert result2.turns_appended >= 1
 
     def test_revert_at_turn_boundary_truncates_correctly(self, tmp_path: Path) -> None:
         """If user reverts to the END of a turn (turn boundary), truncate
-        to that turn's span_end and continue from there.
+        and re-index from the new turn.
 
         Scenario:
         - Indexed: Turn 1 (msg1->msg2), Turn 2 (msg3->msg4)
         - User reverts to msg2 (end of Turn 1) and starts new Turn 2
-        - Common ancestor is msg2, which is at Turn 1's boundary
-        - Should truncate to Turn 1's span_end and re-index new Turn 2
+        - Connection point is msg2 (Turn 1's end)
+        - Should truncate and re-index new Turn 2
         """
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
         client = FakeTranscriptClient()
 
         # Initial sync: 2 turns
@@ -215,15 +199,12 @@ class TestRevertDetectionAtTurnGranularity:
             )
             + "\n"
         )
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
-        state = SessionState.load(state_path)
-        assert state is not None
-        turn1_span = state.entries[0].span_end
-
-        # Reset for tracking
-        client.truncates.clear()
+        # Reset for tracking but preserve indexed state
+        client.truncate_from_time_calls.clear()
         client.appends.clear()
+        client.batch_append_calls.clear()
 
         # User reverts to msg2 (end of Turn 1) and starts new Turn 2
         # Claude Code transcripts are append-only, so old messages remain
@@ -258,15 +239,18 @@ class TestRevertDetectionAtTurnGranularity:
                 )
                 + "\n"
             )
-        result2 = execute_sync(transcript_path, state_path, client)
+        result2 = execute_sync(transcript_path, document_id, client)
 
-        # Should truncate to Turn 1's span (msg2 is exactly at Turn 1 boundary)
+        # Should truncate using time-based truncation
         assert result2.truncated
-        assert result2.truncate_span == turn1_span
+        assert len(client.truncate_from_time_calls) == 1
+        truncate_doc, truncate_time = client.truncate_from_time_calls[0]
+        assert truncate_doc == "transcript"
+        # Truncate to msg2's timestamp (connection point)
+        assert truncate_time == "2024-01-01T10:01:00Z"
 
         # Should re-index the new Turn 2
-        assert "msg3-alt" in result2.appended_uuids
-        assert "msg4-alt" in result2.appended_uuids
+        assert result2.turns_appended >= 1
 
     def test_revert_preserves_untouched_turns(self, tmp_path: Path) -> None:
         """Turns before the revert point should remain indexed.
@@ -274,10 +258,11 @@ class TestRevertDetectionAtTurnGranularity:
         Scenario:
         - Indexed: Turn 1, Turn 2, Turn 3
         - User reverts to end of Turn 1
-        - Turn 1 should remain, Turns 2 & 3 get replaced
+        - Turn 1 should remain (truncation only removes content after)
+        - Turns 2 & 3 get replaced
         """
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
         client = FakeTranscriptClient()
 
         # Initial sync: 3 turns
@@ -345,15 +330,11 @@ class TestRevertDetectionAtTurnGranularity:
             )
             + "\n"
         )
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
 
-        state = SessionState.load(state_path)
-        assert state is not None
-        assert len(state.entries) == 3
-        turn1_span = state.entries[0].span_end
-
-        # Reset
-        client.truncates.clear()
+        # Reset for tracking
+        client.truncate_from_time_calls.clear()
+        client.batch_append_calls.clear()
 
         # Revert to end of Turn 1, new Turn 2
         # Claude Code transcripts are append-only, so old messages remain
@@ -384,22 +365,23 @@ class TestRevertDetectionAtTurnGranularity:
                 )
                 + "\n"
             )
-        result2 = execute_sync(transcript_path, state_path, client)
+        result2 = execute_sync(transcript_path, document_id, client)
 
+        # Should truncate using time-based truncation
         assert result2.truncated
-        assert result2.truncate_span == turn1_span
+        assert len(client.truncate_from_time_calls) == 1
+        truncate_doc, truncate_time = client.truncate_from_time_calls[0]
+        assert truncate_doc == "transcript"
+        # Truncate to msg2's timestamp (end of Turn 1)
+        assert truncate_time == "2024-01-01T10:01:00Z"
 
-        # After sync, should have 2 entries: Turn 1 (preserved) + new Turn 2
-        state2 = SessionState.load(state_path)
-        assert state2 is not None
-        assert len(state2.entries) == 2
-        assert state2.entries[0].last_uuid == "msg2"  # Turn 1 preserved
-        assert state2.entries[1].last_uuid == "msg4-new"  # New Turn 2
+        # New turn should have been appended
+        assert result2.turns_appended >= 1
 
     def test_no_revert_continues_normally(self, tmp_path: Path) -> None:
         """When there's no revert, new turns are simply appended."""
         transcript_path = tmp_path / "transcript.jsonl"
-        state_path = tmp_path / "state.jsonl"
+        document_id = "transcript"
         client = FakeTranscriptClient()
 
         # Initial sync: 1 turn
@@ -428,11 +410,12 @@ class TestRevertDetectionAtTurnGranularity:
             )
             + "\n"
         )
-        execute_sync(transcript_path, state_path, client)
+        execute_sync(transcript_path, document_id, client)
+        assert len(client.batch_append_calls) == 1
 
-        state = SessionState.load(state_path)
-        assert state is not None
-        assert len(state.entries) == 1
+        # Reset for tracking but preserve indexed state
+        client.truncate_from_time_calls.clear()
+        client.batch_append_calls.clear()
 
         # Add another turn (no revert, linear continuation)
         # Append new messages to the existing transcript
@@ -461,14 +444,12 @@ class TestRevertDetectionAtTurnGranularity:
                 )
                 + "\n"
             )
-        result2 = execute_sync(transcript_path, state_path, client)
+        result2 = execute_sync(transcript_path, document_id, client)
 
         # No truncation needed
         assert not result2.truncated
-        assert result2.truncate_span is None
+        assert len(client.truncate_from_time_calls) == 0
 
-        # Should have added the new turn
-        state2 = SessionState.load(state_path)
-        assert state2 is not None
-        assert len(state2.entries) == 2
-        assert state2.entries[1].last_uuid == "msg4"
+        # Should have appended the new turn
+        assert len(client.batch_append_calls) == 1
+        assert result2.turns_appended == 1

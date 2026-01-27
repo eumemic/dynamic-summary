@@ -1,7 +1,9 @@
 """Pytest configuration for Claude Code integration tests.
 
-Re-exports shared fixtures from the main test suite.
+Re-exports shared fixtures and pytest hooks from the main test suite.
 """
+
+from __future__ import annotations
 
 import importlib.util
 import sys
@@ -30,3 +32,7 @@ sqlite_store_factory = _main_conftest.sqlite_store_factory
 storage_backend = _main_conftest.storage_backend
 base_config = _main_conftest.base_config
 indexer_runtime_harness = _main_conftest.indexer_runtime_harness
+
+# Re-export pytest hooks for CLI options (--max-test-duration, --use-real-store)
+# The main conftest uses _safe_addoption so duplicates are silently ignored
+pytest_addoption = _main_conftest.pytest_addoption

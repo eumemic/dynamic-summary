@@ -18,6 +18,7 @@ from ragzoom.cli import cli
 from ragzoom.client.grpc_client import (
     ClearedDocumentResult,
     DocumentStatusView,
+    DocumentWorkStatus,
     ExecuteQueryOutput,
     NodeSummary,
     RetrievalView,
@@ -136,7 +137,7 @@ def cli_mocks() -> Iterator[CliMocks]:
         grpc_client.__exit__.return_value = None
         grpc_client.append_text.return_value = index_result
         grpc_client.execute_query.return_value = execute_output
-        grpc_client.get_document_status.return_value = DocumentStatusView(
+        grpc_client.get_document_work_status.return_value = DocumentWorkStatus(
             document_id="doc-123",
             leaf_count=5,
             tree_depth=4,
@@ -207,7 +208,7 @@ def test_index_command_with_file(
     assert result.exit_code == 0
     assert "Document indexed successfully" in result.output
     cli_mocks["grpc_client"].append_text.assert_called_once()
-    cli_mocks["grpc_client"].get_document_status.assert_called_once_with("doc.txt")
+    cli_mocks["grpc_client"].get_document_work_status.assert_called_once_with("doc.txt")
     assert "Tree height: 4" in result.output
 
 
@@ -220,7 +221,7 @@ def test_index_command_without_awaiting_workers(
     assert result.exit_code == 0
     assert "Leaf ingestion queued" in result.output
     cli_mocks["grpc_client"].iter_worker_snapshots.assert_not_called()
-    cli_mocks["grpc_client"].get_document_status.assert_not_called()
+    cli_mocks["grpc_client"].get_document_work_status.assert_not_called()
 
 
 def test_index_command_rejects_telemetry_without_await(
@@ -253,7 +254,7 @@ def test_index_command_with_document_id(
     assert result.exit_code == 0
     call = cli_mocks["grpc_client"].append_text.call_args
     assert call.kwargs["document_id"] == "my-doc"
-    cli_mocks["grpc_client"].get_document_status.assert_called_once_with("my-doc")
+    cli_mocks["grpc_client"].get_document_work_status.assert_called_once_with("my-doc")
 
 
 def test_index_append_requires_document_id(
@@ -593,11 +594,16 @@ def test_server_start_daemon_flag(runner: CliRunner) -> None:
 
     Spec: specs/daemon-lifecycle.md § CLI Commands > ragzoom server start
     Success: `ragzoom server start --daemon` runs in background
+
+    Note: Port file is written inside run_server (in app.py) AFTER lease
+    acquisition, not in cli.py. This ensures clients only see the daemon
+    as ready once it truly holds the lease. See Issue #6.
     """
     with (
+        # Force production mode to test with production port (50051)
+        patch("ragzoom.cli._is_dev_invocation", return_value=False),
         patch("ragzoom.cli.run_server") as mock_run_server,
         patch("ragzoom.cli.daemonize") as mock_daemonize,
-        patch("ragzoom.cli.write_port_file") as mock_write_port,
         patch("ragzoom.cli.install_shutdown_handlers") as mock_handlers,
     ):
         result = runner.invoke(cli, ["server", "start", "--daemon"])
@@ -608,42 +614,46 @@ def test_server_start_daemon_flag(runner: CliRunner) -> None:
         # Daemonize should be called (forks to background)
         mock_daemonize.assert_called_once()
 
-        # Port file should be written
-        mock_write_port.assert_called_once_with(50051)
-
         # Signal handlers should be installed for graceful shutdown
         mock_handlers.assert_called_once()
 
-        # Server should be started
+        # Server should be started (port file is written inside run_server)
         mock_run_server.assert_called_once()
 
 
 def test_server_start_daemon_flag_with_custom_port(runner: CliRunner) -> None:
-    """Test that --daemon with --port writes correct port to port file."""
+    """Test that --daemon with --port passes correct port to run_server.
+
+    Note: Port file is written inside run_server (in app.py) AFTER lease
+    acquisition, not in cli.py. This ensures clients only see the daemon
+    as ready once it truly holds the lease. See Issue #6.
+    """
     with (
         patch("ragzoom.cli.run_server") as mock_run_server,
         patch("ragzoom.cli.daemonize") as mock_daemonize,
-        patch("ragzoom.cli.write_port_file") as mock_write_port,
         patch("ragzoom.cli.install_shutdown_handlers"),
     ):
         result = runner.invoke(cli, ["server", "start", "--daemon", "--port", "50052"])
 
         assert result.exit_code == 0
         mock_daemonize.assert_called_once()
-        mock_write_port.assert_called_once_with(50052)
         mock_run_server.assert_called_once()
 
-        # Verify port passed to run_server
+        # Verify port passed to run_server (port file is written inside run_server)
         call_args = mock_run_server.call_args
         assert call_args[0][0].port == 50052
 
 
 def test_server_start_without_daemon_flag(runner: CliRunner) -> None:
-    """Test that without --daemon, daemonize is NOT called (foreground mode)."""
+    """Test that without --daemon, daemonize is NOT called (foreground mode).
+
+    Note: Port file writing now happens inside run_server (in app.py) AFTER
+    lease acquisition. In foreground mode, the port file will be written
+    when run_server is called (after lease is acquired). See Issue #6.
+    """
     with (
         patch("ragzoom.cli.run_server") as mock_run_server,
         patch("ragzoom.cli.daemonize") as mock_daemonize,
-        patch("ragzoom.cli.write_port_file") as mock_write_port,
     ):
         # Note: Without --daemon, the server runs in foreground (current behavior)
         # We don't actually run it in tests, so we mock run_server to prevent it
@@ -655,10 +665,7 @@ def test_server_start_without_daemon_flag(runner: CliRunner) -> None:
         # Daemonize should NOT be called in foreground mode
         mock_daemonize.assert_not_called()
 
-        # Port file should NOT be written in foreground mode
-        mock_write_port.assert_not_called()
-
-        # Server should still be started
+        # Server should still be started (port file is written inside run_server)
         mock_run_server.assert_called_once()
 
 
@@ -913,3 +920,116 @@ def test_server_logs_empty_file(runner: CliRunner, tmp_path: Path) -> None:
         assert result.exit_code == 0
         # Output should be empty or indicate no logs
         # (no assertion on specific message - empty output is valid)
+
+
+def test_document_status_human_format(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that document-status outputs human-readable format by default."""
+    cli_mocks["grpc_client"].get_document_status.return_value = DocumentStatusView(
+        document_id="session-abc123",
+        exists=True,
+        is_temporal=True,
+        leaf_count=100,
+        node_count=142,
+        complete_forest_size=197,
+        completion_pct=72.1,
+        time_start="2026-01-25T22:47:42Z",
+        time_end="2026-01-26T07:04:15Z",
+    )
+
+    result = runner.invoke(cli, ["document-status", "session-abc123"])
+
+    assert result.exit_code == 0
+    assert "Document: session-abc123" in result.output
+    assert "Type: temporal" in result.output
+    assert "Leaves: 100" in result.output
+    assert "Nodes: 142 / 197 (72.1% complete)" in result.output
+    assert "Time range: 2026-01-25T22:47:42Z to 2026-01-26T07:04:15Z" in result.output
+    cli_mocks["grpc_client"].get_document_status.assert_called_once_with(
+        "session-abc123"
+    )
+
+
+def test_document_status_json_format(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that document-status --json outputs JSON format."""
+    cli_mocks["grpc_client"].get_document_status.return_value = DocumentStatusView(
+        document_id="session-abc123",
+        exists=True,
+        is_temporal=True,
+        leaf_count=100,
+        node_count=142,
+        complete_forest_size=197,
+        completion_pct=72.1,
+        time_start="2026-01-25T22:47:42Z",
+        time_end="2026-01-26T07:04:15Z",
+    )
+
+    result = runner.invoke(cli, ["document-status", "session-abc123", "--json"])
+
+    assert result.exit_code == 0
+    output = json.loads(result.output)
+    assert output["document_id"] == "session-abc123"
+    assert output["exists"] is True
+    assert output["is_temporal"] is True
+    assert output["leaf_count"] == 100
+    assert output["node_count"] == 142
+    assert output["complete_forest_size"] == 197
+    assert output["completion_pct"] == 72.1
+    assert output["time_start"] == "2026-01-25T22:47:42Z"
+    assert output["time_end"] == "2026-01-26T07:04:15Z"
+
+
+def test_document_status_nonexistent_document(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that document-status handles non-existent documents."""
+    cli_mocks["grpc_client"].get_document_status.return_value = DocumentStatusView(
+        document_id="unknown-doc",
+        exists=False,
+        is_temporal=False,
+        leaf_count=0,
+        node_count=0,
+        complete_forest_size=0,
+        completion_pct=0.0,
+        time_start=None,
+        time_end=None,
+    )
+
+    result = runner.invoke(cli, ["document-status", "unknown-doc"])
+
+    assert result.exit_code == 0
+    assert "Document: unknown-doc" in result.output
+    assert "Status: does not exist" in result.output
+    # Should NOT show type, leaves, nodes, or time range for non-existent docs
+    assert "Type:" not in result.output
+    assert "Leaves:" not in result.output
+
+
+def test_document_status_non_temporal_document(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that document-status handles non-temporal documents correctly."""
+    cli_mocks["grpc_client"].get_document_status.return_value = DocumentStatusView(
+        document_id="regular-doc",
+        exists=True,
+        is_temporal=False,
+        leaf_count=50,
+        node_count=75,
+        complete_forest_size=97,
+        completion_pct=77.3,
+        time_start=None,
+        time_end=None,
+    )
+
+    result = runner.invoke(cli, ["document-status", "regular-doc"])
+
+    assert result.exit_code == 0
+    assert "Document: regular-doc" in result.output
+    assert "Type: non-temporal" in result.output
+    assert "Leaves: 50" in result.output
+    assert "Nodes: 75 / 97 (77.3% complete)" in result.output
+    # Should NOT show time range for non-temporal documents
+    assert "Time range:" not in result.output
