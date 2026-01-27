@@ -1,5 +1,5 @@
 ---
-status: READY
+status: COMPLETE
 ---
 
 # Unified Agent Identity
