@@ -359,21 +359,23 @@ Thread `summarization_guidance` through gRPC client and wrapper.
   - Location: ragzoom/wrapper.py:594-654
   - Implementation: Added parameter to signature, docstring, and both code paths (runtime and gRPC client)
 
-- [ ] Update `DocumentSession` protocol to include `summarization_guidance` in `batch_append_text`
+- [x] Update `DocumentSession` protocol to include `summarization_guidance` in `batch_append_text`
   - Spec: specs/transcript-summarization-guidance.md § Phase 2
   - Success: Protocol signature includes the new parameter
   - Test: N/A (type definition)
   - Location: ragzoom/wrapper.py:144-150
+  - Implementation: Already complete - `summarization_guidance: str | None = None` present at line 150
 
 ### Phase 67: Transcript Sync Integration
 
 Add conversation-specific guidance constant and pass to batch_append.
 
-- [ ] Add `CONVERSATION_SUMMARIZATION_GUIDANCE` constant
+- [x] Add `CONVERSATION_SUMMARIZATION_GUIDANCE` constant
   - Spec: specs/transcript-summarization-guidance.md § 4. Hardcoded Guidance for Conversation Transcripts
   - Success: Constant defined with guidance text preserving identity, decisions, causality, and chronology
   - Test: `test_conversation_guidance_constant_defined`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (near top, after imports)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:19-32
+  - Implementation: Added constant with spec-defined guidance text; 3 tests verify presence, key aspects, and technical preservation
 
 - [ ] Update `execute_sync()` to pass guidance to `batch_append()`
   - Spec: specs/transcript-summarization-guidance.md § 5. Pass Guidance in execute_sync

@@ -427,3 +427,42 @@ class TestTranscribeUuidsFromMap:
 
         text = transcribe_uuids_from_map(["msg1", "missing", "also-missing"], records)
         assert "Hello" in text
+
+
+class TestConversationSummarizationGuidance:
+    """Tests for CONVERSATION_SUMMARIZATION_GUIDANCE constant."""
+
+    def test_conversation_guidance_constant_defined(self) -> None:
+        """Should have guidance constant for conversation transcripts."""
+        from ragzoom_claude_code.transcript_sync import (
+            CONVERSATION_SUMMARIZATION_GUIDANCE,
+        )
+
+        # Constant should be a non-empty string
+        assert isinstance(CONVERSATION_SUMMARIZATION_GUIDANCE, str)
+        assert len(CONVERSATION_SUMMARIZATION_GUIDANCE) > 0
+
+    def test_guidance_preserves_key_aspects(self) -> None:
+        """Guidance should mention identity, decisions, causality, and chronology."""
+        from ragzoom_claude_code.transcript_sync import (
+            CONVERSATION_SUMMARIZATION_GUIDANCE,
+        )
+
+        guidance = CONVERSATION_SUMMARIZATION_GUIDANCE.lower()
+
+        # Key aspects from spec
+        assert "identity" in guidance
+        assert "decision" in guidance
+        assert "cause" in guidance or "why" in guidance
+        assert "chronolog" in guidance or "temporal" in guidance
+
+    def test_guidance_mentions_technical_preservation(self) -> None:
+        """Guidance should instruct to preserve technical terms."""
+        from ragzoom_claude_code.transcript_sync import (
+            CONVERSATION_SUMMARIZATION_GUIDANCE,
+        )
+
+        guidance = CONVERSATION_SUMMARIZATION_GUIDANCE.lower()
+
+        # Should preserve exact technical details
+        assert "file path" in guidance or "function name" in guidance
