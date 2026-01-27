@@ -1310,6 +1310,57 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
             tree_depth=tree_depth,
         )
 
+    async def GetCostStats(  # noqa: N802
+        self,
+        request: pb2.GetCostStatsRequest,
+        context: ServicerContextProto,
+    ) -> pb2.GetCostStatsResponse:
+        """Get cost statistics for documents.
+
+        If document_id is provided, returns stats for only that document.
+        Otherwise, returns stats for all documents.
+
+        Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+        """
+        cost_stats_list: list[pb2.DocumentCostStats] = []
+
+        # If document_id is specified, filter to just that document
+        if request.document_id:
+            doc_store = self._state.store.for_document(request.document_id)
+            total_cost, total_nodes, leaf_nodes, summary_nodes = (
+                doc_store.nodes._repo.get_cost_stats(request.document_id)
+            )
+            cost_stats_list.append(
+                pb2.DocumentCostStats(
+                    document_id=request.document_id,
+                    total_cost=total_cost,
+                    total_nodes=total_nodes,
+                    leaf_nodes=leaf_nodes,
+                    summary_nodes=summary_nodes,
+                )
+            )
+        else:
+            # Return stats for all documents
+            for doc in self._state.store.list_documents():
+                doc_id = getattr(doc, "id", "")
+                if not doc_id:
+                    continue
+                doc_store = self._state.store.for_document(doc_id)
+                total_cost, total_nodes, leaf_nodes, summary_nodes = (
+                    doc_store.nodes._repo.get_cost_stats(doc_id)
+                )
+                cost_stats_list.append(
+                    pb2.DocumentCostStats(
+                        document_id=doc_id,
+                        total_cost=total_cost,
+                        total_nodes=total_nodes,
+                        leaf_nodes=leaf_nodes,
+                        summary_nodes=summary_nodes,
+                    )
+                )
+
+        return pb2.GetCostStatsResponse(documents=cost_stats_list)
+
 
 async def shutdown_gracefully(server: GrpcServerProto) -> None:
     await server.stop(grace=None)

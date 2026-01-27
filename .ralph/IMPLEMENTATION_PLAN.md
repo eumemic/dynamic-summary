@@ -157,11 +157,11 @@ Implement server-side handlers for the new RPCs.
 
 ### 2.4 GetCostStats Servicer
 
-- [ ] Implement GetCostStats method in WorkerServicer
+- [x] Implement GetCostStats method in WorkerServicer
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Returns cost stats for specified document or all documents
-  - Test: test_get_cost_stats_servicer (new)
-  - Location: ragzoom/server/servicers.py:1131-1180 (estimated)
+  - Test: test_get_cost_stats_servicer_returns_stats_for_document, test_get_cost_stats_servicer_returns_all_documents
+  - Location: ragzoom/server/servicers.py:1313-1358
 
 - [ ] Handle optional document_id filter
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
