@@ -43,12 +43,14 @@ class _StubSession:
         *,
         collect_telemetry: bool,
         timestamps: list[str | tuple[str, str]] | None = None,
+        summarization_guidance: str | None = None,
     ) -> IndexingResult:
         self.append_calls.append(
             {
                 "units": units,
                 "collect_telemetry": collect_telemetry,
                 "timestamps": timestamps,
+                "summarization_guidance": summarization_guidance,
             }
         )
         return self._result
@@ -216,6 +218,27 @@ def test_ragzoom_batch_append_without_timestamps() -> None:
     assert session.append_calls[0]["timestamps"] is None
 
 
+def test_ragzoom_batch_append_with_summarization_guidance() -> None:
+    """RagZoom.batch_append() passes summarization_guidance to the runtime session."""
+    expected = IndexingResult(
+        document_id="doc",
+        chunks_created=2,
+        tree_depth=1,
+    )
+    session = _StubSession(expected)
+    runtime = _StubRuntime(session)
+
+    guidance = "Preserve identity and agency. Focus on decisions."
+
+    with patch("ragzoom.wrapper.GrpcRagzoomClient") as client_mock:
+        wrapper = RagZoom(runtime=runtime)
+        wrapper.batch_append("doc", ["unit1", "unit2"], summarization_guidance=guidance)
+
+    assert not client_mock.called
+    assert len(session.append_calls) == 1
+    assert session.append_calls[0]["summarization_guidance"] == guidance
+
+
 @pytest.mark.asyncio
 async def test_async_ragzoom_uses_runtime() -> None:
     expected = IndexingResult(
@@ -283,6 +306,7 @@ async def test_async_ragzoom_preserves_background_tasks() -> None:
             *,
             collect_telemetry: bool,
             timestamps: list[str | tuple[str, str]] | None = None,
+            summarization_guidance: str | None = None,
         ) -> IndexingResult:
             nonlocal task_cancelled, task_completed
 
