@@ -641,6 +641,7 @@ class StatelessMockClient:
         self,
         document_id: str,
         units: list[AppendUnit],
+        summarization_guidance: str | None = None,
     ) -> BatchAppendResult:
         """Track batch append calls."""
         self.batch_append_calls.append((document_id, units))

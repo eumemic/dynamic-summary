@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ragzoom_claude_code.transcript_sync import (
+    CONVERSATION_SUMMARIZATION_GUIDANCE,
     execute_sync,
 )
 
@@ -79,7 +80,9 @@ class MockClient:
     append_calls: list[tuple[str, str, str | tuple[str, str] | None]] = field(
         default_factory=list
     )
-    batch_append_calls: list[tuple[str, list[AppendUnit]]] = field(default_factory=list)
+    batch_append_calls: list[tuple[str, list[AppendUnit], str | None]] = field(
+        default_factory=list
+    )
     truncate_calls: list[tuple[str, int]] = field(default_factory=list)
 
     _span_counter: int = field(default=0)
@@ -107,9 +110,10 @@ class MockClient:
         self,
         document_id: str,
         units: list[AppendUnit],
+        summarization_guidance: str | None = None,
     ) -> BatchAppendResult:
         """Track batch append calls."""
-        self.batch_append_calls.append((document_id, units))
+        self.batch_append_calls.append((document_id, units, summarization_guidance))
         for unit in units:
             self._span_counter += len(unit.text)
         return BatchAppendResult(span_start=0, span_end=self._span_counter)
@@ -201,7 +205,7 @@ class TestExecuteSyncUsesBatchAppend:
 
         # Verify batch_append was called with AppendUnits
         assert len(client.batch_append_calls) == 1
-        document_id, units = client.batch_append_calls[0]
+        document_id, units, _ = client.batch_append_calls[0]
         assert document_id == "transcript"
         assert len(units) >= 1
 
@@ -252,7 +256,7 @@ class TestExecuteSyncUsesBatchAppend:
         execute_sync(transcript_path, document_id, client)
 
         assert len(client.batch_append_calls) == 1
-        _, units = client.batch_append_calls[0]
+        _, units, _ = client.batch_append_calls[0]
         assert len(units) == 2, "Each turn should become one AppendUnit"
 
         assert units[0].time_start == "2024-01-21T14:30:00Z"
@@ -293,7 +297,7 @@ class TestExecuteSyncUsesBatchAppend:
 
         execute_sync(transcript_path, document_id, client)
 
-        _, units = client.batch_append_calls[0]
+        _, units, _ = client.batch_append_calls[0]
         assert len(units) == 1
         assert "XYZ123" in units[0].text, "User content should be in turn text"
         assert "ABC456" in units[0].text, "Assistant content should be in turn text"
@@ -405,3 +409,45 @@ class TestExecuteSyncUsesBatchAppend:
         # Second sync with no changes - should detect head is already indexed
         execute_sync(transcript_path, document_id, client)
         assert len(client.batch_append_calls) == 0
+
+
+class TestExecuteSyncPassesSummarizationGuidance:
+    """Tests that execute_sync passes conversation summarization guidance."""
+
+    def test_execute_sync_passes_summarization_guidance(self, tmp_path: Path) -> None:
+        """execute_sync should pass CONVERSATION_SUMMARIZATION_GUIDANCE to batch_append."""
+        client = MockClient()
+
+        transcript_path = tmp_path / "transcript.jsonl"
+        document_id = "transcript"
+
+        transcript_path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        make_user_message("msg1", None, "2024-01-21T14:30:00Z", "Hello")
+                    ),
+                    json.dumps(
+                        make_assistant_message(
+                            "msg2", "msg1", "2024-01-21T14:30:05Z", "Hi there!"
+                        )
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        execute_sync(transcript_path, document_id, client)
+
+        assert len(client.batch_append_calls) == 1
+        _, _, guidance = client.batch_append_calls[0]
+        assert guidance == CONVERSATION_SUMMARIZATION_GUIDANCE
+
+    def test_summarization_guidance_contains_key_instructions(self) -> None:
+        """CONVERSATION_SUMMARIZATION_GUIDANCE should contain key preservation instructions."""
+        # Verify the guidance includes critical preservation instructions
+        assert "Identity and agency" in CONVERSATION_SUMMARIZATION_GUIDANCE
+        assert "Decisions and outcomes" in CONVERSATION_SUMMARIZATION_GUIDANCE
+        assert "Cause and effect" in CONVERSATION_SUMMARIZATION_GUIDANCE
+        assert "Chronological flow" in CONVERSATION_SUMMARIZATION_GUIDANCE
+        assert "technical terms" in CONVERSATION_SUMMARIZATION_GUIDANCE

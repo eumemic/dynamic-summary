@@ -4,11 +4,11 @@ import subprocess
 from pathlib import Path
 
 
-def test_session_start_hook_uses_correct_module() -> None:
-    """Verify session-start.sh calls ragzoom-claude-code CLI, not old paths.
+def test_session_start_hook_uses_pid_temp_file() -> None:
+    """Verify session-start.sh writes PID temp file, not using deprecated CLI commands.
 
-    The hook should use `ragzoom-claude-code set-pid` CLI command from the
-    integration package, not the old module paths or ragzoom core CLI.
+    The hook should write directly to /tmp/ragzoom-session-$PPID for MCP server
+    lookup, not use the old CLI commands that wrote to state files.
     """
     hook_path = Path(__file__).parent.parent / ".claude" / "hooks" / "session-start.sh"
     assert hook_path.exists(), f"Hook script not found at {hook_path}"
@@ -18,19 +18,25 @@ def test_session_start_hook_uses_correct_module() -> None:
     # Should NOT contain the old incorrect module path
     assert "memory_service.ingestion.claude" not in content, (
         "Hook still uses incorrect module path 'memory_service.ingestion.claude'. "
-        "Should use 'ragzoom-claude-code set-pid' CLI command instead."
+        "Should write to PID temp file directly."
     )
 
     # Should NOT use the old ragzoom core CLI (moved to integration package)
     assert "ragzoom set-session-pid" not in content, (
         "Hook uses old 'ragzoom set-session-pid' command. "
-        "Should use 'ragzoom-claude-code set-pid' from the integration package."
+        "Should write to PID temp file directly."
     )
 
-    # Should use the ragzoom-claude-code integration CLI command
+    # Should NOT use the deprecated set-pid CLI command (removed in Phase 63)
+    assert "ragzoom-claude-code set-pid" not in content, (
+        "Hook uses deprecated 'ragzoom-claude-code set-pid' command. "
+        "Should write to PID temp file directly."
+    )
+
+    # Should write session ID to PID-keyed temp file directly
     assert (
-        "ragzoom-claude-code set-pid" in content
-    ), "Hook should call 'ragzoom-claude-code set-pid' CLI command"
+        '"/tmp/ragzoom-session-$PPID"' in content
+    ), "Hook should write to /tmp/ragzoom-session-$PPID for MCP server lookup"
 
 
 def test_session_start_hook_is_executable() -> None:

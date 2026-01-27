@@ -1154,12 +1154,18 @@ class FakeTranscriptClient:
             chunks_created=1,
         )
 
-    def batch_append(self, document_id: str, units: list[object]) -> FakeAppendResult:
+    def batch_append(
+        self,
+        document_id: str,
+        units: list[object],
+        summarization_guidance: str | None = None,
+    ) -> FakeAppendResult:
         """Batch append multiple units and return span positions.
 
         Args:
             document_id: Document to append to
             units: List of AppendUnit objects or strings
+            summarization_guidance: Optional guidance for summarization
         """
         self.batch_append_calls.append((document_id, units))
         span_start = self._current_span
