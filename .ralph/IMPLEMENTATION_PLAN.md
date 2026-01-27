@@ -237,53 +237,53 @@ Clean up deprecated state file code now that identity discovery uses temp files.
   - Test: N/A (manual cleanup)
   - Implementation: `rm -rf data/transcript-state/`
 
-### Phase 64: Unified Agent Identity Acceptance Tests
+### Phase 64: Unified Agent Identity Acceptance Tests (Complete)
 
 Integration tests verifying all acceptance criteria.
 
-- [ ] Test: `RAGZOOM_DOCUMENT_ID` env var works for sync script
+- [x] Test: `RAGZOOM_DOCUMENT_ID` env var works for sync script
   - Spec: specs/unified-agent-identity.md § Acceptance Criteria #1
   - Success: Sync script uses env var document_id regardless of JSONL filename
   - Test: `test_sync_env_var_document_id`
   - Location: integrations/claude-code/tests/test_unified_identity.py
 
-- [ ] Test: `RAGZOOM_DOCUMENT_ID` env var works for MCP server
+- [x] Test: `RAGZOOM_DOCUMENT_ID` env var works for MCP server
   - Spec: specs/unified-agent-identity.md § Acceptance Criteria #2
   - Success: MCP server queries document specified in env var
   - Test: `test_mcp_env_var_document_id`
   - Location: integrations/claude-code/tests/test_unified_identity.py
 
-- [ ] Test: `--document-id` CLI flag overrides env var and stem
+- [x] Test: `--document-id` CLI flag overrides env var and stem
   - Spec: specs/unified-agent-identity.md § Acceptance Criteria #3
   - Success: CLI flag takes highest priority over all other sources
   - Test: `test_document_id_flag_priority`
   - Location: integrations/claude-code/tests/test_unified_identity.py
 
-- [ ] Test: PID temp file discovery works for Claude Code
+- [x] Test: PID temp file discovery works for Claude Code
   - Spec: specs/unified-agent-identity.md § Acceptance Criteria #4
   - Success: MCP server discovers session via `/tmp/ragzoom-session-{ppid}` when no env var set
   - Test: `test_pid_temp_file_discovery`
   - Location: integrations/claude-code/tests/test_unified_identity.py
 
-- [ ] Test: No state files accumulate in data/transcript-state/
+- [x] Test: No state files accumulate in data/transcript-state/
   - Spec: specs/unified-agent-identity.md § Acceptance Criteria #5
   - Success: After sync and MCP operations, no files exist in transcript-state directory
   - Test: `test_no_state_file_accumulation`
   - Location: integrations/claude-code/tests/test_unified_identity.py
 
-- [ ] Test: Multiple syncs to same document work (Jarvis model)
+- [x] Test: Multiple syncs to same document work (Jarvis model)
   - Spec: specs/unified-agent-identity.md § Acceptance Criteria #6
   - Success: Multiple different transcripts can sync to same document_id via env var
   - Test: `test_multiple_syncs_same_document`
   - Location: integrations/claude-code/tests/test_unified_identity.py
 
-- [ ] Test: MCP queries work with configured identity (Jarvis model)
+- [x] Test: MCP queries work with configured identity (Jarvis model)
   - Spec: specs/unified-agent-identity.md § Acceptance Criteria #7
   - Success: MCP server queries correct document when `RAGZOOM_DOCUMENT_ID` set
   - Test: `test_mcp_configured_identity_queries`
   - Location: integrations/claude-code/tests/test_unified_identity.py
 
-- [ ] Test: `reset` command works without state file cleanup
+- [x] Test: `reset` command works without state file cleanup
   - Spec: specs/unified-agent-identity.md § Acceptance Criteria #8
   - Success: Reset command clears document and re-syncs without referencing state files
   - Test: `test_reset_command_stateless`
