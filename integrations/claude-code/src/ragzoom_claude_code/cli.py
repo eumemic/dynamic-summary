@@ -6,11 +6,7 @@ from pathlib import Path
 
 import click
 
-from ragzoom_claude_code.transcript_sync import (
-    execute_sync,
-    get_state_path,
-    set_session_pid,
-)
+from ragzoom_claude_code.transcript_sync import execute_sync
 
 
 @click.group()
@@ -77,26 +73,6 @@ def sync_cmd(jsonl_path: Path, document_id: str | None, server_address: str) -> 
         raise SystemExit(1) from e
 
 
-@cli.command("set-pid")
-@click.argument("document_id")
-@click.argument("pid", type=int)
-def set_pid_cmd(document_id: str, pid: int) -> None:
-    """Set the PID for a session's state file.
-
-    Called by the SessionStart hook to register the Claude Code PID
-    before any tool calls. Creates the state file if needed.
-
-    Example:
-      ragzoom-claude-code set-pid my-session-123 12345
-    """
-    try:
-        set_session_pid(document_id, pid)
-        click.echo(f"Set PID {pid} for session '{document_id}'")
-    except Exception as e:
-        click.echo(f"Error setting session PID: {e}", err=True)
-        raise SystemExit(1) from e
-
-
 @cli.command("reset")
 @click.argument("jsonl_path", type=click.Path(exists=True, path_type=Path))
 @click.option(
@@ -113,10 +89,9 @@ def set_pid_cmd(document_id: str, pid: int) -> None:
     help="Re-sync after reset (default: yes)",
 )
 def reset_cmd(jsonl_path: Path, server_address: str, resync: bool) -> None:
-    """Reset a session by clearing both state file and document.
+    """Reset a session by clearing the document and re-syncing.
 
-    Deletes the local sync state file and clears the document from RagZoom,
-    then optionally re-syncs from scratch.
+    Clears the document from RagZoom, then optionally re-syncs from scratch.
 
     Example:
       ragzoom-claude-code reset ~/.claude/projects/.../session.jsonl
@@ -126,16 +101,8 @@ def reset_cmd(jsonl_path: Path, server_address: str, resync: bool) -> None:
     from ragzoom.wrapper import RagZoom
 
     document_id = jsonl_path.stem
-    state_path = get_state_path(document_id)
 
-    # Step 1: Delete state file
-    if state_path.exists():
-        state_path.unlink()
-        click.echo(f"Deleted state file: {state_path}")
-    else:
-        click.echo(f"No state file found at: {state_path}")
-
-    # Step 2: Clear document from RagZoom
+    # Step 1: Clear document from RagZoom
     try:
         with GrpcRagzoomClient(server_address) as grpc_client:
             clear_result = grpc_client.clear_document(document_id)
@@ -148,7 +115,7 @@ def reset_cmd(jsonl_path: Path, server_address: str, resync: bool) -> None:
     except Exception as e:
         click.echo(f"Warning: Could not clear document: {e}", err=True)
 
-    # Step 3: Re-sync if requested
+    # Step 2: Re-sync if requested
     if resync:
         click.echo("Re-syncing from scratch...")
         ragzoom_client = RagZoom(server_address=server_address)

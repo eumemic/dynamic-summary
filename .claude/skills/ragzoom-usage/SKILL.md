@@ -262,11 +262,7 @@ ragzoom-claude-code reset session.jsonl --no-resync
 ragzoom-claude-code mcp-server
 ```
 
-**Important:** The `reset` command clears both:
-1. Local state file (`data/transcript-state/<session>.jsonl`)
-2. RagZoom document
-
-This is necessary because sync state is tracked separately from document data. Using `ragzoom clear -d <doc>` alone leaves the state file, so subsequent syncs show "No new content".
+**Important:** The `reset` command clears the RagZoom document and re-syncs from scratch. The sync algorithm is stateless - it derives all state from the transcript file and RagZoom document status API.
 
 ### Clawdbot Integration
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -505,93 +504,6 @@ def turns_to_append_units(
             )
         )
     return result
-
-
-@dataclass
-class SessionStateHeader:
-    """Header line of session state file."""
-
-    document_id: str
-
-    last_pid: int | None = None
-    """PID of the Claude Code process for this session."""
-
-    def to_json(self) -> dict[str, object]:
-        result: dict[str, object] = {"document_id": self.document_id}
-        if self.last_pid is not None:
-            result["last_pid"] = self.last_pid
-        return result
-
-    @classmethod
-    def from_json(cls, data: dict[str, object]) -> SessionStateHeader:
-        doc_id = data.get("document_id")
-        if not isinstance(doc_id, str):
-            raise TypeError(f"document_id must be str, got {type(doc_id)}")
-        last_pid = data.get("last_pid")
-        if last_pid is not None and not isinstance(last_pid, int):
-            raise TypeError(f"last_pid must be int or None, got {type(last_pid)}")
-        return cls(document_id=doc_id, last_pid=last_pid)
-
-
-@dataclass
-class SessionState:
-    """Session state with header for MCP server session discovery.
-
-    Used to map document_id to Claude Code PID so the MCP server can
-    identify which session it belongs to.
-    """
-
-    header: SessionStateHeader
-
-    @classmethod
-    def load(cls, path: Path) -> SessionState | None:
-        """Load session state from JSONL file.
-
-        Returns None if file doesn't exist.
-        """
-        if not path.exists():
-            return None
-
-        lines = path.read_text().strip().split("\n")
-        if not lines or not lines[0]:
-            return None
-
-        header = SessionStateHeader.from_json(json.loads(lines[0]))
-        return cls(header=header)
-
-    def save(self, path: Path) -> None:
-        """Save session state to JSONL file."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self.header.to_json()) + "\n")
-
-
-def _get_state_dir() -> Path:
-    """Get the transcript state directory from environment or default."""
-    import os
-
-    state_dir_str = os.environ.get("RAGZOOM_STATE_DIR", "data/transcript-state")
-    return Path(state_dir_str)
-
-
-def get_state_path(document_id: str) -> Path:
-    """Get the path to the state file for a document."""
-    state_dir = _get_state_dir()
-    state_dir.mkdir(parents=True, exist_ok=True)
-    return state_dir / f"{document_id}.jsonl"
-
-
-def set_session_pid(document_id: str, pid: int) -> None:
-    """Set the PID for a session, creating state file if needed.
-
-    Called by SessionStart hook to register the Claude Code PID before
-    any tool calls. Preserves existing state fields if the file exists.
-    """
-    state_path = get_state_path(document_id)
-    state = SessionState.load(state_path)
-    if state is None:
-        state = SessionState(header=SessionStateHeader(document_id=document_id))
-    state.header.last_pid = pid
-    state.save(state_path)
 
 
 def build_parent_map(transcript_path: Path) -> dict[str, str | None]:

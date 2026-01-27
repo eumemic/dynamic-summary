@@ -272,36 +272,6 @@ class TestGetAncestorChain:
             get_ancestor_chain("msg2", "other", parent_map)
 
 
-class TestSessionState:
-    """Tests for SessionState JSONL format."""
-
-    def test_save_and_load(self, tmp_path: Path) -> None:
-        """Should persist and restore header state."""
-        from ragzoom_claude_code.transcript_sync import (
-            SessionState,
-            SessionStateHeader,
-        )
-
-        state_path = tmp_path / "session.jsonl"
-        state = SessionState(
-            header=SessionStateHeader(document_id="doc-123", last_pid=12345),
-        )
-
-        state.save(state_path)
-        loaded = SessionState.load(state_path)
-
-        assert loaded is not None
-        assert loaded.header.document_id == "doc-123"
-        assert loaded.header.last_pid == 12345
-
-    def test_load_nonexistent_returns_none(self, tmp_path: Path) -> None:
-        """Should return None for missing file."""
-        from ragzoom_claude_code.transcript_sync import SessionState
-
-        state = SessionState.load(tmp_path / "missing.jsonl")
-        assert state is None
-
-
 class TestGetCurrentHead:
     """Tests for getting current head UUID from transcript."""
 
