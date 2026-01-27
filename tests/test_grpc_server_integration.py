@@ -377,3 +377,96 @@ async def test_get_system_status_servicer_empty_system(
     assert response.total_nodes >= 0
     assert response.leaf_nodes >= 0
     assert response.tree_depth >= 0
+
+
+@pytest.mark.asyncio
+async def test_get_cost_stats_servicer_returns_stats_for_document(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """GetCostStats servicer returns cost stats for a specific document.
+
+    Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+    Test: tests/test_grpc_server_integration.py::test_get_cost_stats_servicer_returns_stats_for_document
+    """
+    address, state = grpc_test_environment
+
+    # Index a document with workers completing
+    client = GrpcRagzoomClient(address)
+    try:
+        await asyncio.to_thread(
+            client.append_text,
+            document_id="cost-test-doc",
+            content=b"Content for cost stats test",
+            collect_telemetry=False,
+            replace_existing=True,
+        )
+        await asyncio.to_thread(client.run_workers_once)
+    finally:
+        client.close()
+
+    # Call GetCostStats via direct gRPC stub
+    async with grpc.aio.insecure_channel(address) as channel:
+        stub = pb2_grpc.WorkerServiceStub(channel)
+        request = pb2.GetCostStatsRequest(document_id="cost-test-doc")
+        response = await stub.GetCostStats(request)
+
+    # Verify response contains stats for our document
+    assert len(response.documents) == 1
+    doc_stats = response.documents[0]
+    assert doc_stats.document_id == "cost-test-doc"
+    assert doc_stats.total_nodes >= 1
+    assert doc_stats.leaf_nodes >= 1
+    assert doc_stats.summary_nodes == doc_stats.total_nodes - doc_stats.leaf_nodes
+    # Cost may be 0 if no summarization has occurred
+    assert doc_stats.total_cost >= 0.0
+
+
+@pytest.mark.asyncio
+async def test_get_cost_stats_servicer_returns_all_documents(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """GetCostStats servicer returns cost stats for all documents when no filter.
+
+    Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+    Test: tests/test_grpc_server_integration.py::test_get_cost_stats_servicer_returns_all_documents
+    """
+    address, state = grpc_test_environment
+
+    # Index two documents
+    client = GrpcRagzoomClient(address)
+    try:
+        await asyncio.to_thread(
+            client.append_text,
+            document_id="cost-all-doc-1",
+            content=b"First document for cost all test",
+            collect_telemetry=False,
+            replace_existing=True,
+        )
+        await asyncio.to_thread(
+            client.append_text,
+            document_id="cost-all-doc-2",
+            content=b"Second document for cost all test",
+            collect_telemetry=False,
+            replace_existing=True,
+        )
+        await asyncio.to_thread(client.run_workers_once)
+    finally:
+        client.close()
+
+    # Call GetCostStats without document_id filter
+    async with grpc.aio.insecure_channel(address) as channel:
+        stub = pb2_grpc.WorkerServiceStub(channel)
+        request = pb2.GetCostStatsRequest()  # No document_id = all documents
+        response = await stub.GetCostStats(request)
+
+    # Verify response contains both documents
+    doc_ids = [d.document_id for d in response.documents]
+    assert "cost-all-doc-1" in doc_ids
+    assert "cost-all-doc-2" in doc_ids
+
+    # Verify each document has valid stats
+    for doc_stats in response.documents:
+        assert doc_stats.total_nodes >= 0
+        assert doc_stats.leaf_nodes >= 0
+        assert doc_stats.summary_nodes == doc_stats.total_nodes - doc_stats.leaf_nodes
+        assert doc_stats.total_cost >= 0.0
