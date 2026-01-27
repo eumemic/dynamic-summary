@@ -275,9 +275,15 @@ class Retriever:
                     effective_doc_id, time_start_unix, "start"
                 )
                 if leaf_start is None:
-                    raise ValueError(
-                        f"No leaf found at time_start={time_start}. "
-                        f"The requested time may be outside the document's time range."
+                    # No data at or after time_start - return empty result
+                    return RetrievalResult(
+                        node_ids=[],
+                        scores={},
+                        coverage_map={},
+                        tiling=[],
+                        nodes={},
+                        actual_start=0,
+                        actual_end=0,
                     )
                 span_start = leaf_start.span_start
 
@@ -286,9 +292,15 @@ class Retriever:
                     effective_doc_id, time_end_unix, "end"
                 )
                 if leaf_end is None:
-                    raise ValueError(
-                        f"No leaf found at time_end={time_end}. "
-                        f"The requested time may be outside the document's time range."
+                    # No data at or before time_end - return empty result
+                    return RetrievalResult(
+                        node_ids=[],
+                        scores={},
+                        coverage_map={},
+                        tiling=[],
+                        nodes={},
+                        actual_start=0,
+                        actual_end=0,
                     )
                 span_end = leaf_end.span_end
 
