@@ -1282,6 +1282,34 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
             errors=error_messages,
         )
 
+    async def GetSystemStatus(  # noqa: N802
+        self,
+        request: pb2.GetSystemStatusRequest,
+        context: ServicerContextProto,
+    ) -> pb2.GetSystemStatusResponse:
+        """Get aggregated system status across all documents.
+
+        Returns total_nodes, leaf_nodes, and tree_depth aggregated across
+        all indexed documents in the system.
+
+        Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+        """
+        total_nodes = 0
+        leaf_nodes = 0
+        tree_depth = 0
+
+        for doc in self._state.store.list_documents():
+            doc_store = self._state.store.for_document(doc.id)
+            total_nodes += doc_store.nodes.count()
+            leaf_nodes += doc_store.nodes.leaf_count()
+            tree_depth = max(tree_depth, doc_store.nodes.max_height())
+
+        return pb2.GetSystemStatusResponse(
+            total_nodes=total_nodes,
+            leaf_nodes=leaf_nodes,
+            tree_depth=tree_depth,
+        )
+
 
 async def shutdown_gracefully(server: GrpcServerProto) -> None:
     await server.stop(grace=None)
