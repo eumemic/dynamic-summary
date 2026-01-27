@@ -452,11 +452,18 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
                 # No timestamps on this unit
                 timestamps.append(None)  # type: ignore[arg-type]
 
+        summarization_guidance = (
+            request.summarization_guidance
+            if request.HasField("summarization_guidance")
+            else None
+        )
+
         session = self._runtime.get_session(request.document_id)
         result = await session.batch_append_text(
             units,
             collect_telemetry=request.collect_telemetry,
             timestamps=timestamps if has_any_timestamp else None,
+            summarization_guidance=summarization_guidance,
         )
 
         response = pb2.BatchAppendTextResponse(

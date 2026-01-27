@@ -460,6 +460,7 @@ class DocumentIndexSession:
         *,
         collect_telemetry: bool = False,
         timestamps: list[str | tuple[str, str]] | None = None,
+        summarization_guidance: str | None = None,
     ) -> IndexingResult:
         """Append multiple text units with forced split boundaries between them.
 
@@ -474,6 +475,8 @@ class DocumentIndexSession:
             timestamps: Optional list of timestamps parallel to units. Each entry
                 can be an ISO 8601 string (used for both start and end) or a tuple
                 of (start, end) strings.
+            summarization_guidance: Optional guidance for summary generation.
+                Stored on document at creation time and used by the summarizer.
 
         Returns:
             IndexingResult with combined stats for all appended units
@@ -515,6 +518,7 @@ class DocumentIndexSession:
                         file_path=resolved_path,
                         embedding_model=embedding_model,
                         summary_model=summary_model,
+                        summarization_guidance=summarization_guidance,
                     )
                     doc_record = store.get_document_by_id(self._document_id)
 

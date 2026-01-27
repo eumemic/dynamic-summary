@@ -64,6 +64,7 @@ message BatchAppendTextRequest {
   string document_id = 1;
   repeated AppendUnit units = 2;  // Self-contained units with bundled text and optional timestamps
   bool collect_telemetry = 3;
+  optional string summarization_guidance = 4;  // Additional guidance for summary generation
 }
 
 message BatchAppendTextResponse {

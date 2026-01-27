@@ -297,39 +297,42 @@ Adds conversation-specific summarization guidance to batch append operations, im
 
 **Dependencies:** Custom Prompt Config (COMPLETE), Timestamped Transcript Sync (COMPLETE)
 
-### Phase 65: Proto and Server
+### Phase 65: Proto and Server (Complete)
 
 Add `summarization_guidance` field to batch append and thread through servicer.
 
-- [ ] Add `summarization_guidance` field to `BatchAppendTextRequest` proto
+- [x] Add `summarization_guidance` field to `BatchAppendTextRequest` proto
   - Spec: specs/transcript-summarization-guidance.md § 1. Add summarization_guidance to BatchAppendTextRequest
   - Success: Proto defines `optional string summarization_guidance = 4;` in BatchAppendTextRequest
   - Test: N/A (proto change)
   - Location: proto/dynamic_summary.proto:63-67
+  - Implementation: Added field, also updated .pyi type stubs with HasField method
 
-- [ ] Regenerate Python proto bindings
+- [x] Regenerate Python proto bindings
   - Spec: specs/transcript-summarization-guidance.md § Phase 1
   - Success: `scripts/compile-proto.sh` completes, pb2.py files updated with new field
   - Test: N/A (build step)
   - Location: ragzoom/rpc/dynamic_summary_pb2.py
 
-- [ ] Update servicer to extract and pass guidance to runtime
+- [x] Update servicer to extract and pass guidance to runtime
   - Spec: specs/transcript-summarization-guidance.md § Phase 1
   - Success: BatchAppendText servicer extracts `summarization_guidance` from request and passes to session
   - Test: `test_batch_append_text_passes_summarization_guidance`
-  - Location: ragzoom/server/servicers.py:404-468
+  - Location: ragzoom/server/servicers.py:456-467
+  - Implementation: Extracts with HasField check, passes to session.batch_append_text()
 
-- [ ] Add `summarization_guidance` parameter to `DocumentIndexSession.batch_append_text()`
+- [x] Add `summarization_guidance` parameter to `DocumentIndexSession.batch_append_text()`
   - Spec: specs/transcript-summarization-guidance.md § Phase 1
   - Success: Method accepts `summarization_guidance: str | None = None` and stores on document
-  - Test: `test_runtime_batch_append_text_with_guidance`
-  - Location: ragzoom/indexing/runtime.py:457-463
+  - Test: `test_batch_append_text_passes_summarization_guidance`
+  - Location: ragzoom/indexing/runtime.py:457-480
+  - Implementation: Added parameter, passes to store.add_document() on document creation
 
-- [ ] Add `summarization_guidance` parameter to `AppendExecutor.append_batch()`
+- [x] Add `summarization_guidance` parameter to `AppendExecutor.append_batch()`
   - Spec: specs/transcript-summarization-guidance.md § Phase 1
-  - Success: Method accepts and threads guidance to document storage
-  - Test: `test_append_executor_batch_with_guidance`
-  - Location: ragzoom/server/append_executor.py:426-436
+  - Success: N/A - guidance is document-level metadata stored at creation time, not per-append
+  - Test: N/A
+  - Implementation: Not needed - follows same pattern as append_text where guidance goes to store.add_document(), not executor
 
 ### Phase 66: Client Stack
 
