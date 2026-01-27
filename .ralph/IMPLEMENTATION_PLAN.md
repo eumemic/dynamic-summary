@@ -352,11 +352,12 @@ Thread `summarization_guidance` through gRPC client and wrapper.
   - Location: ragzoom/wrapper.py:245-300
   - Implementation: Parameter already existed in signature; fixed to pass through to runtime session (line 290) and gRPC client (line 298)
 
-- [ ] Add `summarization_guidance` parameter to `AsyncRagZoom.batch_append()` (async)
+- [x] Add `summarization_guidance` parameter to `AsyncRagZoom.batch_append()` (async)
   - Spec: specs/transcript-summarization-guidance.md § 3. Thread Through Wrapper
   - Success: Async method accepts and passes `summarization_guidance` to runtime/client
   - Test: `test_async_wrapper_batch_append_with_guidance`
-  - Location: ragzoom/wrapper.py:588-630
+  - Location: ragzoom/wrapper.py:594-654
+  - Implementation: Added parameter to signature, docstring, and both code paths (runtime and gRPC client)
 
 - [ ] Update `DocumentSession` protocol to include `summarization_guidance` in `batch_append_text`
   - Spec: specs/transcript-summarization-guidance.md § Phase 2
