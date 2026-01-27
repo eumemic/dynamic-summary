@@ -2,19 +2,66 @@
 
 from __future__ import annotations
 
-import json
 import re
-from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from claude_transcriber import Transcriber
-from ragzoom_claude_code.jsonl_reader import iter_jsonl, iter_jsonl_reversed
 
 from ragzoom.wrapper import AppendUnit
+from ragzoom_claude_code.jsonl_reader import iter_jsonl, iter_jsonl_reversed
 
 # Pattern to extract command name from invocation message
 _COMMAND_NAME_PATTERN = re.compile(r"<command-name>(/[\w-]+)</command-name>")
+
+# Summarization guidance for conversation transcripts
+# Instructs the LLM to preserve narrative structure, identity, and decision outcomes
+CONVERSATION_SUMMARIZATION_GUIDANCE = """
+This is a conversation transcript between a human and an AI assistant.
+
+When summarizing, preserve:
+- **Identity and agency**: Who said what, who performed which actions
+- **Decisions and outcomes**: What was decided, what actions were taken
+- **Cause and effect**: Why things happened, the reasoning behind decisions
+- **Chronological flow**: The temporal sequence of events
+
+Focus on the narrative of what happened and why, not just the facts.
+Preserve exact technical terms, file paths, function names, and code references.
+"""
+
+
+def _get_temp_dir() -> Path:
+    """Get the temp directory for session files.
+
+    Uses /tmp by default. Separated for testability.
+    """
+    return Path("/tmp")
+
+
+def get_session_document_id(pid: int) -> str | None:
+    """Read document_id from PID-keyed temp file.
+
+    Used for discovered identity (Claude Code model) where the SessionStart
+    hook writes the session ID to /tmp/ragzoom-session-{pid}.
+
+    Args:
+        pid: Process ID of the Claude Code process
+
+    Returns:
+        The document_id if temp file exists and has content, None otherwise
+    """
+    temp_dir = _get_temp_dir()
+    temp_path = temp_dir / f"ragzoom-session-{pid}"
+
+    if not temp_path.exists():
+        return None
+
+    content = temp_path.read_text().strip()
+    if not content:
+        return None
+
+    return content
 
 
 @dataclass
@@ -85,11 +132,216 @@ def _is_user_prompt(
     return True
 
 
+def is_user_message(record: dict[str, object]) -> bool:
+    """Check if record is a real user message (starts a turn).
+
+    A user message starts a new turn if it's a user type message that is NOT:
+    - A tool result (has toolUseResult field)
+    - A command output (contains <local-command-stdout>)
+
+    Unlike _is_user_prompt(), this doesn't check for command expansion since
+    that requires access to the parent record. For the stateless truncation
+    point algorithm, we only need to identify turn boundaries, and command
+    expansions still mark turn boundaries from the user's perspective.
+
+    Args:
+        record: The JSONL record to check
+
+    Returns:
+        True if the record is a user message that starts a turn
+    """
+    if record.get("type") != "user":
+        return False
+    if "toolUseResult" in record:
+        return False
+
+    # Check for command output marker
+    message = record.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, str) and "<local-command-stdout>" in content:
+            return False
+
+    return True
+
+
+def _parse_timestamp(timestamp_str: str) -> datetime:
+    """Parse an ISO 8601 timestamp string to datetime.
+
+    Handles both 'Z' suffix and '+00:00' timezone formats.
+
+    Args:
+        timestamp_str: ISO 8601 timestamp string
+
+    Returns:
+        datetime object (timezone-aware if input has timezone)
+
+    Raises:
+        ValueError: If timestamp format is invalid
+    """
+    # Replace 'Z' with '+00:00' for Python's fromisoformat
+    normalized = timestamp_str.replace("Z", "+00:00")
+    return datetime.fromisoformat(normalized)
+
+
+def _get_parent_uuid(rec: dict[str, object]) -> str | None:
+    """Extract parentUuid as string or None from a record."""
+    parent = rec.get("parentUuid")
+    return parent if isinstance(parent, str) else None
+
+
+def find_truncation_point(
+    head_uuid: str,
+    records: dict[str, dict[str, object]],
+    indexed_time_end: datetime | None,
+) -> tuple[str | None, str | None]:
+    """Find the connection point between current transcript and indexed content.
+
+    Uses a sliding window algorithm to walk backward from head_uuid, finding
+    where the current transcript connects to previously indexed content. The
+    algorithm ensures we stop at a turn boundary (user message) to maintain
+    atomic turn semantics.
+
+    The function returns (R, S) where:
+    - R is the connection point UUID (last record in indexed content)
+    - S is the first record to append (successor of R in the chain)
+
+    Cases:
+    - First sync (indexed_time_end is None): Returns (None, head_uuid)
+      meaning "no indexed content, append from head back to root"
+    - Normal append: R.timestamp == indexed_time_end (approximately)
+      meaning "continue from where we left off"
+    - Revert detected: R.timestamp < indexed_time_end
+      meaning "truncate orphaned content, then append from S"
+
+    The sliding window ensures we always stop at a turn boundary:
+    1. R.timestamp <= indexed_time_end (R is within indexed range)
+    2. S is a user message OR S is None (turn boundary)
+
+    Args:
+        head_uuid: UUID of the current transcript head
+        records: UUID -> record mapping (must include parentUuid and timestamp)
+        indexed_time_end: Last indexed timestamp, or None if empty document.
+            Must be timezone-aware if provided, as record timestamps are parsed
+            as timezone-aware datetimes.
+
+    Returns:
+        (R, S) tuple where:
+        - R: UUID of connection point, or None for first sync / complete reindex
+        - S: UUID of first record to append, or None if nothing to append
+    """
+    if indexed_time_end is None:
+        # First sync: no indexed content, append everything from head
+        return (None, head_uuid)
+
+    # Sliding window: S is the successor, R is the current node
+    s_uuid: str | None = None  # Starts null at end of chain
+    r_uuid: str | None = head_uuid
+
+    while r_uuid is not None:
+        record = records.get(r_uuid)
+        if record is None:
+            # Record not found - treat as end of chain
+            break
+
+        # Get timestamp from record
+        timestamp_str = record.get("timestamp")
+        if not isinstance(timestamp_str, str):
+            # No timestamp - can't compare, continue walking
+            s_uuid = r_uuid
+            r_uuid = _get_parent_uuid(record)
+            continue
+
+        try:
+            record_time = _parse_timestamp(timestamp_str)
+        except ValueError:
+            # Invalid timestamp - continue walking
+            s_uuid = r_uuid
+            r_uuid = _get_parent_uuid(record)
+            continue
+
+        # Check if R is within indexed range
+        if record_time <= indexed_time_end:
+            # R is in indexed content - check if S is a turn boundary
+            if s_uuid is None:
+                # S is None means we're at the end of chain - valid boundary
+                return (r_uuid, s_uuid)
+
+            s_record = records.get(s_uuid)
+            if s_record is not None and is_user_message(s_record):
+                # S is a user message - valid turn boundary
+                return (r_uuid, s_uuid)
+
+            # S is not a turn boundary - continue sliding to find one
+
+        # Slide window backward
+        s_uuid = r_uuid
+        r_uuid = _get_parent_uuid(record)
+
+    # Walked entire chain without finding indexed content
+    # This means complete reindex is needed
+    return (None, head_uuid)
+
+
+def build_ancestry_chain(
+    head_uuid: str,
+    stop_uuid: str | None,
+    records: dict[str, dict[str, object]],
+    parent_map: dict[str, str | None],
+) -> list[str]:
+    """Collect UUIDs from stop_uuid to head_uuid in chronological order.
+
+    Walks backward from head_uuid through parent links until reaching stop_uuid
+    (exclusive) or the root (parentUuid=None). Returns the collected UUIDs in
+    chronological order (oldest first).
+
+    Only UUIDs that exist in the records dict are included. Uses parent_map
+    for traversal to bridge compaction boundaries.
+
+    Args:
+        head_uuid: UUID of the endpoint (most recent record)
+        stop_uuid: UUID to stop at (exclusive), or None to include entire chain
+        records: UUID -> record mapping
+        parent_map: UUID -> parentUuid mapping that bridges compaction
+            boundaries. Use build_parent_map() to create this.
+
+    Returns:
+        List of UUIDs from stop_uuid's successor to head_uuid, in chronological
+        order. Empty list if head_uuid == stop_uuid or head_uuid not in records.
+    """
+    if head_uuid == stop_uuid:
+        return []
+
+    # Walk backward from head, collecting UUIDs that exist in records
+    chain: list[str] = []
+    current: str | None = head_uuid
+
+    while current is not None and current != stop_uuid:
+        if current not in records:
+            # Current UUID not in records - can't include or trace further
+            break
+        chain.append(current)
+        current = parent_map.get(current)
+
+    # Reverse to get chronological order (oldest first)
+    chain.reverse()
+    return chain
+
+
 def _should_skip_record(record: dict[str, object]) -> bool:
-    """Check if record should be filtered out of turn grouping."""
+    """Check if record should be filtered out of turn grouping.
+
+    Filters:
+    - Compaction summaries (isCompactSummary=True) - already LLM-generated
+    - Queue operations (type="queue-operation") - internal Claude Code state
+    - Meta records (isMeta=True) - injected content like skill expansions,
+      embedded PDFs, command templates (static documentation that repeats)
+    """
     if record.get("isCompactSummary"):
         return True
     if record.get("type") == "queue-operation":
+        return True
+    if record.get("isMeta"):
         return True
     return False
 
@@ -107,6 +359,7 @@ def group_into_turns(
     Filters out:
     - Compaction summaries (isCompactSummary=True)
     - Queue operations (type="queue-operation")
+    - Meta records (isMeta=True) - skill expansions, PDFs, command templates
     - UUIDs not found in records_by_uuid
 
     Args:
@@ -268,291 +521,6 @@ def turns_to_append_units(
     return result
 
 
-@dataclass
-class SessionStateHeader:
-    """Header line of session state file."""
-
-    document_id: str
-
-    last_pid: int | None = None
-    """PID of the Claude Code process for this session."""
-
-    def to_json(self) -> dict[str, object]:
-        result: dict[str, object] = {"document_id": self.document_id}
-        if self.last_pid is not None:
-            result["last_pid"] = self.last_pid
-        return result
-
-    @classmethod
-    def from_json(cls, data: dict[str, object]) -> SessionStateHeader:
-        doc_id = data.get("document_id")
-        if not isinstance(doc_id, str):
-            raise TypeError(f"document_id must be str, got {type(doc_id)}")
-        last_pid = data.get("last_pid")
-        if last_pid is not None and not isinstance(last_pid, int):
-            raise TypeError(f"last_pid must be int or None, got {type(last_pid)}")
-        return cls(document_id=doc_id, last_pid=last_pid)
-
-
-@dataclass
-class AppendEntry:
-    """A single entry in the append log.
-
-    For turn-level tracking, each entry represents one conversation turn.
-    The first_uuid marks the turn's start (for revert detection) and
-    last_uuid marks its end (for continuation detection).
-    """
-
-    last_uuid: str
-    """UUID of the last message in this append (turn end)."""
-
-    span_end: int
-    """Document span position after this append."""
-
-    first_uuid: str | None = None
-    """UUID of the first message in this append (turn start).
-
-    Used for turn-granularity revert detection: if a common ancestor
-    falls between first_uuid and last_uuid (within the turn), we truncate
-    to before this turn rather than keeping it.
-
-    None for backward compatibility with pre-turn-tracking entries.
-    """
-
-    def to_json(self) -> dict[str, object]:
-        """Serialize to JSON-compatible dict."""
-        result: dict[str, object] = {
-            "last_uuid": self.last_uuid,
-            "span_end": self.span_end,
-        }
-        if self.first_uuid is not None:
-            result["first_uuid"] = self.first_uuid
-        return result
-
-    @classmethod
-    def from_json(cls, data: dict[str, object]) -> AppendEntry:
-        """Deserialize from JSON dict."""
-        last_uuid = data["last_uuid"]
-        span_end = data["span_end"]
-        first_uuid = data.get("first_uuid")
-        if not isinstance(last_uuid, str):
-            raise TypeError(f"last_uuid must be str, got {type(last_uuid)}")
-        if not isinstance(span_end, int):
-            raise TypeError(f"span_end must be int, got {type(span_end)}")
-        if first_uuid is not None and not isinstance(first_uuid, str):
-            raise TypeError(f"first_uuid must be str or None, got {type(first_uuid)}")
-        return cls(last_uuid=last_uuid, span_end=span_end, first_uuid=first_uuid)
-
-
-class AppendLog:
-    """JSONL-based log of append operations."""
-
-    def __init__(self, path: Path) -> None:
-        self._path = path
-
-    def append(self, entry: AppendEntry) -> None:
-        """Append an entry to the log."""
-        with open(self._path, "a") as f:
-            f.write(json.dumps(entry.to_json()) + "\n")
-
-    def last_entry(self) -> AppendEntry | None:
-        """Get the last entry, or None if empty."""
-        if not self._path.exists():
-            return None
-
-        # Read last line efficiently
-        content = self._path.read_text().rstrip("\n")
-        if not content:
-            return None
-
-        last_line = content.rsplit("\n", 1)[-1]
-        return AppendEntry.from_json(json.loads(last_line))
-
-    def truncate_to(self, last_uuid: str) -> None:
-        """Remove all entries after the one with the given uuid."""
-        entries = list(self)
-        found_idx = None
-        for i, entry in enumerate(entries):
-            if entry.last_uuid == last_uuid:
-                found_idx = i
-                break
-
-        if found_idx is None:
-            raise ValueError(f"uuid {last_uuid!r} not found in append log")
-
-        # Rewrite file with only entries up to and including found_idx
-        with open(self._path, "w") as f:
-            for entry in entries[: found_idx + 1]:
-                f.write(json.dumps(entry.to_json()) + "\n")
-
-    def find_valid_prefix(
-        self, current_head: str, parent_map: dict[str, str | None]
-    ) -> AppendEntry | None:
-        """Find the last entry whose uuid is an ancestor of current_head.
-
-        Walks backwards through the append log, checking each entry's last_uuid
-        against the ancestor chain of current_head.
-
-        For turn-level tracking: if the common ancestor falls WITHIN a turn
-        (between first_uuid and last_uuid) rather than at a turn boundary
-        (at last_uuid), we return the PREVIOUS turn's entry. This ensures
-        we truncate to before the partially-matching turn.
-
-        Returns None if the log is empty, signaling the caller should transcribe
-        the entire ancestor chain from root to current_head.
-        """
-        entries = list(self)
-        if not entries:
-            return None
-
-        # Get the last indexed uuid
-        last_indexed = entries[-1].last_uuid
-
-        # Find common ancestor between last_indexed and current_head
-        common = find_common_ancestor(last_indexed, current_head, parent_map)
-
-        # No common ancestor means completely disjoint branches - user reverted
-        # to before anything we indexed, so start fresh
-        if common is None:
-            return None
-
-        # Walk backwards through entries to find one whose last_uuid is an ancestor
-        # of the common ancestor (meaning the turn ended at or before the common point)
-        common_ancestors = _get_ancestors(common, parent_map)
-        common_ancestors.add(common)
-
-        for i, entry in enumerate(reversed(entries)):
-            if entry.last_uuid in common_ancestors:
-                # Check if common ancestor is WITHIN this turn (not at its boundary)
-                # This only applies to turn-level entries that have first_uuid set
-                if entry.first_uuid is not None and entry.last_uuid != common:
-                    # Common ancestor is within this turn, not at its end.
-                    # Check if common is actually within this turn's UUID range.
-                    # Get all UUIDs from first_uuid to last_uuid (the turn's range)
-                    turn_ancestors = _get_ancestors(entry.last_uuid, parent_map)
-                    turn_ancestors.add(entry.last_uuid)
-
-                    # If the common ancestor is in the turn's range but not at the end,
-                    # we need to return the previous entry (before this turn)
-                    if common in turn_ancestors and common != entry.last_uuid:
-                        # Find the first_uuid's ancestors to determine turn boundary
-                        first_ancestors = _get_ancestors(entry.first_uuid, parent_map)
-                        # If common is an ancestor of first_uuid (before this turn),
-                        # this entry is still valid
-                        if common in first_ancestors:
-                            return entry
-                        # Common is within this turn - return previous entry
-                        actual_idx = len(entries) - 1 - i
-                        if actual_idx > 0:
-                            return entries[actual_idx - 1]
-                        return None
-                return entry
-
-        return None
-
-    def __iter__(self) -> Iterator[AppendEntry]:
-        """Iterate over all entries."""
-        if not self._path.exists():
-            return
-
-        for record, _ in iter_jsonl(self._path):
-            yield AppendEntry.from_json(record)
-
-
-@dataclass
-class SessionState:
-    """Session state with header and append log."""
-
-    header: SessionStateHeader
-    entries: list[AppendEntry] = field(default_factory=list)
-
-    @classmethod
-    def load(cls, path: Path) -> SessionState | None:
-        """Load session state from JSONL file.
-
-        Returns None if file doesn't exist.
-        """
-        if not path.exists():
-            return None
-
-        lines = path.read_text().strip().split("\n")
-        if not lines or not lines[0]:
-            return None
-
-        header = SessionStateHeader.from_json(json.loads(lines[0]))
-        entries = [
-            AppendEntry.from_json(json.loads(line)) for line in lines[1:] if line
-        ]
-        return cls(header=header, entries=entries)
-
-    def save(self, path: Path) -> None:
-        """Save session state to JSONL file."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        lines = [json.dumps(self.header.to_json())]
-        lines.extend(json.dumps(entry.to_json()) for entry in self.entries)
-        path.write_text("\n".join(lines) + "\n")
-
-    def append_log(self) -> AppendLog:
-        """Get an AppendLog view backed by this state's entries."""
-        return _SessionAppendLog(self)
-
-
-def _get_state_dir() -> Path:
-    """Get the transcript state directory from environment or default."""
-    import os
-
-    state_dir_str = os.environ.get("RAGZOOM_STATE_DIR", "data/transcript-state")
-    return Path(state_dir_str)
-
-
-def get_state_path(document_id: str) -> Path:
-    """Get the path to the state file for a document."""
-    state_dir = _get_state_dir()
-    state_dir.mkdir(parents=True, exist_ok=True)
-    return state_dir / f"{document_id}.jsonl"
-
-
-def set_session_pid(document_id: str, pid: int) -> None:
-    """Set the PID for a session, creating state file if needed.
-
-    Called by SessionStart hook to register the Claude Code PID before
-    any tool calls. Preserves existing state fields if the file exists.
-    """
-    state_path = get_state_path(document_id)
-    state = SessionState.load(state_path)
-    if state is None:
-        state = SessionState(header=SessionStateHeader(document_id=document_id))
-    state.header.last_pid = pid
-    state.save(state_path)
-
-
-class _SessionAppendLog(AppendLog):
-    """AppendLog backed by SessionState entries (in-memory)."""
-
-    def __init__(self, state: SessionState) -> None:
-        # Dummy path - not used for in-memory operations
-        super().__init__(Path("/dev/null"))
-        self._state = state
-
-    def append(self, entry: AppendEntry) -> None:
-        self._state.entries.append(entry)
-
-    def last_entry(self) -> AppendEntry | None:
-        if not self._state.entries:
-            return None
-        return self._state.entries[-1]
-
-    def truncate_to(self, last_uuid: str) -> None:
-        for i, entry in enumerate(self._state.entries):
-            if entry.last_uuid == last_uuid:
-                self._state.entries = self._state.entries[: i + 1]
-                return
-        raise ValueError(f"uuid {last_uuid!r} not found in append log")
-
-    def __iter__(self) -> Iterator[AppendEntry]:
-        return iter(self._state.entries)
-
-
 def build_parent_map(transcript_path: Path) -> dict[str, str | None]:
     """Build a uuid -> parentUuid map from a transcript file.
 
@@ -685,86 +653,6 @@ def get_ancestor_chain(
     # Reverse to get forward order (ancestor's child first, target last)
     chain.reverse()
     return chain
-
-
-@dataclass
-class SyncPlan:
-    """Plan for syncing a transcript to the indexed document."""
-
-    uuids_to_transcribe: list[str]
-    """UUIDs to transcribe and append, in order."""
-
-    truncate_to_span: int | None
-    """If set, truncate document to this span before appending."""
-
-    truncate_to_uuid: str | None
-    """UUID of the valid prefix entry (for truncating append log)."""
-
-
-def compute_sync_plan(
-    current_head: str,
-    append_log: AppendLog,
-    parent_map: dict[str, str | None],
-) -> SyncPlan:
-    """Compute what operations are needed to sync transcript to document.
-
-    Args:
-        current_head: UUID of the current transcript head
-        append_log: The append log tracking what we've indexed
-        parent_map: uuid -> parentUuid mapping from transcript
-
-    Returns:
-        SyncPlan describing truncation and transcription needed
-    """
-    last_entry = append_log.last_entry()
-
-    # Empty append log: transcribe entire ancestor chain from root
-    if last_entry is None:
-        chain = get_ancestor_chain(current_head, None, parent_map)
-        return SyncPlan(
-            uuids_to_transcribe=chain,
-            truncate_to_span=None,
-            truncate_to_uuid=None,
-        )
-
-    # Already synced: nothing to do
-    if last_entry.last_uuid == current_head:
-        return SyncPlan(
-            uuids_to_transcribe=[],
-            truncate_to_span=None,
-            truncate_to_uuid=None,
-        )
-
-    # Find valid prefix (handles revert detection)
-    valid_prefix = append_log.find_valid_prefix(current_head, parent_map)
-
-    if valid_prefix is None:
-        # Disjoint branches: truncate everything and start fresh
-        chain = get_ancestor_chain(current_head, None, parent_map)
-        return SyncPlan(
-            uuids_to_transcribe=chain,
-            truncate_to_span=0,
-            truncate_to_uuid=None,
-        )
-
-    # Get chain from valid prefix to current head
-    chain = get_ancestor_chain(current_head, valid_prefix.last_uuid, parent_map)
-
-    # Determine if truncation is needed
-    if valid_prefix.last_uuid == last_entry.last_uuid:
-        # No revert, just append new messages
-        return SyncPlan(
-            uuids_to_transcribe=chain,
-            truncate_to_span=None,
-            truncate_to_uuid=None,
-        )
-    else:
-        # Revert happened: truncate to valid prefix
-        return SyncPlan(
-            uuids_to_transcribe=chain,
-            truncate_to_span=valid_prefix.span_end,
-            truncate_to_uuid=valid_prefix.last_uuid,
-        )
 
 
 def get_compaction_uuid(transcript_path: Path) -> str | None:
@@ -901,38 +789,95 @@ def transcribe_uuids_from_map(
 
 @dataclass
 class SyncResult:
-    """Result from executing a sync operation."""
+    """Result from executing a sync operation.
+
+    The stateless sync algorithm derives state from the document status API,
+    eliminating the need for UUID-based tracking or span positions.
+    """
 
     document_id: str
+    """Document ID that was synced."""
+
     truncated: bool
-    truncate_span: int | None
-    appended_uuids: list[str]
-    new_span_end: int
+    """True if a revert was detected and orphaned content was removed."""
+
+    truncate_cutoff_time: str | None
+    """ISO 8601 timestamp used for truncation, if truncated is True."""
+
+    turns_appended: int
+    """Number of conversation turns appended to the document."""
+
+
+def _handle_revert_detection(
+    r_uuid: str | None,
+    indexed_time_end: datetime | None,
+    records: dict[str, dict[str, object]],
+    client: object,
+    document_id: str,
+) -> str | None:
+    """Detect and handle revert by comparing connection point to indexed content.
+
+    Returns the cutoff timestamp string if a revert was detected and truncation
+    was performed, or None if no revert occurred.
+    """
+    if r_uuid is None or indexed_time_end is None:
+        return None
+
+    r_record = records.get(r_uuid)
+    if r_record is None:
+        return None
+
+    r_timestamp_str = r_record.get("timestamp")
+    if not isinstance(r_timestamp_str, str):
+        return None
+
+    r_timestamp = _parse_timestamp(r_timestamp_str)
+    if r_timestamp >= indexed_time_end:
+        return None
+
+    # Revert detected: truncate orphaned content
+    truncate_from_time = getattr(client, "truncate_from_time")
+    truncate_from_time(document_id, r_timestamp_str)
+    return r_timestamp_str
+
+
+def _build_records_map(transcript_path: Path) -> dict[str, dict[str, object]]:
+    """Build UUID -> record map from transcript.
+
+    Includes all records with UUIDs, including compaction summaries.
+    Compaction summaries are needed for parent-child chain traversal
+    but are filtered out during transcription.
+    """
+    records: dict[str, dict[str, object]] = {}
+    for record, _ in iter_jsonl(transcript_path):
+        uuid = record.get("uuid")
+        if isinstance(uuid, str):
+            records[uuid] = record
+    return records
 
 
 def execute_sync(
     transcript_path: Path,
-    state_path: Path,
+    document_id: str,
     client: object,
 ) -> SyncResult:
-    """Execute a complete sync operation.
+    """Execute a complete sync operation using stateless algorithm.
+
+    The stateless algorithm derives sync state from two sources:
+    1. The JSONL transcript (source of truth for content)
+    2. RagZoom document status (source of truth for what's indexed)
+
+    This makes sync idempotent and crash-safe, eliminating external state files.
 
     Args:
         transcript_path: Path to the JSONL transcript
-        state_path: Path to the session state file
-        client: RagZoom client with append() and truncate() methods
+        document_id: Document ID to sync to (typically the transcript filename stem)
+        client: RagZoom client with get_document_status(), batch_append(),
+                and truncate_from_time() methods
 
     Returns:
         SyncResult describing what was done
     """
-    # Load or create session state
-    state = SessionState.load(state_path)
-    if state is None:
-        # Generate document_id from transcript filename
-        document_id = transcript_path.stem
-        state = SessionState(header=SessionStateHeader(document_id=document_id))
-
-    document_id = state.header.document_id
 
     # Get current head
     current_head = get_current_head(transcript_path)
@@ -941,122 +886,82 @@ def execute_sync(
         return SyncResult(
             document_id=document_id,
             truncated=False,
-            truncate_span=None,
-            appended_uuids=[],
-            new_span_end=0,
+            truncate_cutoff_time=None,
+            turns_appended=0,
         )
 
-    # Build parent map and compute sync plan
-    parent_map = build_parent_map(transcript_path)
-    append_log = state.append_log()
-    plan = compute_sync_plan(current_head, append_log, parent_map)
+    # Get indexed state from RagZoom document status
+    get_document_status = getattr(client, "get_document_status")
+    doc_status = get_document_status(document_id)
 
-    # Nothing to do
-    if not plan.uuids_to_transcribe and plan.truncate_to_span is None:
-        last_entry = append_log.last_entry()
-        span_end = last_entry.span_end if last_entry else 0
-        state.save(state_path)
+    # Parse indexed_time_end if document has temporal content
+    indexed_time_end: datetime | None = None
+    if doc_status.exists and doc_status.time_end is not None:
+        indexed_time_end = _parse_timestamp(doc_status.time_end)
+
+    # Build records map for stateless algorithm
+    records = _build_records_map(transcript_path)
+
+    # Build parent map with compaction bridging for ancestry traversal
+    parent_map = build_parent_map(transcript_path)
+
+    # Find truncation point using sliding window algorithm
+    r_uuid, s_uuid = find_truncation_point(current_head, records, indexed_time_end)
+
+    # Build list of UUIDs to append (using parent_map to bridge compactions)
+    uuids_to_append = (
+        []
+        if s_uuid is None
+        else build_ancestry_chain(current_head, r_uuid, records, parent_map)
+    )
+
+    # Detect and handle revert (returns cutoff time if truncation occurred)
+    truncate_cutoff_time = _handle_revert_detection(
+        r_uuid, indexed_time_end, records, client, document_id
+    )
+
+    if not uuids_to_append:
+        # Nothing to append
         return SyncResult(
             document_id=document_id,
-            truncated=False,
-            truncate_span=None,
-            appended_uuids=[],
-            new_span_end=span_end,
+            truncated=truncate_cutoff_time is not None,
+            truncate_cutoff_time=truncate_cutoff_time,
+            turns_appended=0,
         )
 
-    truncated = False
-    truncate_span: int | None = None
-
-    # Execute truncation if needed
-    if plan.truncate_to_span is not None:
-        truncate_method = getattr(client, "truncate")
-        truncate_method(document_id, plan.truncate_to_span)
-        truncated = True
-        truncate_span = plan.truncate_to_span
-
-        # Truncate the append log
-        if plan.truncate_to_uuid is not None:
-            append_log.truncate_to(plan.truncate_to_uuid)
-        else:
-            # Disjoint branches - clear the state entries
-            state.entries = []
-
-    # Group UUIDs into turns and batch append with temporal metadata
-    appended_uuids: list[str] = []
-    new_span_end = 0
-    if plan.uuids_to_transcribe:
-        # Build records map once for all UUIDs
-        records_by_uuid = build_records_map(
-            transcript_path, set(plan.uuids_to_transcribe)
+    # Group UUIDs into conversation turns
+    turns = group_into_turns(uuids_to_append, records)
+    if not turns:
+        return SyncResult(
+            document_id=document_id,
+            truncated=truncate_cutoff_time is not None,
+            truncate_cutoff_time=truncate_cutoff_time,
+            turns_appended=0,
         )
 
-        # Group UUIDs into conversation turns
-        turns = group_into_turns(plan.uuids_to_transcribe, records_by_uuid)
+    # Convert turns to AppendUnits and filter out empty ones
+    append_units = turns_to_append_units(turns, records)
+    non_empty = [unit for unit in append_units if unit.text.strip()]
 
-        if turns:
-            # Convert turns to AppendUnits with timestamps
-            append_units = turns_to_append_units(turns, records_by_uuid)
+    if not non_empty:
+        return SyncResult(
+            document_id=document_id,
+            truncated=truncate_cutoff_time is not None,
+            truncate_cutoff_time=truncate_cutoff_time,
+            turns_appended=0,
+        )
 
-            # Pair units with turns, keeping only non-empty units
-            units_with_turns = [
-                (unit, turn)
-                for unit, turn in zip(append_units, turns)
-                if unit.text.strip()
-            ]
-
-            if units_with_turns:
-                non_empty_units = [unit for unit, _ in units_with_turns]
-
-                # Call batch_append with all units at once
-                batch_append_method = getattr(client, "batch_append")
-                batch_append_method(document_id, non_empty_units)
-
-                # Determine starting span position for this batch
-                last_entry = append_log.last_entry()
-                span_start = last_entry.span_end if last_entry else 0
-
-                # Record one AppendEntry per turn with cumulative span_end
-                cumulative_span = span_start
-                for unit, turn in units_with_turns:
-                    cumulative_span += len(unit.text)
-
-                    # Collect UUIDs excluding tool results
-                    turn_uuids = [
-                        uuid
-                        for uuid in turn.uuids
-                        if uuid in records_by_uuid
-                        and not (
-                            records_by_uuid[uuid].get("type") == "user"
-                            and "toolUseResult" in records_by_uuid[uuid]
-                        )
-                    ]
-                    appended_uuids.extend(turn_uuids)
-
-                    if turn_uuids:
-                        append_log.append(
-                            AppendEntry(
-                                last_uuid=turn_uuids[-1],
-                                span_end=cumulative_span,
-                                first_uuid=turn_uuids[0],
-                            )
-                        )
-
-                # Use cumulative span for consistency with stored entries
-                # (matches what we recorded in each turn's AppendEntry)
-                new_span_end = cumulative_span
-
-    # Fall back to existing span_end if nothing was appended
-    if not appended_uuids:
-        last_entry = append_log.last_entry()
-        new_span_end = last_entry.span_end if last_entry else 0
-
-    # Save state
-    state.save(state_path)
+    # Batch append all units with conversation-specific summarization guidance
+    batch_append = getattr(client, "batch_append")
+    batch_append(
+        document_id,
+        non_empty,
+        summarization_guidance=CONVERSATION_SUMMARIZATION_GUIDANCE,
+    )
 
     return SyncResult(
         document_id=document_id,
-        truncated=truncated,
-        truncate_span=truncate_span,
-        appended_uuids=appended_uuids,
-        new_span_end=new_span_end,
+        truncated=truncate_cutoff_time is not None,
+        truncate_cutoff_time=truncate_cutoff_time,
+        turns_appended=len(non_empty),
     )

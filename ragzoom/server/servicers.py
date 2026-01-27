@@ -64,6 +64,38 @@ else:  # pragma: no cover - typing aid only
 logger = logging.getLogger(__name__)
 
 _UNSPECIFIED_WORKER_MODE = 0
+
+
+def complete_forest_size(leaf_count: int) -> int:
+    """Calculate expected total nodes when a binary forest is fully indexed.
+
+    RagZoom builds a forest of perfect binary trees over N leaves.
+    The binary representation of N determines the forest structure:
+    - N decomposes into popcount(N) perfect binary trees
+    - Each tree with 2^k leaves has 2^k - 1 inner nodes
+    - Total inner nodes = N - popcount(N)
+    - Total nodes = N + (N - popcount(N)) = 2N - popcount(N)
+
+    Args:
+        leaf_count: Number of leaf nodes in the document.
+
+    Returns:
+        Expected total node count (leaves + inner nodes) for a complete forest.
+
+    Examples:
+        >>> complete_forest_size(8)   # 0b1000, popcount=1 → 15
+        15
+        >>> complete_forest_size(7)   # 0b111, popcount=3 → 11
+        11
+        >>> complete_forest_size(100) # 0b1100100, popcount=3 → 197
+        197
+    """
+    if leaf_count <= 0:
+        return 0
+    popcount = bin(leaf_count).count("1")
+    return 2 * leaf_count - popcount
+
+
 _UNTIL_IDLE_WORKER_MODE = getattr(pb2, "WORKER_RUN_MODE_UNTIL_IDLE", 1)
 _CONTINUOUS_WORKER_MODE = 2
 
@@ -420,11 +452,18 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
                 # No timestamps on this unit
                 timestamps.append(None)  # type: ignore[arg-type]
 
+        summarization_guidance = (
+            request.summarization_guidance
+            if request.HasField("summarization_guidance")
+            else None
+        )
+
         session = self._runtime.get_session(request.document_id)
         result = await session.batch_append_text(
             units,
             collect_telemetry=request.collect_telemetry,
             timestamps=timestamps if has_any_timestamp else None,
+            summarization_guidance=summarization_guidance,
         )
 
         response = pb2.BatchAppendTextResponse(
@@ -454,6 +493,82 @@ class IndexerServicer(pb2_grpc.IndexerServiceServicer):
             document_id=result.document_id,
             deleted_node_ids=result.deleted_node_ids,
             span_start=result.span_start,
+        )
+
+    async def TruncateFromTime(  # noqa: N802
+        self,
+        request: object,
+        context: ServicerContextProto,
+    ) -> object:
+        """Truncate a temporal document from a given cutoff time.
+
+        Removes all nodes where time_end > cutoff_time, including both
+        leaf nodes and inner (summary) nodes. Vectors for deleted nodes
+        are also removed from the vector index.
+
+        See specs/temporal-document-apis.md for full specification.
+        """
+        document_id = getattr(request, "document_id", "")
+        cutoff_time_str = getattr(request, "cutoff_time", "")
+
+        if not document_id:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="TruncateFromTime requires `document_id`.",
+            )
+
+        if not cutoff_time_str:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="TruncateFromTime requires `cutoff_time`.",
+            )
+
+        # Parse and validate the ISO 8601 timestamp
+        try:
+            cutoff_dt = datetime.fromisoformat(cutoff_time_str.replace("Z", "+00:00"))
+            cutoff_unix = cutoff_dt.timestamp()
+        except ValueError:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message=f"Invalid ISO 8601 timestamp: {cutoff_time_str}",
+            )
+
+        # Check if document exists
+        document_store = self._state.store.for_document(document_id)
+        node_count = document_store.get_node_count()
+        if node_count == 0:
+            await _abort(
+                context,
+                code=grpc.StatusCode.NOT_FOUND,
+                message=f"Document '{document_id}' not found.",
+            )
+
+        # Check if document is temporal
+        is_temporal_result = document_store._doc_repo.get_document_is_temporal(
+            document_id
+        )
+        is_temporal = (
+            bool(is_temporal_result) if is_temporal_result is not None else False
+        )
+        if not is_temporal:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message=f"Document '{document_id}' is not a temporal document.",
+            )
+
+        # Delegate to runtime for actual truncation
+        session = self._runtime.get_session(document_id)
+        result = await session.truncate_from_time(cutoff_unix)
+
+        response_cls = getattr(pb2, "TruncateFromTimeResponse")
+        return response_cls(
+            document_id=result.document_id,
+            deleted_node_ids=result.deleted_node_ids,
+            cutoff_time=cutoff_time_str,
         )
 
 
@@ -776,6 +891,88 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
             except asyncio.CancelledError:  # pragma: no cover - cooperative shutdown
                 return
 
+    async def GetDocumentStatus(  # noqa: N802
+        self,
+        request: object,
+        context: ServicerContextProto,
+    ) -> object:
+        """Return document status with completion metrics.
+
+        Unlike GetDocument which focuses on work queue state, this method
+        returns document completeness and temporal range information for
+        stateless sync workflows.
+
+        See specs/temporal-document-apis.md for full specification.
+        """
+        document_id = getattr(request, "document_id", "")
+        if not document_id:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="GetDocumentStatus requires `document_id`.",
+            )
+
+        # Check if document exists
+        document_store = self._state.store.for_document(document_id)
+        leaf_count = document_store.nodes.leaf_count()
+        node_count = document_store.get_node_count()
+
+        # Document doesn't exist if it has no nodes
+        exists = node_count > 0
+
+        response_cls = getattr(pb2, "DocumentStatusResponse")
+
+        if not exists:
+            # Return empty response for non-existent documents
+            return response_cls(
+                document_id=document_id,
+                exists=False,
+                is_temporal=False,
+                leaf_count=0,
+                node_count=0,
+                complete_forest_size=0,
+                completion_pct=0.0,
+            )
+
+        # Get temporal status from document repository
+        is_temporal_result = document_store._doc_repo.get_document_is_temporal(
+            document_id
+        )
+        is_temporal = (
+            bool(is_temporal_result) if is_temporal_result is not None else False
+        )
+
+        # Calculate completion metrics using binary forest formula
+        forest_size = complete_forest_size(leaf_count)
+        completion_pct = (node_count / forest_size * 100.0) if forest_size > 0 else 0.0
+
+        # Get temporal range if document is temporal
+        time_start_iso: str | None = None
+        time_end_iso: str | None = None
+        if is_temporal:
+            time_start, time_end = document_store.get_temporal_range()
+            if time_start is not None:
+                time_start_iso = _unix_to_iso8601(time_start)
+            if time_end is not None:
+                time_end_iso = _unix_to_iso8601(time_end)
+
+        response = response_cls(
+            document_id=document_id,
+            exists=True,
+            is_temporal=is_temporal,
+            leaf_count=leaf_count,
+            node_count=node_count,
+            complete_forest_size=forest_size,
+            completion_pct=completion_pct,
+        )
+        # Set optional fields if present
+        if time_start_iso is not None:
+            response.time_start = time_start_iso
+        if time_end_iso is not None:
+            response.time_end = time_end_iso
+
+        return response
+
     async def GetDocument(  # noqa: N802
         self,
         request: pb2.GetDocumentRequest,
@@ -997,6 +1194,10 @@ async def serve(state: ServerState, *, host: str, port: int) -> None:
             options=[
                 ("grpc.max_receive_message_length", max_message_size),
                 ("grpc.max_send_message_length", max_message_size),
+                # Disable SO_REUSEPORT to prevent multiple daemons binding to the same port.
+                # This ensures only one daemon can serve requests, complementing the
+                # single-writer lease mechanism.
+                ("grpc.so_reuseport", 0),
             ]
         ),
     )

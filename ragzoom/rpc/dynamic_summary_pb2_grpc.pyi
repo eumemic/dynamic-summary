@@ -10,6 +10,8 @@ from .dynamic_summary_pb2 import (
     AppendTextResponse,
     BatchAppendTextRequest,
     BatchAppendTextResponse,
+    DocumentStatusRequest,
+    DocumentStatusResponse,
     ExecuteQueryRequest,
     ExecuteQueryResponse,
     GetCompactionBoundaryRequest,
@@ -30,6 +32,8 @@ from .dynamic_summary_pb2 import (
     RunWorkersResponse,
     TruncateDocumentRequest,
     TruncateDocumentResponse,
+    TruncateFromTimeRequest,
+    TruncateFromTimeResponse,
 )
 
 Channel = object
@@ -53,6 +57,9 @@ class IndexerServiceStub:
     def TruncateDocument(
         self, request: TruncateDocumentRequest, timeout: float | None = ...
     ) -> TruncateDocumentResponse: ...
+    def TruncateFromTime(
+        self, request: TruncateFromTimeRequest, timeout: float | None = ...
+    ) -> TruncateFromTimeResponse: ...
 
 class RetrievalServiceStub:
     def __init__(self, channel: Channel) -> None: ...
@@ -71,6 +78,9 @@ class WorkerServiceStub:
     def GetDocument(
         self, request: GetDocumentRequest, timeout: float | None = ...
     ) -> GetDocumentResponse: ...
+    def GetDocumentStatus(
+        self, request: DocumentStatusRequest, timeout: float | None = ...
+    ) -> DocumentStatusResponse: ...
 
 class SessionIngestionServiceStub:
     def __init__(self, channel: Channel) -> None: ...
@@ -112,6 +122,9 @@ class IndexerServiceServicer:
     def TruncateDocument(
         self, request: TruncateDocumentRequest, context: ServicerContext
     ) -> Awaitable[TruncateDocumentResponse]: ...
+    def TruncateFromTime(
+        self, request: object, context: ServicerContext
+    ) -> Awaitable[object]: ...
 
 class RetrievalServiceServicer:
     def Retrieve(
@@ -128,6 +141,9 @@ class WorkerServiceServicer:
     def GetDocument(
         self, request: GetDocumentRequest, context: ServicerContext
     ) -> Awaitable[GetDocumentResponse]: ...
+    def GetDocumentStatus(
+        self, request: object, context: ServicerContext
+    ) -> Awaitable[object]: ...
 
 class SessionIngestionServiceServicer:
     def GetSessionCursor(

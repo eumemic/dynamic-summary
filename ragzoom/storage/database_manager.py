@@ -569,6 +569,26 @@ class DatabaseManager:
                     )
                 )
 
+                # Rename summary_system_prompt to summarization_guidance
+                # See specs/custom-prompt-config.md § Migration
+                conn.execute(
+                    text(
+                        """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'documents'
+                            AND column_name = 'summary_system_prompt'
+                        ) THEN
+                            ALTER TABLE documents
+                            RENAME COLUMN summary_system_prompt TO summarization_guidance;
+                        END IF;
+                    END $$;
+                """
+                    )
+                )
+
                 logger.debug("Database migrations completed")
         except Exception as e:
             # Migration failures are not critical - the column might already exist

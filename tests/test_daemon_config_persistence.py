@@ -292,22 +292,26 @@ class TestAutostartUsesPersistedConfig:
             assert config_file.exists()
 
             # Mock start_daemon to capture the config_path argument
-            with patch("ragzoom.daemon.start_daemon") as mock_start:
-                with patch("ragzoom.daemon.is_server_healthy", return_value=False):
-                    with patch("ragzoom.daemon.wait_for_healthy", return_value=True):
+            # Force production mode for auto-start test
+            with patch("ragzoom.daemon._is_dev_invocation", return_value=False):
+                with patch("ragzoom.daemon.start_daemon") as mock_start:
+                    with patch("ragzoom.daemon.is_server_healthy", return_value=False):
                         with patch(
-                            "ragzoom.daemon.get_server_address",
-                            return_value="127.0.0.1:50051",
+                            "ragzoom.daemon.wait_for_healthy", return_value=True
                         ):
-                            from ragzoom.daemon import ensure_server_running
+                            with patch(
+                                "ragzoom.daemon.get_server_address",
+                                return_value="127.0.0.1:50051",
+                            ):
+                                from ragzoom.daemon import ensure_server_running
 
-                            ensure_server_running()
+                                ensure_server_running()
 
-                            # start_daemon should be called with config_path
-                            mock_start.assert_called_once()
-                            call_kwargs = mock_start.call_args.kwargs
-                            assert "config_path" in call_kwargs
-                            assert call_kwargs["config_path"] == config_file
+                                # start_daemon should be called with config_path
+                                mock_start.assert_called_once()
+                                call_kwargs = mock_start.call_args.kwargs
+                                assert "config_path" in call_kwargs
+                                assert call_kwargs["config_path"] == config_file
 
     def test_autostart_without_config_file(self, tmp_path: Path) -> None:
         """ensure_server_running() works without persisted config."""
@@ -320,22 +324,26 @@ class TestAutostartUsesPersistedConfig:
             assert not config_file.exists()
 
             # Mock start_daemon to capture arguments
-            with patch("ragzoom.daemon.start_daemon") as mock_start:
-                with patch("ragzoom.daemon.is_server_healthy", return_value=False):
-                    with patch("ragzoom.daemon.wait_for_healthy", return_value=True):
+            # Force production mode for auto-start test
+            with patch("ragzoom.daemon._is_dev_invocation", return_value=False):
+                with patch("ragzoom.daemon.start_daemon") as mock_start:
+                    with patch("ragzoom.daemon.is_server_healthy", return_value=False):
                         with patch(
-                            "ragzoom.daemon.get_server_address",
-                            return_value="127.0.0.1:50051",
+                            "ragzoom.daemon.wait_for_healthy", return_value=True
                         ):
-                            from ragzoom.daemon import ensure_server_running
+                            with patch(
+                                "ragzoom.daemon.get_server_address",
+                                return_value="127.0.0.1:50051",
+                            ):
+                                from ragzoom.daemon import ensure_server_running
 
-                            ensure_server_running()
+                                ensure_server_running()
 
-                            # start_daemon should be called without config_path
-                            mock_start.assert_called_once()
-                            call_kwargs = mock_start.call_args.kwargs
-                            # config_path should be None when no config file exists
-                            assert call_kwargs.get("config_path") is None
+                                # start_daemon should be called without config_path
+                                mock_start.assert_called_once()
+                                call_kwargs = mock_start.call_args.kwargs
+                                # config_path should be None when no config file exists
+                                assert call_kwargs.get("config_path") is None
 
     def test_start_daemon_includes_config_in_command(self, tmp_path: Path) -> None:
         """start_daemon() includes --config flag when config_path is provided."""

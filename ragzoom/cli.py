@@ -21,7 +21,7 @@ import click
 from dotenv import load_dotenv
 
 from ragzoom.client import (
-    DocumentStatusView,
+    DocumentWorkStatus,
     GrpcRagzoomClient,
     WorkerRunSnapshot,
 )
@@ -33,7 +33,6 @@ from ragzoom.config import (
 from ragzoom.constants import (
     DEFAULT_GRPC_ADDRESS,
     DEFAULT_GRPC_HOST,
-    DEFAULT_GRPC_PORT,
 )
 from ragzoom.daemon import (
     cleanup_stale_state,
@@ -46,7 +45,6 @@ from ragzoom.daemon import (
     read_pid_file,
     read_port_file,
     write_config_file,
-    write_port_file,
 )
 from ragzoom.error_handling import handle_graceful_error
 from ragzoom.exceptions import (
@@ -102,6 +100,31 @@ logging.getLogger("chromadb.telemetry").setLevel(logging.ERROR)
 logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.ERROR)
 
 GRPC_ADDRESS_HELP = f"gRPC server address (defaults to {DEFAULT_GRPC_ADDRESS})"
+
+# Dev/Prod port separation
+PRODUCTION_PORT = 50051
+DEV_PORT = 50052
+
+
+def _is_dev_invocation() -> bool:
+    """Detect if invoked via 'python -m ragzoom.cli' vs 'ragzoom' entry point.
+
+    Returns True for module invocation (development), False for entry point (production).
+    This enables automatic dev/prod separation without explicit flags.
+    """
+    argv0 = sys.argv[0] if sys.argv else ""
+    # Module invocation: argv[0] ends with .py or contains ragzoom/cli.py path
+    return (
+        argv0.endswith(".py") or "ragzoom/cli.py" in argv0 or "ragzoom\\cli.py" in argv0
+    )
+
+
+def _get_default_port() -> int:
+    """Get the default port based on invocation mode.
+
+    Returns DEV_PORT for module invocation, PRODUCTION_PORT for entry point.
+    """
+    return DEV_PORT if _is_dev_invocation() else PRODUCTION_PORT
 
 
 def _resolve_server_address_with_autostart(value: str | None) -> str:
@@ -361,7 +384,7 @@ def index(
         result: IndexingResult
         resolved_address = _resolve_server_address_with_autostart(server_address)
         final_snapshot: WorkerRunSnapshot | None = None
-        refreshed_status: DocumentStatusView | None = None
+        refreshed_status: DocumentWorkStatus | None = None
         refresh_error: str | None = None
 
         content_bytes = Path(file_path).read_bytes()
@@ -435,7 +458,7 @@ def index(
 
                 if should_refresh_status:
                     try:
-                        refreshed_status = client.get_document_status(
+                        refreshed_status = client.get_document_work_status(
                             target_document_id
                         )
                     except Exception as exc:  # pragma: no cover - network failures
@@ -1228,6 +1251,72 @@ def cost(ctx: click.Context, document_id: str) -> None:
         handle_cli_error(e, "getting cost statistics")
 
 
+@cli.command("document-status")
+@click.argument("document_id")
+@click.option(
+    "--server-address",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default=None,
+    show_default=False,
+    help=GRPC_ADDRESS_HELP,
+)
+@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def document_status(
+    ctx: click.Context,
+    document_id: str,
+    server_address: str | None,
+    output_json: bool,
+) -> None:
+    """Display document status and completion metrics.
+
+    Shows document existence, node counts, indexing completion percentage,
+    and temporal range for documents with temporal metadata.
+
+    Examples:
+      ragzoom document-status my-document
+      ragzoom document-status session-abc123 --json
+    """
+    try:
+        resolved_address = _resolve_server_address_with_autostart(server_address)
+
+        with GrpcRagzoomClient(resolved_address) as client:
+            status = client.get_document_status(document_id)
+
+        if output_json:
+            # JSON output format matching spec
+            output = {
+                "document_id": status.document_id,
+                "exists": status.exists,
+                "is_temporal": status.is_temporal,
+                "leaf_count": status.leaf_count,
+                "node_count": status.node_count,
+                "complete_forest_size": status.complete_forest_size,
+                "completion_pct": status.completion_pct,
+                "time_start": status.time_start,
+                "time_end": status.time_end,
+            }
+            click.echo(json.dumps(output, indent=2))
+        else:
+            # Human-readable output format matching spec
+            click.echo(f"Document: {status.document_id}")
+            if not status.exists:
+                click.echo("Status: does not exist")
+            else:
+                doc_type = "temporal" if status.is_temporal else "non-temporal"
+                click.echo(f"Type: {doc_type}")
+                click.echo(f"Leaves: {status.leaf_count}")
+                click.echo(
+                    f"Nodes: {status.node_count} / {status.complete_forest_size} "
+                    f"({status.completion_pct:.1f}% complete)"
+                )
+                if status.is_temporal and status.time_start and status.time_end:
+                    click.echo(f"Time range: {status.time_start} to {status.time_end}")
+
+    except Exception as e:
+        handle_cli_error(e, "getting document status")
+
+
 @cli.command()
 @click.option(
     "--host", default="127.0.0.1", help="Host to bind to"
@@ -1705,10 +1794,9 @@ def _persist_daemon_config(config_path: Path) -> None:
 )
 @click.option(
     "--port",
-    default=DEFAULT_GRPC_PORT,
+    default=None,
     type=int,
-    show_default=True,
-    help="Port to bind",
+    help="Port to bind (default: 50051 for prod, 50052 for dev)",
 )
 @click.option(
     "--config",
@@ -1787,7 +1875,7 @@ def _persist_daemon_config(config_path: Path) -> None:
 )
 def start_server(
     host: str,
-    port: int,
+    port: int | None,
     config_path: Path | None,
     debug: bool,
     collect_telemetry: bool,
@@ -1805,19 +1893,30 @@ def start_server(
 ) -> None:
     """Start the RagZoom gRPC server."""
 
+    # Resolve port: use explicit value or fall back to dev/prod default
+    is_dev = _is_dev_invocation()
+    resolved_port = port if port is not None else _get_default_port()
+
+    # Log which mode we're running in
+    mode_str = "dev" if is_dev else "production"
+    logger.info(f"Starting server in {mode_str} mode on port {resolved_port}")
+
     # If daemon mode, fork to background before starting server
     if daemon:
         daemonize()
-        # Write port file so clients can find us
-        write_port_file(port)
-        # Persist config for auto-start if a config file is provided
-        if config_path:
-            _persist_daemon_config(config_path)
+        # Note: Port file is written in app.py AFTER lease acquisition.
+        # This ensures clients only connect once the daemon is truly ready.
         # Install signal handlers for graceful shutdown (SIGTERM/SIGINT)
         install_shutdown_handlers()
         # Register atexit cleanup for normal exits (when run_server returns)
         # This ensures state files are cleaned up even without signals
         atexit.register(cleanup_stale_state)
+
+    # Persist config for auto-start if a config file is provided.
+    # This runs for both daemon and foreground modes so auto-start
+    # works regardless of how the server was originally started.
+    if config_path:
+        _persist_daemon_config(config_path)
 
     # Configure logging AFTER daemonization (if any) so log output
     # goes to the daemon process, not the parent that exits
@@ -1825,7 +1924,7 @@ def start_server(
 
     options = ServerOptions(
         host=host,
-        port=port,
+        port=resolved_port,
         config_path=str(config_path) if config_path else None,
         collect_telemetry=collect_telemetry,
         telemetry_dir=str(telemetry_dir) if telemetry_dir else None,

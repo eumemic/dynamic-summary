@@ -154,6 +154,9 @@ class PostgresStorageBackend(StorageBackend):
     def delete_nodes_from_span(self, document_id: str, span_start: int) -> list[str]:
         return self.doc_repo.delete_nodes_from_span(document_id, span_start)
 
+    def delete_nodes_from_time(self, document_id: str, cutoff_time: float) -> list[str]:
+        return self.doc_repo.delete_nodes_from_time(document_id, cutoff_time)
+
     def get_document_by_id(self, document_id: str) -> Document | None:
         return self.doc_repo.get_document_by_id(document_id)
 

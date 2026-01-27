@@ -1,4 +1,4 @@
-"""MCP server exposing the 'remember' tool for querying conversation history."""
+"""MCP server exposing the 'recall' tool for querying conversation history."""
 
 from __future__ import annotations
 
@@ -7,39 +7,35 @@ import os
 from mcp.server.fastmcp import FastMCP
 
 from ragzoom.client.grpc_client import GrpcRagzoomClient
-from ragzoom_claude_code.transcript_sync import SessionState, _get_state_dir
+from ragzoom_claude_code.transcript_sync import get_session_document_id
 
 mcp = FastMCP(name="RagZoom Memory")
 
 
-def _get_session_id() -> tuple[str, SessionState]:
-    """Find the session ID by matching our parent PID to transcript state files.
+def _get_session_id() -> str:
+    """Get the document ID for the current session.
 
-    The sync hook writes Claude Code's PID to the state file. We find our session
-    by scanning state files for one whose last_pid matches our parent process.
+    Identity resolution priority:
+    1. RAGZOOM_DOCUMENT_ID env var (configured identity - Jarvis/Legion model)
+    2. PID temp file lookup (discovered identity - Claude Code model)
 
     Returns:
-        Tuple of (document_id, session_state)
+        Document ID string
     """
+    # Configured identity (Jarvis/Legion model)
+    if doc_id := os.environ.get("RAGZOOM_DOCUMENT_ID"):
+        return doc_id
+
+    # Discovered identity (Claude Code model) - PID temp file lookup
     claude_code_pid = os.getppid()
+    doc_id = get_session_document_id(claude_code_pid)
 
-    state_dir = _get_state_dir()
-    if not state_dir.exists():
-        raise ValueError(
-            f"No transcript state directory found at {state_dir}. "
-            "Set RAGZOOM_STATE_DIR environment variable if using a custom location. "
-            "Has the transcript been synced yet?"
-        )
-
-    for state_file in state_dir.glob("*.jsonl"):
-        state = SessionState.load(state_file)
-        if state is not None and state.header.last_pid == claude_code_pid:
-            return state.header.document_id, state
+    if doc_id is not None:
+        return doc_id
 
     raise ValueError(
         f"No session found for PID {claude_code_pid}. "
-        "The Stop hook should have synced the transcript. "
-        "Check that hooks are configured correctly."
+        "Either set RAGZOOM_DOCUMENT_ID or ensure SessionStart hook ran."
     )
 
 
@@ -69,7 +65,7 @@ def _format_response(
 
 
 @mcp.tool()
-def remember(
+def recall(
     query: str,
     token_budget: int = 2000,
     time_start: str | None = None,
@@ -104,7 +100,7 @@ def remember(
 
     **Step 1 - Survey:** Start with a broad query to get an overview:
 
-        remember(query="authentication bug", token_budget=2000)
+        recall(query="authentication bug", token_budget=2000)
 
         # Returns summaries + time ranges like:
         # [2024-01-10T09:00:00 to 2024-01-10T12:00:00] height=3
@@ -133,7 +129,7 @@ def remember(
     - **Recent content:** Recent time ranges often return height=0 (verbatim)
       since they haven't been summarized yet.
     """
-    doc_id, _ = _get_session_id()
+    doc_id = _get_session_id()
 
     # Query RagZoom via gRPC
     server_address = os.environ.get("RAGZOOM_SERVER_ADDRESS", "localhost:50051")
@@ -153,6 +149,11 @@ def remember(
 
     # Extract summary from tiling
     retrieval = output.retrieval
+
+    # Handle empty results (time window outside document data)
+    if not retrieval.tiling_ids:
+        return "No conversation data found in the requested time range."
+
     summary_parts = []
     node_info: list[tuple[str | None, str | None, int]] = []
 
