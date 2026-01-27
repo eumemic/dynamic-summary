@@ -314,6 +314,16 @@ message DocumentInfo {
   optional double completion_pct = 7;
 }
 
+// Validate document tree invariants
+message ValidateDocumentRequest {
+  string document_id = 1;
+}
+
+message ValidateDocumentResponse {
+  bool valid = 1;
+  repeated string errors = 2;
+}
+
 service WorkerService {
   rpc RunWorkers(RunWorkersRequest) returns (stream RunWorkersResponse);
   rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse);
@@ -322,6 +332,7 @@ service WorkerService {
   rpc ClearDocument(ClearDocumentRequest) returns (ClearDocumentResponse);
   rpc ExportTelemetry(ExportTelemetryRequest) returns (ExportTelemetryResponse);
   rpc ListDocuments(ListDocumentsRequest) returns (ListDocumentsResponse);
+  rpc ValidateDocument(ValidateDocumentRequest) returns (ValidateDocumentResponse);
 }
 
 // Session ingestion service for Claude Code transcripts

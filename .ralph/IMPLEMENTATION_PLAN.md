@@ -41,23 +41,23 @@ All new gRPC methods must be defined before server/client implementation.
 
 ### 1.2 ValidateDocument RPC
 
-- [ ] Add ValidateDocument RPC to WorkerService
+- [x] Add ValidateDocument RPC to WorkerService
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: RPC defined accepting ValidateDocumentRequest, returning ValidateDocumentResponse
-  - Test: test_validate_document_proto_exists (new)
-  - Location: proto/dynamic_summary.proto:315-325
+  - Test: tests/test_grpc_proto.py::TestValidateDocumentProto
+  - Location: proto/dynamic_summary.proto:334
 
-- [ ] Add ValidateDocumentRequest message
+- [x] Add ValidateDocumentRequest message
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Contains `string document_id = 1`
-  - Test: test_validate_document_proto_exists
-  - Location: proto/dynamic_summary.proto:316-318
+  - Test: tests/test_grpc_proto.py::TestValidateDocumentProto::test_validate_document_request_exists
+  - Location: proto/dynamic_summary.proto:317-319
 
-- [ ] Add ValidateDocumentResponse message
+- [x] Add ValidateDocumentResponse message
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Contains `bool valid = 1`, `repeated string errors = 2`
-  - Test: test_validate_document_proto_exists
-  - Location: proto/dynamic_summary.proto:319-322
+  - Test: tests/test_grpc_proto.py::TestValidateDocumentProto::test_validate_document_response_has_required_fields
+  - Location: proto/dynamic_summary.proto:321-324
 
 ### 1.3 GetSystemStatus RPC
 
