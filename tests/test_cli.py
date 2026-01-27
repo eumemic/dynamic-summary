@@ -23,6 +23,7 @@ from ragzoom.client.grpc_client import (
     ExecuteQueryOutput,
     NodeSummary,
     RetrievalView,
+    SystemStatusView,
     ValidationResult,
     WorkerRunSnapshot,
 )
@@ -181,6 +182,11 @@ def cli_mocks() -> Iterator[CliMocks]:
             valid=True,
             errors=[],
         )
+        grpc_client.get_system_status.return_value = SystemStatusView(
+            total_nodes=10,
+            leaf_nodes=5,
+            tree_depth=3,
+        )
         mock_grpc_client_cls.return_value = grpc_client
 
         yield CliMocks(
@@ -210,11 +216,48 @@ def test_cli_help(runner: CliRunner) -> None:
     assert "RagZoom: Incremental, hierarchical RAG memory system." in result.output
 
 
-def test_status_command(runner: CliRunner, cli_mocks: CliMocks, api_key: None) -> None:
+def test_cli_status_uses_grpc(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that `status` command uses gRPC client.get_system_status().
+
+    Spec: specs/grpc-cli-architecture.md § Commands Requiring Migration
+    """
     result = runner.invoke(cli, ["status"])
+
     assert result.exit_code == 0
+    cli_mocks["grpc_client"].get_system_status.assert_called_once()
+    cli_mocks["document_service"].get_system_status.assert_not_called()
     assert "SYSTEM STATUS" in result.output
-    cli_mocks["document_service"].get_system_status.assert_called_once()
+    assert "Total nodes: 10" in result.output
+    assert "Leaf nodes: 5" in result.output
+    assert "Tree height: 3" in result.output
+
+
+def test_cli_status_no_pinned_nodes(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that `status` output no longer shows pinned_nodes (removed feature).
+
+    Spec: specs/grpc-cli-architecture.md § Pin Command Removal
+    """
+    result = runner.invoke(cli, ["status"])
+
+    assert result.exit_code == 0
+    assert "Pinned" not in result.output
+
+
+def test_cli_status_server_option(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that `status` accepts --server-address option.
+
+    Spec: specs/grpc-cli-architecture.md § Shared Server Option
+    """
+    result = runner.invoke(cli, ["status", "--server-address", "custom:9999"])
+
+    assert result.exit_code == 0
+    cli_mocks["grpc_client"].get_system_status.assert_called_once()
 
 
 def test_index_command_with_file(
@@ -436,10 +479,17 @@ def test_serve_command(runner: CliRunner, api_key: None) -> None:
         )
 
 
-def test_status_succeeds_without_api_key(runner: CliRunner) -> None:
+def test_status_succeeds_without_api_key(
+    runner: CliRunner, cli_mocks: CliMocks
+) -> None:
+    """Status command doesn't require API key since it only fetches server data.
+
+    Note: Now uses gRPC, but gRPC calls don't need API key.
+    """
     with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=True):
         result = runner.invoke(cli, ["status"])
     assert result.exit_code == 0
+    cli_mocks["grpc_client"].get_system_status.assert_called_once()
 
 
 def test_query_json_output(

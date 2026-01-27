@@ -273,23 +273,23 @@ Migrate CLI commands from direct DB access to gRPC client calls.
 
 ### 4.3 Migrate `status` Command
 
-- [ ] Replace DocumentService.get_system_status() with gRPC client.get_system_status()
+- [x] Replace DocumentService.get_system_status() with gRPC client.get_system_status()
   - Spec: specs/grpc-cli-architecture.md § Commands Requiring Migration
   - Success: `ragzoom status` works against running server
-  - Test: test_cli_status_uses_grpc (new)
-  - Location: ragzoom/cli.py:1163-1191
+  - Test: test_cli_status_uses_grpc
+  - Location: ragzoom/cli.py:1075-1107
 
-- [ ] Add --server-address option to `status` command
+- [x] Add --server-address option to `status` command
   - Spec: specs/grpc-cli-architecture.md § Shared Server Option
   - Success: Option accepts host:port, defaults to localhost:50051
-  - Test: test_cli_status_server_option (new)
-  - Location: ragzoom/cli.py:1161-1163
+  - Test: test_cli_status_server_option
+  - Location: ragzoom/cli.py:1076-1082
 
-- [ ] Remove pinned_nodes display from status output
+- [x] Remove pinned_nodes display from status output
   - Spec: specs/grpc-cli-architecture.md § Pin Command Removal
   - Success: Status output no longer shows "Pinned nodes: X"
-  - Test: test_cli_status_no_pinned_nodes (new)
-  - Location: ragzoom/cli.py:1183
+  - Test: test_cli_status_no_pinned_nodes
+  - Location: ragzoom/cli.py (removed from status command output)
 
 ### 4.4 Migrate `cost` Command
 
