@@ -297,6 +297,27 @@ class SystemStatusView:
 
 
 @dataclass
+class CostStatsView:
+    """Cost statistics for a single document.
+
+    Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+
+    Attributes:
+        document_id: Document identifier.
+        total_cost: Sum of all node costs (arbitrary units).
+        total_nodes: Total node count.
+        leaf_nodes: Leaf node count.
+        summary_nodes: Summary node count (total - leaf).
+    """
+
+    document_id: str
+    total_cost: float
+    total_nodes: int
+    leaf_nodes: int
+    summary_nodes: int
+
+
+@dataclass
 class DocumentStatusView:
     """Document status with completion metrics for stateless sync workflows.
 
@@ -1055,3 +1076,35 @@ class GrpcRagzoomClient:
             leaf_nodes=response.leaf_nodes,
             tree_depth=response.tree_depth,
         )
+
+    def get_cost_stats(self, document_id: str | None = None) -> list[CostStatsView]:
+        """Get cost statistics for documents.
+
+        Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+
+        Args:
+            document_id: If provided, returns stats for only this document.
+                If omitted, returns stats for all documents.
+
+        Returns:
+            List of CostStatsView with cost statistics per document.
+        """
+        request = pb2.GetCostStatsRequest(document_id=document_id or "")
+        try:
+            get_cost_rpc = getattr(self._workers, "GetCostStats")
+            response = get_cost_rpc(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        stats_list: list[CostStatsView] = []
+        for doc in getattr(response, "documents", []):
+            stats_list.append(
+                CostStatsView(
+                    document_id=doc.document_id,
+                    total_cost=doc.total_cost,
+                    total_nodes=doc.total_nodes,
+                    leaf_nodes=doc.leaf_nodes,
+                    summary_nodes=doc.summary_nodes,
+                )
+            )
+        return stats_list

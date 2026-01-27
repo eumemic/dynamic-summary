@@ -17,6 +17,7 @@ from click.testing import CliRunner
 from ragzoom.cli import cli
 from ragzoom.client.grpc_client import (
     ClearedDocumentResult,
+    DocumentInfoView,
     DocumentStatusView,
     DocumentWorkStatus,
     ExecuteQueryOutput,
@@ -162,6 +163,17 @@ def cli_mocks() -> Iterator[CliMocks]:
                 document_id="doc-123",
                 deleted_nodes=10,
                 document_existed=True,
+            )
+        ]
+        grpc_client.list_documents.return_value = [
+            DocumentInfoView(
+                document_id="doc-123",
+                leaf_count=5,
+                node_count=15,
+                is_temporal=False,
+                time_start=None,
+                time_end=None,
+                completion_pct=76.3,
             )
         ]
         mock_grpc_client_cls.return_value = grpc_client
@@ -391,16 +403,6 @@ def test_pin_command_failure(
     result = runner.invoke(cli, ["pin", "node-999"])
     assert result.exit_code == 1
     assert "Failed to pin node node-999" in result.output
-
-
-def test_documents_command(
-    runner: CliRunner, cli_mocks: CliMocks, api_key: None
-) -> None:
-    result = runner.invoke(cli, ["documents"])
-    assert result.exit_code == 0
-    assert "Document ID: doc-123" in result.output
-    assert "Leaf nodes: 5" in result.output
-    cli_mocks["document_service"].list_documents.assert_called_once()
 
 
 def test_clear_specific_document(
@@ -1033,3 +1035,57 @@ def test_document_status_non_temporal_document(
     assert "Nodes: 75 / 97 (77.3% complete)" in result.output
     # Should NOT show time range for non-temporal documents
     assert "Time range:" not in result.output
+
+
+def test_documents_uses_grpc(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that `documents` command uses gRPC client, not DocumentService.
+
+    Spec: specs/grpc-cli-architecture.md § Commands Requiring Migration
+    """
+    result = runner.invoke(cli, ["documents"])
+
+    assert result.exit_code == 0
+    cli_mocks["grpc_client"].list_documents.assert_called_once()
+    cli_mocks["document_service"].list_documents.assert_not_called()
+    assert "doc-123" in result.output
+    assert "Total nodes: 15" in result.output
+    assert "Leaf nodes: 5" in result.output
+
+
+def test_documents_empty_list(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that `documents` handles empty document list."""
+    cli_mocks["grpc_client"].list_documents.return_value = []
+
+    result = runner.invoke(cli, ["documents"])
+
+    assert result.exit_code == 0
+    assert "No documents indexed yet." in result.output
+
+
+def test_documents_temporal_document(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that `documents` displays temporal metadata when present."""
+    cli_mocks["grpc_client"].list_documents.return_value = [
+        DocumentInfoView(
+            document_id="temporal-doc",
+            leaf_count=100,
+            node_count=150,
+            is_temporal=True,
+            time_start="2026-01-01T00:00:00Z",
+            time_end="2026-01-27T23:59:59Z",
+            completion_pct=85.5,
+        )
+    ]
+
+    result = runner.invoke(cli, ["documents"])
+
+    assert result.exit_code == 0
+    assert "Document ID: temporal-doc" in result.output
+    assert "Type: temporal" in result.output
+    assert "Time range: 2026-01-01T00:00:00Z to 2026-01-27T23:59:59Z" in result.output
+    assert "Completion: 85.5%" in result.output
