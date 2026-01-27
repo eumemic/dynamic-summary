@@ -5,6 +5,9 @@ Acceptance tests verifying all criteria from specs/transcript-summarization-guid
 
 from __future__ import annotations
 
+import inspect
+
+from ragzoom.client.grpc_client import GrpcRagzoomClient
 from ragzoom.rpc import dynamic_summary_pb2
 
 
@@ -68,3 +71,44 @@ It should preserve:
         # Default value is empty string but field is not set
         assert req.summarization_guidance == ""
         assert req.HasField("summarization_guidance") is False
+
+
+class TestGrpcClientBatchAppendAcceptsGuidance:
+    """Acceptance Criteria #2: GrpcRagzoomClient.batch_append_text() accepts summarization_guidance."""
+
+    def test_grpc_client_batch_append_accepts_guidance(self) -> None:
+        """batch_append_text method should accept summarization_guidance parameter.
+
+        Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #2
+        """
+        # Verify the method signature includes summarization_guidance
+        sig = inspect.signature(GrpcRagzoomClient.batch_append_text)
+        assert "summarization_guidance" in sig.parameters
+
+        # Verify the parameter has the correct type annotation and default
+        param = sig.parameters["summarization_guidance"]
+        assert param.default is None, "summarization_guidance should default to None"
+        # Note: With `from __future__ import annotations`, annotations are strings
+        assert "str" in str(param.annotation), "Should include str type"
+        assert "None" in str(param.annotation), "Should include None type"
+
+    def test_grpc_client_batch_append_guidance_is_keyword_only(self) -> None:
+        """summarization_guidance should be a keyword-only parameter."""
+        sig = inspect.signature(GrpcRagzoomClient.batch_append_text)
+        param = sig.parameters["summarization_guidance"]
+        assert (
+            param.kind == inspect.Parameter.KEYWORD_ONLY
+        ), "summarization_guidance should be keyword-only"
+
+    def test_grpc_client_batch_append_guidance_sets_proto_field(self) -> None:
+        """Verify the method sets summarization_guidance on the request proto.
+
+        This verifies the implementation logic without making a network call.
+        """
+        # Check the source code sets the field (static analysis)
+        import ragzoom.client.grpc_client as grpc_module
+
+        source = inspect.getsource(grpc_module.GrpcRagzoomClient.batch_append_text)
+        assert (
+            "request.summarization_guidance" in source
+        ), "Method should set request.summarization_guidance"

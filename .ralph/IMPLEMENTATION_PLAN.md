@@ -402,11 +402,12 @@ Integration tests verifying all acceptance criteria.
   - Location: tests/test_transcript_summarization_guidance.py
   - Implementation: Tests verify field existence, HasField semantics, string type, field number 4, and default behavior
 
-- [ ] Test: `GrpcRagzoomClient.batch_append_text()` accepts `summarization_guidance`
+- [x] Test: `GrpcRagzoomClient.batch_append_text()` accepts `summarization_guidance`
   - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #2
   - Success: Client method compiles and sets field on request
   - Test: `test_grpc_client_batch_append_accepts_guidance`
-  - Location: tests/test_transcript_summarization_guidance.py
+  - Location: tests/test_transcript_summarization_guidance.py:75-112
+  - Implementation: Added TestGrpcClientBatchAppendAcceptsGuidance class with 3 tests: signature verification, keyword-only check, and proto field assignment verification via source inspection
 
 - [ ] Test: `RagZoom.batch_append()` accepts `summarization_guidance`
   - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #3
