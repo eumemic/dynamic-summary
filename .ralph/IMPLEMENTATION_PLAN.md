@@ -422,11 +422,12 @@ Integration tests verifying all acceptance criteria.
   - Location: tests/test_transcript_summarization_guidance.py:135-172
   - Implementation: End-to-end test using gRPC client → BatchAppendText servicer → storage path. Verifies document.summarization_guidance == custom_guidance after batch_append_text() call.
 
-- [ ] Test: `execute_sync()` passes conversation-specific guidance
+- [x] Test: `execute_sync()` passes conversation-specific guidance
   - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #5
   - Success: Integration test verifies guidance is set on synced document
-  - Test: `test_execute_sync_sets_conversation_guidance`
+  - Test: `test_execute_sync_passes_guidance_to_batch_append`, `test_execute_sync_stores_guidance_on_document`, `test_guidance_contains_conversation_preservation_instructions`
   - Location: integrations/claude-code/tests/test_transcript_summarization_guidance.py
+  - Implementation: Created GuidanceCapturingClient that tracks guidance passed to batch_append() and stores it on the document. Three tests verify: (1) guidance is passed to batch_append, (2) guidance is stored on document, (3) guidance contains required preservation instructions.
 
 - [ ] Test: Existing tests pass (no regression)
   - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #6
