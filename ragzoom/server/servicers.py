@@ -1194,6 +1194,10 @@ async def serve(state: ServerState, *, host: str, port: int) -> None:
             options=[
                 ("grpc.max_receive_message_length", max_message_size),
                 ("grpc.max_send_message_length", max_message_size),
+                # Disable SO_REUSEPORT to prevent multiple daemons binding to the same port.
+                # This ensures only one daemon can serve requests, complementing the
+                # single-writer lease mechanism.
+                ("grpc.so_reuseport", 0),
             ]
         ),
     )
