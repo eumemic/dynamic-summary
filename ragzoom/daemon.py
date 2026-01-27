@@ -23,6 +23,25 @@ PORT_FILENAME = "daemon.port"
 LOG_FILENAME = "daemon.log"
 CONFIG_FILENAME = "daemon.config.json"
 
+# Dev/Prod separation
+PRODUCTION_STATE_DIR = "~/.local/state/ragzoom"
+DEV_STATE_DIR = "~/.local/state/ragzoom-dev"
+PRODUCTION_PORT = 50051
+DEV_PORT = 50052
+
+
+def _is_dev_invocation() -> bool:
+    """Detect if invoked via 'python -m ragzoom.cli' vs 'ragzoom' entry point.
+
+    Returns True for module invocation (development), False for entry point (production).
+    This enables automatic dev/prod separation without explicit flags.
+    """
+    argv0 = sys.argv[0] if sys.argv else ""
+    # Module invocation: argv[0] ends with .py or contains ragzoom/cli.py path
+    return (
+        argv0.endswith(".py") or "ragzoom/cli.py" in argv0 or "ragzoom\\cli.py" in argv0
+    )
+
 
 def _resolve_path(path_str: str) -> Path:
     """Resolve a path string to an absolute Path.
@@ -44,9 +63,10 @@ def _resolve_path(path_str: str) -> Path:
 def get_daemon_state_dir() -> Path:
     """Get the daemon state directory path.
 
-    Uses XDG Base Directory Specification:
-    - Default: ~/.local/state/ragzoom/
-    - Override: RAGZOOM_STATE_DIR environment variable
+    Uses XDG Base Directory Specification with dev/prod separation:
+    - Production: ~/.local/state/ragzoom/
+    - Development: ~/.local/state/ragzoom-dev/
+    - Override: RAGZOOM_STATE_DIR environment variable (always takes precedence)
 
     Returns:
         Absolute path to the state directory (may not exist yet).
@@ -55,8 +75,10 @@ def get_daemon_state_dir() -> Path:
     if env_override:
         return _resolve_path(env_override)
 
-    # XDG default: ~/.local/state/ragzoom/
-    return Path("~/.local/state/ragzoom").expanduser()
+    # Use dev or prod state directory based on invocation mode
+    if _is_dev_invocation():
+        return Path(DEV_STATE_DIR).expanduser()
+    return Path(PRODUCTION_STATE_DIR).expanduser()
 
 
 def ensure_daemon_state_dir() -> Path:
@@ -538,12 +560,11 @@ class DaemonStartError(Exception):
     """Raised when the daemon fails to start or become healthy."""
 
 
-DEFAULT_PORT = 50051
 DEFAULT_STARTUP_TIMEOUT = 30.0
 HEALTH_CHECK_INTERVAL = 0.2
 
 
-def start_daemon(port: int = DEFAULT_PORT, config_path: Path | None = None) -> None:
+def start_daemon(port: int = PRODUCTION_PORT, config_path: Path | None = None) -> None:
     """Start the daemon as a background subprocess.
 
     Spawns a new process running `ragzoom server start --daemon`.
@@ -654,6 +675,10 @@ def ensure_server_running(timeout: float = DEFAULT_STARTUP_TIMEOUT) -> str:
     3. Waits for the daemon to become healthy
     4. Returns the server address
 
+    In dev mode (invoked via `python -m ragzoom.cli`), auto-start is disabled
+    to avoid confusion. The function will fail fast with a helpful error message
+    directing the user to manually start the dev server.
+
     If a persisted config file exists (from a previous `--config` invocation),
     it will be passed to the daemon to restore settings like target_chunk_tokens
     and summarization_guidance.
@@ -665,13 +690,24 @@ def ensure_server_running(timeout: float = DEFAULT_STARTUP_TIMEOUT) -> str:
         Server address in "host:port" format.
 
     Raises:
-        DaemonStartError: If server fails to start or become healthy within timeout.
+        DaemonStartError: If server fails to start or become healthy within timeout,
+                          or if in dev mode and server is not running.
     """
+    is_dev = _is_dev_invocation()
+
     # Fast path: server already running and healthy
     if is_server_healthy():
         address = get_server_address()
         if address is not None:
             return address
+
+    # In dev mode, fail fast instead of auto-starting to avoid confusion
+    if is_dev:
+        raise DaemonStartError(
+            "Dev server is not running. "
+            "Start it manually with: python -m ragzoom.cli server start\n"
+            f"Dev server uses port {DEV_PORT} and state dir {DEV_STATE_DIR}"
+        )
 
     # Server not running or unhealthy - start fresh
     cleanup_stale_state()

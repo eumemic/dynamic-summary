@@ -49,6 +49,8 @@ class TestEnsureServerRunning:
             return health_calls.pop(0)
 
         with (
+            # Force production mode for auto-start test
+            patch("ragzoom.daemon._is_dev_invocation", return_value=False),
             patch("ragzoom.daemon.is_server_healthy", side_effect=mock_is_healthy),
             patch("ragzoom.daemon.cleanup_stale_state") as mock_cleanup,
             patch("ragzoom.daemon.start_daemon") as mock_start,
@@ -67,6 +69,8 @@ class TestEnsureServerRunning:
         monkeypatch.setenv("RAGZOOM_STATE_DIR", str(tmp_path))
 
         with (
+            # Force production mode for auto-start test
+            patch("ragzoom.daemon._is_dev_invocation", return_value=False),
             patch("ragzoom.daemon.is_server_healthy", return_value=False),
             patch("ragzoom.daemon.cleanup_stale_state"),
             patch("ragzoom.daemon.start_daemon"),
@@ -86,6 +90,8 @@ class TestEnsureServerRunning:
         health_sequence = iter([False, True])
 
         with (
+            # Force production mode for auto-start test
+            patch("ragzoom.daemon._is_dev_invocation", return_value=False),
             patch("ragzoom.daemon.is_server_healthy", side_effect=health_sequence),
             patch("ragzoom.daemon.cleanup_stale_state"),
             patch("ragzoom.daemon.start_daemon"),
