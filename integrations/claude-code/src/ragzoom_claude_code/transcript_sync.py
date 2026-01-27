@@ -15,6 +15,21 @@ from ragzoom_claude_code.jsonl_reader import iter_jsonl, iter_jsonl_reversed
 # Pattern to extract command name from invocation message
 _COMMAND_NAME_PATTERN = re.compile(r"<command-name>(/[\w-]+)</command-name>")
 
+# Summarization guidance for conversation transcripts
+# Instructs the LLM to preserve narrative structure, identity, and decision outcomes
+CONVERSATION_SUMMARIZATION_GUIDANCE = """
+This is a conversation transcript between a human and an AI assistant.
+
+When summarizing, preserve:
+- **Identity and agency**: Who said what, who performed which actions
+- **Decisions and outcomes**: What was decided, what actions were taken
+- **Cause and effect**: Why things happened, the reasoning behind decisions
+- **Chronological flow**: The temporal sequence of events
+
+Focus on the narrative of what happened and why, not just the facts.
+Preserve exact technical terms, file paths, function names, and code references.
+"""
+
 
 def _get_temp_dir() -> Path:
     """Get the temp directory for session files.
