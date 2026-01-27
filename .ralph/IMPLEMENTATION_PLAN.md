@@ -107,7 +107,7 @@ All new gRPC methods must be defined before server/client implementation.
 
 ### 1.5 Regenerate Proto Stubs
 
-- [ ] Run proto compilation to regenerate Python stubs
+- [x] Run proto compilation to regenerate Python stubs
   - Spec: specs/grpc-cli-architecture.md § Implementation
   - Success: `ragzoom/rpc/dynamic_summary_pb2.py` and `*_pb2_grpc.py` updated
   - Test: `python -c "from ragzoom.rpc import dynamic_summary_pb2 as pb; pb.ListDocumentsRequest()"`
