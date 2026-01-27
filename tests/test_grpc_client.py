@@ -388,3 +388,70 @@ async def test_grpc_client_validate_document_empty_id(
 
     finally:
         client.close()
+
+
+@pytest.mark.asyncio
+async def test_grpc_client_get_system_status(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """Test get_system_status returns SystemStatusView with aggregated stats.
+
+    Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+    """
+    from ragzoom.client.grpc_client import SystemStatusView
+
+    address, _state = grpc_test_environment
+    document_id = "system-status-test-doc"
+
+    client = GrpcRagzoomClient(address)
+    try:
+        # Create a document to have some data
+        await asyncio.to_thread(
+            client.append_text,
+            document_id=document_id,
+            content=b"Test content for system status check.",
+            collect_telemetry=False,
+            replace_existing=True,
+        )
+        await asyncio.to_thread(client.run_workers_once)
+
+        # Get system status
+        status = await asyncio.to_thread(client.get_system_status)
+
+        assert isinstance(status, SystemStatusView)
+        assert status.total_nodes >= 1
+        assert status.leaf_nodes >= 1
+        assert status.leaf_nodes <= status.total_nodes
+        assert status.tree_depth >= 0
+
+    finally:
+        client.close()
+
+
+@pytest.mark.asyncio
+async def test_grpc_client_get_system_status_empty(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """Test get_system_status returns zeros when no documents exist.
+
+    Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+    """
+    from ragzoom.client.grpc_client import SystemStatusView
+
+    address, _state = grpc_test_environment
+
+    client = GrpcRagzoomClient(address)
+    try:
+        # Clear all documents first to ensure empty state
+        await asyncio.to_thread(client.clear_all_documents)
+
+        # Get system status
+        status = await asyncio.to_thread(client.get_system_status)
+
+        assert isinstance(status, SystemStatusView)
+        assert status.total_nodes == 0
+        assert status.leaf_nodes == 0
+        assert status.tree_depth == 0
+
+    finally:
+        client.close()
