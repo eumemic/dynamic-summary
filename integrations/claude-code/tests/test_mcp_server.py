@@ -58,14 +58,13 @@ class TestMcpServerPidTempFileDiscovery:
     """Tests for PID temp file discovery in MCP server."""
 
     def test_pid_temp_file_discovery(self, tmp_path: Path) -> None:
-        """MCP server discovers session via PID temp file when env var not set."""
-        # Set up temp file with session ID
+        """MCP server discovers session via PID temp file when env var not set.
+
+        This is a unit test that verifies the MCP server calls get_session_document_id
+        with the correct parent PID.
+        """
         expected_doc_id = "discovered-session-abc123"
         parent_pid = 12345
-
-        # Write temp file
-        temp_file = tmp_path / f"ragzoom-session-{parent_pid}"
-        temp_file.write_text(expected_doc_id)
 
         with (
             patch.dict(os.environ, {}, clear=True),
@@ -79,6 +78,33 @@ class TestMcpServerPidTempFileDiscovery:
 
         assert result == expected_doc_id
         mock_get_session.assert_called_once_with(parent_pid)
+
+    def test_pid_temp_file_discovery_end_to_end(self, tmp_path: Path) -> None:
+        """End-to-end test: creates temp file, verifies MCP server discovers session.
+
+        This test actually writes to a temp file and verifies the full discovery flow
+        without mocking get_session_document_id(). Per acceptance criteria #4:
+        "PID temp file discovery works for Claude Code sessions"
+        """
+        expected_doc_id = "e2e-discovered-session-xyz789"
+        parent_pid = 54321
+
+        # Write temp file simulating what SessionStart hook does
+        temp_file = tmp_path / f"ragzoom-session-{parent_pid}"
+        temp_file.write_text(expected_doc_id)
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("os.getppid", return_value=parent_pid),
+            # Patch _get_temp_dir in transcript_sync to use our test directory
+            patch(
+                "ragzoom_claude_code.transcript_sync._get_temp_dir",
+                return_value=tmp_path,
+            ),
+        ):
+            result = _get_session_id()
+
+        assert result == expected_doc_id
 
     def test_pid_temp_file_not_found_raises_error(self) -> None:
         """Error raised when PID temp file doesn't exist and no env var."""
