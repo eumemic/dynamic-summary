@@ -324,6 +324,15 @@ message ValidateDocumentResponse {
   repeated string errors = 2;
 }
 
+// Get system-wide status (aggregated across all documents)
+message GetSystemStatusRequest {}
+
+message GetSystemStatusResponse {
+  int64 total_nodes = 1;
+  int64 leaf_nodes = 2;
+  int64 tree_depth = 3;
+}
+
 service WorkerService {
   rpc RunWorkers(RunWorkersRequest) returns (stream RunWorkersResponse);
   rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse);
@@ -333,6 +342,7 @@ service WorkerService {
   rpc ExportTelemetry(ExportTelemetryRequest) returns (ExportTelemetryResponse);
   rpc ListDocuments(ListDocumentsRequest) returns (ListDocumentsResponse);
   rpc ValidateDocument(ValidateDocumentRequest) returns (ValidateDocumentResponse);
+  rpc GetSystemStatus(GetSystemStatusRequest) returns (GetSystemStatusResponse);
 }
 
 // Session ingestion service for Claude Code transcripts
