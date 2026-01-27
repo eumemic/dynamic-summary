@@ -149,6 +149,11 @@ def recall(
 
     # Extract summary from tiling
     retrieval = output.retrieval
+
+    # Handle empty results (time window outside document data)
+    if not retrieval.tiling_ids:
+        return "No conversation data found in the requested time range."
+
     summary_parts = []
     node_info: list[tuple[str | None, str | None, int]] = []
 

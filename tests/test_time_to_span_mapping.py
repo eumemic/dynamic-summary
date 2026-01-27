@@ -301,6 +301,72 @@ class TestTimeToSpanMapping:
         assert result.actual_start == 0
         assert result.actual_end == 60
 
+    def test_time_window_outside_document_returns_empty(
+        self,
+        sqlite_store_factory: Callable[[str | None], DocumentStore],
+    ) -> None:
+        """Time window with no overlapping data should return empty result, not error.
+
+        Document has data at time 1000-4000. Querying with time_end=500 (before
+        all data) should return an empty tiling rather than raising ValueError.
+        """
+        doc_id = "temporal-doc"
+        doc_store = sqlite_store_factory(doc_id)
+        _create_temporal_doc_tree(doc_store, doc_id, mark_temporal=True)
+
+        retriever = _create_retriever(doc_store, doc_id)
+        _mock_retriever(retriever, doc_id)
+
+        # Query with time_end=500, before all document data (starts at 1000)
+        result = asyncio.run(
+            retriever.retrieve_async(
+                query="test query",
+                num_seeds=1,
+                budget_tokens=1000,
+                document_id=doc_id,
+                time_end="1970-01-01T00:08:20Z",  # Unix 500
+            )
+        )
+
+        # Should return empty result, not raise an error
+        assert result.tiling == []
+        assert result.nodes == {}
+        assert result.actual_start == 0
+        assert result.actual_end == 0
+
+    def test_time_start_after_all_data_returns_empty(
+        self,
+        sqlite_store_factory: Callable[[str | None], DocumentStore],
+    ) -> None:
+        """time_start after all document data should return empty result.
+
+        Document has data at time 1000-4000. Querying with time_start=5000 (after
+        all data) should return an empty tiling rather than raising ValueError.
+        """
+        doc_id = "temporal-doc"
+        doc_store = sqlite_store_factory(doc_id)
+        _create_temporal_doc_tree(doc_store, doc_id, mark_temporal=True)
+
+        retriever = _create_retriever(doc_store, doc_id)
+        _mock_retriever(retriever, doc_id)
+
+        # Query with time_start=5000, after all document data (ends at 4000)
+        result = asyncio.run(
+            retriever.retrieve_async(
+                query="test query",
+                num_seeds=1,
+                budget_tokens=1000,
+                document_id=doc_id,
+                time_start="1970-01-01T01:23:20Z",  # Unix 5000
+            )
+        )
+
+        # Should return empty result, not raise an error
+        assert result.tiling == []
+        assert result.nodes == {}
+        assert result.actual_start == 0
+        assert result.actual_end == 0
+
 
 @pytest.mark.usefixtures("sqlite_backend")
 class TestTimeQueryValidation:
