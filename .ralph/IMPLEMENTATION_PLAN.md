@@ -205,17 +205,17 @@ Add client-side wrappers for the new RPCs.
 
 ### 3.3 get_system_status() Client Method
 
-- [ ] Add get_system_status() method to GrpcRagzoomClient
+- [x] Add get_system_status() method to GrpcRagzoomClient
   - Spec: specs/grpc-cli-architecture.md § CLI Changes
   - Success: Returns SystemStatusView with total_nodes, leaf_nodes, tree_depth
-  - Test: test_grpc_client_get_system_status (new)
-  - Location: ragzoom/client/grpc_client.py:981-1000 (estimated)
+  - Test: test_grpc_client_get_system_status, test_grpc_client_get_system_status_empty
+  - Location: ragzoom/client/grpc_client.py:1021-1038
 
-- [ ] Add SystemStatusView dataclass for client response
+- [x] Add SystemStatusView dataclass for client response
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Dataclass with total_nodes, leaf_nodes, tree_depth (no pinned_nodes)
   - Test: test_grpc_client_get_system_status
-  - Location: ragzoom/client/grpc_client.py:271-276 (estimated)
+  - Location: ragzoom/client/grpc_client.py:281-295
 
 ### 3.4 get_cost_stats() Client Method
 

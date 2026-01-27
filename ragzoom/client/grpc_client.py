@@ -280,6 +280,23 @@ class ValidationResult:
 
 
 @dataclass
+class SystemStatusView:
+    """System-wide status aggregated across all documents.
+
+    Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+
+    Attributes:
+        total_nodes: Total node count across all documents.
+        leaf_nodes: Leaf node count across all documents.
+        tree_depth: Maximum tree depth across all documents.
+    """
+
+    total_nodes: int
+    leaf_nodes: int
+    tree_depth: int
+
+
+@dataclass
 class DocumentStatusView:
     """Document status with completion metrics for stateless sync workflows.
 
@@ -1016,4 +1033,25 @@ class GrpcRagzoomClient:
         return ValidationResult(
             valid=response.valid,
             errors=list(response.errors),
+        )
+
+    def get_system_status(self) -> SystemStatusView:
+        """Get system-wide status aggregated across all documents.
+
+        Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+
+        Returns:
+            SystemStatusView with total_nodes, leaf_nodes, tree_depth.
+        """
+        request = pb2.GetSystemStatusRequest()
+        try:
+            get_status_rpc = getattr(self._workers, "GetSystemStatus")
+            response = get_status_rpc(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        return SystemStatusView(
+            total_nodes=response.total_nodes,
+            leaf_nodes=response.leaf_nodes,
+            tree_depth=response.tree_depth,
         )
