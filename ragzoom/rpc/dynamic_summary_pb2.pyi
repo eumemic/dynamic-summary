@@ -502,7 +502,6 @@ class GetSystemStatusResponse:
         self, *, total_nodes: int = ..., leaf_nodes: int = ..., tree_depth: int = ...
     ) -> None: ...
 
-
 # GetCostStats messages
 class GetCostStatsRequest:
     """Request for cost statistics, optionally filtered by document."""
@@ -512,7 +511,6 @@ class GetCostStatsRequest:
 
     def __init__(self, *, document_id: str = ...) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
-
 
 class DocumentCostStats:
     """Cost statistics for a single document."""
@@ -534,7 +532,6 @@ class DocumentCostStats:
         summary_nodes: int = ...,
     ) -> None: ...
 
-
 class GetCostStatsResponse:
     """Response containing cost statistics for one or more documents."""
 
@@ -542,7 +539,6 @@ class GetCostStatsResponse:
     documents: Sequence[DocumentCostStats]
 
     def __init__(self, *, documents: Iterable[DocumentCostStats] = ...) -> None: ...
-
 
 WORKER_RUN_MODE_UNTIL_IDLE: int
 

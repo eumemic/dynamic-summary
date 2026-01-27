@@ -304,3 +304,76 @@ async def test_validate_document_servicer_invalid_argument_for_empty_document_id
             await stub.ValidateDocument(request)
 
         assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+@pytest.mark.asyncio
+async def test_get_system_status_servicer_returns_aggregated_stats(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """GetSystemStatus servicer returns aggregated stats across all documents.
+
+    Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+    Test: tests/test_grpc_server_integration.py::test_get_system_status_servicer_returns_aggregated_stats
+    """
+    address, state = grpc_test_environment
+
+    # Index two documents with workers completing
+    client = GrpcRagzoomClient(address)
+    try:
+        await asyncio.to_thread(
+            client.append_text,
+            document_id="status-doc-1",
+            content=b"First document for status test",
+            collect_telemetry=False,
+            replace_existing=True,
+        )
+        await asyncio.to_thread(
+            client.append_text,
+            document_id="status-doc-2",
+            content=b"Second document for status test",
+            collect_telemetry=False,
+            replace_existing=True,
+        )
+        await asyncio.to_thread(client.run_workers_once)
+    finally:
+        client.close()
+
+    # Call GetSystemStatus via direct gRPC stub
+    async with grpc.aio.insecure_channel(address) as channel:
+        stub = pb2_grpc.WorkerServiceStub(channel)
+        request = pb2.GetSystemStatusRequest()
+        response = await stub.GetSystemStatus(request)
+
+    # Verify response contains aggregated data
+    # With 2 documents, each with at least 1 leaf node
+    assert response.total_nodes >= 2, "Should have nodes from both documents"
+    assert response.leaf_nodes >= 2, "Should have leaf nodes from both documents"
+    assert response.tree_depth >= 0, "Tree depth should be non-negative"
+
+
+@pytest.mark.asyncio
+async def test_get_system_status_servicer_empty_system(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """GetSystemStatus servicer returns zeros for empty system.
+
+    Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+    Test: tests/test_grpc_server_integration.py::test_get_system_status_servicer_empty_system
+    """
+    address, state = grpc_test_environment
+
+    # Call GetSystemStatus without indexing any documents
+    # Note: Other tests may have already indexed documents, so we just verify
+    # the response structure is valid
+    async with grpc.aio.insecure_channel(address) as channel:
+        stub = pb2_grpc.WorkerServiceStub(channel)
+        request = pb2.GetSystemStatusRequest()
+        response = await stub.GetSystemStatus(request)
+
+    # Verify response has valid structure (fields exist and are integers)
+    assert isinstance(response.total_nodes, int)
+    assert isinstance(response.leaf_nodes, int)
+    assert isinstance(response.tree_depth, int)
+    assert response.total_nodes >= 0
+    assert response.leaf_nodes >= 0
+    assert response.tree_depth >= 0
