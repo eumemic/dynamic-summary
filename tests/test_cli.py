@@ -23,6 +23,7 @@ from ragzoom.client.grpc_client import (
     ExecuteQueryOutput,
     NodeSummary,
     RetrievalView,
+    ValidationResult,
     WorkerRunSnapshot,
 )
 from ragzoom.exceptions import InvalidOperationError
@@ -176,6 +177,10 @@ def cli_mocks() -> Iterator[CliMocks]:
                 completion_pct=76.3,
             )
         ]
+        grpc_client.validate_document.return_value = ValidationResult(
+            valid=True,
+            errors=[],
+        )
         mock_grpc_client_cls.return_value = grpc_client
 
         yield CliMocks(
@@ -1089,3 +1094,70 @@ def test_documents_temporal_document(
     assert "Type: temporal" in result.output
     assert "Time range: 2026-01-01T00:00:00Z to 2026-01-27T23:59:59Z" in result.output
     assert "Completion: 85.5%" in result.output
+
+
+# ========================================================================
+# `validate` command tests (gRPC migration)
+# ========================================================================
+
+
+def test_cli_validate_uses_grpc(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that `validate` command uses gRPC client.validate_document().
+
+    Spec: specs/grpc-cli-architecture.md § Commands Requiring Migration
+    """
+    result = runner.invoke(cli, ["validate", "doc-123"])
+
+    assert result.exit_code == 0
+    cli_mocks["grpc_client"].validate_document.assert_called_once_with("doc-123")
+    assert "Document validation passed" in result.output
+
+
+def test_cli_validate_shows_errors_on_failure(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that `validate` displays error messages when validation fails."""
+    cli_mocks["grpc_client"].validate_document.return_value = ValidationResult(
+        valid=False,
+        errors=["Missing parent node", "Orphaned leaf detected"],
+    )
+
+    result = runner.invoke(cli, ["validate", "doc-123"])
+
+    assert result.exit_code == 1
+    assert "Document validation failed" in result.output
+    assert "Missing parent node" in result.output
+    assert "Orphaned leaf detected" in result.output
+
+
+def test_cli_validate_handles_not_found(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that `validate` handles NOT_FOUND error from gRPC."""
+    from ragzoom.exceptions import DocumentNotFoundError
+
+    cli_mocks["grpc_client"].validate_document.side_effect = DocumentNotFoundError(
+        "doc-123"
+    )
+
+    result = runner.invoke(cli, ["validate", "doc-123"])
+
+    assert result.exit_code != 0
+    assert "not found" in result.output.lower() or "not found" in str(result.exception)
+
+
+def test_cli_validate_server_option(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that `validate` accepts --server-address option.
+
+    Spec: specs/grpc-cli-architecture.md § Shared Server Option
+    """
+    result = runner.invoke(
+        cli, ["validate", "doc-123", "--server-address", "remote:50051"]
+    )
+
+    assert result.exit_code == 0
+    cli_mocks["grpc_client"].validate_document.assert_called_once()
