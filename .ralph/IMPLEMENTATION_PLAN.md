@@ -219,17 +219,17 @@ Add client-side wrappers for the new RPCs.
 
 ### 3.4 get_cost_stats() Client Method
 
-- [ ] Add get_cost_stats() method to GrpcRagzoomClient
+- [x] Add get_cost_stats() method to GrpcRagzoomClient
   - Spec: specs/grpc-cli-architecture.md § CLI Changes
   - Success: Returns list of CostStatsView dataclasses
-  - Test: test_grpc_client_get_cost_stats (new)
-  - Location: ragzoom/client/grpc_client.py:1001-1030 (estimated)
+  - Test: test_grpc_client_get_cost_stats, test_grpc_client_get_cost_stats_all_documents, test_grpc_client_get_cost_stats_empty
+  - Location: ragzoom/client/grpc_client.py:1080-1110
 
-- [ ] Add CostStatsView dataclass for client response
+- [x] Add CostStatsView dataclass for client response
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Dataclass with document_id, total_cost, total_nodes, leaf_nodes, summary_nodes
   - Test: test_grpc_client_get_cost_stats
-  - Location: ragzoom/client/grpc_client.py:277-284 (estimated)
+  - Location: ragzoom/client/grpc_client.py:300-317
 
 ---
 
@@ -239,17 +239,17 @@ Migrate CLI commands from direct DB access to gRPC client calls.
 
 ### 4.1 Migrate `documents` Command
 
-- [ ] Replace DocumentService.list_documents() with gRPC client.list_documents()
+- [x] Replace DocumentService.list_documents() with gRPC client.list_documents()
   - Spec: specs/grpc-cli-architecture.md § Commands Requiring Migration
   - Success: `ragzoom documents` works against running server, fails fast if server down
-  - Test: test_cli_documents_uses_grpc (new)
-  - Location: ragzoom/cli.py:577-611
+  - Test: test_documents_uses_grpc, test_documents_empty_list, test_documents_temporal_document
+  - Location: ragzoom/cli.py:575-612
 
-- [ ] Add --server-address option to `documents` command
+- [x] Add --server-address option to `documents` command
   - Spec: specs/grpc-cli-architecture.md § Shared Server Option
   - Success: Option accepts host:port, defaults to localhost:50051
-  - Test: test_cli_documents_server_option (new)
-  - Location: ragzoom/cli.py:575-577
+  - Test: test_documents_uses_grpc (uses fixture which mocks server address resolution)
+  - Location: ragzoom/cli.py:576-582
 
 ### 4.2 Migrate `validate` Command
 
