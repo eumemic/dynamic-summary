@@ -5,11 +5,18 @@ Acceptance tests verifying all criteria from specs/transcript-summarization-guid
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+from typing import TYPE_CHECKING
+
+import pytest
 
 from ragzoom.client.grpc_client import GrpcRagzoomClient
 from ragzoom.rpc import dynamic_summary_pb2
 from ragzoom.wrapper import RagZoom
+
+if TYPE_CHECKING:
+    from ragzoom.server.state import ServerState
 
 
 class TestBatchAppendRequestHasGuidanceField:
@@ -113,6 +120,49 @@ class TestGrpcClientBatchAppendAcceptsGuidance:
         assert (
             "request.summarization_guidance" in source
         ), "Method should set request.summarization_guidance"
+
+
+class TestGuidanceStoredOnDocument:
+    """Acceptance Criteria #4: Guidance is threaded to the summarizer.
+
+    Tests verify that summarization_guidance is stored on the document record
+    after batch_append() is called with guidance.
+
+    Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #4
+    """
+
+    @pytest.mark.asyncio
+    async def test_guidance_stored_on_document_via_grpc(
+        self,
+        grpc_test_environment: tuple[str, ServerState],
+    ) -> None:
+        """Document record contains summarization_guidance after batch_append with guidance.
+
+        This is an end-to-end test using the gRPC client path:
+        GrpcRagzoomClient.batch_append_text() → BatchAppendText servicer → storage
+        """
+        address, state = grpc_test_environment
+        document_id = "guidance-storage-test"
+        custom_guidance = (
+            "This is a conversation transcript.\n"
+            "Preserve identity, agency, and decision outcomes."
+        )
+
+        client = GrpcRagzoomClient(address)
+        try:
+            await asyncio.to_thread(
+                client.batch_append_text,
+                document_id=document_id,
+                units=["Turn 1: User asks a question", "Turn 2: Assistant responds"],
+                summarization_guidance=custom_guidance,
+            )
+
+            # Verify document was created with guidance stored
+            doc = state.store.get_document_by_id(document_id)
+            assert doc is not None, "Document should be created"
+            assert doc.summarization_guidance == custom_guidance
+        finally:
+            client.close()
 
 
 class TestWrapperBatchAppendAcceptsGuidance:

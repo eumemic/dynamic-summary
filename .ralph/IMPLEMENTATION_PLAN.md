@@ -415,11 +415,12 @@ Integration tests verifying all acceptance criteria.
   - Test: `TestWrapperBatchAppendAcceptsGuidance` (4 tests: signature, keyword-only, threads to runtime, threads to client)
   - Location: tests/test_transcript_summarization_guidance.py:118-170
 
-- [ ] Test: Guidance is threaded to the summarizer
+- [x] Test: Guidance is threaded to the summarizer
   - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #4
   - Success: Document record contains `summarization_guidance` after batch append with guidance
-  - Test: `test_guidance_stored_on_document`
-  - Location: tests/test_transcript_summarization_guidance.py
+  - Test: `test_guidance_stored_on_document_via_grpc`
+  - Location: tests/test_transcript_summarization_guidance.py:135-172
+  - Implementation: End-to-end test using gRPC client → BatchAppendText servicer → storage path. Verifies document.summarization_guidance == custom_guidance after batch_append_text() call.
 
 - [ ] Test: `execute_sync()` passes conversation-specific guidance
   - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #5
