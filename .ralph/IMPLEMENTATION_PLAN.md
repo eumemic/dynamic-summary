@@ -395,11 +395,12 @@ Add conversation-specific guidance constant and pass to batch_append.
 
 Integration tests verifying all acceptance criteria.
 
-- [ ] Test: `BatchAppendTextRequest` proto has `summarization_guidance` field
+- [x] Test: `BatchAppendTextRequest` proto has `summarization_guidance` field
   - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #1
-  - Success: Proto field accessible and serializes correctly
-  - Test: `test_batch_append_request_has_guidance_field`
+  - Success: Proto field accessible, optional semantics work correctly, field number is 4
+  - Test: `TestBatchAppendRequestHasGuidanceField` (5 tests)
   - Location: tests/test_transcript_summarization_guidance.py
+  - Implementation: Tests verify field existence, HasField semantics, string type, field number 4, and default behavior
 
 - [ ] Test: `GrpcRagzoomClient.batch_append_text()` accepts `summarization_guidance`
   - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #2
