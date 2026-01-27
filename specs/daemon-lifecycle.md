@@ -6,17 +6,26 @@ status: COMPLETE
 
 ## Overview
 
-RagZoom's gRPC server should run as a managed daemon with automatic lifecycle management. Users should never need to manually start the server - it starts automatically when needed and recovers from failures transparently.
+RagZoom's gRPC server runs as a managed daemon with proper lifecycle management. The user is responsible for starting the server; CLI commands fail fast with a clear error if the server is not running.
 
 ## Goals
 
-1. **Zero manual server management** - Server auto-starts on first client command
-2. **Transparent crash recovery** - Stale/crashed servers are automatically replaced
+1. **User-managed lifecycle** - User starts/stops server explicitly
+2. **Fail-fast CLI** - Commands fail immediately with clear error if server unreachable
 3. **Clean shutdown** - Graceful stop with proper cleanup
 4. **Observable state** - Easy to check if daemon is running and healthy
 
+## Explicitly NOT Implemented
+
+**Auto-start is NOT implemented.** The original design considered auto-starting the daemon when CLI commands needed it, but this was rejected because:
+- It complicates debugging (unexpected daemon processes)
+- It's unclear which config to use for auto-started daemons
+- User should control when the server runs
+- See `specs/grpc-cli-architecture.md` for the fail-fast CLI design
+
 ## Non-Goals
 
+- **Auto-start** - See "Explicitly NOT Implemented" above
 - Systemd/launchd service integration (future work)
 - Multi-user daemon sharing
 - Remote daemon management
@@ -53,36 +62,26 @@ When `--daemon` is used:
 4. Write port to `daemon.port`
 5. Detach from terminal (setsid)
 
-### Auto-Start
+### No Auto-Start (Fail-Fast Instead)
 
-Any client command that needs the server triggers auto-start:
+**Auto-start was designed but NOT implemented.** Instead, CLI commands fail fast:
 
 ```python
-def ensure_server_running() -> str:
-    """Ensure daemon is running, return server address."""
-    if is_server_healthy():
-        return get_server_address()
+def _resolve_server_address(value: str | None) -> str:
+    """Resolve server address, fail fast if not reachable."""
+    address = value or f"localhost:{PRODUCTION_PORT}"
 
-    # Server not running or unhealthy - start it
-    cleanup_stale_state()
-    start_daemon()
-    wait_for_healthy(timeout=30)
-    return get_server_address()
+    if not is_server_reachable(address, timeout=2):
+        raise click.ClickException(
+            f"Cannot connect to RagZoom server at {address}.\n"
+            f"Start the server with: ragzoom server start"
+        )
+
+    return address
 ```
 
-Commands that trigger auto-start:
-- `ragzoom index`
-- `ragzoom query`
-- `ragzoom clear`
-- `ragzoom status`
-- Any command with `--server-address` that uses default
-
-Commands that do NOT auto-start:
-- `ragzoom server start` (explicit start)
-- `ragzoom server stop` (explicit stop)
-- `ragzoom server status` (just reports)
-- `ragzoom doctor` (diagnostic only)
-- `ragzoom config` (local only)
+User is responsible for starting the server before using CLI commands.
+See `specs/grpc-cli-architecture.md` for full details.
 
 ### Health Check
 
