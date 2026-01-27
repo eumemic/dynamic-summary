@@ -68,6 +68,56 @@ def test_proto_summarization_guidance_is_optional() -> None:
     assert not request.HasField("summarization_guidance")
 
 
+def test_batch_append_proto_has_summarization_guidance_field() -> None:
+    """Verify BatchAppendTextRequest proto has summarization_guidance field."""
+    request = pb2.BatchAppendTextRequest(
+        document_id="test",
+        units=[pb2.AppendUnit(content=b"unit 1")],
+        summarization_guidance="Batch guidance",
+    )
+    assert request.summarization_guidance == "Batch guidance"
+
+
+def test_batch_append_proto_summarization_guidance_is_optional() -> None:
+    """Verify summarization_guidance field is optional in BatchAppendTextRequest."""
+    request = pb2.BatchAppendTextRequest(
+        document_id="test",
+        units=[pb2.AppendUnit(content=b"unit 1")],
+    )
+    assert not request.HasField("summarization_guidance")
+
+
+@pytest.mark.asyncio
+async def test_batch_append_text_with_summarization_guidance(
+    grpc_test_environment: tuple[str, ServerState],
+) -> None:
+    """Verify batch_append_text passes summarization_guidance to server.
+
+    Spec: specs/transcript-summarization-guidance.md § 2. Thread Through gRPC Client
+    """
+    address, state = grpc_test_environment
+    custom_guidance = "This is conversation transcript. Preserve identity and agency."
+
+    client = GrpcRagzoomClient(address)
+    try:
+        result = await asyncio.to_thread(
+            client.batch_append_text,
+            document_id="batch-guidance-test",
+            units=["Turn 1: Hello", "Turn 2: World"],
+            summarization_guidance=custom_guidance,
+        )
+        assert result is not None
+
+        # Verify document was created and guidance stored
+        doc = state.store.get_document_by_id("batch-guidance-test")
+        assert doc is not None, "Document should be created"
+        assert (
+            doc.summarization_guidance == custom_guidance
+        ), f"Expected guidance stored, got: {doc.summarization_guidance!r}"
+    finally:
+        client.close()
+
+
 @pytest.mark.asyncio
 async def test_grpc_client_get_document_status(
     grpc_test_environment: tuple[str, ServerState],

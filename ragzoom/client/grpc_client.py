@@ -380,6 +380,7 @@ class GrpcRagzoomClient:
         units: list[str],
         collect_telemetry: bool = False,
         timestamps: list[str | tuple[str, str]] | None = None,
+        summarization_guidance: str | None = None,
     ) -> IndexingResult:
         """Append multiple text units with forced split boundaries between them.
 
@@ -394,6 +395,8 @@ class GrpcRagzoomClient:
             collect_telemetry: Whether to collect telemetry data
             timestamps: Optional list of timestamps parallel to units.
                 Each entry can be a single ISO 8601 string or a (start, end) tuple.
+            summarization_guidance: Optional guidance for summary generation,
+                appended to the default prompt.
 
         Returns:
             IndexingResult with combined stats for all appended units
@@ -425,6 +428,8 @@ class GrpcRagzoomClient:
             units=append_units,
             collect_telemetry=collect_telemetry,
         )
+        if summarization_guidance is not None:
+            request.summarization_guidance = summarization_guidance
         try:
             response = self._indexer.BatchAppendText(request, timeout=self._timeout)
         except grpc.RpcError as error:  # pragma: no cover
