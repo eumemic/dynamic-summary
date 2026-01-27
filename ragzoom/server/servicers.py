@@ -1179,6 +1179,62 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
             parts.append(f"active=[{inflight}]")
         return " ".join(parts)
 
+    async def ListDocuments(  # noqa: N802
+        self,
+        request: pb2.ListDocumentsRequest,
+        context: ServicerContextProto,
+    ) -> pb2.ListDocumentsResponse:
+        """List all indexed documents with metadata.
+
+        Returns DocumentInfo for each document including leaf count, node count,
+        temporal status, time range, and completion percentage.
+
+        Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+        """
+        documents: list[pb2.DocumentInfo] = []
+
+        for doc in self._state.store.list_documents():
+            doc_id = getattr(doc, "id", "")
+            if not doc_id:
+                continue
+
+            doc_store = self._state.store.for_document(doc_id)
+            leaf_count = doc_store.nodes.leaf_count()
+            node_count = doc_store.get_node_count()
+
+            # Get temporal status
+            is_temporal_result = doc_store._doc_repo.get_document_is_temporal(doc_id)
+            is_temporal = (
+                bool(is_temporal_result) if is_temporal_result is not None else False
+            )
+
+            # Calculate completion percentage using binary forest formula
+            forest_size = complete_forest_size(leaf_count)
+            completion_pct = (
+                (node_count / forest_size * 100.0) if forest_size > 0 else 0.0
+            )
+
+            # Build DocumentInfo proto
+            doc_info = pb2.DocumentInfo(
+                document_id=doc_id,
+                leaf_count=leaf_count,
+                node_count=node_count,
+                is_temporal=is_temporal,
+                completion_pct=completion_pct,
+            )
+
+            # Add temporal range if document is temporal
+            if is_temporal:
+                time_start, time_end = doc_store.get_temporal_range()
+                if time_start is not None:
+                    doc_info.time_start = _unix_to_iso8601(time_start)
+                if time_end is not None:
+                    doc_info.time_end = _unix_to_iso8601(time_end)
+
+            documents.append(doc_info)
+
+        return pb2.ListDocumentsResponse(documents=documents)
+
 
 async def shutdown_gracefully(server: GrpcServerProto) -> None:
     await server.stop(grace=None)
