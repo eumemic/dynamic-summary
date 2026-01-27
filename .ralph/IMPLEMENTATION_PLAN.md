@@ -151,11 +151,12 @@ Replace state file scanning with ephemeral PID-keyed temp files for Claude Code 
   - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:20-49
   - Implementation: Added `_get_temp_dir()` helper for testability and `get_session_document_id(pid)` function. Returns stripped content or None if file missing/empty.
 
-- [ ] Update MCP server to use `get_session_document_id()` as fallback
+- [x] Update MCP server to use `get_session_document_id()` as fallback
   - Spec: specs/unified-agent-identity.md § 4. MCP Server Identity Resolution
   - Success: Falls back to `get_session_document_id(os.getppid())` when env var not set
-  - Test: `test_mcp_pid_temp_file_discovery`
+  - Test: `test_mcp_pid_temp_file_discovery`, `test_pid_temp_file_not_found_raises_error`
   - Location: integrations/claude-code/src/ragzoom_claude_code/mcp_server.py:27-37
+  - Implementation: Replaced old state file scanning with `get_session_document_id(claude_code_pid)` call. Updated import and tests.
 
 - [ ] Update SessionStart hook to write PID temp file
   - Spec: specs/unified-agent-identity.md § 5. Hook Updates
