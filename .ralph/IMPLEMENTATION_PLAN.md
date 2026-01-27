@@ -121,11 +121,11 @@ Implement server-side handlers for the new RPCs.
 
 ### 2.1 ListDocuments Servicer
 
-- [ ] Implement ListDocuments method in WorkerServicer
+- [x] Implement ListDocuments method in WorkerServicer
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Returns DocumentInfo for all documents with correct fields
-  - Test: test_list_documents_servicer (new)
-  - Location: ragzoom/server/servicers.py:1000-1050 (estimated)
+  - Test: tests/test_grpc_server_integration.py::test_list_documents_servicer_*
+  - Location: ragzoom/server/servicers.py:1183-1236
 
 ### 2.2 ValidateDocument Servicer
 
