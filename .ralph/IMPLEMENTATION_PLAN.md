@@ -81,29 +81,29 @@ All new gRPC methods must be defined before server/client implementation.
 
 ### 1.4 GetCostStats RPC
 
-- [ ] Add GetCostStats RPC to WorkerService
+- [x] Add GetCostStats RPC to WorkerService
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: RPC defined accepting GetCostStatsRequest, returning GetCostStatsResponse
-  - Test: test_get_cost_stats_proto_exists (new)
-  - Location: proto/dynamic_summary.proto:337-352
+  - Test: tests/test_grpc_proto.py::TestGetCostStatsProto
+  - Location: proto/dynamic_summary.proto:357
 
-- [ ] Add GetCostStatsRequest message
+- [x] Add GetCostStatsRequest message
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Contains `optional string document_id = 1`
-  - Test: test_get_cost_stats_proto_exists
-  - Location: proto/dynamic_summary.proto:338-340
+  - Test: tests/test_grpc_proto.py::TestGetCostStatsProto::test_get_cost_stats_request_exists
+  - Location: proto/dynamic_summary.proto:337-339
 
-- [ ] Add GetCostStatsResponse message
+- [x] Add GetCostStatsResponse message
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Contains `repeated DocumentCostStats documents = 1`
-  - Test: test_get_cost_stats_proto_exists
+  - Test: tests/test_grpc_proto.py::TestGetCostStatsProto::test_get_cost_stats_response_has_repeated_documents
   - Location: proto/dynamic_summary.proto:341-343
 
-- [ ] Add DocumentCostStats message
+- [x] Add DocumentCostStats message
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Contains document_id, total_cost, total_nodes, leaf_nodes, summary_nodes
-  - Test: test_get_cost_stats_proto_exists
-  - Location: proto/dynamic_summary.proto:344-350
+  - Test: tests/test_grpc_proto.py::TestGetCostStatsProto::test_document_cost_stats_has_required_fields
+  - Location: proto/dynamic_summary.proto:345-351
 
 ### 1.5 Regenerate Proto Stubs
 
