@@ -1235,6 +1235,53 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
 
         return pb2.ListDocumentsResponse(documents=documents)
 
+    async def ValidateDocument(  # noqa: N802
+        self,
+        request: pb2.ValidateDocumentRequest,
+        context: ServicerContextProto,
+    ) -> pb2.ValidateDocumentResponse:
+        """Validate document tree invariants.
+
+        Returns valid=true when document passes validation, errors list when fails.
+        Raises NOT_FOUND for missing document, INVALID_ARGUMENT for empty document_id.
+
+        Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+        """
+        if not request.document_id:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="ValidateDocument requires `document_id`.",
+            )
+
+        document_store = self._state.store.for_document(request.document_id)
+        node_count = document_store.get_node_count()
+
+        if node_count == 0:
+            await _abort(
+                context,
+                code=grpc.StatusCode.NOT_FOUND,
+                message=f"Document '{request.document_id}' not found.",
+            )
+
+        # Import here to avoid circular imports
+        from ragzoom.validation.tree import validate_document
+
+        # Use fast=True for performance (SQL-only validation)
+        report = validate_document(
+            document_id=request.document_id,
+            store=self._state.store,
+            fast=True,
+        )
+
+        # Convert ValidationReport to protobuf response
+        error_messages = [f.message for f in report.errors]
+
+        return pb2.ValidateDocumentResponse(
+            valid=report.status == "ok",
+            errors=error_messages,
+        )
+
 
 async def shutdown_gracefully(server: GrpcServerProto) -> None:
     await server.stop(grace=None)
