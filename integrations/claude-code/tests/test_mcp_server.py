@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from ragzoom_claude_code.mcp_server import _get_session_id
@@ -92,3 +92,40 @@ class TestMcpServerPidTempFileDiscovery:
             pytest.raises(ValueError, match="No session found for PID 99999"),
         ):
             _get_session_id()
+
+
+class TestRememberToolDocumentId:
+    """Tests for remember tool document ID handling."""
+
+    def test_remember_tool_uses_correct_document_id(self) -> None:
+        """Remember tool uses string doc_id from _get_session_id(), not tuple."""
+        expected_doc_id = "test-session-doc"
+
+        with (
+            patch.dict(os.environ, {"RAGZOOM_DOCUMENT_ID": expected_doc_id}),
+            patch(
+                "ragzoom_claude_code.mcp_server.GrpcRagzoomClient"
+            ) as mock_client_class,
+        ):
+            # Set up mock client (context manager pattern)
+            mock_client = MagicMock()
+            mock_client_class.return_value.__enter__.return_value = mock_client
+
+            # Set up mock response
+            mock_node = MagicMock(
+                text="test summary", time_start=None, time_end=None, height=0
+            )
+            mock_retrieval = MagicMock(tiling_ids=["node1"], nodes={"node1": mock_node})
+            mock_client.execute_query.return_value = MagicMock(retrieval=mock_retrieval)
+
+            from ragzoom_claude_code.mcp_server import remember
+
+            result = remember(query="test query", token_budget=1000)
+
+            # Verify execute_query was called with string document_id
+            mock_client.execute_query.assert_called_once()
+            call_kwargs = mock_client.execute_query.call_args.kwargs
+            assert call_kwargs["document_id"] == expected_doc_id
+            assert isinstance(call_kwargs["document_id"], str)
+
+            assert "test summary" in result
