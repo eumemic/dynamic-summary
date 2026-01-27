@@ -149,11 +149,11 @@ Implement server-side handlers for the new RPCs.
 
 ### 2.3 GetSystemStatus Servicer
 
-- [ ] Implement GetSystemStatus method in WorkerServicer
+- [x] Implement GetSystemStatus method in WorkerServicer
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Returns aggregated total_nodes, leaf_nodes, tree_depth across all documents
   - Test: test_get_system_status_servicer (new)
-  - Location: ragzoom/server/servicers.py:1101-1130 (estimated)
+  - Location: ragzoom/server/servicers.py:1285-1314
 
 ### 2.4 GetCostStats Servicer
 

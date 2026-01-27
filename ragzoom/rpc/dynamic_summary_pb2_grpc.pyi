@@ -20,6 +20,8 @@ from .dynamic_summary_pb2 import (
     GetDocumentResponse,
     GetSessionCursorRequest,
     GetSessionCursorResponse,
+    GetSystemStatusRequest,
+    GetSystemStatusResponse,
     IndexDocumentRequest,
     IndexDocumentResponse,
     IngestSessionRequest,
@@ -91,6 +93,9 @@ class WorkerServiceStub:
     def ValidateDocument(
         self, request: ValidateDocumentRequest, timeout: float | None = ...
     ) -> Awaitable[ValidateDocumentResponse]: ...
+    def GetSystemStatus(
+        self, request: GetSystemStatusRequest, timeout: float | None = ...
+    ) -> Awaitable[GetSystemStatusResponse]: ...
 
 class SessionIngestionServiceStub:
     def __init__(self, channel: Channel) -> None: ...
@@ -160,6 +165,9 @@ class WorkerServiceServicer:
     def ValidateDocument(
         self, request: ValidateDocumentRequest, context: ServicerContext
     ) -> Awaitable[ValidateDocumentResponse]: ...
+    def GetSystemStatus(
+        self, request: GetSystemStatusRequest, context: ServicerContext
+    ) -> Awaitable[GetSystemStatusResponse]: ...
 
 class SessionIngestionServiceServicer:
     def GetSessionCursor(
