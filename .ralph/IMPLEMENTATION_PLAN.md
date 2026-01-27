@@ -144,11 +144,12 @@ Add `RAGZOOM_DOCUMENT_ID` env var and `--document-id` CLI flag support to both s
 
 Replace state file scanning with ephemeral PID-keyed temp files for Claude Code session discovery.
 
-- [ ] Implement `get_session_document_id()` function for temp file reading
+- [x] Implement `get_session_document_id()` function for temp file reading
   - Spec: specs/unified-agent-identity.md § 2. PID-Keyed Temp File for Discovered Identity
   - Success: Reads `/tmp/ragzoom-session-{pid}` and returns document_id, or None if not found
   - Test: `test_get_session_document_id_from_temp_file`, `test_get_session_document_id_not_found`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (new function)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:20-49
+  - Implementation: Added `_get_temp_dir()` helper for testability and `get_session_document_id(pid)` function. Returns stripped content or None if file missing/empty.
 
 - [ ] Update MCP server to use `get_session_document_id()` as fallback
   - Spec: specs/unified-agent-identity.md § 4. MCP Server Identity Resolution

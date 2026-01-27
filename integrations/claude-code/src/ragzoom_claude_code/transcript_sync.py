@@ -17,6 +17,39 @@ from ragzoom_claude_code.jsonl_reader import iter_jsonl, iter_jsonl_reversed
 _COMMAND_NAME_PATTERN = re.compile(r"<command-name>(/[\w-]+)</command-name>")
 
 
+def _get_temp_dir() -> Path:
+    """Get the temp directory for session files.
+
+    Uses /tmp by default. Separated for testability.
+    """
+    return Path("/tmp")
+
+
+def get_session_document_id(pid: int) -> str | None:
+    """Read document_id from PID-keyed temp file.
+
+    Used for discovered identity (Claude Code model) where the SessionStart
+    hook writes the session ID to /tmp/ragzoom-session-{pid}.
+
+    Args:
+        pid: Process ID of the Claude Code process
+
+    Returns:
+        The document_id if temp file exists and has content, None otherwise
+    """
+    temp_dir = _get_temp_dir()
+    temp_path = temp_dir / f"ragzoom-session-{pid}"
+
+    if not temp_path.exists():
+        return None
+
+    content = temp_path.read_text().strip()
+    if not content:
+        return None
+
+    return content
+
+
 @dataclass
 class Turn:
     """A conversation turn with timestamp range.
