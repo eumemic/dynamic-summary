@@ -71,6 +71,23 @@ When the `remember` memory tool is available:
 2. **Use it proactively**: Query whenever you need to recall details - after compaction, when resuming sessions, when details feel fuzzy, or when specifics matter
 3. **Zoom aggressively**: For specific recall, use tight time windows (minutes, not hours) to get verbatim content instead of summaries
 
+## Dev/Prod Server Separation
+
+The RagZoom server automatically uses different ports and state directories based on how it's invoked:
+
+| Invocation | Mode | Port | State Directory |
+|------------|------|------|-----------------|
+| `ragzoom server start` | Production | 50051 | `~/.local/state/ragzoom/` |
+| `python -m ragzoom.cli server start` | Development | 50052 | `~/.local/state/ragzoom-dev/` |
+
+**Key behaviors:**
+- **Production mode** (`ragzoom`): Auto-starts server if not running when CLI commands need it
+- **Development mode** (`python -m ragzoom.cli`): Fails fast if server not running (no auto-start)
+- Explicit `--port` flag always overrides the default
+- `RAGZOOM_STATE_DIR` env var overrides the state directory
+
+This separation prevents dev testing from interfering with production data.
+
 ## Integration Packages
 
 Client-specific integrations live in `integrations/`. Each is an independent pip-installable package:
