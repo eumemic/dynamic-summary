@@ -830,16 +830,23 @@ class TelemetryCollector:
     def _get_system_prompts(self) -> dict[str, str]:
         """Get system prompts used during indexing for reproducibility.
 
+        Returns the FULL constructed prompt as it would be sent to the LLM,
+        matching the logic in summary_utils.py. When summarization_guidance is
+        provided, it is appended under a "# Summarization Guidance" header.
+
         Returns:
             Dictionary containing the actual system prompt used (custom or default)
         """
-        return {
-            "summary_system_prompt": (
-                self.config.summary_system_prompt
-                if self.config.summary_system_prompt is not None
-                else DEFAULT_SUMMARY_SYSTEM_PROMPT
+        guidance = self.config.summarization_guidance
+        if guidance and guidance.strip():
+            full_prompt = (
+                f"{DEFAULT_SUMMARY_SYSTEM_PROMPT}\n\n"
+                f"# Summarization Guidance\n{guidance}"
             )
-        }
+        else:
+            full_prompt = DEFAULT_SUMMARY_SYSTEM_PROMPT
+
+        return {"summary_system_prompt": full_prompt}
 
     def _get_runtime_info(self) -> RuntimeInfoDict:
         """Get runtime environment information for reproducibility.
