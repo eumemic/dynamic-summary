@@ -61,23 +61,23 @@ All new gRPC methods must be defined before server/client implementation.
 
 ### 1.3 GetSystemStatus RPC
 
-- [ ] Add GetSystemStatus RPC to WorkerService
+- [x] Add GetSystemStatus RPC to WorkerService
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: RPC defined accepting GetSystemStatusRequest, returning GetSystemStatusResponse
-  - Test: test_get_system_status_proto_exists (new)
-  - Location: proto/dynamic_summary.proto:326-336
+  - Test: tests/test_grpc_proto.py::TestGetSystemStatusProto
+  - Location: proto/dynamic_summary.proto:345
 
-- [ ] Add GetSystemStatusRequest message (empty)
+- [x] Add GetSystemStatusRequest message (empty)
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Empty message defined
-  - Test: test_get_system_status_proto_exists
-  - Location: proto/dynamic_summary.proto:327-328
+  - Test: tests/test_grpc_proto.py::TestGetSystemStatusProto::test_get_system_status_request_exists
+  - Location: proto/dynamic_summary.proto:328
 
-- [ ] Add GetSystemStatusResponse message
+- [x] Add GetSystemStatusResponse message
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Contains total_nodes, leaf_nodes, tree_depth (no pinned_nodes)
-  - Test: test_get_system_status_proto_exists
-  - Location: proto/dynamic_summary.proto:329-333
+  - Test: tests/test_grpc_proto.py::TestGetSystemStatusProto::test_get_system_status_response_has_required_fields
+  - Location: proto/dynamic_summary.proto:330-334
 
 ### 1.4 GetCostStats RPC
 
