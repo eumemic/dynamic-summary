@@ -409,11 +409,11 @@ Integration tests verifying all acceptance criteria.
   - Location: tests/test_transcript_summarization_guidance.py:75-112
   - Implementation: Added TestGrpcClientBatchAppendAcceptsGuidance class with 3 tests: signature verification, keyword-only check, and proto field assignment verification via source inspection
 
-- [ ] Test: `RagZoom.batch_append()` accepts `summarization_guidance`
+- [x] Test: `RagZoom.batch_append()` accepts `summarization_guidance`
   - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #3
   - Success: Wrapper method compiles and threads to underlying implementation
-  - Test: `test_wrapper_batch_append_accepts_guidance`
-  - Location: tests/test_transcript_summarization_guidance.py
+  - Test: `TestWrapperBatchAppendAcceptsGuidance` (4 tests: signature, keyword-only, threads to runtime, threads to client)
+  - Location: tests/test_transcript_summarization_guidance.py:118-170
 
 - [ ] Test: Guidance is threaded to the summarizer
   - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #4

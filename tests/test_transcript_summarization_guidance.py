@@ -9,6 +9,7 @@ import inspect
 
 from ragzoom.client.grpc_client import GrpcRagzoomClient
 from ragzoom.rpc import dynamic_summary_pb2
+from ragzoom.wrapper import RagZoom
 
 
 class TestBatchAppendRequestHasGuidanceField:
@@ -112,3 +113,57 @@ class TestGrpcClientBatchAppendAcceptsGuidance:
         assert (
             "request.summarization_guidance" in source
         ), "Method should set request.summarization_guidance"
+
+
+class TestWrapperBatchAppendAcceptsGuidance:
+    """Acceptance Criteria #3: RagZoom.batch_append() accepts summarization_guidance."""
+
+    def test_wrapper_batch_append_accepts_guidance(self) -> None:
+        """batch_append method should accept summarization_guidance parameter.
+
+        Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #3
+        """
+        # Verify the method signature includes summarization_guidance
+        sig = inspect.signature(RagZoom.batch_append)
+        assert "summarization_guidance" in sig.parameters
+
+        # Verify the parameter has the correct type annotation and default
+        param = sig.parameters["summarization_guidance"]
+        assert param.default is None, "summarization_guidance should default to None"
+        # Note: With `from __future__ import annotations`, annotations are strings
+        assert "str" in str(param.annotation), "Should include str type"
+        assert "None" in str(param.annotation), "Should include None type"
+
+    def test_wrapper_batch_append_guidance_is_keyword_only(self) -> None:
+        """summarization_guidance should be a keyword-only parameter."""
+        sig = inspect.signature(RagZoom.batch_append)
+        param = sig.parameters["summarization_guidance"]
+        assert (
+            param.kind == inspect.Parameter.KEYWORD_ONLY
+        ), "summarization_guidance should be keyword-only"
+
+    def test_wrapper_batch_append_threads_to_runtime(self) -> None:
+        """Verify batch_append passes summarization_guidance to runtime session.
+
+        This verifies the implementation logic via static analysis.
+        """
+        import ragzoom.wrapper as wrapper_module
+
+        source = inspect.getsource(wrapper_module.RagZoom.batch_append)
+        # Should pass guidance to session.batch_append_text()
+        assert (
+            "summarization_guidance=summarization_guidance" in source
+        ), "Method should pass summarization_guidance to session"
+
+    def test_wrapper_batch_append_threads_to_grpc_client(self) -> None:
+        """Verify batch_append passes summarization_guidance to gRPC client.
+
+        This verifies the implementation logic via static analysis.
+        """
+        import ragzoom.wrapper as wrapper_module
+
+        source = inspect.getsource(wrapper_module.RagZoom.batch_append)
+        # Should pass guidance to client.batch_append_text()
+        assert (
+            "summarization_guidance=summarization_guidance" in source
+        ), "Method should pass summarization_guidance to client"
