@@ -27,9 +27,9 @@ Start broad to get the time range layout:
 recall(query="authentication bug", token_budget=2000)
 
 # Returns summaries + time ranges like:
-# [2024-01-10T09:00:00 to 2024-01-10T12:00:00] height=3
-# [2024-01-10T14:00:00 to 2024-01-10T16:30:00] height=2  <-- mentions auth bug
-# [2024-01-10T16:30:00 to 2024-01-10T18:00:00] height=1
+# [2024-01-10T09:00:00Z to 2024-01-10T12:00:00Z] height=3
+# [2024-01-10T14:00:00Z to 2024-01-10T16:30:00Z] height=2  <-- mentions auth bug
+# [2024-01-10T16:30:00Z to 2024-01-10T18:00:00Z] height=1
 ```
 
 ### Step 2: Zoom
