@@ -345,11 +345,12 @@ Thread `summarization_guidance` through gRPC client and wrapper.
   - Location: ragzoom/client/grpc_client.py:376-443
   - Implementation: Added parameter to method signature, docstring, and request proto field assignment
 
-- [ ] Add `summarization_guidance` parameter to `RagZoom.batch_append()` (sync)
+- [x] Add `summarization_guidance` parameter to `RagZoom.batch_append()` (sync)
   - Spec: specs/transcript-summarization-guidance.md § 3. Thread Through Wrapper
   - Success: Method accepts and passes `summarization_guidance` to runtime/client
-  - Test: `test_wrapper_batch_append_with_guidance`
-  - Location: ragzoom/wrapper.py:244-287
+  - Test: `test_ragzoom_batch_append_with_summarization_guidance`
+  - Location: ragzoom/wrapper.py:245-300
+  - Implementation: Parameter already existed in signature; fixed to pass through to runtime session (line 290) and gRPC client (line 298)
 
 - [ ] Add `summarization_guidance` parameter to `AsyncRagZoom.batch_append()` (async)
   - Spec: specs/transcript-summarization-guidance.md § 3. Thread Through Wrapper
