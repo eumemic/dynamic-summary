@@ -16,6 +16,8 @@ from .dynamic_summary_pb2 import (
     ExecuteQueryResponse,
     GetCompactionBoundaryRequest,
     GetCompactionBoundaryResponse,
+    GetCostStatsRequest,
+    GetCostStatsResponse,
     GetDocumentRequest,
     GetDocumentResponse,
     GetSessionCursorRequest,
@@ -96,6 +98,9 @@ class WorkerServiceStub:
     def GetSystemStatus(
         self, request: GetSystemStatusRequest, timeout: float | None = ...
     ) -> Awaitable[GetSystemStatusResponse]: ...
+    def GetCostStats(
+        self, request: GetCostStatsRequest, timeout: float | None = ...
+    ) -> Awaitable[GetCostStatsResponse]: ...
 
 class SessionIngestionServiceStub:
     def __init__(self, channel: Channel) -> None: ...
@@ -168,6 +173,9 @@ class WorkerServiceServicer:
     def GetSystemStatus(
         self, request: GetSystemStatusRequest, context: ServicerContext
     ) -> Awaitable[GetSystemStatusResponse]: ...
+    def GetCostStats(
+        self, request: GetCostStatsRequest, context: ServicerContext
+    ) -> Awaitable[GetCostStatsResponse]: ...
 
 class SessionIngestionServiceServicer:
     def GetSessionCursor(
