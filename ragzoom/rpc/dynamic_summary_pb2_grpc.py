@@ -473,6 +473,12 @@ class WorkerServiceStub(object):
             response_deserializer=dynamic__summary__pb2.ExportTelemetryResponse.FromString,
             _registered_method=True,
         )
+        self.ListDocuments = channel.unary_unary(
+            "/ragzoom.rpc.WorkerService/ListDocuments",
+            request_serializer=dynamic__summary__pb2.ListDocumentsRequest.SerializeToString,
+            response_deserializer=dynamic__summary__pb2.ListDocumentsResponse.FromString,
+            _registered_method=True,
+        )
 
 
 class WorkerServiceServicer(object):
@@ -514,6 +520,12 @@ class WorkerServiceServicer(object):
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
 
+    def ListDocuments(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
 
 def add_WorkerServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -546,6 +558,11 @@ def add_WorkerServiceServicer_to_server(servicer, server):
             servicer.ExportTelemetry,
             request_deserializer=dynamic__summary__pb2.ExportTelemetryRequest.FromString,
             response_serializer=dynamic__summary__pb2.ExportTelemetryResponse.SerializeToString,
+        ),
+        "ListDocuments": grpc.unary_unary_rpc_method_handler(
+            servicer.ListDocuments,
+            request_deserializer=dynamic__summary__pb2.ListDocumentsRequest.FromString,
+            response_serializer=dynamic__summary__pb2.ListDocumentsResponse.SerializeToString,
         ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -730,6 +747,36 @@ class WorkerService(object):
             "/ragzoom.rpc.WorkerService/ExportTelemetry",
             dynamic__summary__pb2.ExportTelemetryRequest.SerializeToString,
             dynamic__summary__pb2.ExportTelemetryResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def ListDocuments(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/ragzoom.rpc.WorkerService/ListDocuments",
+            dynamic__summary__pb2.ListDocumentsRequest.SerializeToString,
+            dynamic__summary__pb2.ListDocumentsResponse.FromString,
             options,
             channel_credentials,
             insecure,
