@@ -333,6 +333,23 @@ message GetSystemStatusResponse {
   int64 tree_depth = 3;
 }
 
+// Get cost statistics
+message GetCostStatsRequest {
+  optional string document_id = 1;  // If omitted, returns all docs
+}
+
+message GetCostStatsResponse {
+  repeated DocumentCostStats documents = 1;
+}
+
+message DocumentCostStats {
+  string document_id = 1;
+  double total_cost = 2;       // Sum of all node costs (arbitrary units)
+  int64 total_nodes = 3;       // Total node count
+  int64 leaf_nodes = 4;        // Leaf node count
+  int64 summary_nodes = 5;     // Summary node count (total - leaf)
+}
+
 service WorkerService {
   rpc RunWorkers(RunWorkersRequest) returns (stream RunWorkersResponse);
   rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse);
@@ -343,6 +360,7 @@ service WorkerService {
   rpc ListDocuments(ListDocumentsRequest) returns (ListDocumentsResponse);
   rpc ValidateDocument(ValidateDocumentRequest) returns (ValidateDocumentResponse);
   rpc GetSystemStatus(GetSystemStatusRequest) returns (GetSystemStatusResponse);
+  rpc GetCostStats(GetCostStatsRequest) returns (GetCostStatsResponse);
 }
 
 // Session ingestion service for Claude Code transcripts

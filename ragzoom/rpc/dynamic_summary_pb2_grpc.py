@@ -491,6 +491,12 @@ class WorkerServiceStub(object):
             response_deserializer=dynamic__summary__pb2.GetSystemStatusResponse.FromString,
             _registered_method=True,
         )
+        self.GetCostStats = channel.unary_unary(
+            "/ragzoom.rpc.WorkerService/GetCostStats",
+            request_serializer=dynamic__summary__pb2.GetCostStatsRequest.SerializeToString,
+            response_deserializer=dynamic__summary__pb2.GetCostStatsResponse.FromString,
+            _registered_method=True,
+        )
 
 
 class WorkerServiceServicer(object):
@@ -550,6 +556,12 @@ class WorkerServiceServicer(object):
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
 
+    def GetCostStats(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
 
 def add_WorkerServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -597,6 +609,11 @@ def add_WorkerServiceServicer_to_server(servicer, server):
             servicer.GetSystemStatus,
             request_deserializer=dynamic__summary__pb2.GetSystemStatusRequest.FromString,
             response_serializer=dynamic__summary__pb2.GetSystemStatusResponse.SerializeToString,
+        ),
+        "GetCostStats": grpc.unary_unary_rpc_method_handler(
+            servicer.GetCostStats,
+            request_deserializer=dynamic__summary__pb2.GetCostStatsRequest.FromString,
+            response_serializer=dynamic__summary__pb2.GetCostStatsResponse.SerializeToString,
         ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -871,6 +888,36 @@ class WorkerService(object):
             "/ragzoom.rpc.WorkerService/GetSystemStatus",
             dynamic__summary__pb2.GetSystemStatusRequest.SerializeToString,
             dynamic__summary__pb2.GetSystemStatusResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def GetCostStats(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/ragzoom.rpc.WorkerService/GetCostStats",
+            dynamic__summary__pb2.GetCostStatsRequest.SerializeToString,
+            dynamic__summary__pb2.GetCostStatsResponse.FromString,
             options,
             channel_credentials,
             insecure,

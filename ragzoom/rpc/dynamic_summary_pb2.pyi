@@ -482,7 +482,6 @@ class ValidateDocumentResponse:
 
     def __init__(self, *, valid: bool = ..., errors: Iterable[str] = ...) -> None: ...
 
-
 # GetSystemStatus messages
 class GetSystemStatusRequest:
     """Request for system-wide status (empty message)."""
@@ -490,7 +489,6 @@ class GetSystemStatusRequest:
     DESCRIPTOR: ClassVar[Descriptor]
 
     def __init__(self) -> None: ...
-
 
 class GetSystemStatusResponse:
     """Response containing aggregated system status across all documents."""
@@ -503,6 +501,47 @@ class GetSystemStatusResponse:
     def __init__(
         self, *, total_nodes: int = ..., leaf_nodes: int = ..., tree_depth: int = ...
     ) -> None: ...
+
+
+# GetCostStats messages
+class GetCostStatsRequest:
+    """Request for cost statistics, optionally filtered by document."""
+
+    DESCRIPTOR: ClassVar[Descriptor]
+    document_id: str
+
+    def __init__(self, *, document_id: str = ...) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
+
+
+class DocumentCostStats:
+    """Cost statistics for a single document."""
+
+    DESCRIPTOR: ClassVar[Descriptor]
+    document_id: str
+    total_cost: float
+    total_nodes: int
+    leaf_nodes: int
+    summary_nodes: int
+
+    def __init__(
+        self,
+        *,
+        document_id: str = ...,
+        total_cost: float = ...,
+        total_nodes: int = ...,
+        leaf_nodes: int = ...,
+        summary_nodes: int = ...,
+    ) -> None: ...
+
+
+class GetCostStatsResponse:
+    """Response containing cost statistics for one or more documents."""
+
+    DESCRIPTOR: ClassVar[Descriptor]
+    documents: Sequence[DocumentCostStats]
+
+    def __init__(self, *, documents: Iterable[DocumentCostStats] = ...) -> None: ...
 
 
 WORKER_RUN_MODE_UNTIL_IDLE: int
