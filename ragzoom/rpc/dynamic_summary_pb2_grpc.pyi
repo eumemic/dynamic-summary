@@ -24,6 +24,8 @@ from .dynamic_summary_pb2 import (
     IndexDocumentResponse,
     IngestSessionRequest,
     IngestSessionResponse,
+    ListDocumentsRequest,
+    ListDocumentsResponse,
     ResetSessionCursorRequest,
     ResetSessionCursorResponse,
     RetrieveRequest,
@@ -81,6 +83,9 @@ class WorkerServiceStub:
     def GetDocumentStatus(
         self, request: DocumentStatusRequest, timeout: float | None = ...
     ) -> DocumentStatusResponse: ...
+    def ListDocuments(
+        self, request: ListDocumentsRequest, timeout: float | None = ...
+    ) -> Awaitable[ListDocumentsResponse]: ...
 
 class SessionIngestionServiceStub:
     def __init__(self, channel: Channel) -> None: ...
@@ -144,6 +149,9 @@ class WorkerServiceServicer:
     def GetDocumentStatus(
         self, request: object, context: ServicerContext
     ) -> Awaitable[object]: ...
+    def ListDocuments(
+        self, request: ListDocumentsRequest, context: ServicerContext
+    ) -> Awaitable[ListDocumentsResponse]: ...
 
 class SessionIngestionServiceServicer:
     def GetSessionCursor(
