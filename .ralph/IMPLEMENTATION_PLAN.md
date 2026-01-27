@@ -338,11 +338,12 @@ Add `summarization_guidance` field to batch append and thread through servicer.
 
 Thread `summarization_guidance` through gRPC client and wrapper.
 
-- [ ] Add `summarization_guidance` parameter to `GrpcRagzoomClient.batch_append_text()`
+- [x] Add `summarization_guidance` parameter to `GrpcRagzoomClient.batch_append_text()`
   - Spec: specs/transcript-summarization-guidance.md § 2. Thread Through gRPC Client
   - Success: Method accepts `summarization_guidance: str | None = None` and sets on request proto
-  - Test: `test_grpc_client_batch_append_text_with_guidance`
-  - Location: ragzoom/client/grpc_client.py:376-427
+  - Test: `test_batch_append_text_with_summarization_guidance`, `test_batch_append_proto_has_summarization_guidance_field`
+  - Location: ragzoom/client/grpc_client.py:376-443
+  - Implementation: Added parameter to method signature, docstring, and request proto field assignment
 
 - [ ] Add `summarization_guidance` parameter to `RagZoom.batch_append()` (sync)
   - Spec: specs/transcript-summarization-guidance.md § 3. Thread Through Wrapper
