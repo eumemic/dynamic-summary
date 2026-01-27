@@ -172,11 +172,12 @@ Replace state file scanning with ephemeral PID-keyed temp files for Claude Code 
   - Location: integrations/claude-code/src/ragzoom_claude_code/mcp_server.py:132
   - Implementation: Code already correct; added test to verify remember tool receives string document_id from _get_session_id()
 
-- [ ] Add tests for PID-based discovery
+- [x] Add tests for PID-based discovery
   - Spec: specs/unified-agent-identity.md § Acceptance Criteria #4
   - Success: Test creates temp file, verifies MCP server discovers session
-  - Test: `test_pid_temp_file_discovery`
+  - Test: `test_pid_temp_file_discovery`, `test_pid_temp_file_discovery_end_to_end`
   - Location: integrations/claude-code/tests/test_mcp_server.py
+  - Implementation: Added end-to-end test that writes actual temp file and tests full discovery flow without mocking get_session_document_id()
 
 ### Phase 63: Remove State File Machinery
 
