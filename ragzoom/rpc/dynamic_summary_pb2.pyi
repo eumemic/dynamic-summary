@@ -482,6 +482,29 @@ class ValidateDocumentResponse:
 
     def __init__(self, *, valid: bool = ..., errors: Iterable[str] = ...) -> None: ...
 
+
+# GetSystemStatus messages
+class GetSystemStatusRequest:
+    """Request for system-wide status (empty message)."""
+
+    DESCRIPTOR: ClassVar[Descriptor]
+
+    def __init__(self) -> None: ...
+
+
+class GetSystemStatusResponse:
+    """Response containing aggregated system status across all documents."""
+
+    DESCRIPTOR: ClassVar[Descriptor]
+    total_nodes: int
+    leaf_nodes: int
+    tree_depth: int
+
+    def __init__(
+        self, *, total_nodes: int = ..., leaf_nodes: int = ..., tree_depth: int = ...
+    ) -> None: ...
+
+
 WORKER_RUN_MODE_UNTIL_IDLE: int
 
 class GetTelemetryRequest:

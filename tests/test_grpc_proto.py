@@ -127,3 +127,37 @@ class TestValidateDocumentProto:
         resp_fields = {f.name: f.number for f in resp_desc.fields}
         assert resp_fields["valid"] == 1
         assert resp_fields["errors"] == 2
+
+
+class TestGetSystemStatusProto:
+    """Test the GetSystemStatus RPC proto definitions."""
+
+    def test_get_system_status_request_exists(self) -> None:
+        """GetSystemStatusRequest message type should be importable."""
+        assert hasattr(dynamic_summary_pb2, "GetSystemStatusRequest")
+        # Request is empty - verify it can be created
+        req = dynamic_summary_pb2.GetSystemStatusRequest()
+        assert req is not None
+
+    def test_get_system_status_response_exists(self) -> None:
+        """GetSystemStatusResponse message type should be importable."""
+        assert hasattr(dynamic_summary_pb2, "GetSystemStatusResponse")
+
+    def test_get_system_status_response_has_required_fields(self) -> None:
+        """GetSystemStatusResponse should have total_nodes, leaf_nodes, tree_depth."""
+        response = dynamic_summary_pb2.GetSystemStatusResponse(
+            total_nodes=100,
+            leaf_nodes=51,
+            tree_depth=6,
+        )
+        assert response.total_nodes == 100
+        assert response.leaf_nodes == 51
+        assert response.tree_depth == 6
+
+    def test_get_system_status_response_field_numbers(self) -> None:
+        """GetSystemStatusResponse fields should have correct field numbers per spec."""
+        descriptor = dynamic_summary_pb2.GetSystemStatusResponse.DESCRIPTOR
+        fields = {f.name: f.number for f in descriptor.fields}
+        assert fields["total_nodes"] == 1
+        assert fields["leaf_nodes"] == 2
+        assert fields["tree_depth"] == 3
