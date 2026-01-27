@@ -951,9 +951,13 @@ def execute_sync(
             turns_appended=0,
         )
 
-    # Batch append all units
+    # Batch append all units with conversation-specific summarization guidance
     batch_append = getattr(client, "batch_append")
-    batch_append(document_id, non_empty)
+    batch_append(
+        document_id,
+        non_empty,
+        summarization_guidance=CONVERSATION_SUMMARIZATION_GUIDANCE,
+    )
 
     return SyncResult(
         document_id=document_id,

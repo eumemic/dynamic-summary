@@ -92,6 +92,7 @@ class AppendExecutorClient:
         self,
         document_id: str,
         units: list[AppendUnit],
+        summarization_guidance: str | None = None,
     ) -> AppendResult:
         """Batch append multiple units to document.
 

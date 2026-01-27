@@ -377,17 +377,19 @@ Add conversation-specific guidance constant and pass to batch_append.
   - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:19-32
   - Implementation: Added constant with spec-defined guidance text; 3 tests verify presence, key aspects, and technical preservation
 
-- [ ] Update `execute_sync()` to pass guidance to `batch_append()`
+- [x] Update `execute_sync()` to pass guidance to `batch_append()`
   - Spec: specs/transcript-summarization-guidance.md § 5. Pass Guidance in execute_sync
   - Success: `batch_append()` call includes `summarization_guidance=CONVERSATION_SUMMARIZATION_GUIDANCE`
   - Test: `test_execute_sync_passes_summarization_guidance`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:995-996
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:955-959
+  - Implementation: Added `summarization_guidance=CONVERSATION_SUMMARIZATION_GUIDANCE` to batch_append() call; added test class TestExecuteSyncPassesSummarizationGuidance with 2 tests
 
-- [ ] Update test fixtures to accept `summarization_guidance` parameter
+- [x] Update test fixtures to accept `summarization_guidance` parameter
   - Spec: specs/transcript-summarization-guidance.md § Acceptance Criteria #6
   - Success: FakeTranscriptClient, MockClient, and integration test clients accept the parameter
   - Test: All existing execute_sync tests pass without modification
   - Location: integrations/claude-code/tests/test_stateless_sync.py:640, tests/conftest.py:1157
+  - Implementation: Updated 6 mock clients to accept `summarization_guidance: str | None = None` parameter
 
 ### Phase 68: Transcript Summarization Guidance Acceptance Tests
 
@@ -428,6 +430,15 @@ Integration tests verifying all acceptance criteria.
   - Success: All batch_append and execute_sync tests pass without modification
   - Test: `pytest tests/ integrations/claude-code/tests/` passes
   - Location: N/A (full test suite)
+
+---
+
+## Bug Fix: Outdated Hook Test (Resolved)
+
+- [x] Fix outdated test_memzoom_session_hook.py that expected deprecated set-pid command
+  - Test was written before Phase 62 (PID Temp File Discovery) changed the hook
+  - Updated to verify hook writes to `/tmp/ragzoom-session-$PPID` directly
+  - Location: tests/test_memzoom_session_hook.py
 
 ---
 
