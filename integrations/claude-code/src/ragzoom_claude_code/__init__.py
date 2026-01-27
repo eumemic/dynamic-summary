@@ -12,19 +12,11 @@ Components:
 """
 
 from ragzoom_claude_code.transcript_sync import (
-    SessionState,
-    SessionStateHeader,
     SyncResult,
     execute_sync,
-    get_state_path,
-    set_session_pid,
 )
 
 __all__ = [
-    "SessionState",
-    "SessionStateHeader",
     "SyncResult",
     "execute_sync",
-    "get_state_path",
-    "set_session_pid",
 ]
