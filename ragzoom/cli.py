@@ -1073,28 +1073,33 @@ def pin(ctx: click.Context, node_id: str, document_id: str | None) -> None:
 
 
 @cli.command()
+@click.option(
+    "--server-address",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default=None,
+    show_default=False,
+    help=GRPC_ADDRESS_HELP,
+)
 @click.pass_context
-def status(ctx: click.Context) -> None:
-    """Show system status."""
+def status(ctx: click.Context, server_address: str | None) -> None:
+    """Show system status.
+
+    Spec: specs/grpc-cli-architecture.md § Commands Requiring Migration
+    """
     try:
-        # Get configs and create services
+        resolved_address = _resolve_server_address_with_autostart(server_address)
+
+        with GrpcRagzoomClient(resolved_address) as client:
+            system_status = client.get_system_status()
+
         index_config = ctx.obj["index_config"]
         query_config = ctx.obj["query_config"]
-        operational_config = ctx.obj["operational_config"]
-        store = create_store_with_docker(
-            operational_config, embedding_model=index_config.embedding_model
-        )
-        document_service = DocumentService(store)
-
-        # Get system status
-        status = document_service.get_system_status()
 
         click.echo("\nSYSTEM STATUS:")
         click.echo("=" * 40)
-        click.echo(f"Total nodes: {status.total_nodes}")
-        click.echo(f"Leaf nodes: {status.leaf_nodes}")
-        click.echo(f"Tree height: {status.tree_depth}")
-        click.echo(f"Pinned nodes: {status.pinned_nodes}")
+        click.echo(f"Total nodes: {system_status.total_nodes}")
+        click.echo(f"Leaf nodes: {system_status.leaf_nodes}")
+        click.echo(f"Tree height: {system_status.tree_depth}")
         click.echo("\nCONFIGURATION:")
         click.echo("=" * 40)
         click.echo(f"Budget tokens: {query_config.budget_tokens}")
