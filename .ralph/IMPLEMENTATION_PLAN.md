@@ -177,31 +177,31 @@ Add client-side wrappers for the new RPCs.
 
 ### 3.1 list_documents() Client Method
 
-- [ ] Add list_documents() method to GrpcRagzoomClient
+- [x] Add list_documents() method to GrpcRagzoomClient
   - Spec: specs/grpc-cli-architecture.md § CLI Changes
-  - Success: Method returns list of document info dicts/dataclasses
-  - Test: test_grpc_client_list_documents (new)
-  - Location: ragzoom/client/grpc_client.py:920-950 (estimated)
+  - Success: Method returns list of DocumentInfoView dataclasses
+  - Test: test_grpc_client_list_documents, test_grpc_client_list_documents_empty
+  - Location: ragzoom/client/grpc_client.py:960-991
 
-- [ ] Add DocumentInfoView dataclass for client response
+- [x] Add DocumentInfoView dataclass for client response
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Dataclass with document_id, leaf_count, node_count, is_temporal, time_start, time_end, completion_pct
   - Test: test_grpc_client_list_documents
-  - Location: ragzoom/client/grpc_client.py:250-265 (estimated)
+  - Location: ragzoom/client/grpc_client.py:242-264
 
 ### 3.2 validate_document() Client Method
 
-- [ ] Add validate_document() method to GrpcRagzoomClient
+- [x] Add validate_document() method to GrpcRagzoomClient
   - Spec: specs/grpc-cli-architecture.md § CLI Changes
-  - Success: Returns (valid: bool, errors: list[str])
-  - Test: test_grpc_client_validate_document (new)
-  - Location: ragzoom/client/grpc_client.py:951-980 (estimated)
+  - Success: Returns ValidationResult with valid: bool, errors: list[str]
+  - Test: test_grpc_client_validate_document, test_grpc_client_validate_document_not_found, test_grpc_client_validate_document_empty_id
+  - Location: ragzoom/client/grpc_client.py:979-1003
 
-- [ ] Add ValidationResult dataclass for client response
+- [x] Add ValidationResult dataclass for client response
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Dataclass with valid: bool, errors: list[str]
   - Test: test_grpc_client_validate_document
-  - Location: ragzoom/client/grpc_client.py:266-270 (estimated)
+  - Location: ragzoom/client/grpc_client.py:265-277
 
 ### 3.3 get_system_status() Client Method
 
