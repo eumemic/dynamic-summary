@@ -163,11 +163,11 @@ Implement server-side handlers for the new RPCs.
   - Test: test_get_cost_stats_servicer_returns_stats_for_document, test_get_cost_stats_servicer_returns_all_documents
   - Location: ragzoom/server/servicers.py:1313-1358
 
-- [ ] Handle optional document_id filter
+- [x] Handle optional document_id filter
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: When document_id provided, returns only that doc; when omitted, returns all
-  - Test: test_get_cost_stats_all_documents (new)
-  - Location: ragzoom/server/servicers.py (within GetCostStats)
+  - Test: test_get_cost_stats_servicer_returns_all_documents (existing)
+  - Location: ragzoom/server/servicers.py:1328-1360 (within GetCostStats)
 
 ---
 
