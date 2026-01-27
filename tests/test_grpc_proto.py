@@ -82,3 +82,48 @@ class TestListDocumentsProto:
         assert fields["time_start"] == 5
         assert fields["time_end"] == 6
         assert fields["completion_pct"] == 7
+
+
+class TestValidateDocumentProto:
+    """Test the ValidateDocument RPC proto definitions."""
+
+    def test_validate_document_request_exists(self) -> None:
+        """ValidateDocumentRequest message type should be importable."""
+        assert hasattr(dynamic_summary_pb2, "ValidateDocumentRequest")
+        req = dynamic_summary_pb2.ValidateDocumentRequest(document_id="test_doc")
+        assert req.document_id == "test_doc"
+
+    def test_validate_document_response_exists(self) -> None:
+        """ValidateDocumentResponse message type should be importable."""
+        assert hasattr(dynamic_summary_pb2, "ValidateDocumentResponse")
+
+    def test_validate_document_response_has_required_fields(self) -> None:
+        """ValidateDocumentResponse should have valid and errors fields."""
+        response = dynamic_summary_pb2.ValidateDocumentResponse(
+            valid=True,
+            errors=[],
+        )
+        assert response.valid is True
+        assert len(response.errors) == 0
+
+    def test_validate_document_response_with_errors(self) -> None:
+        """ValidateDocumentResponse should support error list."""
+        response = dynamic_summary_pb2.ValidateDocumentResponse(
+            valid=False,
+            errors=["Missing root node", "Invalid parent reference"],
+        )
+        assert response.valid is False
+        assert len(response.errors) == 2
+        assert response.errors[0] == "Missing root node"
+        assert response.errors[1] == "Invalid parent reference"
+
+    def test_validate_document_field_numbers(self) -> None:
+        """ValidateDocument messages should have correct field numbers."""
+        req_desc = dynamic_summary_pb2.ValidateDocumentRequest.DESCRIPTOR
+        req_fields = {f.name: f.number for f in req_desc.fields}
+        assert req_fields["document_id"] == 1
+
+        resp_desc = dynamic_summary_pb2.ValidateDocumentResponse.DESCRIPTOR
+        resp_fields = {f.name: f.number for f in resp_desc.fields}
+        assert resp_fields["valid"] == 1
+        assert resp_fields["errors"] == 2

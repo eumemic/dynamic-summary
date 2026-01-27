@@ -479,6 +479,12 @@ class WorkerServiceStub(object):
             response_deserializer=dynamic__summary__pb2.ListDocumentsResponse.FromString,
             _registered_method=True,
         )
+        self.ValidateDocument = channel.unary_unary(
+            "/ragzoom.rpc.WorkerService/ValidateDocument",
+            request_serializer=dynamic__summary__pb2.ValidateDocumentRequest.SerializeToString,
+            response_deserializer=dynamic__summary__pb2.ValidateDocumentResponse.FromString,
+            _registered_method=True,
+        )
 
 
 class WorkerServiceServicer(object):
@@ -526,6 +532,12 @@ class WorkerServiceServicer(object):
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
 
+    def ValidateDocument(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
 
 def add_WorkerServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -563,6 +575,11 @@ def add_WorkerServiceServicer_to_server(servicer, server):
             servicer.ListDocuments,
             request_deserializer=dynamic__summary__pb2.ListDocumentsRequest.FromString,
             response_serializer=dynamic__summary__pb2.ListDocumentsResponse.SerializeToString,
+        ),
+        "ValidateDocument": grpc.unary_unary_rpc_method_handler(
+            servicer.ValidateDocument,
+            request_deserializer=dynamic__summary__pb2.ValidateDocumentRequest.FromString,
+            response_serializer=dynamic__summary__pb2.ValidateDocumentResponse.SerializeToString,
         ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -777,6 +794,36 @@ class WorkerService(object):
             "/ragzoom.rpc.WorkerService/ListDocuments",
             dynamic__summary__pb2.ListDocumentsRequest.SerializeToString,
             dynamic__summary__pb2.ListDocumentsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def ValidateDocument(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/ragzoom.rpc.WorkerService/ValidateDocument",
+            dynamic__summary__pb2.ValidateDocumentRequest.SerializeToString,
+            dynamic__summary__pb2.ValidateDocumentResponse.FromString,
             options,
             channel_credentials,
             insecure,
