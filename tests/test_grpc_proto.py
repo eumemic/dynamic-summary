@@ -161,3 +161,84 @@ class TestGetSystemStatusProto:
         assert fields["total_nodes"] == 1
         assert fields["leaf_nodes"] == 2
         assert fields["tree_depth"] == 3
+
+
+class TestGetCostStatsProto:
+    """Test the GetCostStats RPC proto definitions."""
+
+    def test_get_cost_stats_request_exists(self) -> None:
+        """GetCostStatsRequest message type should be importable."""
+        assert hasattr(dynamic_summary_pb2, "GetCostStatsRequest")
+        # Request has optional document_id - verify it can be created empty
+        req = dynamic_summary_pb2.GetCostStatsRequest()
+        assert req is not None
+
+    def test_get_cost_stats_request_with_document_id(self) -> None:
+        """GetCostStatsRequest should accept optional document_id."""
+        req = dynamic_summary_pb2.GetCostStatsRequest(document_id="test_doc")
+        assert req.document_id == "test_doc"
+
+    def test_get_cost_stats_request_document_id_optional(self) -> None:
+        """GetCostStatsRequest document_id should be optional."""
+        req = dynamic_summary_pb2.GetCostStatsRequest()
+        assert req.HasField("document_id") is False
+
+    def test_get_cost_stats_response_exists(self) -> None:
+        """GetCostStatsResponse message type should be importable."""
+        assert hasattr(dynamic_summary_pb2, "GetCostStatsResponse")
+
+    def test_document_cost_stats_message_exists(self) -> None:
+        """DocumentCostStats message type should be importable."""
+        assert hasattr(dynamic_summary_pb2, "DocumentCostStats")
+
+    def test_document_cost_stats_has_required_fields(self) -> None:
+        """DocumentCostStats should have all specified fields."""
+        cost_stats = dynamic_summary_pb2.DocumentCostStats(
+            document_id="test_doc",
+            total_cost=1.234,
+            total_nodes=100,
+            leaf_nodes=51,
+            summary_nodes=49,
+        )
+        assert cost_stats.document_id == "test_doc"
+        assert abs(cost_stats.total_cost - 1.234) < 0.001
+        assert cost_stats.total_nodes == 100
+        assert cost_stats.leaf_nodes == 51
+        assert cost_stats.summary_nodes == 49
+
+    def test_get_cost_stats_response_has_repeated_documents(self) -> None:
+        """GetCostStatsResponse should have repeated DocumentCostStats field."""
+        doc1 = dynamic_summary_pb2.DocumentCostStats(
+            document_id="doc1",
+            total_cost=1.0,
+            total_nodes=10,
+            leaf_nodes=5,
+            summary_nodes=5,
+        )
+        doc2 = dynamic_summary_pb2.DocumentCostStats(
+            document_id="doc2",
+            total_cost=2.0,
+            total_nodes=20,
+            leaf_nodes=10,
+            summary_nodes=10,
+        )
+        response = dynamic_summary_pb2.GetCostStatsResponse(documents=[doc1, doc2])
+        assert len(response.documents) == 2
+        assert response.documents[0].document_id == "doc1"
+        assert response.documents[1].document_id == "doc2"
+
+    def test_get_cost_stats_request_field_numbers(self) -> None:
+        """GetCostStatsRequest fields should have correct field numbers per spec."""
+        descriptor = dynamic_summary_pb2.GetCostStatsRequest.DESCRIPTOR
+        fields = {f.name: f.number for f in descriptor.fields}
+        assert fields["document_id"] == 1
+
+    def test_document_cost_stats_field_numbers(self) -> None:
+        """DocumentCostStats fields should have correct field numbers per spec."""
+        descriptor = dynamic_summary_pb2.DocumentCostStats.DESCRIPTOR
+        fields = {f.name: f.number for f in descriptor.fields}
+        assert fields["document_id"] == 1
+        assert fields["total_cost"] == 2
+        assert fields["total_nodes"] == 3
+        assert fields["leaf_nodes"] == 4
+        assert fields["summary_nodes"] == 5
