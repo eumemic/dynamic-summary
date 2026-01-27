@@ -97,3 +97,32 @@ ragzoom documents
 - Always use `ragzoom server stop` before ending a session
 - If using `--config`, the config is persisted to `daemon.config.json` for auto-start
 - Don't run multiple terminal sessions that each try to start daemons
+
+## Dev/Prod Code Separation
+
+Production (`ragzoom`) must be a **non-editable install** so code changes don't affect the running daemon until explicitly reinstalled.
+
+### Verify Production Install
+
+```bash
+pip show ragzoom | grep Editable
+```
+
+- **No output** = correct (non-editable)
+- **Shows "Editable project location"** = wrong (will break on code changes)
+
+### Fix Editable Install
+
+```bash
+pip uninstall ragzoom -y && pip install /Users/tom/code/dynamic-summary
+```
+
+### After Merging Daemon-Affecting Changes
+
+When merging changes to files the daemon loads (`ragzoom/retrieve.py`, `ragzoom/server/`, etc.):
+
+1. Verify production is non-editable (check above)
+2. If editable, reinstall as non-editable
+3. Restart production server to pick up new code: `ragzoom server stop && ragzoom server start`
+
+Development always uses `python -m ragzoom.cli` which runs from source.

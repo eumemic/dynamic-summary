@@ -7,6 +7,7 @@ health checks, and auto-start capabilities.
 import errno
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -571,17 +572,31 @@ def start_daemon(port: int = PRODUCTION_PORT, config_path: Path | None = None) -
     This function returns immediately after spawning; it does NOT
     wait for the server to become healthy.
 
+    IMPORTANT: Uses the `ragzoom` console script (not `python -m ragzoom.cli`)
+    to ensure the daemon runs in production mode and writes state files to
+    the production state directory (~/.local/state/ragzoom/).
+
     Args:
         port: Port number for the daemon to listen on.
         config_path: Optional path to config file. If provided, the daemon
                      will be started with `--config <path>` to use persisted
                      settings (e.g., target_chunk_tokens, summarization_guidance).
+
+    Raises:
+        FileNotFoundError: If the `ragzoom` command is not found in PATH.
     """
+    # Find the ragzoom console script - must use this (not python -m ragzoom.cli)
+    # to ensure daemon runs in production mode with correct state directory
+    ragzoom_cmd = shutil.which("ragzoom")
+    if ragzoom_cmd is None:
+        raise FileNotFoundError(
+            "Cannot find 'ragzoom' command in PATH. "
+            "Ensure ragzoom is installed: pip install /path/to/dynamic-summary"
+        )
+
     # Build command to start daemon
     cmd = [
-        sys.executable,
-        "-m",
-        "ragzoom.cli",
+        ragzoom_cmd,
         "server",
         "start",
         "--daemon",
