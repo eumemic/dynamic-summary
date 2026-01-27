@@ -1,4 +1,4 @@
-"""MCP server exposing the 'remember' tool for querying conversation history."""
+"""MCP server exposing the 'recall' tool for querying conversation history."""
 
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ def _format_response(
 
 
 @mcp.tool()
-def remember(
+def recall(
     query: str,
     token_budget: int = 2000,
     time_start: str | None = None,
@@ -100,7 +100,7 @@ def remember(
 
     **Step 1 - Survey:** Start with a broad query to get an overview:
 
-        remember(query="authentication bug", token_budget=2000)
+        recall(query="authentication bug", token_budget=2000)
 
         # Returns summaries + time ranges like:
         # [2024-01-10T09:00:00 to 2024-01-10T12:00:00] height=3

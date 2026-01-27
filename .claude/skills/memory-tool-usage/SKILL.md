@@ -1,11 +1,11 @@
 ---
 name: memory-tool-usage
-description: This skill should be used when needing to recall earlier conversation details, after compaction occurs, when resuming a session, when details feel fuzzy, or when the user references something from earlier in the conversation. Provides guidance on effective use of the `remember` memory tool.
+description: This skill should be used when needing to recall earlier conversation details, after compaction occurs, when resuming a session, when details feel fuzzy, or when the user references something from earlier in the conversation. Provides guidance on effective use of the `recall` memory tool.
 ---
 
 # Memory Tool Usage
 
-Guidance for effective use of the `remember` memory tool to recall information from earlier in the conversation after compaction.
+Guidance for effective use of the `recall` memory tool to recall information from earlier in the conversation after compaction.
 
 ## When to Use Memory Proactively
 
@@ -24,7 +24,7 @@ The memory tool is designed for iterative exploration, not single-shot queries.
 Start broad to get the time range layout:
 
 ```python
-remember(query="authentication bug", token_budget=2000)
+recall(query="authentication bug", token_budget=2000)
 
 # Returns summaries + time ranges like:
 # [2024-01-10T09:00:00 to 2024-01-10T12:00:00] height=3
@@ -37,7 +37,7 @@ remember(query="authentication bug", token_budget=2000)
 Drill into the relevant time range for more detail:
 
 ```python
-remember(query="authentication bug", token_budget=2000,
+recall(query="authentication bug", token_budget=2000,
          time_start="2024-01-10T14:00:00", time_end="2024-01-10T16:30:00")
 
 # Same budget, smaller time range = more verbatim content
@@ -48,7 +48,7 @@ remember(query="authentication bug", token_budget=2000,
 For specific details (commands run, exact decisions, code snippets), use **sub-hour windows**:
 
 ```python
-remember(query="daemon restart commands", token_budget=1500,
+recall(query="daemon restart commands", token_budget=1500,
          time_start="2024-01-10T15:22:00", time_end="2024-01-10T15:26:00")
 
 # Tight window = height=0 verbatim content, no repetitive summaries
@@ -81,13 +81,13 @@ If results contain repetitive context you already know:
 **Problem**: Querying broad time windows and getting the same problem/context description repeated:
 ```python
 # BAD: 3-hour window returns summaries with repeated context
-remember(query="verification", time_start="00:38:00", time_end="03:31:00")
+recall(query="verification", time_start="00:38:00", time_end="03:31:00")
 ```
 
 **Solution**: Zoom to the specific moment:
 ```python
 # GOOD: 4-minute window returns exactly what happened
-remember(query="verification", time_start="03:22:00", time_end="03:26:00")
+recall(query="verification", time_start="03:22:00", time_end="03:26:00")
 ```
 
 ### Parallel Broad Queries
@@ -95,19 +95,19 @@ remember(query="verification", time_start="03:22:00", time_end="03:26:00")
 **Don't do this:**
 ```python
 # BAD: Multiple broad queries all hitting the same summaries
-remember(query="summarization hints", token_budget=3000)
-remember(query="structured node data", token_budget=3000)
-remember(query="cost per node", token_budget=3000)
+recall(query="summarization hints", token_budget=3000)
+recall(query="structured node data", token_budget=3000)
+recall(query="cost per node", token_budget=3000)
 ```
 
 **Do this instead:**
 ```python
 # GOOD: Survey once, then zoom into specific time ranges
-remember(query="brainstorm session", token_budget=2000)
+recall(query="brainstorm session", token_budget=2000)
 # Notice discussion is in time range 14:00-15:30
 
-remember(query="summarization hints", time_start="14:00:00", time_end="14:30:00")
-remember(query="cost per node", time_start="15:00:00", time_end="15:30:00")
+recall(query="summarization hints", time_start="14:00:00", time_end="14:30:00")
+recall(query="cost per node", time_start="15:00:00", time_end="15:30:00")
 ```
 
 ### Other Anti-patterns

@@ -65,7 +65,7 @@ When in a worktree, the current working directory IS the project root. Run comma
 
 ## Memory Tool
 
-When the `remember` memory tool is available:
+When the `recall` memory tool is available:
 
 1. **Load the skill first**: Before your first memory query, load the `memory-tool-usage` skill to get effective retrieval patterns
 2. **Use it proactively**: Query whenever you need to recall details - after compaction, when resuming sessions, when details feel fuzzy, or when specifics matter
