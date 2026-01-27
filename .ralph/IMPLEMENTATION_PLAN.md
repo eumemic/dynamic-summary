@@ -253,23 +253,23 @@ Migrate CLI commands from direct DB access to gRPC client calls.
 
 ### 4.2 Migrate `validate` Command
 
-- [ ] Replace validate_document() with gRPC client.validate_document()
+- [x] Replace validate_document() with gRPC client.validate_document()
   - Spec: specs/grpc-cli-architecture.md § Commands Requiring Migration
-  - Success: `ragzoom validate -d doc` works against running server
-  - Test: test_cli_validate_uses_grpc (new)
-  - Location: ragzoom/cli.py:761-858
+  - Success: `ragzoom validate doc` works against running server
+  - Test: test_cli_validate_uses_grpc
+  - Location: ragzoom/cli.py:740-772
 
-- [ ] Add --server-address option to `validate` command
+- [x] Add --server-address option to `validate` command
   - Spec: specs/grpc-cli-architecture.md § Shared Server Option
   - Success: Option accepts host:port, defaults to localhost:50051
-  - Test: test_cli_validate_server_option (new)
-  - Location: ragzoom/cli.py:759-761
+  - Test: test_cli_validate_server_option
+  - Location: ragzoom/cli.py:743-748
 
-- [ ] Remove direct store/vector_index creation from validate
+- [x] Remove direct store/vector_index creation from validate
   - Spec: specs/grpc-cli-architecture.md § CLI Changes
   - Success: No create_store_with_docker or create_vector_index in validate command
   - Test: test_cli_validate_uses_grpc
-  - Location: ragzoom/cli.py:773-783
+  - Location: ragzoom/cli.py (removed `from ragzoom.validation import validate_document`)
 
 ### 4.3 Migrate `status` Command
 
