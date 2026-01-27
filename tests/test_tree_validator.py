@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-import numpy as np
 import pytest
 from click.testing import CliRunner
 
-from ragzoom.config import OperationalConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
 from ragzoom.document_store import DocumentStore
 from ragzoom.telemetry_types import NodeTelemetryDict, TelemetryDataDict
 from ragzoom.validation import validate_document
-from ragzoom.vector_api import Vector
 
 
 @pytest.fixture()
@@ -74,7 +70,6 @@ def _add_parent(
         level_index=level_index,
     )
     # Set preceding_context as JSON array of node IDs
-    import json
 
     if start == 0:
         preceding_context = "[]"
@@ -517,182 +512,17 @@ def test_tree_validator_detects_misordered_parent_neighbors(
     validator_store.clear_document(document_id)
 
 
-def test_cli_validate_command(
-    monkeypatch: pytest.MonkeyPatch,
-    validator_store: StorageBackend,
-    runner: CliRunner,
-    tmp_path: Path,
-) -> None:
-    document_id = "cli-validate"
-    store: DocumentStore = validator_store.add_document(
-        document_id=document_id,
-        file_path=None,
-        embedding_model="text-embedding-3-small",
-        summary_model="gpt-5-mini",
-    )
-    _build_four_leaf_tree(store, document_id)
-    telemetry_path = tmp_path / "telemetry.json"
-    telemetry_payload = _make_telemetry_payload(
-        document_id, list(store.nodes.get_all())
-    )
-    telemetry_path.write_text(json.dumps(telemetry_payload))
-
-    from ragzoom import cli as cli_module
-
-    class DummyVectorIndex:
-        def __init__(self, ids: list[str]) -> None:
-            self._ids = set(ids)
-
-        def get_vectors(self, ids: list[str]) -> list[Vector]:
-            vectors: list[Vector] = []
-            for node_id in ids:
-                if node_id in self._ids:
-                    vectors.append(
-                        Vector(
-                            id=node_id,
-                            vec=np.asarray([1.0], dtype=np.float32),
-                            meta={"document_id": document_id},
-                            model_id="dummy",
-                            dim=1,
-                        )
-                    )
-            return vectors
-
-        def list_ids(self) -> list[str]:
-            return list(self._ids)
-
-        def search_similar(
-            self,
-            query_embedding: list[float],
-            k: int,
-            where: dict[str, str | int | float | bool | None] | None = None,
-        ) -> list[Vector]:  # pragma: no cover - unused
-            return []
-
-        def upsert(
-            self,
-            items: list[tuple[str, list[float], dict[str, object]]],
-        ) -> None:  # pragma: no cover - unused
-            for node_id, _vec, _meta in items:
-                self._ids.add(node_id)
-
-        def delete(
-            self,
-            filter: dict[str, object] | None = None,
-            ids: list[str] | None = None,
-        ) -> int:  # pragma: no cover - unused
-            return 0
-
-    def fake_create_store(
-        config: OperationalConfig, embedding_model: str
-    ) -> StorageBackend:
-        return validator_store
-
-    def fake_create_vector_index(
-        backend: str, database_url: str, embedding_model: str
-    ) -> DummyVectorIndex:
-        node_ids = [node.id for node in store.nodes.get_all()]
-        return DummyVectorIndex(node_ids)
-
-    monkeypatch.setattr(cli_module, "create_store_with_docker", fake_create_store)
-    monkeypatch.setattr(cli_module, "create_vector_index", fake_create_vector_index)
-
-    result = runner.invoke(
-        cli_module.cli,
-        [
-            "validate",
-            document_id,
-            "--complete",
-            "--telemetry-file",
-            str(telemetry_path),
-        ],
-    )
-    assert result.exit_code == 0
-    assert "✅" in result.output
-
-    validator_store.clear_document(document_id)
-
-
-def test_cli_validate_command_reports_telemetry_mismatch(
-    monkeypatch: pytest.MonkeyPatch,
-    validator_store: StorageBackend,
-    runner: CliRunner,
-    tmp_path: Path,
-) -> None:
-    document_id = "cli-validate-mismatch"
-    store: DocumentStore = validator_store.add_document(
-        document_id=document_id,
-        file_path=None,
-        embedding_model="text-embedding-3-small",
-        summary_model="gpt-5-mini",
-    )
-    _build_four_leaf_tree(store, document_id)
-
-    telemetry_payload = _make_telemetry_payload(
-        document_id, list(store.nodes.get_all())
-    )
-    telemetry_nodes = telemetry_payload["nodes"]
-    idx = 0
-    while idx < len(telemetry_nodes):
-        if telemetry_nodes[idx]["node_id"] == "parent-right":
-            del telemetry_nodes[idx]
-        else:
-            idx += 1
-    telemetry_path = tmp_path / "telemetry_mismatch.json"
-    telemetry_path.write_text(json.dumps(telemetry_payload))
-
-    from ragzoom import cli as cli_module
-
-    class DummyVectorIndex:
-        def __init__(self, ids: list[str]) -> None:
-            self._ids = set(ids)
-
-        def get_vectors(self, ids: list[str]) -> list[Vector]:
-            vectors: list[Vector] = []
-            for node_id in ids:
-                if node_id in self._ids:
-                    vectors.append(
-                        Vector(
-                            id=node_id,
-                            vec=np.asarray([1.0], dtype=np.float32),
-                            meta={"document_id": document_id},
-                            model_id="dummy",
-                            dim=1,
-                        )
-                    )
-            return vectors
-
-        def list_ids(self) -> list[str]:
-            return list(self._ids)
-
-    def fake_create_store(
-        config: OperationalConfig, embedding_model: str
-    ) -> StorageBackend:
-        return validator_store
-
-    def fake_create_vector_index(
-        backend: str, database_url: str, embedding_model: str
-    ) -> DummyVectorIndex:
-        node_ids = [node.id for node in store.nodes.get_all()]
-        return DummyVectorIndex(node_ids)
-
-    monkeypatch.setattr(cli_module, "create_store_with_docker", fake_create_store)
-    monkeypatch.setattr(cli_module, "create_vector_index", fake_create_vector_index)
-
-    result = runner.invoke(
-        cli_module.cli,
-        [
-            "validate",
-            document_id,
-            "--telemetry-file",
-            str(telemetry_path),
-        ],
-    )
-
-    assert result.exit_code == 1
-    assert "Database node is missing from telemetry payload" in result.output
-
-    validator_store.clear_document(document_id)
+# NOTE: CLI validate tests moved to tests/test_cli.py since the validate command
+# now uses gRPC. The tests below were removed as part of the gRPC migration:
+# - test_cli_validate_command: tested --complete and --telemetry-file options
+# - test_cli_validate_command_reports_telemetry_mismatch: tested telemetry mismatch
+#
+# These features are no longer exposed via CLI; the gRPC validate command only
+# supports fast (SQL-only) validation. See tests/test_cli.py for gRPC-based tests:
+# - test_cli_validate_uses_grpc
+# - test_cli_validate_shows_errors_on_failure
+# - test_cli_validate_handles_not_found
+# - test_cli_validate_server_option
 
 
 # --- Fast (SQL-based) Validation Tests ---

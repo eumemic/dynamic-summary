@@ -63,8 +63,6 @@ from ragzoom.services.document_service import DocumentService
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.store import create_store_with_docker
 from ragzoom.telemetry_types import TelemetryDataDict
-from ragzoom.validation import validate_document
-from ragzoom.vector_factory import create_vector_index
 
 
 class AppendTextCallable(Protocol):
@@ -740,126 +738,39 @@ def telemetry_export(document_id: str, output: str, server_address: str | None) 
 @cli.command()
 @click.argument("document_id", type=str)
 @click.option(
-    "--complete",
-    is_flag=True,
-    help="Require forest completeness: all sibling pairs have parents, all leaves have embeddings.",
+    "--server-address",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default=None,
+    show_default=False,
+    help=GRPC_ADDRESS_HELP,
 )
-@click.option(
-    "--telemetry-file",
-    type=click.Path(exists=True, dir_okay=False, readable=True),
-    help=(
-        "Path to telemetry JSON file; when provided, cross-check contents "
-        "against stored nodes."
-    ),
-)
-@click.option(
-    "--fast",
-    is_flag=True,
-    help=(
-        "Use SQL-only validation for faster results (~7x speedup). "
-        "Skips: preceding_context checks, telemetry consistency, vector index checks."
-    ),
-)
-@click.pass_context
 def validate(
-    ctx: click.Context,
     document_id: str,
-    complete: bool,
-    telemetry_file: str | None,
-    fast: bool,
+    server_address: str | None,
 ) -> None:
-    """Validate invariants for a document tree."""
+    """Validate invariants for a document tree.
 
-    index_config: IndexConfig = ctx.obj["index_config"]
-    operational_config = OperationalConfig()
+    Spec: specs/grpc-cli-architecture.md § Commands Requiring Migration
+    """
+    try:
+        resolved_address = _resolve_server_address_with_autostart(server_address)
 
-    store = create_store_with_docker(
-        operational_config, embedding_model=index_config.embedding_model
-    )
-    vector_backend = (operational_config.vector_backend or "").strip().lower()
-    vector_index = None
-    if vector_backend != "python":
-        vector_index = create_vector_index(
-            operational_config.vector_backend,
-            operational_config.database_url,
-            index_config.embedding_model,
-        )
+        with GrpcRagzoomClient(resolved_address) as client:
+            result = client.validate_document(document_id)
 
-    telemetry_payload: TelemetryDataDict | None = None
-    if telemetry_file:
-        try:
-            with open(telemetry_file, encoding="utf-8") as fh:
-                telemetry_json = json.load(fh)
-        except OSError as exc:
-            click.echo(f"❌ Failed to read telemetry file: {exc}", err=True)
-            raise SystemExit(1)
-        except json.JSONDecodeError as exc:
-            click.echo(
-                f"❌ Telemetry file is not valid JSON: {exc.msg}",
-                err=True,
-            )
+        if result.valid:
+            click.echo("✅ Document validation passed")
+            click.echo("\nNo issues detected.")
+        else:
+            click.echo("❌ Document validation failed")
+            if result.errors:
+                click.echo("\nFindings:")
+                for error in result.errors:
+                    click.echo(f" - [ERROR] {error}")
             raise SystemExit(1)
 
-        if not isinstance(telemetry_json, dict):
-            click.echo(
-                "❌ Telemetry file must contain a JSON object at the top level.",
-                err=True,
-            )
-            raise SystemExit(1)
-
-        telemetry_payload = cast(TelemetryDataDict, telemetry_json)
-
-    report = validate_document(
-        document_id=document_id,
-        store=store,
-        vector_index=vector_index,
-        require_complete=complete,
-        target_chunk_tokens=index_config.target_chunk_tokens,
-        telemetry=telemetry_payload,
-        fast=fast,
-    )
-
-    heading = (
-        "✅ Document validation passed"
-        if report.status == "ok"
-        else "❌ Document validation failed"
-    )
-    if complete and report.status == "ok":
-        heading += " (complete forest required)"
-
-    click.echo(heading)
-    click.echo(
-        f"   Nodes: {report.metrics.get('node_count', 0)}, "
-        f"Leaves: {report.metrics.get('leaf_count', 0)}, "
-        f"Roots: {report.metrics.get('root_count', 0)}"
-    )
-
-    # Show pending work if any
-    pending_embeddings = report.metrics.get("pending_embeddings", 0)
-    pending_summaries = report.metrics.get("pending_summaries", 0)
-    if pending_embeddings > 0 or pending_summaries > 0:
-        parts = []
-        if pending_embeddings > 0:
-            parts.append(f"{pending_embeddings} embeddings")
-        if pending_summaries > 0:
-            parts.append(f"{pending_summaries} summaries")
-        click.echo(f"   Pending: {', '.join(parts)}")
-
-    if report.findings:
-        click.echo("\nFindings:")
-        ordered = sorted(
-            report.findings,
-            key=lambda finding: 0 if finding.severity == "error" else 1,
-        )
-        for finding in ordered:
-            prefix = "ERROR" if finding.severity == "error" else "WARN"
-            suffix = f" (node {finding.node_id})" if finding.node_id else ""
-            click.echo(f" - [{prefix}] {finding.message}{suffix}")
-    else:
-        click.echo("\nNo issues detected.")
-
-    if report.status == "failed":
-        raise SystemExit(1)
+    except Exception as e:
+        handle_cli_error(e, "validating document")
 
 
 @cli.command()
