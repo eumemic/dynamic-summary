@@ -5,6 +5,7 @@
 - **Be Zen, Not Flustered:** When stuck in a loop or series of failures, stop. Rethink from first principles.
 - **Don't Be Long-winded:** Keep it concise. Don't repeat yourself or summarize your own messages.
 - **Use the Scientific Method:** For complex problems, form a hypothesis, propose a test, discuss before implementing.
+- **Investigate Before Fixing:** When encountering strange phenomena (unexpected errors, processes respawning, state inconsistencies), use the `/investigate` skill to understand root cause before attempting fixes. Don't just kill processes or delete files - understand *why* they're in that state first.
 - **Raise Blockers:** If you hit an insurmountable roadblock, bring it to the user's attention. Don't switch gears silently.
 - **Leave the Codebase Better:** As a master craftsman, always improve code you touch. Fix poor naming, unclear logic, missing error handling opportunistically.
 - **No Fallback Code:** NEVER write fallback code that papers over issues. No silent skipping, dummy values, or error suppression. Fail hard with clear error messages.
@@ -29,7 +30,6 @@
 
 ## Version Control Rules
 
-- **Never Commit to Master:** Check with `git branch --show-current`. If on master, ask the user what feature you're working on before creating a branch.
 - **NEVER Use `--no-verify`:** Pre-commit hooks are guardians of code quality. Never bypass them without explicit permission.
 - **No Unauthorized Commits:** Never commit unless explicitly directed by the user.
 - **Atomic Commits:** Group changes into small, logical commits. Don't lump unrelated changes.
@@ -85,6 +85,8 @@ The RagZoom server automatically uses different ports and state directories base
 - **Development mode** (`python -m ragzoom.cli`): Fails fast if server not running (no auto-start)
 - Explicit `--port` flag always overrides the default
 - `RAGZOOM_STATE_DIR` env var overrides the state directory
+
+**Code separation:** Production must be a **non-editable install** (`pip install .`, not `pip install -e .`). This ensures code changes don't affect the running production daemon until explicitly reinstalled. After merging changes that affect the daemon, reinstall production: `pip uninstall ragzoom -y && pip install /Users/tom/code/dynamic-summary`
 
 This separation prevents dev testing from interfering with production data.
 
