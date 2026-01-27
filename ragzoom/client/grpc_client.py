@@ -240,6 +240,46 @@ class DocumentWorkStatus:
 
 
 @dataclass
+class DocumentInfoView:
+    """Document info for list_documents responses.
+
+    Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+
+    Attributes:
+        document_id: Document identifier.
+        leaf_count: Number of leaf nodes.
+        node_count: Total nodes (leaves + inner summary nodes).
+        is_temporal: Whether the document has temporal metadata.
+        time_start: Earliest content timestamp, None if non-temporal or empty.
+        time_end: Latest content timestamp, None if non-temporal or empty.
+        completion_pct: Indexing completion (node_count / forest_size * 100).
+    """
+
+    document_id: str
+    leaf_count: int
+    node_count: int
+    is_temporal: bool
+    time_start: str | None = None
+    time_end: str | None = None
+    completion_pct: float | None = None
+
+
+@dataclass
+class ValidationResult:
+    """Result from validate_document().
+
+    Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+
+    Attributes:
+        valid: True if document passes all validation checks.
+        errors: List of validation error messages (empty if valid).
+    """
+
+    valid: bool
+    errors: list[str]
+
+
+@dataclass
 class DocumentStatusView:
     """Document status with completion metrics for stateless sync workflows.
 
@@ -918,3 +958,62 @@ class GrpcRagzoomClient:
             raise _map_rpc_error(error) from error
 
         return (response.success, response.message)
+
+    def list_documents(self) -> list[DocumentInfoView]:
+        """List all indexed documents with metadata.
+
+        Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+
+        Returns:
+            List of DocumentInfoView with document metadata.
+        """
+        request = pb2.ListDocumentsRequest()
+        try:
+            list_docs_rpc = getattr(self._workers, "ListDocuments")
+            response = list_docs_rpc(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        documents: list[DocumentInfoView] = []
+        for doc in getattr(response, "documents", []):
+            documents.append(
+                DocumentInfoView(
+                    document_id=doc.document_id,
+                    leaf_count=doc.leaf_count,
+                    node_count=doc.node_count,
+                    is_temporal=doc.is_temporal,
+                    time_start=doc.time_start if doc.HasField("time_start") else None,
+                    time_end=doc.time_end if doc.HasField("time_end") else None,
+                    completion_pct=(
+                        doc.completion_pct if doc.HasField("completion_pct") else None
+                    ),
+                )
+            )
+        return documents
+
+    def validate_document(self, document_id: str) -> ValidationResult:
+        """Validate document tree invariants.
+
+        Spec: specs/grpc-cli-architecture.md § New gRPC Methods
+
+        Args:
+            document_id: The document to validate.
+
+        Returns:
+            ValidationResult with valid=True if document passes, errors list if fails.
+
+        Raises:
+            RuntimeError: If document doesn't exist (NOT_FOUND) or document_id empty
+                (INVALID_ARGUMENT).
+        """
+        request = pb2.ValidateDocumentRequest(document_id=document_id)
+        try:
+            validate_rpc = getattr(self._workers, "ValidateDocument")
+            response = validate_rpc(request, timeout=self._timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        return ValidationResult(
+            valid=response.valid,
+            errors=list(response.errors),
+        )
