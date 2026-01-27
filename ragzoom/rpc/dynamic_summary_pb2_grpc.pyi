@@ -36,6 +36,8 @@ from .dynamic_summary_pb2 import (
     TruncateDocumentResponse,
     TruncateFromTimeRequest,
     TruncateFromTimeResponse,
+    ValidateDocumentRequest,
+    ValidateDocumentResponse,
 )
 
 Channel = object
@@ -86,6 +88,9 @@ class WorkerServiceStub:
     def ListDocuments(
         self, request: ListDocumentsRequest, timeout: float | None = ...
     ) -> Awaitable[ListDocumentsResponse]: ...
+    def ValidateDocument(
+        self, request: ValidateDocumentRequest, timeout: float | None = ...
+    ) -> Awaitable[ValidateDocumentResponse]: ...
 
 class SessionIngestionServiceStub:
     def __init__(self, channel: Channel) -> None: ...
@@ -152,6 +157,9 @@ class WorkerServiceServicer:
     def ListDocuments(
         self, request: ListDocumentsRequest, context: ServicerContext
     ) -> Awaitable[ListDocumentsResponse]: ...
+    def ValidateDocument(
+        self, request: ValidateDocumentRequest, context: ServicerContext
+    ) -> Awaitable[ValidateDocumentResponse]: ...
 
 class SessionIngestionServiceServicer:
     def GetSessionCursor(

@@ -129,23 +129,23 @@ Implement server-side handlers for the new RPCs.
 
 ### 2.2 ValidateDocument Servicer
 
-- [ ] Implement ValidateDocument method in WorkerServicer
+- [x] Implement ValidateDocument method in WorkerServicer
   - Spec: specs/grpc-cli-architecture.md § Error Handling
   - Success: Returns valid=true when document passes, errors list when fails
-  - Test: test_validate_document_servicer (new)
-  - Location: ragzoom/server/servicers.py:1051-1100 (estimated)
+  - Test: tests/test_grpc_server_integration.py::test_validate_document_servicer_returns_valid_for_healthy_document
+  - Location: ragzoom/server/servicers.py:1238-1280
 
-- [ ] Handle NOT_FOUND for missing document
+- [x] Handle NOT_FOUND for missing document
   - Spec: specs/grpc-cli-architecture.md § Error Handling
   - Success: Aborts with NOT_FOUND status code
-  - Test: test_validate_document_not_found (new)
-  - Location: ragzoom/server/servicers.py (within ValidateDocument)
+  - Test: tests/test_grpc_server_integration.py::test_validate_document_servicer_not_found_for_missing_document
+  - Location: ragzoom/server/servicers.py:1257-1262 (within ValidateDocument)
 
-- [ ] Handle INVALID_ARGUMENT for empty document_id
+- [x] Handle INVALID_ARGUMENT for empty document_id
   - Spec: specs/grpc-cli-architecture.md § Error Handling
   - Success: Aborts with INVALID_ARGUMENT status code
-  - Test: test_validate_document_invalid_argument (new)
-  - Location: ragzoom/server/servicers.py (within ValidateDocument)
+  - Test: tests/test_grpc_server_integration.py::test_validate_document_servicer_invalid_argument_for_empty_document_id
+  - Location: ragzoom/server/servicers.py:1250-1255 (within ValidateDocument)
 
 ### 2.3 GetSystemStatus Servicer
 
