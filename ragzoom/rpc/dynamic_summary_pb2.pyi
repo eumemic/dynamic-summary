@@ -123,6 +123,7 @@ class BatchAppendTextRequest:
     document_id: str
     units: Sequence[AppendUnit]
     collect_telemetry: bool
+    summarization_guidance: str
 
     def __init__(
         self,
@@ -130,7 +131,9 @@ class BatchAppendTextRequest:
         document_id: str,
         units: Iterable[AppendUnit] = ...,
         collect_telemetry: bool = ...,
+        summarization_guidance: str = ...,
     ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
 
 class BatchAppendTextResponse:
     stats: DocumentStats
