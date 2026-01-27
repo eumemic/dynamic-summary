@@ -426,6 +426,44 @@ class DocumentStatusResponse:
     ) -> None: ...
     def HasField(self, field_name: str) -> bool: ...
 
+# List documents messages
+class ListDocumentsRequest:
+    """Request to list all indexed documents."""
+
+    def __init__(self) -> None: ...
+
+class DocumentInfo:
+    """Information about a single indexed document."""
+
+    DESCRIPTOR: ClassVar[Descriptor]
+    document_id: str
+    leaf_count: int
+    node_count: int
+    is_temporal: bool
+    time_start: str
+    time_end: str
+    completion_pct: float
+
+    def __init__(
+        self,
+        *,
+        document_id: str = ...,
+        leaf_count: int = ...,
+        node_count: int = ...,
+        is_temporal: bool = ...,
+        time_start: str = ...,
+        time_end: str = ...,
+        completion_pct: float = ...,
+    ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
+
+class ListDocumentsResponse:
+    """Response containing list of all indexed documents."""
+
+    documents: Sequence[DocumentInfo]
+
+    def __init__(self, *, documents: Iterable[DocumentInfo] = ...) -> None: ...
+
 WORKER_RUN_MODE_UNTIL_IDLE: int
 
 class GetTelemetryRequest:

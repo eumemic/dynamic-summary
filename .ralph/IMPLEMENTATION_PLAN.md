@@ -15,29 +15,29 @@ All new gRPC methods must be defined before server/client implementation.
 
 ### 1.1 ListDocuments RPC
 
-- [ ] Add ListDocuments RPC to WorkerService
+- [x] Add ListDocuments RPC to WorkerService
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: `grpc_tools_protoc` compiles without errors, pb2 files contain ListDocuments
-  - Test: test_list_documents_proto_exists (new)
-  - Location: proto/dynamic_summary.proto:300-310
+  - Test: tests/test_grpc_proto.py::TestListDocumentsProto
+  - Location: proto/dynamic_summary.proto:318 (in WorkerService)
 
-- [ ] Add ListDocumentsRequest message (empty)
+- [x] Add ListDocumentsRequest message (empty)
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Message defined with correct structure
-  - Test: test_list_documents_proto_exists
-  - Location: proto/dynamic_summary.proto:300-302
+  - Test: tests/test_grpc_proto.py::TestListDocumentsProto::test_list_documents_request_exists
+  - Location: proto/dynamic_summary.proto:299
 
-- [ ] Add ListDocumentsResponse message with repeated DocumentInfo
+- [x] Add ListDocumentsResponse message with repeated DocumentInfo
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Message contains `repeated DocumentInfo documents = 1`
-  - Test: test_list_documents_proto_exists
-  - Location: proto/dynamic_summary.proto:303-305
+  - Test: tests/test_grpc_proto.py::TestListDocumentsProto::test_list_documents_response_has_repeated_documents
+  - Location: proto/dynamic_summary.proto:301-303
 
-- [ ] Add DocumentInfo message
+- [x] Add DocumentInfo message
   - Spec: specs/grpc-cli-architecture.md § New gRPC Methods
   - Success: Fields: document_id, leaf_count, node_count, is_temporal, time_start, time_end, completion_pct
-  - Test: test_list_documents_proto_exists
-  - Location: proto/dynamic_summary.proto:306-314
+  - Test: tests/test_grpc_proto.py::TestListDocumentsProto::test_document_info_has_required_fields
+  - Location: proto/dynamic_summary.proto:305-313
 
 ### 1.2 ValidateDocument RPC
 

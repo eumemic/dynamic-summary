@@ -297,6 +297,23 @@ service RetrievalService {
   rpc ExecuteQuery(ExecuteQueryRequest) returns (ExecuteQueryResponse);
 }
 
+// List all indexed documents
+message ListDocumentsRequest {}
+
+message ListDocumentsResponse {
+  repeated DocumentInfo documents = 1;
+}
+
+message DocumentInfo {
+  string document_id = 1;
+  int64 leaf_count = 2;
+  int64 node_count = 3;
+  bool is_temporal = 4;
+  optional string time_start = 5;  // ISO 8601
+  optional string time_end = 6;    // ISO 8601
+  optional double completion_pct = 7;
+}
+
 service WorkerService {
   rpc RunWorkers(RunWorkersRequest) returns (stream RunWorkersResponse);
   rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse);
@@ -304,6 +321,7 @@ service WorkerService {
   rpc GetTelemetry(GetTelemetryRequest) returns (GetTelemetryResponse);
   rpc ClearDocument(ClearDocumentRequest) returns (ClearDocumentResponse);
   rpc ExportTelemetry(ExportTelemetryRequest) returns (ExportTelemetryResponse);
+  rpc ListDocuments(ListDocumentsRequest) returns (ListDocumentsResponse);
 }
 
 // Session ingestion service for Claude Code transcripts
