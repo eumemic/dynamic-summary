@@ -165,11 +165,12 @@ Replace state file scanning with ephemeral PID-keyed temp files for Claude Code 
   - Location: .claude/hooks/session-start.sh:31
   - Implementation: Replaced `ragzoom-claude-code set-pid "$SESSION_ID" "$PPID"` with direct echo redirect
 
-- [ ] Fix MCP server `remember` tool to handle string return from `_get_session_id()`
+- [x] Fix MCP server `remember` tool to handle string return from `_get_session_id()`
   - Spec: specs/unified-agent-identity.md § 4. MCP Server Identity Resolution
-  - Success: Line 130 uses `doc_id = _get_session_id()` (string, not tuple)
+  - Success: Line 132 uses `doc_id = _get_session_id()` (string, not tuple)
   - Test: `test_remember_tool_uses_correct_document_id`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/mcp_server.py:130
+  - Location: integrations/claude-code/src/ragzoom_claude_code/mcp_server.py:132
+  - Implementation: Code already correct; added test to verify remember tool receives string document_id from _get_session_id()
 
 - [ ] Add tests for PID-based discovery
   - Spec: specs/unified-agent-identity.md § Acceptance Criteria #4
