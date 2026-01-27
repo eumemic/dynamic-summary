@@ -27,8 +27,9 @@ CWD=$(echo "$JSON" | jq -r '.cwd // ""')
 TRIGGER=$(echo "$JSON" | jq -r '.trigger // ""')
 
 if [[ -n "$SESSION_ID" ]]; then
-    # Register the PID (PPID is Claude Code's PID)
-    ragzoom-claude-code set-pid "$SESSION_ID" "$PPID" >/dev/null 2>&1 || true
+    # Write session ID to PID-keyed temp file for MCP server lookup
+    # Uses PPID (Claude Code's PID) so MCP server can find session via os.getppid()
+    echo "$SESSION_ID" > "/tmp/ragzoom-session-$PPID"
 
     # Derive transcript path: ~/.claude/projects/<encoded-cwd>/<session-id>.jsonl
     # CWD like /Users/tom/code/foo -> -Users-tom-code-foo
