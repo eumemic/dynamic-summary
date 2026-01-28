@@ -313,69 +313,45 @@ Remove daemon auto-start behavior from CLI.
 
 ### 5.1 Replace Auto-Start Function
 
-- [ ] Rename _resolve_server_address_with_autostart to _resolve_server_address
+- [x] Rename _resolve_server_address_with_autostart to _resolve_server_address
   - Spec: specs/grpc-cli-architecture.md § Auto-Start Removal
   - Success: Function renamed in cli.py
-  - Test: test_no_autostart_function_exists (new)
-  - Location: ragzoom/cli.py:130-143
+  - Test: test_no_autostart_function_exists
+  - Location: ragzoom/cli.py:128-162
 
-- [ ] Replace auto-start with TCP connectivity check
+- [x] Replace auto-start with TCP connectivity check
   - Spec: specs/grpc-cli-architecture.md § New Behavior
   - Success: Function checks TCP connectivity, raises ClickException if unreachable
-  - Test: test_resolve_server_address_fails_fast (new)
-  - Location: ragzoom/cli.py:130-143
+  - Test: test_resolve_server_address_fails_fast
+  - Location: ragzoom/cli.py:128-162
 
-- [ ] Show helpful error message with server start command
+- [x] Show helpful error message with server start command
   - Spec: specs/grpc-cli-architecture.md § Error Message
   - Success: Error includes "Start the server with: ragzoom server start"
-  - Test: test_server_unreachable_error_message (new)
-  - Location: ragzoom/cli.py:140-143
+  - Test: test_server_unreachable_error_message
+  - Location: ragzoom/cli.py:157-160
 
 ### 5.2 Update Call Sites
 
-- [ ] Update call site at line 385 (telemetry command)
-  - Spec: specs/grpc-cli-architecture.md § Auto-Start Removal
-  - Success: Uses _resolve_server_address instead of _resolve_server_address_with_autostart
-  - Test: test_cli_commands_use_resolve_server_address (new)
-  - Location: ragzoom/cli.py:647
-
-- [ ] Update call site at line 647 (other command)
-  - Spec: specs/grpc-cli-architecture.md § Auto-Start Removal
-  - Success: Function name updated
-  - Test: test_cli_commands_use_resolve_server_address
-  - Location: ragzoom/cli.py:709
-
-- [ ] Update call site at line 709
-  - Spec: specs/grpc-cli-architecture.md § Auto-Start Removal
-  - Success: Function name updated
-  - Test: test_cli_commands_use_resolve_server_address
-  - Location: ragzoom/cli.py:987
-
-- [ ] Update call site at line 987
-  - Spec: specs/grpc-cli-architecture.md § Auto-Start Removal
-  - Success: Function name updated
-  - Test: test_cli_commands_use_resolve_server_address
-  - Location: ragzoom/cli.py:1281
-
-- [ ] Update call site at line 1281
-  - Spec: specs/grpc-cli-architecture.md § Auto-Start Removal
-  - Success: Function name updated
-  - Test: test_cli_commands_use_resolve_server_address
-  - Location: ragzoom/cli.py:1350
-
-- [ ] Update call site at line 1350
-  - Spec: specs/grpc-cli-architecture.md § Auto-Start Removal
-  - Success: Function name updated
-  - Test: test_cli_commands_use_resolve_server_address
-  - Location: ragzoom/cli.py:1350
+All call sites already use `_resolve_server_address`:
+- [x] Line 403: telemetry command
+- [x] Line 608: index command
+- [x] Line 668: append command
+- [x] Line 730: query command
+- [x] Line 776: document-status command
+- [x] Line 921: clear command
+- [x] Line 1110: documents command
+- [x] Line 1154: validate command
+- [x] Line 1211: status command
+- [x] Line 1280: cost command
 
 ### 5.3 Remove Unused Import
 
-- [ ] Remove ensure_server_running from daemon imports
+- [x] Remove ensure_server_running from daemon imports
   - Spec: specs/grpc-cli-architecture.md § Auto-Start Removal
   - Success: `ensure_server_running` no longer imported in cli.py
   - Test: grep confirms no import
-  - Location: ragzoom/cli.py:40
+  - Location: ragzoom/cli.py:38-48
 
 ---
 

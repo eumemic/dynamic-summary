@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import TypedDict
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -55,7 +56,7 @@ def cli_mocks() -> Iterator[CliMocks]:
         patch("ragzoom.cli.DocumentService") as mock_document_service,
         patch("ragzoom.cli.GrpcRagzoomClient") as mock_grpc_client_cls,
         patch("ragzoom.vector_factory.create_vector_index") as mock_create_vector_index,
-        patch("ragzoom.cli.ensure_server_running", return_value="127.0.0.1:50051"),
+        patch("ragzoom.cli.socket.create_connection"),  # Mock TCP check
     ):
         # Storage backend impersonation used by several commands
         store = MagicMock(name="store")
@@ -1266,3 +1267,101 @@ def test_cli_cost_handles_not_found(
 
     assert result.exit_code == 1
     assert "not found" in result.output.lower()
+
+
+# ============================================================================
+# Phase 5: Auto-Start Removal Tests
+# ============================================================================
+
+
+def test_no_autostart_function_exists(runner: CliRunner) -> None:
+    """Test that _resolve_server_address_with_autostart no longer exists.
+
+    Spec: specs/grpc-cli-architecture.md § Auto-Start Removal
+    Success: The old autostart function has been renamed
+    """
+    from ragzoom import cli as cli_module
+
+    # The old function should not exist
+    assert not hasattr(cli_module, "_resolve_server_address_with_autostart")
+    # The new function should exist
+    assert hasattr(cli_module, "_resolve_server_address")
+
+
+def test_resolve_server_address_fails_fast(runner: CliRunner) -> None:
+    """Test that _resolve_server_address fails immediately when server unreachable.
+
+    Spec: specs/grpc-cli-architecture.md § New Behavior
+    Success: Function raises ClickException when TCP connection fails
+    """
+    from ragzoom.cli import _resolve_server_address
+
+    # Use a port that should not have a server running
+    with pytest.raises(click.ClickException) as exc_info:
+        _resolve_server_address("localhost:59999")
+
+    assert "Cannot connect to RagZoom server" in str(exc_info.value.message)
+    assert "localhost:59999" in str(exc_info.value.message)
+
+
+def test_server_unreachable_error_message(runner: CliRunner) -> None:
+    """Test that server unreachable error includes helpful start command.
+
+    Spec: specs/grpc-cli-architecture.md § Error Message
+    Success: Error includes "Start the server with: ragzoom server start"
+    """
+    from ragzoom.cli import _resolve_server_address
+
+    with pytest.raises(click.ClickException) as exc_info:
+        _resolve_server_address("localhost:59999")
+
+    assert "ragzoom server start" in str(exc_info.value.message)
+
+
+def test_resolve_server_address_uses_explicit_value(runner: CliRunner) -> None:
+    """Test that explicit server address is used without modification.
+
+    Spec: specs/grpc-cli-architecture.md § New Behavior
+    """
+    from ragzoom.cli import _resolve_server_address
+
+    # Mock socket to simulate successful connection
+    with patch("ragzoom.cli.socket.create_connection"):
+        result = _resolve_server_address("custom-host:9999")
+
+    assert result == "custom-host:9999"
+
+
+def test_resolve_server_address_uses_env_var(runner: CliRunner) -> None:
+    """Test that RAGZOOM_SERVER_ADDRESS env var is used when no explicit value.
+
+    Spec: specs/grpc-cli-architecture.md § New Behavior
+    """
+    from ragzoom.cli import _resolve_server_address
+
+    with (
+        patch.dict(os.environ, {"RAGZOOM_SERVER_ADDRESS": "env-host:8888"}),
+        patch("ragzoom.cli.socket.create_connection"),
+    ):
+        result = _resolve_server_address(None)
+
+    assert result == "env-host:8888"
+
+
+def test_resolve_server_address_uses_default_port(runner: CliRunner) -> None:
+    """Test that default port is used when no address specified.
+
+    Spec: specs/grpc-cli-architecture.md § New Behavior
+    """
+    from ragzoom.cli import _get_default_port, _resolve_server_address
+
+    with (
+        patch.dict(os.environ, {"RAGZOOM_SERVER_ADDRESS": ""}, clear=False),
+        patch("ragzoom.cli.socket.create_connection"),
+    ):
+        # Clear env var if set
+        os.environ.pop("RAGZOOM_SERVER_ADDRESS", None)
+        result = _resolve_server_address(None)
+
+    expected_port = _get_default_port()
+    assert result == f"localhost:{expected_port}"
