@@ -64,6 +64,9 @@ class PostgresTreeNode(TreeNodeColumnsMixin, Base):
     parent_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("tree_nodes.id"), nullable=True
     )
+    # DEPRECATED: Pin functionality was removed. Column retained for backwards
+    # compatibility with existing databases. Do not use in new code. Will be
+    # removed in a future database migration.
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
