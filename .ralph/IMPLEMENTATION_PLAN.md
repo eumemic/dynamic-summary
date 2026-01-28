@@ -37,11 +37,11 @@ Replace turn-based transcript chunking with step-based chunking. Currently, mess
   - Test: `test_filter_to_steps.py::TestFilterToSteps`
   - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:134-165
 
-- [ ] Implement `steps_to_append_units()` function
+- [x] Implement `steps_to_append_units()` function
   - Spec: specs/step-level-chunking.md § 3. Replace `turns_to_append_units()` with `steps_to_append_units()`
   - Success: Function creates AppendUnit per step with `time_start = time_end = step.timestamp`
   - Test: `test_step_to_append_unit.py::TestStepsToAppendUnits`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (new function)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:167-196
 
 ### Phase 3: Migration - Update Existing Code
 
