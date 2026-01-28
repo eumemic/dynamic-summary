@@ -361,11 +361,12 @@ Remove obsolete pin functionality. Non-blocking, can be done in parallel with ot
 
 ### 6.1 Remove Pin CLI Command
 
-- [ ] Remove `pin` CLI command
+- [x] Remove `pin` CLI command
   - Spec: specs/grpc-cli-architecture.md § Pin Command Removal
   - Success: No `@cli.command()` named `pin` exists
   - Test: grep confirms no pin command
-  - Location: ragzoom/cli.py
+  - Location: ragzoom/cli.py (removed)
+  - Also removed: InvalidOperationError import from cli.py, test_pin_command* tests from test_cli.py, TestCLIPinCommandIsolation class from test_phase5_entry_points.py
 
 ### 6.2 Remove DocumentService Pin Method
 

@@ -68,9 +68,6 @@ ragzoom clear --confirm
 
 # Validate document structure
 ragzoom validate document.txt
-
-# Pin important nodes
-ragzoom pin <node-id>
 ```
 
 ### System Commands
