@@ -417,132 +417,132 @@ New tests to verify implementation.
 
 ### 7.1 Proto Tests
 
-- [ ] Add test_list_documents_proto_exists
+- [x] Add test_list_documents_proto_exists
   - Spec: specs/grpc-cli-architecture.md § Testing
   - Success: Test imports ListDocumentsRequest, ListDocumentsResponse, DocumentInfo
-  - Test: tests/test_grpc_proto.py::test_list_documents_proto_exists
-  - Location: tests/test_grpc_proto.py (new file)
+  - Test: TestListDocumentsProto class (7 tests)
+  - Location: tests/test_grpc_proto.py
 
-- [ ] Add test_validate_document_proto_exists
+- [x] Add test_validate_document_proto_exists
   - Spec: specs/grpc-cli-architecture.md § Testing
   - Success: Test imports ValidateDocumentRequest, ValidateDocumentResponse
-  - Test: tests/test_grpc_proto.py::test_validate_document_proto_exists
+  - Test: TestValidateDocumentProto class (5 tests)
   - Location: tests/test_grpc_proto.py
 
-- [ ] Add test_get_system_status_proto_exists
+- [x] Add test_get_system_status_proto_exists
   - Spec: specs/grpc-cli-architecture.md § Testing
   - Success: Test imports GetSystemStatusRequest, GetSystemStatusResponse
-  - Test: tests/test_grpc_proto.py::test_get_system_status_proto_exists
+  - Test: TestGetSystemStatusProto class (4 tests)
   - Location: tests/test_grpc_proto.py
 
-- [ ] Add test_get_cost_stats_proto_exists
+- [x] Add test_get_cost_stats_proto_exists
   - Spec: specs/grpc-cli-architecture.md § Testing
   - Success: Test imports GetCostStatsRequest, GetCostStatsResponse, DocumentCostStats
-  - Test: tests/test_grpc_proto.py::test_get_cost_stats_proto_exists
+  - Test: TestGetCostStatsProto class (9 tests)
   - Location: tests/test_grpc_proto.py
 
 ### 7.2 Servicer Unit Tests
 
-- [ ] Add test_list_documents_servicer
+- [x] Add test_list_documents_servicer
   - Spec: specs/grpc-cli-architecture.md § Unit Tests
   - Success: Servicer returns correct documents
-  - Test: tests/test_grpc_servicers.py::test_list_documents_servicer
-  - Location: tests/test_grpc_servicers.py (new file or extend existing)
+  - Test: test_list_documents_servicer_* (3 tests)
+  - Location: tests/test_grpc_server_integration.py
 
-- [ ] Add test_validate_document_servicer
+- [x] Add test_validate_document_servicer
   - Spec: specs/grpc-cli-architecture.md § Unit Tests
   - Success: Servicer returns valid/errors correctly
-  - Test: tests/test_grpc_servicers.py::test_validate_document_servicer
-  - Location: tests/test_grpc_servicers.py
+  - Test: test_validate_document_servicer_returns_valid_for_healthy_document
+  - Location: tests/test_grpc_server_integration.py
 
-- [ ] Add test_validate_document_not_found
+- [x] Add test_validate_document_not_found
   - Spec: specs/grpc-cli-architecture.md § Error Handling
   - Success: NOT_FOUND raised for missing document
-  - Test: tests/test_grpc_servicers.py::test_validate_document_not_found
-  - Location: tests/test_grpc_servicers.py
+  - Test: test_validate_document_servicer_not_found_for_missing_document
+  - Location: tests/test_grpc_server_integration.py
 
-- [ ] Add test_get_system_status_servicer
+- [x] Add test_get_system_status_servicer
   - Spec: specs/grpc-cli-architecture.md § Unit Tests
   - Success: Servicer returns aggregated stats
-  - Test: tests/test_grpc_servicers.py::test_get_system_status_servicer
-  - Location: tests/test_grpc_servicers.py
+  - Test: test_get_system_status_servicer_* (2 tests)
+  - Location: tests/test_grpc_server_integration.py
 
-- [ ] Add test_get_cost_stats_servicer
+- [x] Add test_get_cost_stats_servicer
   - Spec: specs/grpc-cli-architecture.md § Unit Tests
   - Success: Servicer returns cost stats for document
-  - Test: tests/test_grpc_servicers.py::test_get_cost_stats_servicer
-  - Location: tests/test_grpc_servicers.py
+  - Test: test_get_cost_stats_servicer_* (2 tests)
+  - Location: tests/test_grpc_server_integration.py
 
 ### 7.3 Client Unit Tests
 
-- [ ] Add test_grpc_client_list_documents
+- [x] Add test_grpc_client_list_documents
   - Spec: specs/grpc-cli-architecture.md § Unit Tests
   - Success: Client method returns document list
-  - Test: tests/test_grpc_client.py::test_grpc_client_list_documents
+  - Test: test_grpc_client_list_documents, test_grpc_client_list_documents_empty
   - Location: tests/test_grpc_client.py
 
-- [ ] Add test_grpc_client_validate_document
+- [x] Add test_grpc_client_validate_document
   - Spec: specs/grpc-cli-architecture.md § Unit Tests
   - Success: Client method returns validation result
-  - Test: tests/test_grpc_client.py::test_grpc_client_validate_document
+  - Test: test_grpc_client_validate_document, test_grpc_client_validate_document_not_found, test_grpc_client_validate_document_empty_id
   - Location: tests/test_grpc_client.py
 
-- [ ] Add test_grpc_client_get_system_status
+- [x] Add test_grpc_client_get_system_status
   - Spec: specs/grpc-cli-architecture.md § Unit Tests
   - Success: Client method returns system status
-  - Test: tests/test_grpc_client.py::test_grpc_client_get_system_status
+  - Test: test_grpc_client_get_system_status, test_grpc_client_get_system_status_empty
   - Location: tests/test_grpc_client.py
 
-- [ ] Add test_grpc_client_get_cost_stats
+- [x] Add test_grpc_client_get_cost_stats
   - Spec: specs/grpc-cli-architecture.md § Unit Tests
   - Success: Client method returns cost stats
-  - Test: tests/test_grpc_client.py::test_grpc_client_get_cost_stats
+  - Test: test_grpc_client_get_cost_stats, test_grpc_client_get_cost_stats_all_documents, test_grpc_client_get_cost_stats_empty
   - Location: tests/test_grpc_client.py
 
 ### 7.4 CLI Tests
 
-- [ ] Add test_cli_documents_uses_grpc
+- [x] Add test_cli_documents_uses_grpc
   - Spec: specs/grpc-cli-architecture.md § Unit Tests
   - Success: Command calls gRPC client, not DocumentService directly
-  - Test: tests/test_cli_grpc.py::test_cli_documents_uses_grpc
-  - Location: tests/test_cli_grpc.py (new file)
+  - Test: test_documents_uses_grpc
+  - Location: tests/test_cli.py
 
-- [ ] Add test_cli_server_unreachable_error
+- [x] Add test_cli_server_unreachable_error
   - Spec: specs/grpc-cli-architecture.md § Unit Tests
   - Success: Clear error message shown when server not running
-  - Test: tests/test_cli_grpc.py::test_cli_server_unreachable_error
-  - Location: tests/test_cli_grpc.py
+  - Test: test_resolve_server_address_fails_fast, test_server_unreachable_error_message
+  - Location: tests/test_cli.py
 
-- [ ] Add test_no_autostart_attempted
+- [x] Add test_no_autostart_attempted
   - Spec: specs/grpc-cli-architecture.md § Unit Tests
   - Success: ensure_server_running never called
-  - Test: tests/test_cli_grpc.py::test_no_autostart_attempted
-  - Location: tests/test_cli_grpc.py
+  - Test: test_no_autostart_function_exists
+  - Location: tests/test_cli.py
 
 ### 7.5 Integration Tests
 
-- [ ] Add test_grpc_list_documents_integration
+- [x] Add test_grpc_list_documents_integration
   - Spec: specs/grpc-cli-architecture.md § Integration Tests
   - Success: Full roundtrip: index doc, list via gRPC, verify response
-  - Test: tests/test_grpc_server_integration.py::test_grpc_list_documents_integration
+  - Test: test_list_documents_servicer_returns_document_info
   - Location: tests/test_grpc_server_integration.py
 
-- [ ] Add test_grpc_validate_document_integration
+- [x] Add test_grpc_validate_document_integration
   - Spec: specs/grpc-cli-architecture.md § Integration Tests
   - Success: Full roundtrip: index doc, validate via gRPC
-  - Test: tests/test_grpc_server_integration.py::test_grpc_validate_document_integration
+  - Test: test_validate_document_servicer_returns_valid_for_healthy_document
   - Location: tests/test_grpc_server_integration.py
 
-- [ ] Add test_grpc_system_status_integration
+- [x] Add test_grpc_system_status_integration
   - Spec: specs/grpc-cli-architecture.md § Integration Tests
   - Success: Full roundtrip: index doc, get status via gRPC
-  - Test: tests/test_grpc_server_integration.py::test_grpc_system_status_integration
+  - Test: test_get_system_status_servicer_returns_aggregated_stats
   - Location: tests/test_grpc_server_integration.py
 
-- [ ] Add test_grpc_cost_stats_integration
+- [x] Add test_grpc_cost_stats_integration
   - Spec: specs/grpc-cli-architecture.md § Integration Tests
   - Success: Full roundtrip: index doc, get cost via gRPC
-  - Test: tests/test_grpc_server_integration.py::test_grpc_cost_stats_integration
+  - Test: test_get_cost_stats_servicer_returns_stats_for_document
   - Location: tests/test_grpc_server_integration.py
 
 ---
