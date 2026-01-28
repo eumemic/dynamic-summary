@@ -1,4 +1,4 @@
-"""Tests for memzoom plugin.json manifest."""
+"""Tests for ragzoom-memory plugin.json manifest."""
 
 import json
 from pathlib import Path
@@ -11,7 +11,8 @@ def plugin_json_path() -> Path:
     """Return the path to plugin.json."""
     return (
         Path(__file__).parent.parent
-        / "ragzoom"
+        / "integrations"
+        / "claude-code"
         / "plugin"
         / ".claude-plugin"
         / "plugin.json"
@@ -28,29 +29,17 @@ def plugin_data(plugin_json_path: Path) -> dict[str, object]:
 
 
 def test_plugin_json_exists(plugin_json_path: Path) -> None:
-    """Verify plugin.json exists at expected location.
-
-    Spec: specs/memzoom-plugin.md § Plugin Structure
-    Success: Plugin manifest exists at ragzoom/plugin/.claude-plugin/plugin.json
-    """
+    """Verify plugin.json exists at expected location."""
     assert plugin_json_path.exists(), f"plugin.json not found at {plugin_json_path}"
 
 
 def test_plugin_json_valid_json(plugin_data: dict[str, object]) -> None:
-    """Verify plugin.json is valid JSON.
-
-    Spec: specs/memzoom-plugin.md § Plugin Structure
-    Success: plugin.json parses without errors
-    """
+    """Verify plugin.json is valid JSON."""
     assert isinstance(plugin_data, dict)
 
 
 def test_plugin_json_has_required_fields(plugin_data: dict[str, object]) -> None:
-    """Verify plugin.json has all required fields.
-
-    Spec: specs/memzoom-plugin.md § Plugin Structure
-    Success: plugin.json contains name, version, description, author
-    """
+    """Verify plugin.json has all required fields."""
     assert "name" in plugin_data, "plugin.json missing 'name' field"
     assert "version" in plugin_data, "plugin.json missing 'version' field"
     assert "description" in plugin_data, "plugin.json missing 'description' field"
@@ -60,22 +49,14 @@ def test_plugin_json_has_required_fields(plugin_data: dict[str, object]) -> None
     assert "name" in author, "plugin.json author missing 'name' field"
 
 
-def test_plugin_json_name_is_memzoom(plugin_data: dict[str, object]) -> None:
-    """Verify plugin.json has correct name.
-
-    Spec: specs/memzoom-plugin.md § Plugin Structure
-    Success: Plugin name is 'memzoom'
-    """
+def test_plugin_json_name_is_ragzoom_memory(plugin_data: dict[str, object]) -> None:
+    """Verify plugin.json has correct name."""
     name = plugin_data["name"]
-    assert name == "memzoom", f"Expected name 'memzoom', got '{name}'"
+    assert name == "ragzoom-memory", f"Expected name 'ragzoom-memory', got '{name}'"
 
 
 def test_plugin_json_has_version(plugin_data: dict[str, object]) -> None:
-    """Verify plugin.json has version field.
-
-    Spec: specs/memzoom-plugin.md § Plugin Structure
-    Success: Plugin has version field matching semver format
-    """
+    """Verify plugin.json has version field."""
     assert "version" in plugin_data, "plugin.json missing 'version' field"
     version = plugin_data["version"]
     assert isinstance(version, str)
