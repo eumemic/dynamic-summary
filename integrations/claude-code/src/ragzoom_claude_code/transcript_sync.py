@@ -161,6 +161,43 @@ def filter_to_steps(
     return steps
 
 
+def steps_to_append_units(
+    steps: list[Step],
+    records_by_uuid: dict[str, dict[str, object]],
+) -> list[AppendUnit]:
+    """Convert steps to AppendUnits for batch indexing.
+
+    Each step is transcribed individually with time_start = time_end (point-in-time).
+    This enables fine-grained temporal queries at the message level rather than
+    turn level.
+
+    Steps whose UUID is not in records_by_uuid or that transcribe to empty/whitespace
+    are skipped.
+
+    Args:
+        steps: List of conversation steps
+        records_by_uuid: UUID -> record mapping for transcription
+
+    Returns:
+        List of AppendUnits with text and point-in-time timestamps
+    """
+    if not steps:
+        return []
+
+    result: list[AppendUnit] = []
+    for step in steps:
+        text = transcribe_uuids_from_map([step.uuid], records_by_uuid)
+        if text.strip():
+            result.append(
+                AppendUnit(
+                    text=text,
+                    time_start=step.timestamp,
+                    time_end=step.timestamp,
+                )
+            )
+    return result
+
+
 def _is_command_output_or_expansion(
     record: dict[str, object], records_by_uuid: dict[str, dict[str, object]]
 ) -> bool:
