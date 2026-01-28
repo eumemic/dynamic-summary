@@ -6,7 +6,7 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-from ragzoom.client.grpc_client import GrpcRagzoomClient
+from ragzoom_claude_code.recall import execute_recall, format_for_mcp
 from ragzoom_claude_code.transcript_sync import get_session_document_id
 
 mcp = FastMCP(name="RagZoom Memory")
@@ -37,31 +37,6 @@ def _get_session_id() -> str:
         f"No session found for PID {claude_code_pid}. "
         "Either set RAGZOOM_DOCUMENT_ID or ensure SessionStart hook ran."
     )
-
-
-def _format_response(
-    summary: str,
-    nodes: list[tuple[str | None, str | None, int]],
-) -> str:
-    """Format query response with node metadata for follow-up queries.
-
-    Args:
-        summary: The summary text from the query
-        nodes: List of (time_start, time_end, height) tuples
-
-    Returns:
-        Formatted string with summary and time ranges
-    """
-    result = summary
-
-    if nodes:
-        result += "\n\n---\nTime ranges (for zooming):\n"
-        for time_start, time_end, height in nodes:
-            start = time_start or "?"
-            end = time_end or "?"
-            result += f"  [{start} to {end}] height={height}\n"
-
-    return result
 
 
 @mcp.tool()
@@ -130,41 +105,18 @@ def recall(
       since they haven't been summarized yet.
     """
     doc_id = _get_session_id()
-
-    # Query RagZoom via gRPC
     server_address = os.environ.get("RAGZOOM_SERVER_ADDRESS", "localhost:50051")
-    with GrpcRagzoomClient(server_address) as client:
-        output = client.execute_query(
-            query=query,
-            document_id=doc_id,
-            budget_tokens=token_budget,
-            num_seeds=None,
-            embedding_model=None,
-            debug=False,
-            viz_width=80,
-            use_token_coords=False,
-            time_start=time_start,
-            time_end=time_end,
-        )
 
-    # Extract summary from tiling
-    retrieval = output.retrieval
+    result = execute_recall(
+        query=query,
+        document_id=doc_id,
+        token_budget=token_budget,
+        time_start=time_start,
+        time_end=time_end,
+        server_address=server_address,
+    )
 
-    # Handle empty results (time window outside document data)
-    if not retrieval.tiling_ids:
-        return "No conversation data found in the requested time range."
-
-    summary_parts = []
-    node_info: list[tuple[str | None, str | None, int]] = []
-
-    for node_id in retrieval.tiling_ids:
-        node = retrieval.nodes.get(node_id)
-        if node and node.text:
-            summary_parts.append(node.text)
-            node_info.append((node.time_start, node.time_end, node.height))
-
-    summary = "\n\n".join(summary_parts)
-    return _format_response(summary, node_info)
+    return format_for_mcp(result)
 
 
 if __name__ == "__main__":
