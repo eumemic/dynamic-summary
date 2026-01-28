@@ -14,7 +14,6 @@ Incremental, hierarchical RAG (Retrieval-Augmented Generation) memory system tha
 - **Token Budget Management**: Strict adherence to configurable token limits
 - **Incremental Appends (beta)**: Default patch-based indexing that reuses existing tree structure while appending new content under strict invariants
 - **Optional Features**:
-  - Node pinning for always-included content
   - Sliding queue eviction with freshness decay
   - Smoothing pass for enhanced coherence
   - **Temporal documents** with timestamp queries (see [docs/temporal-documents.md](docs/temporal-documents.md))
@@ -363,9 +362,6 @@ ragzoom status
 
 # Check system health
 ragzoom doctor
-
-# Pin important nodes
-ragzoom pin <node-id>
 
 # Start API server
 ragzoom serve

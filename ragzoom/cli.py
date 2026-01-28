@@ -50,7 +50,6 @@ from ragzoom.error_handling import handle_graceful_error
 from ragzoom.exceptions import (
     ConfigurationError,
     DatabaseError,
-    InvalidOperationError,
     LLMError,
     NodeNotFoundError,
     ResourceError,
@@ -59,7 +58,6 @@ from ragzoom.exceptions import (
 from ragzoom.output_formatters import build_json_error_from_exception, build_json_output
 from ragzoom.progress_display import DocumentProgressTotals, WorkerProgressDisplay
 from ragzoom.server.app import ServerOptions, run_server
-from ragzoom.services.document_service import DocumentService
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.store import create_store_with_docker
 from ragzoom.telemetry_types import TelemetryDataDict
@@ -1043,53 +1041,6 @@ def query(
             click.echo(json.dumps(error_data, indent=2))
             sys.exit(1)
         handle_cli_error(e, "processing query")
-
-
-@cli.command()
-@click.argument("node_id")
-@click.option(
-    "--document-id",
-    help="Document ID (optional - will be auto-detected from node)",
-)
-@click.pass_context
-def pin(ctx: click.Context, node_id: str, document_id: str | None) -> None:
-    """Pin a node to always include it.
-
-    The node must belong to a document and be within the allowed pinning depth.
-    Document ID is optional - it will be auto-detected from the node if not provided.
-    """
-    try:
-        # Create services for this command
-        operational_config = ctx.obj["operational_config"]
-        index_config = ctx.obj["index_config"]
-        store = create_store_with_docker(
-            operational_config, embedding_model=index_config.embedding_model
-        )
-
-        document_service = DocumentService(store)
-        # If a document was provided, verify the node belongs to it
-        if document_id:
-            ds = store.for_document(document_id)
-            if not ds.nodes.get_node(node_id):
-                click.echo(
-                    f"❌ Node {node_id} not found"
-                    + (f" in document {document_id}" if document_id else "")
-                )
-                sys.exit(1)
-        # Delegate to service to find and pin the node
-        document_service.pin_node(node_id)
-
-        click.echo(f"✅ Node {node_id} pinned successfully!")
-
-    except NodeNotFoundError:
-        click.echo(f"❌ Node {node_id} not found")
-        sys.exit(1)
-    except InvalidOperationError as e:
-        click.echo(f"❌ Failed to pin node {node_id}: {e}")
-        sys.exit(1)
-
-    except Exception as e:
-        handle_cli_error(e, "pinning node")
 
 
 @cli.command()

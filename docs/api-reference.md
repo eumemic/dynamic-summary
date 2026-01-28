@@ -153,25 +153,6 @@ ragzoom validate <document_id> [--complete]
 
 The validator reads from the active storage backend and executes the invariant suite in `ragzoom/validation/tree.py`. It exits with a non-zero status when any errors are detected.
 
-### `ragzoom pin`
-
-Pin nodes to always include them in results.
-
-```bash
-ragzoom pin <node_ids> [OPTIONS]
-```
-
-**Arguments:**
-- `node_ids` - Comma-separated list of node IDs
-
-**Options:**
-- `--document-id, -d` - Document ID (required)
-
-**Example:**
-```bash
-ragzoom pin "3_100_200_abc123,4_200_300_def456" -d my-doc
-```
-
 ### `ragzoom status`
 
 Show system status and configuration.
@@ -344,18 +325,6 @@ Query a document.
   ],
   "tokens_used": 3456,
   "query_time": 1.2
-}
-```
-
-#### `POST /pin`
-
-Pin nodes.
-
-**Request Body:**
-```json
-{
-  "node_ids": ["3_100_200_abc123", "4_200_300_def456"],
-  "document_id": "my-doc"
 }
 ```
 
