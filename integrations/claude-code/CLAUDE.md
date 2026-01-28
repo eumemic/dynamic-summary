@@ -55,3 +55,24 @@ The MCP server discovers its session document ID via PID temp files:
 2. The MCP server reads this file using its parent PID to find the session
 
 The sync algorithm itself is stateless, deriving all state from the transcript and RagZoom document status API.
+
+## Plugin Development
+
+The Claude Code plugin source lives in `integrations/claude-code/plugin/`.
+
+**After modifying plugin files, deploy to make changes available globally:**
+
+```bash
+./integrations/claude-code/scripts/deploy-plugin.sh
+```
+
+This copies the plugin to `~/.claude/plugins/ragzoom-memory/` with a backup of the previous version.
+
+**Plugin structure:**
+- `.claude-plugin/plugin.json` - Plugin manifest
+- `.mcp.json` - MCP server configuration
+- `hooks/hooks.json` - SessionStart, UserPromptSubmit, Stop hooks
+- `scripts/` - Hook scripts (session-start.sh, sync-transcript.sh, iTerm2 status)
+- `skills/memory-tool-usage/` - Memory retrieval guidance
+
+Changes require restarting Claude Code to take effect.
