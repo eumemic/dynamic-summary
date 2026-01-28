@@ -11,67 +11,9 @@ from ragzoom_claude_code.transcript_sync import (
     build_ancestry_chain,
     execute_sync,
     find_truncation_point,
-    is_user_message,
 )
 
 from ragzoom.wrapper import AppendUnit
-
-
-class TestIsUserMessage:
-    """Tests for is_user_message() helper function."""
-
-    def test_returns_true_for_user_type(self) -> None:
-        """User messages with type='user' and no toolUseResult return True."""
-        record = {
-            "uuid": "msg1",
-            "type": "user",
-            "message": {"content": "Hello world"},
-        }
-
-        assert is_user_message(record) is True
-
-    def test_returns_false_for_assistant_type(self) -> None:
-        """Assistant messages return False."""
-        record = {
-            "uuid": "msg1",
-            "type": "assistant",
-            "message": {"content": [{"type": "text", "text": "Response"}]},
-        }
-
-        assert is_user_message(record) is False
-
-    def test_returns_false_for_tool_result(self) -> None:
-        """User messages with toolUseResult return False."""
-        record = {
-            "uuid": "msg1",
-            "type": "user",
-            "toolUseResult": {"result": "tool output"},
-            "message": {"content": "Tool result"},
-        }
-
-        assert is_user_message(record) is False
-
-    def test_returns_false_for_command_output(self) -> None:
-        """User messages with command output marker return False."""
-        record = {
-            "uuid": "msg1",
-            "type": "user",
-            "message": {
-                "content": "<local-command-stdout>output here</local-command-stdout>"
-            },
-        }
-
-        assert is_user_message(record) is False
-
-    def test_returns_true_for_normal_user_with_dict_content(self) -> None:
-        """Normal user messages with dict content return True."""
-        record = {
-            "uuid": "msg1",
-            "type": "user",
-            "message": {"content": {"text": "Hello", "type": "text"}},
-        }
-
-        assert is_user_message(record) is True
 
 
 class TestFindTruncationPoint:
@@ -137,22 +79,24 @@ class TestFindTruncationPoint:
         indexed_time_end = datetime(2024, 1, 1, 10, 1, 0, tzinfo=timezone.utc)
         r, s = find_truncation_point("msg4", records, indexed_time_end)
 
-        # Should connect at msg2 (last in indexed range) with S=msg3 (turn boundary)
+        # Should connect at msg2 (last in indexed range) with S=msg3
         assert r == "msg2"
         assert s == "msg3"
 
-    def test_slides_past_assistant_to_find_turn_boundary(self) -> None:
-        """Sliding window continues past assistant messages to find turn boundary."""
+    def test_stops_at_first_indexed_record(self) -> None:
+        """With step-level chunking, stop at first record <= indexed_time_end.
+
+        Unlike turn-level chunking, we don't need to slide to find turn
+        boundaries. Every record is a valid truncation point.
+        """
         # Chain: msg1(user) -> msg2(asst) -> msg3(user) -> msg4(asst) -> msg5(asst)
-        # When indexed_time_end is at msg4, S=msg5 (assistant), so we slide
-        # to find msg3 (user) as the turn boundary
         records = self._make_records(
             [
                 ("msg1", None, "2024-01-01T10:00:00Z", "user"),
                 ("msg2", "msg1", "2024-01-01T10:01:00Z", "assistant"),
                 ("msg3", "msg2", "2024-01-01T10:02:00Z", "user"),
                 ("msg4", "msg3", "2024-01-01T10:03:00Z", "assistant"),
-                ("msg5", "msg4", "2024-01-01T10:04:00Z", "assistant"),  # continuation
+                ("msg5", "msg4", "2024-01-01T10:04:00Z", "assistant"),
             ]
         )
 
@@ -160,15 +104,13 @@ class TestFindTruncationPoint:
         indexed_time_end = datetime(2024, 1, 1, 10, 3, 0, tzinfo=timezone.utc)
         r, s = find_truncation_point("msg5", records, indexed_time_end)
 
-        # Walking: msg5->msg4->msg3->msg2->msg1
+        # Walking: msg5->msg4
         # r=msg5, s=None: msg5.ts=10:04 > 10:03, slide
-        # r=msg4, s=msg5: msg4.ts=10:03 <= 10:03, s=msg5 is assistant (not boundary), slide
-        # r=msg3, s=msg4: msg3.ts=10:02 <= 10:03, s=msg4 is assistant (not boundary), slide
-        # r=msg2, s=msg3: msg2.ts=10:01 <= 10:03, s=msg3 is user (turn boundary!), stop
-        assert r == "msg2"
-        assert s == "msg3"
+        # r=msg4, s=msg5: msg4.ts=10:03 <= 10:03, stop immediately
+        assert r == "msg4"
+        assert s == "msg5"
 
-    def test_revert_to_turn_boundary(self) -> None:
+    def test_revert_detects_orphaned_content(self) -> None:
         """Revert case: R.timestamp < indexed_time_end indicates orphaned content."""
         # Original: msg1(user) -> msg2(asst) -> msg3(user) -> msg4(asst)
         # User reverted to msg2 and continued differently
@@ -189,15 +131,17 @@ class TestFindTruncationPoint:
         # Walking: msg6->msg5->msg2->msg1
         # msg6.ts=10:06 > 10:04, slide
         # msg5.ts=10:05 > 10:04, slide
-        # msg2.ts=10:01 <= 10:04, S=msg5 is user (turn boundary), stop
+        # msg2.ts=10:01 <= 10:04, stop
         assert r == "msg2"
         assert s == "msg5"
 
-    def test_revert_mid_turn_rounds_down(self) -> None:
-        """Mid-turn revert continues to turn boundary."""
-        # Turn 1: msg1(user) -> msg2(asst)
-        # Turn 2: msg3(user) -> msg4(asst) -> msg5(asst) [assistant continuation]
-        # Revert happens within turn 2, creates new branch from msg3
+    def test_revert_stops_at_first_indexed_record(self) -> None:
+        """Revert case: stop at first record <= indexed_time_end.
+
+        With step-level chunking, we don't round down to turn boundaries.
+        We stop as soon as we find R.timestamp <= indexed_time_end.
+        """
+        # Revert happens: original msg4/msg5 are orphaned, new msg7 branches from msg3
         # New: msg1 -> msg2 -> msg3 -> msg7(asst) [different response]
         records = self._make_records(
             [
@@ -208,17 +152,15 @@ class TestFindTruncationPoint:
             ]
         )
 
-        # Indexed up to 10:05 (would have included msg4, msg5 in old turn 2)
+        # Indexed up to 10:05 (would have included msg4, msg5 in old branch)
         indexed_time_end = datetime(2024, 1, 1, 10, 5, 0, tzinfo=timezone.utc)
         r, s = find_truncation_point("msg7", records, indexed_time_end)
 
-        # Walking: msg7->msg3->msg2->msg1
+        # Walking: msg7->msg3
         # msg7.ts=10:07 > 10:05, slide
-        # msg3.ts=10:02 <= 10:05, S=msg7 is assistant (not boundary), slide
-        # msg2.ts=10:01 <= 10:05, S=msg3 is user (turn boundary), stop
-        # So we round down to msg2, returning msg3 as start of new content
-        assert r == "msg2"
-        assert s == "msg3"
+        # msg3.ts=10:02 <= 10:05, stop immediately
+        assert r == "msg3"
+        assert s == "msg7"
 
     def test_complete_reindex_no_common_ancestor(self) -> None:
         """Complete reindex when entire chain is newer than indexed content."""
@@ -271,18 +213,11 @@ class TestFindTruncationPoint:
         r, s = find_truncation_point("msg3", records, indexed_time_end)
 
         # Walking: msg3->msg2->msg1
-        # msg3.ts=10:02 > 10:01, slide
-        # msg2 has no timestamp, slide (s=msg3)
-        # msg1.ts=10:00 <= 10:01, S=msg2 is assistant (not boundary)
-        # Actually we need to check: the S at this point is msg2, not msg3
-        # Let me trace again:
         # r=msg3, s=None: ts=10:02 > 10:01, slide -> r=msg2, s=msg3
         # r=msg2, s=msg3: no timestamp, slide -> r=msg1, s=msg2
-        # r=msg1, s=msg2: ts=10:00 <= 10:01, is s=msg2 user? No (assistant)
-        #   slide -> r=None, s=msg1
-        # r=None, return (None, head_uuid="msg3")
-        assert r is None
-        assert s == "msg3"
+        # r=msg1, s=msg2: ts=10:00 <= 10:01, stop immediately
+        assert r == "msg1"
+        assert s == "msg2"
 
     def test_head_already_indexed(self) -> None:
         """When head is already indexed, S is None (nothing to append)."""
@@ -343,8 +278,12 @@ class TestFindTruncationPoint:
         assert r == "msg1"
         assert s == "msg2"
 
-    def test_tool_result_not_turn_boundary(self) -> None:
-        """Tool results are not turn boundaries even though they're user type."""
+    def test_any_record_is_valid_truncation_point(self) -> None:
+        """With step-level chunking, any record can be a truncation point.
+
+        Unlike turn-level chunking, we don't distinguish between user messages,
+        tool results, or assistant messages. Every record is valid.
+        """
         records: dict[str, dict[str, object]] = {
             "msg1": {
                 "uuid": "msg1",
@@ -365,7 +304,7 @@ class TestFindTruncationPoint:
                 "parentUuid": "msg2",
                 "timestamp": "2024-01-01T10:02:00Z",
                 "type": "user",
-                "toolUseResult": {"result": "file content"},  # Tool result
+                "toolUseResult": {"result": "file content"},
                 "message": {"content": "Tool result"},
             },
             "msg4": {
@@ -380,9 +319,9 @@ class TestFindTruncationPoint:
         indexed_time_end = datetime(2024, 1, 1, 10, 2, 0, tzinfo=timezone.utc)
         r, s = find_truncation_point("msg4", records, indexed_time_end)
 
-        # Walking: msg4->msg3->msg2->msg1
+        # Walking: msg4->msg3
         # msg4.ts=10:03 > 10:02, slide
-        # msg3.ts=10:02 <= 10:02, s=msg4 is user (real), boundary, stop
+        # msg3.ts=10:02 <= 10:02, stop immediately (even though msg3 is a tool result)
         assert r == "msg3"
         assert s == "msg4"
 
