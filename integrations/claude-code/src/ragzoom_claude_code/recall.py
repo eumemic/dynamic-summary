@@ -84,25 +84,9 @@ def execute_recall(
 def format_for_mcp(result: RecallResult) -> str:
     """Format recall result for MCP tool output.
 
-    Args:
-        result: The recall result to format
-
-    Returns:
-        Formatted string with summary and time ranges for zooming
+    Uses the same format as CLI for consistency.
     """
-    if not result.nodes:
-        return "No conversation data found in the requested time range."
-
-    summary = "\n\n".join(node.text for node in result.nodes)
-
-    # Add time ranges footer for zoom workflow
-    summary += "\n\n---\nTime ranges (for zooming):\n"
-    for node in result.nodes:
-        start = node.time_start or "?"
-        end = node.time_end or "?"
-        summary += f"  [{start} to {end}] height={node.height}\n"
-
-    return summary
+    return format_for_cli(result)
 
 
 def format_for_cli(result: RecallResult) -> str:
@@ -112,41 +96,47 @@ def format_for_cli(result: RecallResult) -> str:
         result: The recall result to format
 
     Returns:
-        Numbered, formatted output with timestamps
+        Formatted output with XML-style spans and copy-pasteable timestamps
     """
     if not result.nodes:
         return "No conversation data found in the requested time range."
 
     lines: list[str] = []
-    for i, node in enumerate(result.nodes, 1):
-        # Format time range
-        start = _format_time(node.time_start)
-        end = _format_time(node.time_end)
-        time_range = f"{start}-{end}" if start != end else start
 
-        # Header with number, time range, and height
-        lines.append(f"[{i}] {time_range} (height={node.height})")
+    # Header explaining the format
+    max_height = max(node.height for node in result.nodes)
+    first_start = result.nodes[0].time_start or "?"
+    last_end = result.nodes[-1].time_end or "?"
 
-        # Indented text content
-        for text_line in node.text.split("\n"):
-            lines.append(f"    {text_line}")
+    lines.append("<Explanation>")
+    lines.append(
+        f"This is a variable-resolution summary of the events from {first_start} to {last_end}."
+    )
+    lines.append(
+        "Each span's height indicates summarization level: "
+        "height=0 is verbatim transcript, higher values are increasingly compressed."
+    )
+    if max_height > 0:
+        lines.append(
+            "To zoom in, invoke recall() with time_start/time_end to constrain the time range."
+        )
+    lines.append("</Explanation>")
+    lines.append("")
 
-        lines.append("")  # Blank line between nodes
+    for node in result.nodes:
+        start = node.time_start or "?"
+        end = node.time_end or "?"
+
+        # XML-style opening tag with copy-pasteable timestamps
+        lines.append(
+            f'<Span time_start="{start}" time_end="{end}" height={node.height}>'
+        )
+
+        # Text content
+        lines.append(node.text)
+
+        # Closing tag
+        lines.append("</Span>")
+        lines.append("")
 
     return "\n".join(lines).rstrip()
-
-
-def _format_time(iso_time: str | None) -> str:
-    """Format ISO timestamp for display (HH:MM:SS or full date if needed)."""
-    if iso_time is None:
-        return "?"
-
-    # Extract just the time portion if it's a full ISO timestamp
-    # e.g., "2024-01-15T10:30:45.123Z" -> "10:30:45"
-    if "T" in iso_time:
-        time_part = iso_time.split("T")[1]
-        # Remove timezone and milliseconds
-        time_part = time_part.split(".")[0].split("Z")[0].split("+")[0]
-        return time_part
-
-    return iso_time
