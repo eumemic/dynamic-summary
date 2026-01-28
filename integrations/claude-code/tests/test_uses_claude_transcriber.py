@@ -5,9 +5,9 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from ragzoom_claude_code.transcript_sync import (
-    Turn,
+    Step,
+    steps_to_append_units,
     transcribe_uuids_from_map,
-    turns_to_append_units,
 )
 
 
@@ -59,8 +59,8 @@ class TestUsesClaudeTranscriber:
             assert "User text" in result
             assert "Assistant text" in result
 
-    def test_turns_to_append_units_uses_transcriber(self) -> None:
-        """turns_to_append_units uses claude-transcriber via transcribe_uuids_from_map."""
+    def test_steps_to_append_units_uses_transcriber(self) -> None:
+        """steps_to_append_units uses claude-transcriber via transcribe_uuids_from_map."""
         records = _records(
             {
                 "uuid": "msg1",
@@ -75,11 +75,10 @@ class TestUsesClaudeTranscriber:
                 "message": {"content": [{"type": "text", "text": "Hi there!"}]},
             },
         )
-        turn = Turn(
-            uuids=["msg1", "msg2"],
-            time_start="2024-01-21T14:30:00Z",
-            time_end="2024-01-21T14:30:05Z",
-        )
+        steps = [
+            Step(uuid="msg1", timestamp="2024-01-21T14:30:00Z"),
+            Step(uuid="msg2", timestamp="2024-01-21T14:30:05Z"),
+        ]
 
         with patch(
             "ragzoom_claude_code.transcript_sync.Transcriber"
@@ -88,14 +87,14 @@ class TestUsesClaudeTranscriber:
             mock_instance.transcribe.side_effect = ["User text", "Assistant text"]
             mock_transcriber_cls.return_value = mock_instance
 
-            result = turns_to_append_units([turn], records)
+            result = steps_to_append_units(steps, records)
 
-            # Verify Transcriber was used for the turn's text
+            # Verify Transcriber was used for each step's text
             mock_transcriber_cls.assert_called()
-            assert len(result) == 1
-            # The text should contain the transcribed content
+            assert len(result) == 2  # Each step becomes its own AppendUnit
+            # Each step should contain its transcribed content
             assert "User text" in result[0].text
-            assert "Assistant text" in result[0].text
+            assert "Assistant text" in result[1].text
 
     def test_transcriber_preserves_record_order(self) -> None:
         """Records are transcribed in order for proper tool result matching."""

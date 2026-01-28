@@ -116,23 +116,26 @@ Replace turn-based transcript chunking with step-based chunking. Currently, mess
 
 ### Phase 5: Test Updates
 
-- [ ] Replace `test_group_into_turns.py` with `test_filter_to_steps.py`
+- [x] Replace `test_group_into_turns.py` with `test_filter_to_steps.py`
   - Spec: specs/step-level-chunking.md § Test Updates
   - Success: New test file covers all step filtering cases: user/assistant included, toolUseResult included as own step, meta filtered, compaction filtered, queue-operation filtered, records without timestamps skipped
   - Test: `pytest integrations/claude-code/tests/test_filter_to_steps.py -v`
   - Location: integrations/claude-code/tests/test_group_into_turns.py (delete), integrations/claude-code/tests/test_filter_to_steps.py (create)
+  - Done: Deleted test_group_into_turns.py (tested removed code). test_filter_to_steps.py already exists with 20 tests covering all cases.
 
-- [ ] Replace `test_turn_dataclass.py` with `test_step_dataclass.py`
+- [x] Replace `test_turn_dataclass.py` with `test_step_dataclass.py`
   - Spec: specs/step-level-chunking.md § Test Updates
   - Success: Tests for `Step` dataclass covering uuid, timestamp fields
   - Test: `pytest integrations/claude-code/tests/test_step_dataclass.py -v`
   - Location: integrations/claude-code/tests/test_turn_dataclass.py (delete), integrations/claude-code/tests/test_step_dataclass.py (create)
+  - Done: Deleted test_turn_dataclass.py. test_step_dataclass.py already exists with 6 tests including test_turn_dataclass_removed.
 
-- [ ] Replace `test_turn_to_append_unit.py` with `test_step_to_append_unit.py`
+- [x] Replace `test_turn_to_append_unit.py` with `test_step_to_append_unit.py`
   - Spec: specs/step-level-chunking.md § Test Updates
   - Success: Tests for `steps_to_append_units()` verifying `time_start = time_end` per step
   - Test: `pytest integrations/claude-code/tests/test_step_to_append_unit.py -v`
   - Location: integrations/claude-code/tests/test_turn_to_append_unit.py (delete), integrations/claude-code/tests/test_step_to_append_unit.py (create)
+  - Done: Deleted test_turn_to_append_unit.py. test_step_to_append_unit.py already exists with 11 tests including time_start=time_end verification. Also updated test_uses_claude_transcriber.py to use Step and steps_to_append_units.
 
 - [x] Update `test_stateless_sync.py`
   - Spec: specs/step-level-chunking.md § Test Updates
