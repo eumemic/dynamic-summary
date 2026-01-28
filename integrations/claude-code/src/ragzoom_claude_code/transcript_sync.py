@@ -1029,9 +1029,9 @@ def execute_sync(
             steps_appended=0,
         )
 
-    # Group UUIDs into conversation turns
-    turns = group_into_turns(uuids_to_append, records)
-    if not turns:
+    # Filter UUIDs to conversation steps (user/assistant messages only)
+    steps = filter_to_steps(uuids_to_append, records)
+    if not steps:
         return SyncResult(
             document_id=document_id,
             truncated=truncate_cutoff_time is not None,
@@ -1039,9 +1039,8 @@ def execute_sync(
             steps_appended=0,
         )
 
-    # Convert turns to AppendUnits and filter out empty ones
-    append_units = turns_to_append_units(turns, records)
-    non_empty = [unit for unit in append_units if unit.text.strip()]
+    # Convert steps to AppendUnits (steps_to_append_units already filters empty)
+    non_empty = steps_to_append_units(steps, records)
 
     if not non_empty:
         return SyncResult(

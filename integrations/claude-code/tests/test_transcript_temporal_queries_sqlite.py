@@ -538,14 +538,21 @@ class TestTimeWindowedQueryOnSyncedTranscript:
             )
         )
 
-        # The query should succeed and include the turn
+        # The query should succeed and include the step(s)
         assert query_result.actual_start is not None
         assert query_result.actual_end is not None
 
-        # The span should cover the leaf (since it overlaps the time window)
-        leaf = leaves[0]
-        assert query_result.actual_start <= leaf.span_start
-        assert query_result.actual_end >= leaf.span_end
+        # With step-level chunking, we have 2 leaves (2 messages)
+        # The span should cover at least one of the leaves (since it overlaps the time window)
+        # The query window (14:03-14:10) overlaps with msg2's timestamp (14:05:00)
+        assert len(leaves) == 2, f"Expected 2 leaves (2 steps), got {len(leaves)}"
+        # At least one leaf should be covered by the span
+        covered = any(
+            query_result.actual_start <= leaf.span_start
+            and query_result.actual_end >= leaf.span_end
+            for leaf in leaves
+        )
+        assert covered, "At least one leaf should be covered by the query span"
 
     def test_compaction_summaries_not_indexed(
         self, sqlite_backend: SQLiteStorageBackend, tmp_path: Path
@@ -659,5 +666,6 @@ class TestTimeWindowedQueryOnSyncedTranscript:
         assert "help with my code" in all_indexed_text
         assert "fix this bug" in all_indexed_text
 
-        # Verify we have exactly 2 turns (msg1+msg2) and (msg3+msg4), not 3
-        assert len(leaves) == 2, f"Expected 2 leaves (2 turns), got {len(leaves)}"
+        # With step-level chunking, each message is a step (4 steps total, minus the
+        # compaction summary which is filtered out = 4 leaves)
+        assert len(leaves) == 4, f"Expected 4 leaves (4 steps), got {len(leaves)}"

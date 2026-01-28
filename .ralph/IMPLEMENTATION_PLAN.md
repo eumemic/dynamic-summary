@@ -52,11 +52,12 @@ Replace turn-based transcript chunking with step-based chunking. Currently, mess
   - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:308-398
   - Done: Removed `is_user_message()` call and turn boundary sliding. Tests updated accordingly.
 
-- [ ] Update `execute_sync()` to use step-based functions
+- [x] Update `execute_sync()` to use step-based functions
   - Spec: specs/step-level-chunking.md § 6. Update `execute_sync()`
   - Success: Uses `filter_to_steps()` and `steps_to_append_units()` instead of `group_into_turns()` and `turns_to_append_units()`
   - Test: `test_stateless_sync.py::TestExecuteSyncStateless`, `test_execute_sync_batch_append.py`
   - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:859-967 (lines 932-943)
+  - Done: Changed `group_into_turns()` to `filter_to_steps()` and `turns_to_append_units()` to `steps_to_append_units()`. Updated all test files to expect step-level behavior (one unit per message instead of one per turn).
 
 - [x] Update CLI output messages (turns -> steps)
   - Spec: specs/step-level-chunking.md § 5. Update `SyncResult` (implied)

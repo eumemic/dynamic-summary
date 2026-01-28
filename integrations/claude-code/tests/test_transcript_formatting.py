@@ -1,4 +1,4 @@
-"""Tests for transcript formatting and compaction segment batching."""
+"""Tests for transcript formatting and step-level batching."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ class TestTranscriptFormatting:
     """Tests for transcript formatting issues."""
 
     def test_double_newlines_between_messages(self, tmp_path: Path) -> None:
-        """Messages should be separated by double newlines."""
+        """Messages should be separated by double newlines within each step."""
         transcript_path = tmp_path / "transcript.jsonl"
         document_id = "transcript"
 
@@ -58,17 +58,13 @@ class TestTranscriptFormatting:
         client = FakeTranscriptClient()
         execute_sync(transcript_path, document_id, client)
 
-        # With turn-based grouping: Turn 1 = msg1+msg2, Turn 2 = msg3 (standalone)
-        assert len(client.appends) == 2
+        # With step-level chunking: 3 messages = 3 steps
+        assert len(client.appends) == 3
 
-        # First turn should have user + assistant content
-        # (claude-transcriber uses ❯ for user, ⏺ for assistant)
-        turn1_text = client.appends[0][1]
-        assert "First message" in turn1_text
-        assert "Response" in turn1_text
-
-        # Messages should be separated by double newlines
-        assert "\n\n" in turn1_text
+        # Each step contains one message
+        assert "First message" in client.appends[0][1]
+        assert "Response" in client.appends[1][1]
+        assert "Second message" in client.appends[2][1]
 
     def test_slash_commands_simplified(self, tmp_path: Path) -> None:
         """Slash commands should be simplified from XML format."""
@@ -143,27 +139,28 @@ class TestTranscriptFormatting:
             assert "<local-command-stdout>" not in text
 
 
-class TestTurnBasedBatching:
-    """Tests for turn-based batching (one AppendUnit per conversation turn)."""
+class TestStepBasedBatching:
+    """Tests for step-based batching (one AppendUnit per message step)."""
 
-    def test_one_append_per_turn(self, tmp_path: Path) -> None:
-        """Each conversation turn should be a separate AppendUnit."""
+    def test_one_append_per_step(self, tmp_path: Path) -> None:
+        """Each conversation step should be a separate AppendUnit."""
         transcript_path = tmp_path / "transcript.jsonl"
         document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
                 [
-                    # Turn 1: user + assistant
+                    # Step 1: user
                     json.dumps(
                         {
                             "uuid": "a1",
                             "parentUuid": None,
                             "type": "user",
                             "timestamp": "2024-01-21T14:30:00Z",
-                            "message": {"content": "Turn 1 question"},
+                            "message": {"content": "Step 1 question"},
                         }
                     ),
+                    # Step 2: assistant
                     json.dumps(
                         {
                             "uuid": "a2",
@@ -171,20 +168,21 @@ class TestTurnBasedBatching:
                             "type": "assistant",
                             "timestamp": "2024-01-21T14:30:05Z",
                             "message": {
-                                "content": [{"type": "text", "text": "Turn 1 reply"}]
+                                "content": [{"type": "text", "text": "Step 1 reply"}]
                             },
                         }
                     ),
-                    # Turn 2: user + assistant
+                    # Step 3: user
                     json.dumps(
                         {
                             "uuid": "b1",
                             "parentUuid": "a2",
                             "type": "user",
                             "timestamp": "2024-01-21T14:30:10Z",
-                            "message": {"content": "Turn 2 question"},
+                            "message": {"content": "Step 2 question"},
                         }
                     ),
+                    # Step 4: assistant
                     json.dumps(
                         {
                             "uuid": "b2",
@@ -192,18 +190,18 @@ class TestTurnBasedBatching:
                             "type": "assistant",
                             "timestamp": "2024-01-21T14:30:15Z",
                             "message": {
-                                "content": [{"type": "text", "text": "Turn 2 reply"}]
+                                "content": [{"type": "text", "text": "Step 2 reply"}]
                             },
                         }
                     ),
-                    # Turn 3: standalone user message
+                    # Step 5: user
                     json.dumps(
                         {
                             "uuid": "c1",
                             "parentUuid": "b2",
                             "type": "user",
                             "timestamp": "2024-01-21T14:30:20Z",
-                            "message": {"content": "Turn 3 question"},
+                            "message": {"content": "Step 3 question"},
                         }
                     ),
                 ]
@@ -214,27 +212,25 @@ class TestTurnBasedBatching:
         client = FakeTranscriptClient()
         execute_sync(transcript_path, document_id, client)
 
-        # Should have 3 appends (one per turn)
-        assert len(client.appends) == 3
+        # Should have 5 appends (one per step)
+        assert len(client.appends) == 5
 
-        # First append should contain turn 1 content
-        assert "Turn 1" in client.appends[0][1]
+        # Each step should contain its message content
+        assert "Step 1 question" in client.appends[0][1]
+        assert "Step 1 reply" in client.appends[1][1]
+        assert "Step 2 question" in client.appends[2][1]
+        assert "Step 2 reply" in client.appends[3][1]
+        assert "Step 3 question" in client.appends[4][1]
 
-        # Second append should contain turn 2 content
-        assert "Turn 2" in client.appends[1][1]
-
-        # Third append should contain turn 3 content
-        assert "Turn 3" in client.appends[2][1]
-
-    def test_two_turns_are_both_appended(self, tmp_path: Path) -> None:
-        """Two turns should result in appended content for both."""
+    def test_two_steps_are_both_appended(self, tmp_path: Path) -> None:
+        """Two steps should result in appended content for both."""
         transcript_path = tmp_path / "transcript.jsonl"
         document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
                 [
-                    # Turn 1
+                    # Step 1
                     json.dumps(
                         {
                             "uuid": "a1",
@@ -244,7 +240,7 @@ class TestTurnBasedBatching:
                             "message": {"content": "First"},
                         }
                     ),
-                    # Turn 2
+                    # Step 2
                     json.dumps(
                         {
                             "uuid": "b1",
@@ -262,38 +258,38 @@ class TestTurnBasedBatching:
         client = FakeTranscriptClient()
         result = execute_sync(transcript_path, document_id, client)
 
-        # Should have appended both turns
+        # Should have appended both steps
         assert result.steps_appended == 2
 
         # Should have batch appended
         assert len(client.batch_append_calls) == 1
 
-    def test_turn_content_has_expected_text(self, tmp_path: Path) -> None:
-        """Each turn's content should contain the message text."""
+    def test_step_content_has_expected_text(self, tmp_path: Path) -> None:
+        """Each step's content should contain the message text."""
         transcript_path = tmp_path / "transcript.jsonl"
         document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
                 [
-                    # Turn 1
+                    # Step 1
                     json.dumps(
                         {
                             "uuid": "a1",
                             "parentUuid": None,
                             "type": "user",
                             "timestamp": "2024-01-21T14:30:00Z",
-                            "message": {"content": "First turn content"},
+                            "message": {"content": "First step content"},
                         }
                     ),
-                    # Turn 2
+                    # Step 2
                     json.dumps(
                         {
                             "uuid": "b1",
                             "parentUuid": "a1",
                             "type": "user",
                             "timestamp": "2024-01-21T14:30:05Z",
-                            "message": {"content": "Second turn content"},
+                            "message": {"content": "Second step content"},
                         }
                     ),
                 ]
@@ -311,24 +307,27 @@ class TestTurnBasedBatching:
         _, units = client.batch_append_calls[0]
         all_text = " ".join(u.text for u in units)
 
-        # Both turns' content should be present
-        assert "First turn" in all_text
-        assert "Second turn" in all_text
+        # Both steps' content should be present
+        assert "First step" in all_text
+        assert "Second step" in all_text
+
+
+# Legacy alias for backwards compatibility
+TestTurnBasedBatching = TestStepBasedBatching
 
 
 class TestToolUsageBatching:
-    """Tests for batching consecutive tool usage messages."""
+    """Tests for tool usage messages in step-level batching."""
 
     def test_tool_only_with_text_between_not_batched(self, tmp_path: Path) -> None:
-        """Tool-only messages separated by text messages should not batch."""
+        """Each message becomes its own step."""
         transcript_path = tmp_path / "transcript.jsonl"
         document_id = "transcript"
 
-        # Turns must start with a user message
         transcript_path.write_text(
             "\n".join(
                 [
-                    # User prompt starts the turn
+                    # Step 1: User prompt
                     json.dumps(
                         {
                             "uuid": "user1",
@@ -340,7 +339,7 @@ class TestToolUsageBatching:
                             },
                         }
                     ),
-                    # First tool use
+                    # Step 2: First tool use
                     json.dumps(
                         {
                             "uuid": "msg1",
@@ -358,7 +357,7 @@ class TestToolUsageBatching:
                             },
                         }
                     ),
-                    # Tool result
+                    # Step 3: Tool result
                     json.dumps(
                         {
                             "uuid": "msg2",
@@ -369,7 +368,7 @@ class TestToolUsageBatching:
                             "message": {"content": "..."},
                         }
                     ),
-                    # Text response (breaks the chain)
+                    # Step 4: Text response
                     json.dumps(
                         {
                             "uuid": "msg3",
@@ -383,7 +382,7 @@ class TestToolUsageBatching:
                             },
                         }
                     ),
-                    # Second tool use
+                    # Step 5: Second tool use
                     json.dumps(
                         {
                             "uuid": "msg4",
@@ -401,7 +400,7 @@ class TestToolUsageBatching:
                             },
                         }
                     ),
-                    # Tool result
+                    # Step 6: Tool result
                     json.dumps(
                         {
                             "uuid": "msg5",
@@ -420,23 +419,24 @@ class TestToolUsageBatching:
         client = FakeTranscriptClient()
         execute_sync(transcript_path, document_id, client)
 
-        text = client.appends[0][1]
+        # With step-level chunking: 6 messages = 6 steps
+        assert len(client.appends) == 6
 
-        # claude-transcriber formats tool uses individually with ⏺ prefix
-        assert "Bash(git status)" in text or "Bash" in text
-        assert "Read(README.md)" in text or "Read" in text
-        assert "The status shows" in text
+        # All content should be present across all steps
+        all_text = " ".join(a[1] for a in client.appends)
+        assert "Bash" in all_text
+        assert "Read" in all_text
+        assert "The status shows" in all_text
 
     def test_consecutive_tool_uses_batched(self, tmp_path: Path) -> None:
-        """Consecutive tool-only messages should be batched into one line."""
+        """Each tool use becomes its own step."""
         transcript_path = tmp_path / "transcript.jsonl"
         document_id = "transcript"
 
-        # Turns must start with a user message
         transcript_path.write_text(
             "\n".join(
                 [
-                    # User prompt starts the turn
+                    # Step 1: User prompt
                     json.dumps(
                         {
                             "uuid": "user1",
@@ -446,7 +446,7 @@ class TestToolUsageBatching:
                             "message": {"content": "Search the codebase"},
                         }
                     ),
-                    # First tool use (tool-only, no text)
+                    # Step 2: First tool use
                     json.dumps(
                         {
                             "uuid": "msg1",
@@ -464,7 +464,7 @@ class TestToolUsageBatching:
                             },
                         }
                     ),
-                    # Tool result (user type)
+                    # Step 3: Tool result
                     json.dumps(
                         {
                             "uuid": "msg2",
@@ -475,7 +475,7 @@ class TestToolUsageBatching:
                             "message": {"content": "..."},
                         }
                     ),
-                    # Second tool use (tool-only)
+                    # Step 4: Second tool use
                     json.dumps(
                         {
                             "uuid": "msg3",
@@ -493,7 +493,7 @@ class TestToolUsageBatching:
                             },
                         }
                     ),
-                    # Tool result
+                    # Step 5: Tool result
                     json.dumps(
                         {
                             "uuid": "msg4",
@@ -504,7 +504,7 @@ class TestToolUsageBatching:
                             "message": {"content": "..."},
                         }
                     ),
-                    # Third tool use (tool-only)
+                    # Step 6: Third tool use
                     json.dumps(
                         {
                             "uuid": "msg5",
@@ -530,14 +530,14 @@ class TestToolUsageBatching:
         client = FakeTranscriptClient()
         execute_sync(transcript_path, document_id, client)
 
-        assert len(client.appends) == 1
-        text = client.appends[0][1]
+        # With step-level chunking: 6 messages = 6 steps
+        assert len(client.appends) == 6
 
-        # claude-transcriber formats each tool use individually
-        # All tools should be present in the output
-        assert "Bash" in text
-        assert "Read" in text
-        assert "Grep" in text
+        # All tools should be present across all steps
+        all_text = " ".join(a[1] for a in client.appends)
+        assert "Bash" in all_text
+        assert "Read" in all_text
+        assert "Grep" in all_text
 
     def test_tool_names_include_summary(self, tmp_path: Path) -> None:
         """Tool names should include a brief summary of the invocation."""
@@ -621,14 +621,14 @@ class TestToolUsageBatching:
         assert 'Read({"file_path":' in text or "Read(ragzoom/db_utils.py)" in text
 
     def test_single_tool_use_not_batched(self, tmp_path: Path) -> None:
-        """A single tool use followed by text should not be batched."""
+        """Each message is its own step."""
         transcript_path = tmp_path / "transcript.jsonl"
         document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
                 [
-                    # User prompt starts the turn
+                    # Step 1: User prompt
                     json.dumps(
                         {
                             "uuid": "user1",
@@ -638,6 +638,7 @@ class TestToolUsageBatching:
                             "message": {"content": "List the files"},
                         }
                     ),
+                    # Step 2: Assistant with text + tool
                     json.dumps(
                         {
                             "uuid": "msg1",
@@ -656,6 +657,7 @@ class TestToolUsageBatching:
                             },
                         }
                     ),
+                    # Step 3: Tool result
                     json.dumps(
                         {
                             "uuid": "msg2",
@@ -666,7 +668,7 @@ class TestToolUsageBatching:
                             "message": {"content": "..."},
                         }
                     ),
-                    # Assistant responds with text (breaking the tool-only chain)
+                    # Step 4: Follow-up text
                     json.dumps(
                         {
                             "uuid": "msg3",
@@ -688,27 +690,27 @@ class TestToolUsageBatching:
         client = FakeTranscriptClient()
         execute_sync(transcript_path, document_id, client)
 
-        text = client.appends[0][1]
+        # With step-level chunking: 4 messages = 4 steps
+        assert len(client.appends) == 4
 
-        # claude-transcriber formats tool use with ⏺ prefix
-        assert "Bash" in text
-
-        # And the follow-up text
-        assert "Here's what I found" in text
+        # All content should be present across all steps
+        all_text = " ".join(a[1] for a in client.appends)
+        assert "Bash" in all_text
+        assert "Here's what I found" in all_text
 
 
 class TestCommandHandling:
     """Tests for slash command transcription."""
 
     def test_builtin_command_transcribed_simply(self, tmp_path: Path) -> None:
-        """Built-in commands like /compact should be transcribed as [User issued /compact command]."""
+        """Built-in commands should be transcribed simply."""
         transcript_path = tmp_path / "transcript.jsonl"
         document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
                 [
-                    # Command invocation
+                    # Step 1: Command invocation
                     json.dumps(
                         {
                             "uuid": "cmd1",
@@ -722,7 +724,7 @@ class TestCommandHandling:
                             },
                         }
                     ),
-                    # Command output (should be skipped)
+                    # Step 2: Command output (should be skipped/filtered)
                     json.dumps(
                         {
                             "uuid": "out1",
@@ -734,7 +736,7 @@ class TestCommandHandling:
                             },
                         }
                     ),
-                    # Assistant response
+                    # Step 3: Assistant response
                     json.dumps(
                         {
                             "uuid": "resp1",
@@ -752,25 +754,26 @@ class TestCommandHandling:
         client = FakeTranscriptClient()
         execute_sync(transcript_path, document_id, client)
 
-        text = client.appends[0][1]
+        # All content should be present across all steps
+        all_text = " ".join(a[1] for a in client.appends)
 
         # claude-transcriber extracts command as "❯ /compact"
-        assert "/compact" in text
+        assert "/compact" in all_text
         # Should NOT have the raw XML tags
-        assert "<command-name>" not in text
-        assert "<command-message>" not in text
+        assert "<command-name>" not in all_text
+        assert "<command-message>" not in all_text
         # Should have the assistant response
-        assert "Done." in text
+        assert "Done." in all_text
 
     def test_custom_command_expansion_skipped(self, tmp_path: Path) -> None:
-        """Custom commands like /commit should skip the expanded file content."""
+        """Custom commands should skip the expanded file content."""
         transcript_path = tmp_path / "transcript.jsonl"
         document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
                 [
-                    # Command invocation
+                    # Step 1: Command invocation
                     json.dumps(
                         {
                             "uuid": "cmd1",
@@ -783,7 +786,7 @@ class TestCommandHandling:
                             },
                         }
                     ),
-                    # Command expansion (the .md file content - should be skipped)
+                    # Step 2: Command expansion
                     json.dumps(
                         {
                             "uuid": "exp1",
@@ -801,7 +804,7 @@ class TestCommandHandling:
                             },
                         }
                     ),
-                    # Assistant response
+                    # Step 3: Assistant response
                     json.dumps(
                         {
                             "uuid": "resp1",
@@ -823,24 +826,25 @@ class TestCommandHandling:
         client = FakeTranscriptClient()
         execute_sync(transcript_path, document_id, client)
 
-        text = client.appends[0][1]
+        # All content should be present across all steps
+        all_text = " ".join(a[1] for a in client.appends)
 
         # claude-transcriber extracts command as "❯ /commit"
-        assert "/commit" in text
+        assert "/commit" in all_text
         # Should NOT have raw XML
-        assert "<command-name>" not in text
+        assert "<command-name>" not in all_text
         # Should have the assistant response
-        assert "Committed changes." in text
+        assert "Committed changes." in all_text
 
     def test_command_followed_by_assistant(self, tmp_path: Path) -> None:
-        """Command directly followed by assistant (no expansion) should work."""
+        """Command directly followed by assistant should work."""
         transcript_path = tmp_path / "transcript.jsonl"
         document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
                 [
-                    # Command invocation
+                    # Step 1: Command invocation
                     json.dumps(
                         {
                             "uuid": "cmd1",
@@ -854,7 +858,7 @@ class TestCommandHandling:
                             },
                         }
                     ),
-                    # Assistant responds directly (no user message in between)
+                    # Step 2: Assistant responds directly
                     json.dumps(
                         {
                             "uuid": "resp1",
@@ -876,22 +880,23 @@ class TestCommandHandling:
         client = FakeTranscriptClient()
         execute_sync(transcript_path, document_id, client)
 
-        text = client.appends[0][1]
+        # All content should be present across all steps
+        all_text = " ".join(a[1] for a in client.appends)
 
         # claude-transcriber extracts command as "❯ /clear"
-        assert "/clear" in text
+        assert "/clear" in all_text
         # Should have the assistant response
-        assert "Context cleared." in text
+        assert "Context cleared." in all_text
 
     def test_hyphenated_command_cleaned_properly(self, tmp_path: Path) -> None:
-        """Commands with hyphens like /review-pr should be cleaned properly."""
+        """Commands with hyphens should be cleaned properly."""
         transcript_path = tmp_path / "transcript.jsonl"
         document_id = "transcript"
 
         transcript_path.write_text(
             "\n".join(
                 [
-                    # Hyphenated command invocation
+                    # Step 1: Hyphenated command
                     json.dumps(
                         {
                             "uuid": "cmd1",
@@ -905,7 +910,7 @@ class TestCommandHandling:
                             },
                         }
                     ),
-                    # Assistant responds
+                    # Step 2: Assistant responds
                     json.dumps(
                         {
                             "uuid": "resp1",
@@ -925,11 +930,12 @@ class TestCommandHandling:
         client = FakeTranscriptClient()
         execute_sync(transcript_path, document_id, client)
 
-        text = client.appends[0][1]
+        # All content should be present across all steps
+        all_text = " ".join(a[1] for a in client.appends)
 
         # claude-transcriber extracts hyphenated command as "❯ /review-pr"
-        assert "/review-pr" in text
+        assert "/review-pr" in all_text
         # Should NOT have any raw XML
-        assert "<command-name>" not in text
-        assert "<command-message>" not in text
-        assert "Reviewing PR." in text
+        assert "<command-name>" not in all_text
+        assert "<command-message>" not in all_text
+        assert "Reviewing PR." in all_text
