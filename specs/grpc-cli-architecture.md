@@ -35,7 +35,6 @@ All ragzoom CLI commands that need server data must work through gRPC to support
 | Command | Current Implementation | New gRPC Method |
 |---------|----------------------|-----------------|
 | `documents` | DocumentService.list_documents() | ListDocuments |
-| `validate` | validate_document() | ValidateDocument |
 | `status` | DocumentService.get_system_status() | GetSystemStatus |
 | `cost` | node_repo.get_cost_stats() | GetCostStats |
 
@@ -45,6 +44,7 @@ Note: `pin` command is obsolete and will be removed (not migrated to gRPC).
 
 | Command | Reason |
 |---------|--------|
+| `validate` | Needs `--complete` and `--telemetry-file` options for benchmark compatibility |
 | `inspect` | Debugging tool, needs full node details including embeddings |
 | `export` | Large data export, client-side file writing |
 | `eval measure/report/compare` | Client-side computation on sampled data |
@@ -77,17 +77,6 @@ message DocumentInfo {
   optional string time_start = 5;  // ISO 8601
   optional string time_end = 6;    // ISO 8601
   optional double completion_pct = 7;
-}
-
-// Validate document tree invariants
-rpc ValidateDocument(ValidateDocumentRequest) returns (ValidateDocumentResponse);
-
-message ValidateDocumentRequest {
-  string document_id = 1;
-}
-message ValidateDocumentResponse {
-  bool valid = 1;
-  repeated string errors = 2;
 }
 
 // Get system-wide status (matches existing DocumentService.get_system_status())
@@ -125,20 +114,6 @@ All new methods follow existing patterns:
 - **NOT_FOUND**: Document or node doesn't exist
 - **INVALID_ARGUMENT**: Bad input (empty document_id, etc.)
 - **INTERNAL**: Unexpected server error
-
-Example for ValidateDocument:
-```python
-async def ValidateDocument(self, request, context):
-    if not request.document_id:
-        await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "document_id required")
-
-    doc_store = self._state.store.for_document(request.document_id)
-    if not doc_store.exists():
-        await context.abort(grpc.StatusCode.NOT_FOUND, f"Document not found: {request.document_id}")
-
-    errors = validate_document(doc_store)
-    return ValidateDocumentResponse(valid=len(errors) == 0, errors=errors)
-```
 
 ## Auto-Start Removal
 
@@ -267,12 +242,12 @@ ragzoom server start --daemon
 ragzoom documents
 ragzoom status
 ragzoom cost
-ragzoom validate -d mydoc
 
 # Test remote scenario
 ragzoom documents --server otherhost:50051
 
 # Local commands still work without server
+ragzoom validate mydoc
 ragzoom inspect abc123
 ragzoom export -d mydoc
 ragzoom eval measure -d mydoc

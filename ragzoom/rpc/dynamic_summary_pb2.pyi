@@ -464,24 +464,6 @@ class ListDocumentsResponse:
 
     def __init__(self, *, documents: Iterable[DocumentInfo] = ...) -> None: ...
 
-# ValidateDocument messages
-class ValidateDocumentRequest:
-    """Request to validate document tree invariants."""
-
-    DESCRIPTOR: ClassVar[Descriptor]
-    document_id: str
-
-    def __init__(self, *, document_id: str = ...) -> None: ...
-
-class ValidateDocumentResponse:
-    """Response containing validation result."""
-
-    DESCRIPTOR: ClassVar[Descriptor]
-    valid: bool
-    errors: Sequence[str]
-
-    def __init__(self, *, valid: bool = ..., errors: Iterable[str] = ...) -> None: ...
-
 # GetSystemStatus messages
 class GetSystemStatusRequest:
     """Request for system-wide status (empty message)."""

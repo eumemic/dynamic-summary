@@ -314,80 +314,9 @@ async def test_grpc_client_list_documents_empty(
         client.close()
 
 
-@pytest.mark.asyncio
-async def test_grpc_client_validate_document(
-    grpc_test_environment: tuple[str, ServerState],
-) -> None:
-    """Test validate_document returns ValidationResult with valid=True for healthy doc.
-
-    Spec: specs/grpc-cli-architecture.md § New gRPC Methods
-    """
-    from ragzoom.client.grpc_client import ValidationResult
-
-    address, _state = grpc_test_environment
-    document_id = "validate-test-doc"
-
-    client = GrpcRagzoomClient(address)
-    try:
-        # Create a document
-        await asyncio.to_thread(
-            client.append_text,
-            document_id=document_id,
-            content=b"Test content for validation.",
-            collect_telemetry=False,
-            replace_existing=True,
-        )
-        await asyncio.to_thread(client.run_workers_once)
-
-        # Validate the document
-        result = await asyncio.to_thread(client.validate_document, document_id)
-
-        assert isinstance(result, ValidationResult)
-        assert result.valid is True
-        assert result.errors == []
-
-    finally:
-        client.close()
-
-
-@pytest.mark.asyncio
-async def test_grpc_client_validate_document_not_found(
-    grpc_test_environment: tuple[str, ServerState],
-) -> None:
-    """Test validate_document raises RuntimeError for nonexistent document.
-
-    Spec: specs/grpc-cli-architecture.md § Error Handling
-    """
-    address, _state = grpc_test_environment
-
-    client = GrpcRagzoomClient(address)
-    try:
-        with pytest.raises(RuntimeError, match="NOT_FOUND"):
-            await asyncio.to_thread(
-                client.validate_document, "nonexistent-validate-doc-12345"
-            )
-
-    finally:
-        client.close()
-
-
-@pytest.mark.asyncio
-async def test_grpc_client_validate_document_empty_id(
-    grpc_test_environment: tuple[str, ServerState],
-) -> None:
-    """Test validate_document raises RuntimeError for empty document_id.
-
-    Spec: specs/grpc-cli-architecture.md § Error Handling
-    """
-    address, _state = grpc_test_environment
-
-    client = GrpcRagzoomClient(address)
-    try:
-        with pytest.raises(RuntimeError, match="INVALID_ARGUMENT"):
-            await asyncio.to_thread(client.validate_document, "")
-
-    finally:
-        client.close()
+# Note: validate_document is a local command (not gRPC) because it needs
+# --complete and --telemetry-file options for benchmark compatibility.
+# Tests for validate are in test_tree_validator.py.
 
 
 @pytest.mark.asyncio
