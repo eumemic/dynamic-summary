@@ -14,8 +14,6 @@ batch_append, ensuring concurrent sessions are serialized when appending
 to the same document.
 
 These tests verify the storage-layer locking prevents concurrent access.
-For full integration tests against the gRPC servicer with PostgreSQL,
-see tests/memory_service/test_concurrent_ingest_duplicates.py.
 """
 
 from __future__ import annotations
