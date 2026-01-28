@@ -265,21 +265,6 @@ class DocumentInfoView:
 
 
 @dataclass
-class ValidationResult:
-    """Result from validate_document().
-
-    Spec: specs/grpc-cli-architecture.md § New gRPC Methods
-
-    Attributes:
-        valid: True if document passes all validation checks.
-        errors: List of validation error messages (empty if valid).
-    """
-
-    valid: bool
-    errors: list[str]
-
-
-@dataclass
 class SystemStatusView:
     """System-wide status aggregated across all documents.
 
@@ -1028,33 +1013,6 @@ class GrpcRagzoomClient:
                 )
             )
         return documents
-
-    def validate_document(self, document_id: str) -> ValidationResult:
-        """Validate document tree invariants.
-
-        Spec: specs/grpc-cli-architecture.md § New gRPC Methods
-
-        Args:
-            document_id: The document to validate.
-
-        Returns:
-            ValidationResult with valid=True if document passes, errors list if fails.
-
-        Raises:
-            RuntimeError: If document doesn't exist (NOT_FOUND) or document_id empty
-                (INVALID_ARGUMENT).
-        """
-        request = pb2.ValidateDocumentRequest(document_id=document_id)
-        try:
-            validate_rpc = getattr(self._workers, "ValidateDocument")
-            response = validate_rpc(request, timeout=self._timeout)
-        except grpc.RpcError as error:  # pragma: no cover
-            raise _map_rpc_error(error) from error
-
-        return ValidationResult(
-            valid=response.valid,
-            errors=list(response.errors),
-        )
 
     def get_system_status(self) -> SystemStatusView:
         """Get system-wide status aggregated across all documents.

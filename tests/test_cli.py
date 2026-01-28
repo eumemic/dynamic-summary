@@ -26,7 +26,6 @@ from ragzoom.client.grpc_client import (
     NodeSummary,
     RetrievalView,
     SystemStatusView,
-    ValidationResult,
     WorkerRunSnapshot,
 )
 from ragzoom.services.indexing_service import IndexingResult
@@ -156,10 +155,6 @@ def cli_mocks() -> Iterator[CliMocks]:
                 completion_pct=76.3,
             )
         ]
-        grpc_client.validate_document.return_value = ValidationResult(
-            valid=True,
-            errors=[],
-        )
         grpc_client.get_system_status.return_value = SystemStatusView(
             total_nodes=10,
             leaf_nodes=5,
@@ -1116,70 +1111,11 @@ def test_documents_temporal_document(
 
 
 # ========================================================================
-# `validate` command tests (gRPC migration)
+# `validate` command tests
 # ========================================================================
-
-
-def test_cli_validate_uses_grpc(
-    runner: CliRunner, cli_mocks: CliMocks, api_key: None
-) -> None:
-    """Test that `validate` command uses gRPC client.validate_document().
-
-    Spec: specs/grpc-cli-architecture.md § Commands Requiring Migration
-    """
-    result = runner.invoke(cli, ["validate", "doc-123"])
-
-    assert result.exit_code == 0
-    cli_mocks["grpc_client"].validate_document.assert_called_once_with("doc-123")
-    assert "Document validation passed" in result.output
-
-
-def test_cli_validate_shows_errors_on_failure(
-    runner: CliRunner, cli_mocks: CliMocks, api_key: None
-) -> None:
-    """Test that `validate` displays error messages when validation fails."""
-    cli_mocks["grpc_client"].validate_document.return_value = ValidationResult(
-        valid=False,
-        errors=["Missing parent node", "Orphaned leaf detected"],
-    )
-
-    result = runner.invoke(cli, ["validate", "doc-123"])
-
-    assert result.exit_code == 1
-    assert "Document validation failed" in result.output
-    assert "Missing parent node" in result.output
-    assert "Orphaned leaf detected" in result.output
-
-
-def test_cli_validate_handles_not_found(
-    runner: CliRunner, cli_mocks: CliMocks, api_key: None
-) -> None:
-    """Test that `validate` handles NOT_FOUND error from gRPC."""
-    from ragzoom.exceptions import DocumentNotFoundError
-
-    cli_mocks["grpc_client"].validate_document.side_effect = DocumentNotFoundError(
-        "doc-123"
-    )
-
-    result = runner.invoke(cli, ["validate", "doc-123"])
-
-    assert result.exit_code != 0
-    assert "not found" in result.output.lower() or "not found" in str(result.exception)
-
-
-def test_cli_validate_server_option(
-    runner: CliRunner, cli_mocks: CliMocks, api_key: None
-) -> None:
-    """Test that `validate` accepts --server-address option.
-
-    Spec: specs/grpc-cli-architecture.md § Shared Server Option
-    """
-    result = runner.invoke(
-        cli, ["validate", "doc-123", "--server-address", "remote:50051"]
-    )
-
-    assert result.exit_code == 0
-    cli_mocks["grpc_client"].validate_document.assert_called_once()
+# Note: validate is a local command (not gRPC) because it needs --complete
+# and --telemetry-file options for benchmark compatibility. Tests for
+# validate are in test_tree_validator.py.
 
 
 def test_cli_cost_uses_grpc(
