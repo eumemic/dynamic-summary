@@ -11,6 +11,7 @@ import os
 import random
 import shutil
 import signal
+import socket
 import sys
 import time
 from collections.abc import Iterable, Mapping
@@ -37,7 +38,6 @@ from ragzoom.constants import (
 from ragzoom.daemon import (
     cleanup_stale_state,
     daemonize,
-    ensure_server_running,
     get_log_file_path,
     get_process_uptime,
     install_shutdown_handlers,
@@ -125,20 +125,40 @@ def _get_default_port() -> int:
     return DEV_PORT if _is_dev_invocation() else PRODUCTION_PORT
 
 
-def _resolve_server_address_with_autostart(value: str | None) -> str:
-    """Resolve server address, auto-starting daemon if using default.
+def _resolve_server_address(value: str | None) -> str:
+    """Resolve server address, fail fast if not reachable.
 
-    When the user provides an explicit address (CLI arg or env var), use it
-    directly without auto-starting. When using the default address, ensure
-    the daemon is running first.
+    Args:
+        value: Explicit server address (host:port) or None to use default.
+
+    Returns:
+        The resolved server address.
+
+    Raises:
+        click.ClickException: If the server is not reachable.
     """
     if value:
-        return value
-    env_value = os.environ.get("RAGZOOM_SERVER_ADDRESS")
-    if env_value:
-        return env_value
-    # Using default address - ensure daemon is running
-    return ensure_server_running()
+        address = value
+    else:
+        env_value = os.environ.get("RAGZOOM_SERVER_ADDRESS")
+        if env_value:
+            address = env_value
+        else:
+            address = f"localhost:{_get_default_port()}"
+
+    # Quick TCP connectivity check
+    host, port_str = address.rsplit(":", 1)
+    port = int(port_str)
+    try:
+        with socket.create_connection((host, port), timeout=2):
+            pass  # Connection succeeded
+    except (OSError, TimeoutError):
+        raise click.ClickException(
+            f"Cannot connect to RagZoom server at {address}.\n"
+            f"Start the server with: ragzoom server start"
+        )
+
+    return address
 
 
 def _display_worker_snapshots(
@@ -380,7 +400,7 @@ def index(
             )
 
         result: IndexingResult
-        resolved_address = _resolve_server_address_with_autostart(server_address)
+        resolved_address = _resolve_server_address(server_address)
         final_snapshot: WorkerRunSnapshot | None = None
         refreshed_status: DocumentWorkStatus | None = None
         refresh_error: str | None = None
@@ -585,7 +605,7 @@ def documents(ctx: click.Context, server_address: str | None) -> None:
     Spec: specs/grpc-cli-architecture.md § Commands Requiring Migration
     """
     try:
-        resolved_address = _resolve_server_address_with_autostart(server_address)
+        resolved_address = _resolve_server_address(server_address)
 
         with GrpcRagzoomClient(resolved_address) as client:
             docs = client.list_documents()
@@ -645,7 +665,7 @@ def telemetry(
 ) -> None:
     """Fetch telemetry for a previous indexing run."""
 
-    resolved_address = _resolve_server_address_with_autostart(server_address)
+    resolved_address = _resolve_server_address(server_address)
 
     try:
         with GrpcRagzoomClient(resolved_address) as client:
@@ -707,7 +727,7 @@ def telemetry(
 def telemetry_export(document_id: str, output: str, server_address: str | None) -> None:
     """Synthesize document-level telemetry from server logs."""
 
-    resolved_address = _resolve_server_address_with_autostart(server_address)
+    resolved_address = _resolve_server_address(server_address)
     try:
         with GrpcRagzoomClient(resolved_address) as client:
             result = client.export_document_telemetry(document_id=document_id)
@@ -753,7 +773,7 @@ def validate(
     Spec: specs/grpc-cli-architecture.md § Commands Requiring Migration
     """
     try:
-        resolved_address = _resolve_server_address_with_autostart(server_address)
+        resolved_address = _resolve_server_address(server_address)
 
         with GrpcRagzoomClient(resolved_address) as client:
             result = client.validate_document(document_id)
@@ -898,7 +918,7 @@ def query(
         ctx.obj["query_config"] = query_config
 
         effective_budget = token_budget or query_config.budget_tokens
-        resolved_address = _resolve_server_address_with_autostart(server_address)
+        resolved_address = _resolve_server_address(server_address)
 
         # Calculate visualization width
         if not debug:
@@ -1087,7 +1107,7 @@ def status(ctx: click.Context, server_address: str | None) -> None:
     Spec: specs/grpc-cli-architecture.md § Commands Requiring Migration
     """
     try:
-        resolved_address = _resolve_server_address_with_autostart(server_address)
+        resolved_address = _resolve_server_address(server_address)
 
         with GrpcRagzoomClient(resolved_address) as client:
             system_status = client.get_system_status()
@@ -1131,7 +1151,7 @@ def cost(document_id: str, server_address: str | None) -> None:
       ragzoom cost e0d9b972-3bad-472f-a570-a4e02d0a1ff4
     """
     try:
-        resolved_address = _resolve_server_address_with_autostart(server_address)
+        resolved_address = _resolve_server_address(server_address)
 
         with GrpcRagzoomClient(resolved_address) as client:
             stats_list = client.get_cost_stats(document_id)
@@ -1188,7 +1208,7 @@ def document_status(
       ragzoom document-status session-abc123 --json
     """
     try:
-        resolved_address = _resolve_server_address_with_autostart(server_address)
+        resolved_address = _resolve_server_address(server_address)
 
         with GrpcRagzoomClient(resolved_address) as client:
             status = client.get_document_status(document_id)
@@ -1257,9 +1277,7 @@ def clear(ctx: click.Context, document_id: str | None, confirm: bool) -> None:
     """Clear data from the database via the gRPC server."""
 
     try:
-        resolved_address = _resolve_server_address_with_autostart(
-            ctx.obj.get("server_address")
-        )
+        resolved_address = _resolve_server_address(ctx.obj.get("server_address"))
 
         with GrpcRagzoomClient(resolved_address) as client:
             if document_id:

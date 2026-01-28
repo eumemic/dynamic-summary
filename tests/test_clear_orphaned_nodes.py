@@ -138,9 +138,7 @@ class TestAutomaticClearing:
 
         try:
             with (
-                patch(
-                    "ragzoom.cli.ensure_server_running", return_value="127.0.0.1:50051"
-                ),
+                patch("ragzoom.cli.socket.create_connection"),  # Mock TCP check
                 patch("ragzoom.cli.GrpcRagzoomClient") as mock_client_cls,
             ):
                 client = MagicMock()
@@ -227,9 +225,7 @@ class TestAutomaticClearing:
 
         try:
             with (
-                patch(
-                    "ragzoom.cli.ensure_server_running", return_value="127.0.0.1:50051"
-                ),
+                patch("ragzoom.cli.socket.create_connection"),  # Mock TCP check
                 patch("ragzoom.cli.GrpcRagzoomClient") as mock_client_cls,
             ):
                 client = MagicMock()
