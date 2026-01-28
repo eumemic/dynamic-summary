@@ -45,11 +45,12 @@ Replace turn-based transcript chunking with step-based chunking. Currently, mess
 
 ### Phase 3: Migration - Update Existing Code
 
-- [ ] Simplify `find_truncation_point()` - remove turn boundary detection
+- [x] Simplify `find_truncation_point()` - remove turn boundary detection
   - Spec: specs/step-level-chunking.md § 4. Simplify `find_truncation_point()`
   - Success: Function no longer calls `is_user_message()` for boundary detection; every record is a valid truncation point
-  - Test: `test_stateless_sync.py::TestFindTruncationPoint` (update to remove turn boundary tests)
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:193-283
+  - Test: `test_stateless_sync.py::TestFindTruncationPoint` (updated to remove turn boundary tests)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:308-398
+  - Done: Removed `is_user_message()` call and turn boundary sliding. Tests updated accordingly.
 
 - [ ] Update `execute_sync()` to use step-based functions
   - Spec: specs/step-level-chunking.md § 6. Update `execute_sync()`
@@ -127,11 +128,12 @@ Replace turn-based transcript chunking with step-based chunking. Currently, mess
   - Test: `pytest integrations/claude-code/tests/test_step_to_append_unit.py -v`
   - Location: integrations/claude-code/tests/test_turn_to_append_unit.py (delete), integrations/claude-code/tests/test_step_to_append_unit.py (create)
 
-- [ ] Update `test_stateless_sync.py`
+- [x] Update `test_stateless_sync.py`
   - Spec: specs/step-level-chunking.md § Test Updates
-  - Success: Remove `TestIsUserMessage` class, update `TestFindTruncationPoint` to not test turn boundaries
+  - Success: Removed `TestIsUserMessage` class, updated `TestFindTruncationPoint` to not test turn boundaries
   - Test: `pytest integrations/claude-code/tests/test_stateless_sync.py -v`
-  - Location: integrations/claude-code/tests/test_stateless_sync.py:20-75 (remove), :77-388 (update)
+  - Location: integrations/claude-code/tests/test_stateless_sync.py
+  - Done: Removed TestIsUserMessage, removed is_user_message import, updated tests to reflect step-level behavior
 
 - [x] Update test files referencing `turns_appended` to use `steps_appended`
   - Spec: specs/step-level-chunking.md § 5. Update `SyncResult`

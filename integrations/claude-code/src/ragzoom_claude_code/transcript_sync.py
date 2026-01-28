@@ -312,10 +312,9 @@ def find_truncation_point(
 ) -> tuple[str | None, str | None]:
     """Find the connection point between current transcript and indexed content.
 
-    Uses a sliding window algorithm to walk backward from head_uuid, finding
-    where the current transcript connects to previously indexed content. The
-    algorithm ensures we stop at a turn boundary (user message) to maintain
-    atomic turn semantics.
+    Walks backward from head_uuid to find where the current transcript connects
+    to previously indexed content. With step-level chunking, every record is a
+    valid truncation point (no turn boundary constraints).
 
     The function returns (R, S) where:
     - R is the connection point UUID (last record in indexed content)
@@ -328,10 +327,6 @@ def find_truncation_point(
       meaning "continue from where we left off"
     - Revert detected: R.timestamp < indexed_time_end
       meaning "truncate orphaned content, then append from S"
-
-    The sliding window ensures we always stop at a turn boundary:
-    1. R.timestamp <= indexed_time_end (R is within indexed range)
-    2. S is a user message OR S is None (turn boundary)
 
     Args:
         head_uuid: UUID of the current transcript head
@@ -349,7 +344,7 @@ def find_truncation_point(
         # First sync: no indexed content, append everything from head
         return (None, head_uuid)
 
-    # Sliding window: S is the successor, R is the current node
+    # Walk backward: S is the successor, R is the current node
     s_uuid: str | None = None  # Starts null at end of chain
     r_uuid: str | None = head_uuid
 
@@ -375,19 +370,9 @@ def find_truncation_point(
             r_uuid = _get_parent_uuid(record)
             continue
 
-        # Check if R is within indexed range
+        # Check if R is within indexed range - stop immediately if so
         if record_time <= indexed_time_end:
-            # R is in indexed content - check if S is a turn boundary
-            if s_uuid is None:
-                # S is None means we're at the end of chain - valid boundary
-                return (r_uuid, s_uuid)
-
-            s_record = records.get(s_uuid)
-            if s_record is not None and is_user_message(s_record):
-                # S is a user message - valid turn boundary
-                return (r_uuid, s_uuid)
-
-            # S is not a turn boundary - continue sliding to find one
+            return (r_uuid, s_uuid)
 
         # Slide window backward
         s_uuid = r_uuid
