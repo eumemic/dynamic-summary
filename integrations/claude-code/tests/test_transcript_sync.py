@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from ragzoom_claude_code.transcript_sync import (
     build_parent_map,
     find_common_ancestor,
+    find_entries_after_time,
 )
 
 
@@ -466,3 +469,330 @@ class TestConversationSummarizationGuidance:
 
         # Should preserve exact technical details
         assert "file path" in guidance or "function name" in guidance
+
+
+class TestFindEntriesAfterTime:
+    """Tests for finding entries after a cutoff time."""
+
+    def test_finds_entries_after_cutoff(self) -> None:
+        """Should return entries with timestamp > cutoff_time."""
+        records: dict[str, dict[str, object]] = {
+            "msg1": {"uuid": "msg1", "timestamp": "2024-01-10T10:00:00Z"},
+            "msg2": {"uuid": "msg2", "timestamp": "2024-01-10T11:00:00Z"},
+            "msg3": {"uuid": "msg3", "timestamp": "2024-01-10T12:00:00Z"},
+        }
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+        }
+        cutoff = datetime(2024, 1, 10, 10, 30, tzinfo=timezone.utc)
+
+        result = find_entries_after_time("msg3", records, parent_map, cutoff)
+
+        # Should include msg2 and msg3 (both after 10:30)
+        assert result == ["msg2", "msg3"]
+
+    def test_returns_empty_when_all_before_cutoff(self) -> None:
+        """Should return empty list when all entries are at or before cutoff."""
+        records: dict[str, dict[str, object]] = {
+            "msg1": {"uuid": "msg1", "timestamp": "2024-01-10T10:00:00Z"},
+            "msg2": {"uuid": "msg2", "timestamp": "2024-01-10T11:00:00Z"},
+        }
+        parent_map: dict[str, str | None] = {"msg1": None, "msg2": "msg1"}
+        cutoff = datetime(2024, 1, 10, 12, 0, tzinfo=timezone.utc)
+
+        result = find_entries_after_time("msg2", records, parent_map, cutoff)
+
+        assert result == []
+
+    def test_returns_all_when_all_after_cutoff(self) -> None:
+        """Should return all entries when all are after cutoff."""
+        records: dict[str, dict[str, object]] = {
+            "msg1": {"uuid": "msg1", "timestamp": "2024-01-10T10:00:00Z"},
+            "msg2": {"uuid": "msg2", "timestamp": "2024-01-10T11:00:00Z"},
+        }
+        parent_map: dict[str, str | None] = {"msg1": None, "msg2": "msg1"}
+        cutoff = datetime(2024, 1, 10, 9, 0, tzinfo=timezone.utc)
+
+        result = find_entries_after_time("msg2", records, parent_map, cutoff)
+
+        assert result == ["msg1", "msg2"]
+
+    def test_returns_chronological_order(self) -> None:
+        """Should return entries in oldest-first order."""
+        records: dict[str, dict[str, object]] = {
+            "msg1": {"uuid": "msg1", "timestamp": "2024-01-10T10:00:00Z"},
+            "msg2": {"uuid": "msg2", "timestamp": "2024-01-10T11:00:00Z"},
+            "msg3": {"uuid": "msg3", "timestamp": "2024-01-10T12:00:00Z"},
+            "msg4": {"uuid": "msg4", "timestamp": "2024-01-10T13:00:00Z"},
+        }
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+            "msg4": "msg3",
+        }
+        cutoff = datetime(2024, 1, 10, 10, 30, tzinfo=timezone.utc)
+
+        result = find_entries_after_time("msg4", records, parent_map, cutoff)
+
+        # Should be chronological: msg2 -> msg3 -> msg4
+        assert result == ["msg2", "msg3", "msg4"]
+
+    def test_includes_entries_without_timestamp(self) -> None:
+        """Should include entries without timestamps in the chain."""
+        records: dict[str, dict[str, object]] = {
+            "msg1": {"uuid": "msg1", "timestamp": "2024-01-10T10:00:00Z"},
+            "msg2": {"uuid": "msg2"},  # No timestamp
+            "msg3": {"uuid": "msg3", "timestamp": "2024-01-10T12:00:00Z"},
+        }
+        parent_map: dict[str, str | None] = {
+            "msg1": None,
+            "msg2": "msg1",
+            "msg3": "msg2",
+        }
+        cutoff = datetime(2024, 1, 10, 10, 30, tzinfo=timezone.utc)
+
+        result = find_entries_after_time("msg3", records, parent_map, cutoff)
+
+        # msg2 has no timestamp so we can't compare, but msg3 is after
+        # and msg2 is in the chain, so both should be included
+        assert result == ["msg2", "msg3"]
+
+
+class TestAppendOnlySync:
+    """Tests for append-only sync mode."""
+
+    def _make_transcript(
+        self, tmp_path: Path, records: list[dict[str, object]]
+    ) -> Path:
+        """Helper to create a JSONL transcript file."""
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+        return jsonl
+
+    def _make_mock_client(
+        self, exists: bool = False, time_end: str | None = None
+    ) -> MagicMock:
+        """Create a mock RagZoom client."""
+        client = MagicMock()
+        doc_status = MagicMock()
+        doc_status.exists = exists
+        doc_status.time_end = time_end
+        client.get_document_status.return_value = doc_status
+        client.batch_append.return_value = None
+        client.truncate_from_time.return_value = None
+        return client
+
+    def test_append_only_first_sync(self, tmp_path: Path) -> None:
+        """First sync in append-only mode should index everything."""
+        from ragzoom_claude_code.transcript_sync import execute_sync
+
+        jsonl = self._make_transcript(
+            tmp_path,
+            [
+                {
+                    "uuid": "msg1",
+                    "parentUuid": None,
+                    "type": "user",
+                    "timestamp": "2024-01-10T10:00:00Z",
+                    "message": {"content": "Hello"},
+                },
+                {
+                    "uuid": "msg2",
+                    "parentUuid": "msg1",
+                    "type": "assistant",
+                    "timestamp": "2024-01-10T10:01:00Z",
+                    "message": {"content": [{"type": "text", "text": "Hi there"}]},
+                },
+            ],
+        )
+        client = self._make_mock_client(exists=False)
+
+        result = execute_sync(jsonl, "test-doc", client, append_only=True)
+
+        assert result.steps_appended == 2
+        assert result.truncated is False
+        assert result.truncate_cutoff_time is None
+        client.batch_append.assert_called_once()
+
+    def test_append_only_normal_append(self, tmp_path: Path) -> None:
+        """Append-only should add entries after time_end."""
+        from ragzoom_claude_code.transcript_sync import execute_sync
+
+        jsonl = self._make_transcript(
+            tmp_path,
+            [
+                {
+                    "uuid": "msg1",
+                    "parentUuid": None,
+                    "type": "user",
+                    "timestamp": "2024-01-10T10:00:00Z",
+                    "message": {"content": "Hello"},
+                },
+                {
+                    "uuid": "msg2",
+                    "parentUuid": "msg1",
+                    "type": "assistant",
+                    "timestamp": "2024-01-10T10:01:00Z",
+                    "message": {"content": [{"type": "text", "text": "Hi there"}]},
+                },
+                {
+                    "uuid": "msg3",
+                    "parentUuid": "msg2",
+                    "type": "user",
+                    "timestamp": "2024-01-10T10:02:00Z",
+                    "message": {"content": "New message"},
+                },
+            ],
+        )
+        # Document already has msg1 and msg2 indexed
+        client = self._make_mock_client(exists=True, time_end="2024-01-10T10:01:00Z")
+
+        result = execute_sync(jsonl, "test-doc", client, append_only=True)
+
+        # Should only append msg3
+        assert result.steps_appended == 1
+        assert result.truncated is False
+        client.truncate_from_time.assert_not_called()
+
+    def test_append_only_ignores_revert(self, tmp_path: Path) -> None:
+        """Append-only should NOT detect or handle reverts."""
+        from ragzoom_claude_code.transcript_sync import execute_sync
+
+        # Simulates a transcript where user reverted: msg1 -> msg2 -> msg3
+        # then reverted to msg1 and continued with msg2-alt
+        # In normal mode this would truncate. In append-only, we just look for
+        # entries after indexed time_end.
+        jsonl = self._make_transcript(
+            tmp_path,
+            [
+                {
+                    "uuid": "msg1",
+                    "parentUuid": None,
+                    "type": "user",
+                    "timestamp": "2024-01-10T10:00:00Z",
+                    "message": {"content": "Hello"},
+                },
+                {
+                    "uuid": "msg2",
+                    "parentUuid": "msg1",
+                    "type": "assistant",
+                    "timestamp": "2024-01-10T10:01:00Z",
+                    "message": {"content": [{"type": "text", "text": "Response"}]},
+                },
+                {
+                    "uuid": "msg3",
+                    "parentUuid": "msg2",
+                    "type": "user",
+                    "timestamp": "2024-01-10T10:02:00Z",
+                    "message": {"content": "Original continuation"},
+                },
+                # User reverted to msg1 and continued differently
+                {
+                    "uuid": "msg2-alt",
+                    "parentUuid": "msg1",
+                    "type": "assistant",
+                    "timestamp": "2024-01-10T10:05:00Z",
+                    "message": {"content": [{"type": "text", "text": "Alt response"}]},
+                },
+            ],
+        )
+        # Document has up to msg3 indexed (time_end = 10:02)
+        # The current head is msg2-alt which is on a different branch
+        client = self._make_mock_client(exists=True, time_end="2024-01-10T10:02:00Z")
+
+        result = execute_sync(jsonl, "test-doc", client, append_only=True)
+
+        # In append-only mode, we just look for entries > time_end
+        # msg2-alt has timestamp 10:05 which is > 10:02, so it gets appended
+        # No truncation should occur
+        assert result.truncated is False
+        assert result.truncate_cutoff_time is None
+        client.truncate_from_time.assert_not_called()
+        # Should append msg2-alt (timestamp 10:05 > 10:02)
+        assert result.steps_appended == 1
+
+    def test_append_only_no_new_content(self, tmp_path: Path) -> None:
+        """Append-only should return 0 steps when nothing new."""
+        from ragzoom_claude_code.transcript_sync import execute_sync
+
+        jsonl = self._make_transcript(
+            tmp_path,
+            [
+                {
+                    "uuid": "msg1",
+                    "parentUuid": None,
+                    "type": "user",
+                    "timestamp": "2024-01-10T10:00:00Z",
+                    "message": {"content": "Hello"},
+                },
+            ],
+        )
+        # Document already has everything indexed
+        client = self._make_mock_client(exists=True, time_end="2024-01-10T10:00:00Z")
+
+        result = execute_sync(jsonl, "test-doc", client, append_only=True)
+
+        assert result.steps_appended == 0
+        assert result.truncated is False
+        client.batch_append.assert_not_called()
+
+
+class TestAppendOnlyCli:
+    """Tests for append-only CLI flag and environment variable."""
+
+    def test_append_only_flag_in_sync_command(self) -> None:
+        """CLI sync command should accept --append-only flag."""
+        from click.testing import CliRunner
+        from ragzoom_claude_code.cli import sync_cmd
+
+        runner = CliRunner()
+        # Just verify the option is accepted (will fail on missing file, that's ok)
+        result = runner.invoke(sync_cmd, ["--help"])
+
+        assert result.exit_code == 0
+        assert "--append-only" in result.output
+        assert "RAGZOOM_APPEND_ONLY" in result.output
+
+    def test_append_only_env_var(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CLI should pick up RAGZOOM_APPEND_ONLY environment variable."""
+        from unittest.mock import patch
+
+        from click.testing import CliRunner
+        from ragzoom_claude_code.cli import sync_cmd
+
+        # Create a minimal transcript
+        jsonl = tmp_path / "test.jsonl"
+        jsonl.write_text(
+            json.dumps(
+                {
+                    "uuid": "msg1",
+                    "parentUuid": None,
+                    "type": "user",
+                    "timestamp": "2024-01-10T10:00:00Z",
+                    "message": {"content": "Hello"},
+                }
+            )
+            + "\n"
+        )
+
+        # Mock execute_sync to capture the append_only argument
+        with patch("ragzoom_claude_code.cli.execute_sync") as mock_sync:
+            mock_result = MagicMock()
+            mock_result.truncated = False
+            mock_result.steps_appended = 1
+            mock_result.document_id = "test"
+            mock_sync.return_value = mock_result
+
+            runner = CliRunner(env={"RAGZOOM_APPEND_ONLY": "1"})
+            result = runner.invoke(sync_cmd, [str(jsonl)])
+
+            # Should have called execute_sync with append_only=True
+            assert result.exit_code == 0
+            mock_sync.assert_called_once()
+            call_kwargs = mock_sync.call_args[1]
+            assert call_kwargs.get("append_only") is True

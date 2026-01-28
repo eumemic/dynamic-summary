@@ -36,7 +36,16 @@ def cli() -> None:
     show_default=True,
     help="RagZoom gRPC server address",
 )
-def sync_cmd(jsonl_path: Path, document_id: str | None, server_address: str) -> None:
+@click.option(
+    "--append-only",
+    is_flag=True,
+    envvar="RAGZOOM_APPEND_ONLY",
+    help="Skip revert detection, append entries after document time_end "
+    "[env: RAGZOOM_APPEND_ONLY]",
+)
+def sync_cmd(
+    jsonl_path: Path, document_id: str | None, server_address: str, append_only: bool
+) -> None:
     """Sync a Claude Code JSONL log to a RagZoom document.
 
     Incrementally transcribes new conversation records and indexes them.
@@ -61,7 +70,7 @@ def sync_cmd(jsonl_path: Path, document_id: str | None, server_address: str) -> 
     client = RagZoom(server_address=server_address)
 
     try:
-        result = execute_sync(jsonl_path, doc_id, client)
+        result = execute_sync(jsonl_path, doc_id, client, append_only=append_only)
         if result.truncated:
             click.echo(
                 f"Reverted document '{result.document_id}' "
