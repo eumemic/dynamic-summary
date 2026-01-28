@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ragzoom-memory": {
+      "command": "python",
+      "args": ["-m", "ragzoom_claude_code.mcp_server"]
+    }
+  }
+}
