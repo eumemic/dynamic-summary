@@ -343,7 +343,7 @@ class TestTimeWindowedQueryOnSyncedTranscript:
 
         # Verify document was created
         assert result.document_id == "transcript"
-        assert result.turns_appended >= 3
+        assert result.steps_appended >= 3
 
         # Verify document is temporal
         is_temporal = sqlite_backend.doc_repo.get_document_is_temporal(

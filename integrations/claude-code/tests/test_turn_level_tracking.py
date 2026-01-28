@@ -97,7 +97,7 @@ class TestTurnLevelTracking:
         assert len(units) == 3, f"Expected 3 units (one per turn), got {len(units)}"
 
         # All turns should have been appended
-        assert result.turns_appended == 3
+        assert result.steps_appended == 3
 
     def test_turn_units_have_correct_timestamps(self, tmp_path: Path) -> None:
         """Each turn's AppendUnit should have correct timestamps."""
@@ -230,7 +230,7 @@ class TestTurnLevelTracking:
         assert len(units) == 1
 
         # One turn was appended
-        assert result.turns_appended == 1
+        assert result.steps_appended == 1
 
     def test_incremental_sync_adds_new_turn(self, tmp_path: Path) -> None:
         """Incremental sync should add new turns correctly."""
@@ -270,7 +270,7 @@ class TestTurnLevelTracking:
 
         # First sync should append 1 turn
         assert len(client.batch_append_calls) == 1
-        assert result1.turns_appended == 1
+        assert result1.steps_appended == 1
 
         # Reset tracking
         client.batch_append_calls.clear()
@@ -327,4 +327,4 @@ class TestTurnLevelTracking:
 
         # Second sync should append only the new turn
         assert len(client.batch_append_calls) == 1
-        assert result2.turns_appended == 1
+        assert result2.steps_appended == 1

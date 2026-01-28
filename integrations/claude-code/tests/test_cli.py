@@ -22,7 +22,7 @@ def mock_sync_result() -> MagicMock:
     """Mock result from execute_sync."""
     result = MagicMock()
     result.document_id = "test-doc"
-    result.turns_appended = 5
+    result.steps_appended = 5
     result.truncated = False
     return result
 
