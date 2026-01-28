@@ -371,15 +371,6 @@ class QueryDetailResponse(BaseModel):  # type: ignore[explicit-any]
 
 
 # Pydantic BaseModel inherits from type containing Any, required for serialization
-class PinNodeRequest(BaseModel):  # type: ignore[explicit-any]
-    """Request to pin a node."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    node_id: str = Field(description="Node ID to pin")
-
-
-# Pydantic BaseModel inherits from type containing Any, required for serialization
 class UpdateConfigRequest(BaseModel):  # type: ignore[explicit-any]
     """Request to update configuration."""
 
@@ -851,17 +842,6 @@ async def query(
         actual_start=result.actual_start,
         actual_end=result.actual_end,
     )
-    # Error handling is now done by middleware
-
-
-@app.post("/pin")
-async def pin_node(
-    request: PinNodeRequest, services: ServiceContainer = Depends(get_service_container)
-) -> dict[str, str]:
-    """Pin a node."""
-    services.document_service.pin_node(request.node_id)
-    return {"message": "Node pinned successfully", "node_id": request.node_id}
-    # Specific exceptions are now handled by middleware
     # Error handling is now done by middleware
 
 

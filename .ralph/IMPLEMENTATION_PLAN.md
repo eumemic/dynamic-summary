@@ -370,11 +370,12 @@ Remove obsolete pin functionality. Non-blocking, can be done in parallel with ot
 
 ### 6.2 Remove DocumentService Pin Method
 
-- [ ] Remove pin_node() method from DocumentService
+- [x] Remove pin_node() method from DocumentService
   - Spec: specs/grpc-cli-architecture.md § Pin Command Removal
   - Success: Method no longer exists
-  - Test: test_document_service_no_pin_method (new)
-  - Location: ragzoom/services/document_service.py:136-151
+  - Test: test_document_service_no_pin_method
+  - Location: ragzoom/services/document_service.py (removed)
+  - Also removed: PinNodeRequest model and /pin REST endpoint from ragzoom/api.py
 
 ### 6.3 Remove SystemStatus pinned_nodes Field
 

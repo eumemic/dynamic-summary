@@ -23,6 +23,16 @@ from ragzoom.services.query_service import QueryResult, QueryService
 class TestDocumentService:
     """Test the DocumentService."""
 
+    def test_document_service_no_pin_method(self) -> None:
+        """Test that pin_node method has been removed from DocumentService.
+
+        The pin functionality is obsolete as documented in specs/grpc-cli-architecture.md.
+        This test ensures the method stays removed.
+        """
+        assert not hasattr(
+            DocumentService, "pin_node"
+        ), "pin_node method should be removed from DocumentService"
+
     def test_list_documents(self, storage_backend: StorageBackend) -> None:
         """Test listing documents returns formatted results using backend."""
         # Setup a document with nodes

@@ -4,9 +4,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
 
-from ragzoom.contracts.node_repository import NodeRepository as NodeRepositoryProtocol
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.contracts.tree_node import TreeNode
 
@@ -133,23 +131,6 @@ class DocumentService:
             total += self.store.clear_document(doc.id)
         return total
 
-    def pin_node(self, node_id: str) -> None:
-        """Pin a node to always include it.
-
-        Args:
-            node_id: ID of node to pin
-
-        Raises:
-            NodeNotFoundError: If node doesn't exist
-            InvalidOperationError: If node cannot be pinned
-        """
-        for doc in self.store.list_documents():
-            ds = self.store.for_document(doc.id)
-            if ds.nodes.get_node(node_id):
-                ds._node_repo.pin_node(node_id)
-                return
-        raise ValueError(f"Node {node_id} not found")
-
     def get_nodes_in_span(
         self,
         document_id: str,
@@ -208,7 +189,3 @@ class DocumentService:
             created_at=getattr(node, "created_at", None),
             preceding_context_summary=getattr(node, "preceding_context_summary", None),
         )
-
-
-class HasNodeRepo(Protocol):
-    node_repo: NodeRepositoryProtocol
