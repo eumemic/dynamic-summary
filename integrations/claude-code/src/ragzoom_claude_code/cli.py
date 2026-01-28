@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import click
 
+from ragzoom_claude_code.recall import (
+    execute_recall,
+    format_for_cli,
+)
 from ragzoom_claude_code.transcript_sync import execute_sync
 
 
@@ -146,6 +151,104 @@ def mcp_server_cmd() -> None:
     from ragzoom_claude_code.mcp_server import mcp
 
     mcp.run(transport="stdio")
+
+
+@cli.command("recall")
+@click.argument("query", default="")
+@click.option(
+    "--document-id",
+    "-d",
+    envvar="RAGZOOM_DOCUMENT_ID",
+    required=True,
+    help="Document ID to query (required)",
+)
+@click.option(
+    "--token-budget",
+    "-t",
+    type=int,
+    default=2000,
+    show_default=True,
+    help="Max tokens for returned context",
+)
+@click.option(
+    "--time-start",
+    type=str,
+    default=None,
+    help="ISO timestamp to start from (e.g., '2024-01-15T10:00:00')",
+)
+@click.option(
+    "--time-end",
+    type=str,
+    default=None,
+    help="ISO timestamp to end at (e.g., '2024-01-15T18:00:00')",
+)
+@click.option(
+    "--server-address",
+    "-s",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default="localhost:50051",
+    show_default=True,
+    help="RagZoom gRPC server address",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Output as JSON instead of human-readable format",
+)
+def recall_cmd(
+    query: str,
+    document_id: str,
+    token_budget: int,
+    time_start: str | None,
+    time_end: str | None,
+    server_address: str,
+    json_output: bool,
+) -> None:
+    """Search conversation history.
+
+    Query RagZoom's hierarchical summarization to recall context from
+    earlier in a conversation. Uses semantic search with token-budget
+    controlled detail level.
+
+    Document ID priority:
+      1. --document-id CLI flag
+      2. RAGZOOM_DOCUMENT_ID environment variable
+
+    Example:
+      ragzoom-claude-code recall "authentication bug" -d session-id
+      ragzoom-claude-code recall "OAuth" -d my-session --token-budget 5000
+      ragzoom-claude-code recall "" -d session --time-start 2024-01-15T10:00:00
+    """
+    try:
+        result = execute_recall(
+            query=query,
+            document_id=document_id,
+            token_budget=token_budget,
+            time_start=time_start,
+            time_end=time_end,
+            server_address=server_address,
+        )
+
+        if json_output:
+            output = {
+                "nodes": [
+                    {
+                        "text": node.text,
+                        "time_start": node.time_start,
+                        "time_end": node.time_end,
+                        "height": node.height,
+                    }
+                    for node in result.nodes
+                ]
+            }
+            click.echo(json.dumps(output, indent=2))
+        else:
+            click.echo(format_for_cli(result))
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
 
 
 if __name__ == "__main__":
