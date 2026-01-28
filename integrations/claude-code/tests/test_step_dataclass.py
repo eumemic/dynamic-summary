@@ -46,3 +46,10 @@ class TestStepDataclass:
 
         field_names = {f.name for f in fields(Step)}
         assert field_names == {"uuid", "timestamp"}
+
+    def test_turn_dataclass_removed(self) -> None:
+        """Turn dataclass should no longer exist after migration to Step."""
+        import pytest
+
+        with pytest.raises(ImportError):
+            from ragzoom_claude_code.transcript_sync import Turn  # noqa: F401
