@@ -83,6 +83,22 @@ class Turn:
     """ISO 8601 timestamp of the last message in the turn."""
 
 
+@dataclass
+class Step:
+    """A single conversation step with timestamp.
+
+    Each step is one JSONL record that passes filtering. Unlike Turn which
+    groups multiple messages, Step represents a single point-in-time message
+    with time_start = time_end = timestamp.
+    """
+
+    uuid: str
+    """UUID of the message for this step."""
+
+    timestamp: str
+    """ISO 8601 timestamp of this step."""
+
+
 def _is_command_output_or_expansion(
     record: dict[str, object], records_by_uuid: dict[str, dict[str, object]]
 ) -> bool:
