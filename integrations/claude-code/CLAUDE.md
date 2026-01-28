@@ -13,9 +13,9 @@ This package provides Claude Code with access to pre-compaction conversation his
 
 ## Key Concepts
 
-### Turn-Level Granularity
+### Step-Level Granularity
 
-Messages are grouped into "turns" - a user prompt through the assistant's complete response cycle. Each turn becomes one leaf node with temporal metadata (`time_start`, `time_end`). This enables time-based queries like "what did we discuss yesterday?"
+A "step" is any user or assistant message (excluding meta records, compaction summaries, and queue operations). Each step becomes its own leaf node with `time_start = time_end = record.timestamp`. This enables precise temporal queries - the `recall` tool can zoom to specific messages rather than being limited to coarser conversation chunks.
 
 ### Revert Detection
 
@@ -25,7 +25,7 @@ Claude Code supports branching - users can revert to earlier points and take dif
 2. Finds the common ancestor between the last indexed uuid and current head
 3. If the ancestor is before the last indexed point, truncates the document and re-syncs
 
-Turn-level tracking means if a revert falls *within* a turn (not at a boundary), we truncate the entire turn rather than keeping partial content.
+With step-level tracking, every record is a valid truncation point - no special boundary detection needed.
 
 ### MCP Server
 

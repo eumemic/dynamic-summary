@@ -161,11 +161,12 @@ Replace turn-based transcript chunking with step-based chunking. Currently, mess
 
 ### Phase 6: Documentation Updates
 
-- [ ] Update `integrations/claude-code/CLAUDE.md` - Turn-Level Granularity section
+- [x] Update `integrations/claude-code/CLAUDE.md` - Turn-Level Granularity section
   - Spec: specs/step-level-chunking.md (implied)
   - Success: Documentation refers to "step-level" granularity instead of "turn-level"
   - Test: Manual review
   - Location: integrations/claude-code/CLAUDE.md:15-22
+  - Done: Updated section title to "Step-Level Granularity", rewrote content to explain each record becomes its own leaf with point-in-time timestamps, and updated revert detection section to reflect no boundary detection needed.
 
 ## Verification
 
