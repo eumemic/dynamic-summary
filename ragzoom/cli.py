@@ -1112,56 +1112,47 @@ def status(ctx: click.Context, server_address: str | None) -> None:
 
 @cli.command()
 @click.argument("document_id")
-@click.pass_context
-def cost(ctx: click.Context, document_id: str) -> None:
+@click.option(
+    "--server-address",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default=None,
+    show_default=False,
+    help=GRPC_ADDRESS_HELP,
+)
+def cost(document_id: str, server_address: str | None) -> None:
     """Display cost statistics for a document.
 
-    Shows total indexing cost, node counts, and per-token/per-node metrics.
+    Shows total indexing cost, node counts, and per-node metrics.
+
+    Spec: specs/grpc-cli-architecture.md § Commands Requiring Migration
 
     Examples:
       ragzoom cost my-document
       ragzoom cost e0d9b972-3bad-472f-a570-a4e02d0a1ff4
     """
     try:
-        operational_config = ctx.obj["operational_config"]
-        index_config: IndexConfig = ctx.obj["index_config"]
+        resolved_address = _resolve_server_address_with_autostart(server_address)
 
-        store = create_store_with_docker(
-            operational_config, embedding_model=index_config.embedding_model
-        )
+        with GrpcRagzoomClient(resolved_address) as client:
+            stats_list = client.get_cost_stats(document_id)
 
-        # Get document store and verify it exists
-        doc_store = store.for_document(document_id)
-        doc_meta = doc_store.get_metadata()
-        if doc_meta is None:
+        if not stats_list:
             click.echo(f"Document '{document_id}' not found.", err=True)
             sys.exit(1)
 
-        # Get cost stats from the repository
-        total_cost, total_nodes, leaf_nodes, summary_nodes = (
-            doc_store.nodes._repo.get_cost_stats(document_id)
-        )
-
-        # Get source tokens from leaves
-        source_tokens = 0
-        for leaf in doc_store.nodes.get_leaves():
-            source_tokens += leaf.token_count
-
-        click.echo(f"\nDocument: {document_id}")
-        click.echo(f"Source tokens: {source_tokens:,}")
+        stats = stats_list[0]
+        click.echo(f"\nDocument: {stats.document_id}")
         click.echo(
-            f"Total nodes: {total_nodes:,} ({leaf_nodes:,} leaves, {summary_nodes:,} summaries)"
+            f"Total nodes: {stats.total_nodes:,} "
+            f"({stats.leaf_nodes:,} leaves, {stats.summary_nodes:,} summaries)"
         )
         click.echo()
 
-        if total_cost > 0:
-            click.echo(f"Total cost:           ${total_cost:.4f}")
-            if source_tokens > 0:
-                cost_per_1m = (total_cost / source_tokens) * 1_000_000
-                click.echo(f"Per 1M source tokens: ${cost_per_1m:.2f}")
-            if total_nodes > 0:
-                cost_per_node = total_cost / total_nodes
-                click.echo(f"Per node (avg):       ${cost_per_node:.6f}")
+        if stats.total_cost > 0:
+            click.echo(f"Total cost:     ${stats.total_cost:.4f}")
+            if stats.total_nodes > 0:
+                cost_per_node = stats.total_cost / stats.total_nodes
+                click.echo(f"Per node (avg): ${cost_per_node:.6f}")
         else:
             click.echo("No cost data recorded for this document.")
             click.echo("(Cost tracking was added after this document was indexed)")

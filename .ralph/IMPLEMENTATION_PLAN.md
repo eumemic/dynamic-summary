@@ -293,17 +293,17 @@ Migrate CLI commands from direct DB access to gRPC client calls.
 
 ### 4.4 Migrate `cost` Command
 
-- [ ] Replace node_repo.get_cost_stats() with gRPC client.get_cost_stats()
+- [x] Replace node_repo.get_cost_stats() with gRPC client.get_cost_stats()
   - Spec: specs/grpc-cli-architecture.md § Commands Requiring Migration
   - Success: `ragzoom cost doc` works against running server
   - Test: test_cli_cost_uses_grpc (new)
-  - Location: ragzoom/cli.py:1197-1251
+  - Location: ragzoom/cli.py:1113-1158
 
-- [ ] Add --server-address option to `cost` command
+- [x] Add --server-address option to `cost` command
   - Spec: specs/grpc-cli-architecture.md § Shared Server Option
   - Success: Option accepts host:port, defaults to localhost:50051
   - Test: test_cli_cost_server_option (new)
-  - Location: ragzoom/cli.py:1195-1197
+  - Location: ragzoom/cli.py:1115-1120
 
 ---
 
