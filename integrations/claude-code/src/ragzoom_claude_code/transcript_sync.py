@@ -281,6 +281,55 @@ def find_truncation_point(
     return (None, head_uuid)
 
 
+def find_entries_after_time(
+    head_uuid: str,
+    records: dict[str, dict[str, object]],
+    parent_map: dict[str, str | None],
+    cutoff_time: datetime,
+) -> list[str]:
+    """Walk backward from head, collect UUIDs with timestamp > cutoff_time.
+
+    Used in append-only mode to find entries newer than the indexed time_end
+    without performing revert detection.
+
+    Args:
+        head_uuid: UUID of the current transcript head
+        records: UUID -> record mapping (must include timestamp)
+        parent_map: UUID -> parentUuid mapping for chain traversal
+        cutoff_time: Only include records with timestamp > cutoff_time.
+            Must be timezone-aware to match parsed record timestamps.
+
+    Returns:
+        List of UUIDs with timestamp > cutoff_time, in chronological order
+        (oldest first) for appending.
+    """
+    chain: list[str] = []
+    current: str | None = head_uuid
+
+    while current is not None:
+        record = records.get(current)
+        if record is None:
+            break
+
+        timestamp_str = record.get("timestamp")
+        if isinstance(timestamp_str, str):
+            try:
+                record_time = _parse_timestamp(timestamp_str)
+                if record_time <= cutoff_time:
+                    # Reached indexed content, stop here
+                    break
+            except ValueError:
+                # Invalid timestamp - include it anyway since we can't compare
+                pass
+
+        chain.append(current)
+        current = parent_map.get(current)
+
+    # Reverse to get chronological order (oldest first)
+    chain.reverse()
+    return chain
+
+
 def build_ancestry_chain(
     head_uuid: str,
     stop_uuid: str | None,
@@ -665,6 +714,8 @@ def execute_sync(
     transcript_path: Path,
     document_id: str,
     client: object,
+    *,
+    append_only: bool = False,
 ) -> SyncResult:
     """Execute a complete sync operation using stateless algorithm.
 
@@ -679,6 +730,9 @@ def execute_sync(
         document_id: Document ID to sync to (typically the transcript filename stem)
         client: RagZoom client with get_document_status(), batch_append(),
                 and truncate_from_time() methods
+        append_only: If True, skip revert detection and simply append entries
+                newer than the document's time_end. Faster for linear transcripts
+                without branching.
 
     Returns:
         SyncResult describing what was done
@@ -710,20 +764,36 @@ def execute_sync(
     # Build parent map with compaction bridging for ancestry traversal
     parent_map = build_parent_map(transcript_path)
 
-    # Find truncation point using sliding window algorithm
-    r_uuid, s_uuid = find_truncation_point(current_head, records, indexed_time_end)
+    # Fork logic based on append_only mode
+    truncate_cutoff_time: str | None = None
 
-    # Build list of UUIDs to append (using parent_map to bridge compactions)
-    uuids_to_append = (
-        []
-        if s_uuid is None
-        else build_ancestry_chain(current_head, r_uuid, records, parent_map)
-    )
+    if append_only:
+        # Append-only mode: skip revert detection, just find entries after time_end
+        if indexed_time_end is None:
+            # First sync - include everything from head to root
+            uuids_to_append = build_ancestry_chain(
+                current_head, None, records, parent_map
+            )
+        else:
+            # Find entries newer than indexed_time_end
+            uuids_to_append = find_entries_after_time(
+                current_head, records, parent_map, indexed_time_end
+            )
+    else:
+        # Revert-aware mode: full truncation detection
+        r_uuid, s_uuid = find_truncation_point(current_head, records, indexed_time_end)
 
-    # Detect and handle revert (returns cutoff time if truncation occurred)
-    truncate_cutoff_time = _handle_revert_detection(
-        r_uuid, indexed_time_end, records, client, document_id
-    )
+        # Build list of UUIDs to append (using parent_map to bridge compactions)
+        uuids_to_append = (
+            []
+            if s_uuid is None
+            else build_ancestry_chain(current_head, r_uuid, records, parent_map)
+        )
+
+        # Detect and handle revert (returns cutoff time if truncation occurred)
+        truncate_cutoff_time = _handle_revert_detection(
+            r_uuid, indexed_time_end, records, client, document_id
+        )
 
     if not uuids_to_append:
         # Nothing to append
