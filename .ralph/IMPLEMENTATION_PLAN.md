@@ -25,11 +25,11 @@ Replace turn-based transcript chunking with step-based chunking. Currently, mess
 
 ### Phase 2: New Step-Based Functions
 
-- [ ] Implement `_should_include_record()` helper
+- [x] Implement `_should_include_record()` helper
   - Spec: specs/step-level-chunking.md § What is a "Step"?
   - Success: Function returns True for user/assistant messages, False for queue-operation/isCompactSummary/isMeta
   - Test: `test_filter_to_steps.py::TestShouldIncludeRecord`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (new function near line 331)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:101-138
 
 - [ ] Implement `filter_to_steps()` function
   - Spec: specs/step-level-chunking.md § 2. Replace `group_into_turns()` with `filter_to_steps()`
