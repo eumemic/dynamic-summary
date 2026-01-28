@@ -29,15 +29,12 @@ from ragzoom.client.grpc_client import (
     ValidationResult,
     WorkerRunSnapshot,
 )
-from ragzoom.exceptions import InvalidOperationError
-from ragzoom.services.document_service import DocumentInfo, SystemStatus
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.services.query_service import QueryResult
 
 
 class CliMocks(TypedDict):
     store: MagicMock
-    document_service: MagicMock
     grpc_client: MagicMock
     vector_index: MagicMock
 
@@ -53,7 +50,6 @@ def cli_mocks() -> Iterator[CliMocks]:
     """Patch expensive dependencies and provide reusable fakes."""
     with (
         patch("ragzoom.cli.create_store_with_docker") as mock_create_store,
-        patch("ragzoom.cli.DocumentService") as mock_document_service,
         patch("ragzoom.cli.GrpcRagzoomClient") as mock_grpc_client_cls,
         patch("ragzoom.vector_factory.create_vector_index") as mock_create_vector_index,
         patch("ragzoom.cli.socket.create_connection"),  # Mock TCP check
@@ -72,26 +68,6 @@ def cli_mocks() -> Iterator[CliMocks]:
         doc_store.nodes.get_leaves.return_value = [MagicMock() for _ in range(5)]
         store.for_document.return_value = doc_store
         mock_create_store.return_value = store
-
-        # Document service behaviour
-        document_service = MagicMock(name="document_service")
-        document_service.get_system_status.return_value = SystemStatus(
-            total_nodes=10,
-            leaf_nodes=5,
-            tree_depth=3,
-            pinned_nodes=0,
-        )
-        document_service.list_documents.return_value = [
-            DocumentInfo(
-                document_id="doc-123",
-                file_path="/path/to/file.txt",
-                indexed_at=datetime(2023, 1, 1),
-                node_count=15,
-            )
-        ]
-        document_service.clear_document.return_value = 10
-        document_service.clear_all_documents.return_value = 50
-        mock_document_service.return_value = document_service
 
         # Vector index stubbed for clear command side effects
         vector_index = MagicMock(name="vector_index")
@@ -202,7 +178,6 @@ def cli_mocks() -> Iterator[CliMocks]:
 
         yield CliMocks(
             store=store,
-            document_service=document_service,
             grpc_client=grpc_client,
             vector_index=vector_index,
         )
@@ -238,7 +213,7 @@ def test_cli_status_uses_grpc(
 
     assert result.exit_code == 0
     cli_mocks["grpc_client"].get_system_status.assert_called_once()
-    cli_mocks["document_service"].get_system_status.assert_not_called()
+    # DocumentService is no longer used by CLI (removed with pin command)
     assert "SYSTEM STATUS" in result.output
     assert "Total nodes: 10" in result.output
     assert "Leaf nodes: 5" in result.output
@@ -445,23 +420,6 @@ def test_query_time_window_defaults_to_none(
     call = cli_mocks["grpc_client"].execute_query.call_args
     assert call.kwargs["time_start"] is None
     assert call.kwargs["time_end"] is None
-
-
-def test_pin_command(runner: CliRunner, cli_mocks: CliMocks, api_key: None) -> None:
-    result = runner.invoke(cli, ["pin", "node-123"])
-    assert result.exit_code == 0
-    cli_mocks["document_service"].pin_node.assert_called_once_with("node-123")
-
-
-def test_pin_command_failure(
-    runner: CliRunner, cli_mocks: CliMocks, api_key: None
-) -> None:
-    cli_mocks["document_service"].pin_node.side_effect = InvalidOperationError(
-        "pin_node", "Node is already pinned"
-    )
-    result = runner.invoke(cli, ["pin", "node-999"])
-    assert result.exit_code == 1
-    assert "Failed to pin node node-999" in result.output
 
 
 def test_clear_specific_document(
@@ -1114,7 +1072,7 @@ def test_documents_uses_grpc(
 
     assert result.exit_code == 0
     cli_mocks["grpc_client"].list_documents.assert_called_once()
-    cli_mocks["document_service"].list_documents.assert_not_called()
+    # DocumentService is no longer used by CLI (removed with pin command)
     assert "doc-123" in result.output
     assert "Total nodes: 15" in result.output
     assert "Leaf nodes: 5" in result.output
