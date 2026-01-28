@@ -40,6 +40,9 @@ class SQLiteTreeNode(TreeNodeColumnsMixin, SqliteBase):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str | None] = mapped_column(String, nullable=True)
     parent_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # DEPRECATED: Pin functionality was removed. Column retained for backwards
+    # compatibility with existing databases. Do not use in new code. Will be
+    # removed in a future database migration.
     is_pinned: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime, default=lambda: dt.datetime.now(dt.timezone.utc)

@@ -397,13 +397,13 @@ Remove obsolete pin functionality. Non-blocking, can be done in parallel with ot
 Note: Full database migration to remove is_pinned column deferred to future work.
 These items track code that references the column but can remain until migration.
 
-- [ ] Document is_pinned column as deprecated in models.py
+- [x] Document is_pinned column as deprecated in models.py
   - Spec: specs/grpc-cli-architecture.md § Pin Command Removal
   - Success: Comment added noting deprecation
   - Test: N/A (documentation only)
   - Location: ragzoom/models.py:67
 
-- [ ] Document is_pinned column as deprecated in sqlite_db.py
+- [x] Document is_pinned column as deprecated in sqlite_db.py
   - Spec: specs/grpc-cli-architecture.md § Pin Command Removal
   - Success: Comment added noting deprecation
   - Test: N/A (documentation only)
