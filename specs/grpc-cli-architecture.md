@@ -1,5 +1,5 @@
 ---
-status: READY
+status: COMPLETE
 ---
 
 # gRPC CLI Architecture
