@@ -755,13 +755,17 @@ def execute_sync(
             steps_appended=0,
         )
 
-    # Batch append all units with conversation-specific summarization guidance
+    # Batch append in chunks to avoid gRPC timeout on large syncs.
+    # Each chunk completes within the default 30s timeout.
+    chunk_size = 200
     batch_append = getattr(client, "batch_append")
-    batch_append(
-        document_id,
-        non_empty,
-        summarization_guidance=CONVERSATION_SUMMARIZATION_GUIDANCE,
-    )
+    for i in range(0, len(non_empty), chunk_size):
+        chunk = non_empty[i : i + chunk_size]
+        batch_append(
+            document_id,
+            chunk,
+            summarization_guidance=CONVERSATION_SUMMARIZATION_GUIDANCE,
+        )
 
     return SyncResult(
         document_id=document_id,
