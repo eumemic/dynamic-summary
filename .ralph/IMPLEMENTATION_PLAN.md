@@ -31,11 +31,11 @@ Replace turn-based transcript chunking with step-based chunking. Currently, mess
   - Test: `test_filter_to_steps.py::TestShouldIncludeRecord`
   - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:101-138
 
-- [ ] Implement `filter_to_steps()` function
+- [x] Implement `filter_to_steps()` function
   - Spec: specs/step-level-chunking.md § 2. Replace `group_into_turns()` with `filter_to_steps()`
   - Success: Function takes `(uuids, records_by_uuid)` and returns `list[Step]` filtering to user/assistant messages
   - Test: `test_filter_to_steps.py::TestFilterToSteps`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py (new function)
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:134-165
 
 - [ ] Implement `steps_to_append_units()` function
   - Spec: specs/step-level-chunking.md § 3. Replace `turns_to_append_units()` with `steps_to_append_units()`
