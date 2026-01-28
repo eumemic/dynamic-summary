@@ -131,6 +131,36 @@ def _should_include_record(record: dict[str, object]) -> bool:
     return True
 
 
+def filter_to_steps(
+    uuids: list[str],
+    records_by_uuid: dict[str, dict[str, object]],
+) -> list[Step]:
+    """Filter UUIDs to steps (user/assistant messages only).
+
+    Each JSONL record that passes _should_include_record() becomes its own Step
+    with a point-in-time timestamp. This enables fine-grained temporal retrieval.
+
+    Args:
+        uuids: Message UUIDs in chronological order
+        records_by_uuid: UUID -> record mapping
+
+    Returns:
+        List of Step objects for records that pass filtering
+    """
+    steps: list[Step] = []
+    for uuid in uuids:
+        record = records_by_uuid.get(uuid)
+        if record is None:
+            continue
+        if not _should_include_record(record):
+            continue
+        timestamp = record.get("timestamp")
+        if not isinstance(timestamp, str):
+            continue
+        steps.append(Step(uuid=uuid, timestamp=timestamp))
+    return steps
+
+
 def _is_command_output_or_expansion(
     record: dict[str, object], records_by_uuid: dict[str, dict[str, object]]
 ) -> bool:
