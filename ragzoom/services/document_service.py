@@ -28,7 +28,6 @@ class SystemStatus:
     total_nodes: int
     leaf_nodes: int
     tree_depth: int
-    pinned_nodes: int
 
 
 @dataclass
@@ -97,20 +96,17 @@ class DocumentService:
         total_nodes = 0
         leaf_nodes = 0
         tree_depth = 0
-        pinned_nodes = 0
         for doc in self.store.list_documents():
             ds = self.store.for_document(doc.id)
             # Use repository-level aggregations when available
             total_nodes += ds.nodes.count()
             leaf_nodes += ds.nodes.leaf_count()
             tree_depth = max(tree_depth, ds.nodes.max_height())
-            pinned_nodes += ds.nodes.pinned_count()
 
         return SystemStatus(
             total_nodes=total_nodes,
             leaf_nodes=leaf_nodes,
             tree_depth=tree_depth,
-            pinned_nodes=pinned_nodes,
         )
 
     def clear_document(self, document_id: str) -> int:

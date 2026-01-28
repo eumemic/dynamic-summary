@@ -421,7 +421,6 @@ class SystemStatusResponse(BaseModel):  # type: ignore[explicit-any]
     total_nodes: int
     leaf_nodes: int
     tree_depth: int
-    pinned_nodes: int
     config: SystemConfigDict
 
 
@@ -879,7 +878,6 @@ async def get_status(
         total_nodes=status.total_nodes,
         leaf_nodes=status.leaf_nodes,
         tree_depth=status.tree_depth,
-        pinned_nodes=status.pinned_nodes,
         config={
             "index": cast(IndexConfigDict, asdict(services.index_config)),
             "query": cast(QueryConfigDict, asdict(services.query_config)),

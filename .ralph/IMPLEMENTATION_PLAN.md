@@ -379,17 +379,18 @@ Remove obsolete pin functionality. Non-blocking, can be done in parallel with ot
 
 ### 6.3 Remove SystemStatus pinned_nodes Field
 
-- [ ] Remove pinned_nodes from SystemStatus dataclass
+- [x] Remove pinned_nodes from SystemStatus dataclass
   - Spec: specs/grpc-cli-architecture.md § Pin Command Removal
   - Success: Field removed from dataclass
   - Test: test_system_status_no_pinned_nodes (new)
-  - Location: ragzoom/services/document_service.py:27-33
+  - Location: ragzoom/services/document_service.py:27-30
+  - Also updated: ragzoom/api.py (SystemStatusResponse and get_status endpoint), tests/test_service_layer.py
 
-- [ ] Remove pinned_nodes aggregation from get_system_status()
+- [x] Remove pinned_nodes aggregation from get_system_status()
   - Spec: specs/grpc-cli-architecture.md § Pin Command Removal
   - Success: No pinned_count() call in get_system_status
   - Test: test_system_status_no_pinned_nodes
-  - Location: ragzoom/services/document_service.py:97-116
+  - Location: ragzoom/services/document_service.py:95-109
 
 ### 6.4 Remove Database Pin Column (Future Migration)
 

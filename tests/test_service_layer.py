@@ -33,6 +33,17 @@ class TestDocumentService:
             DocumentService, "pin_node"
         ), "pin_node method should be removed from DocumentService"
 
+    def test_system_status_no_pinned_nodes(self) -> None:
+        """Test that SystemStatus dataclass no longer has pinned_nodes field.
+
+        The pin functionality is obsolete as documented in specs/grpc-cli-architecture.md.
+        This test ensures the field stays removed from SystemStatus.
+        """
+        # Verify field is not in SystemStatus dataclass
+        assert (
+            "pinned_nodes" not in SystemStatus.__dataclass_fields__
+        ), "pinned_nodes field should be removed from SystemStatus"
+
     def test_list_documents(self, storage_backend: StorageBackend) -> None:
         """Test listing documents returns formatted results using backend."""
         # Setup a document with nodes
@@ -93,8 +104,6 @@ class TestDocumentService:
                 for i in range(5)
             ]
             ds.nodes.add_batch(nodes)  # type: ignore[arg-type]
-        # Pin a node
-        storage_backend.node_repo.pin_node("doc-a-leaf-0")  # type: ignore[attr-defined]
 
         service = DocumentService(storage_backend)
         status = service.get_system_status()
@@ -103,7 +112,6 @@ class TestDocumentService:
         assert status.total_nodes >= 10
         assert status.leaf_nodes >= 10
         assert status.tree_depth >= 0
-        assert status.pinned_nodes >= 1
 
     def test_clear_document(self) -> None:
         """Test clearing a document."""
