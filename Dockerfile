@@ -28,16 +28,16 @@ COPY . .
 # Install project (postgres and chroma are already in lockfile)
 RUN pip install -e '.[chroma,postgres]'
 
-# Default environment vars (Railway will override DATABASE_URL)
+# Default environment vars
 ENV PYTHONUNBUFFERED=1 \
     RAGZOOM_BACKEND=postgres
 
 # Create data dir (will be mounted as volume at runtime)
 RUN mkdir -p /data
 
-# Expose gRPC port (Railway overrides via PORT env var)
+# Expose gRPC port
 EXPOSE 50051
 
-# Use shell form to expand PORT env var (Railway sets this dynamically)
+# Use shell form to expand PORT env var
 CMD python -m ragzoom.cli server start --host 0.0.0.0 --port ${PORT:-50051} --collect-telemetry
 

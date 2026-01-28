@@ -716,7 +716,7 @@ class OperationalConfig:
         elif url.startswith("postgresql") or url.startswith("postgres"):
             self.backend = "postgres"
             # Convert postgresql:// to postgresql+psycopg:// for psycopg3 compatibility
-            # Railway and other providers use postgresql:// which defaults to psycopg2
+            # Some providers use postgresql:// which defaults to psycopg2
             if self.database_url.startswith("postgresql://"):
                 self.database_url = self.database_url.replace(
                     "postgresql://", "postgresql+psycopg://", 1
