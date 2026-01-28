@@ -67,47 +67,52 @@ Replace turn-based transcript chunking with step-based chunking. Currently, mess
 
 ### Phase 4: Removal of Dead Code
 
-- [ ] Remove `Turn` dataclass
+- [x] Remove `Turn` dataclass
   - Spec: specs/step-level-chunking.md § Code to Remove
   - Success: `Turn` class no longer exists in codebase
   - Test: Import should fail: `from ragzoom_claude_code.transcript_sync import Turn`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:67-84
+  - Done: Removed in batch with all dependent code. Added test `test_step_dataclass.py::test_turn_dataclass_removed` to verify import fails.
 
-- [ ] Remove `group_into_turns()` function
+- [x] Remove `group_into_turns()` function
   - Spec: specs/step-level-chunking.md § Code to Remove
   - Success: Function no longer exists
   - Test: Import should fail: `from ragzoom_claude_code.transcript_sync import group_into_turns`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:349-404
+  - Done: Removed in batch with Turn dataclass (tightly coupled).
 
-- [ ] Remove `turns_to_append_units()` function
+- [x] Remove `turns_to_append_units()` function
   - Spec: specs/step-level-chunking.md § Code to Remove
   - Success: Function no longer exists
   - Test: Import should fail: `from ragzoom_claude_code.transcript_sync import turns_to_append_units`
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:492-521
+  - Done: Removed in batch with Turn dataclass (tightly coupled).
 
-- [ ] Remove `_build_turn()` helper function
+- [x] Remove `_build_turn()` helper function
   - Spec: specs/step-level-chunking.md § Code to Remove
   - Success: Function no longer exists
   - Test: No references to `_build_turn` in codebase
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:456-489
+  - Done: Removed in batch with Turn dataclass (only caller).
 
-- [ ] Remove `_is_user_prompt()` helper function
+- [x] Remove `_is_user_prompt()` helper function
   - Spec: specs/step-level-chunking.md § Code to Remove
   - Success: Function no longer exists
   - Test: No references to `_is_user_prompt` in codebase
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:121-132
+  - Done: Removed in batch with Turn dataclass (only used by group_into_turns).
 
-- [ ] Remove `is_user_message()` function
+- [x] Remove `is_user_message()` function
   - Spec: specs/step-level-chunking.md § Code to Remove
   - Success: Function no longer exists (verify not used elsewhere first)
   - Test: Import should fail, no other usages
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:135-165
+  - Done: Removed in batch - was already unused after find_truncation_point simplification.
 
-- [ ] Remove `_is_command_output_or_expansion()` helper function
+- [x] Remove `_is_command_output_or_expansion()` helper function
   - Spec: specs/step-level-chunking.md § Code to Remove
   - Success: Function no longer exists
   - Test: No references to `_is_command_output_or_expansion` in codebase
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:86-118
+  - Done: Removed in batch with Turn dataclass (only used by _is_user_prompt).
+
+**Note:** Also removed additional dead code discovered during cleanup:
+- `_should_skip_record()` - only used by group_into_turns()
+- `_get_record_timestamp()` - only used by _build_turn()
+- `_extract_segment_timestamps()` - defined but never called
 
 ### Phase 5: Test Updates
 
