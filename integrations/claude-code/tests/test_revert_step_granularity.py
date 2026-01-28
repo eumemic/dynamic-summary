@@ -277,11 +277,9 @@ class TestRevertDetectionAtStepGranularity:
         assert truncate_time == "2024-01-01T10:02:30Z"
 
         # In this edge case, the ancestry chain from msg4-alt to msg3-alt (exclusive)
-        # is just [msg4-alt]. Since msg4-alt is assistant-type and execute_sync()
-        # still uses turn-based grouping (requires user message to start a turn),
-        # no content is appended. This will be fixed when execute_sync() is updated
-        # to use step-based functions.
-        assert result2.steps_appended == 0
+        # is just [msg4-alt]. With step-based functions, msg4-alt (assistant type)
+        # becomes its own step and is appended.
+        assert result2.steps_appended == 1
 
     def test_revert_preserves_untouched_content(self, tmp_path: Path) -> None:
         """Content before the connection point should remain indexed.

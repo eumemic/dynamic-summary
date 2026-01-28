@@ -216,8 +216,8 @@ class TestExecuteSyncUsesBatchAppend:
             assert unit.time_end is not None, "AppendUnit should have time_end"
             assert unit.is_temporal is True
 
-    def test_each_turn_becomes_one_append_unit(self, tmp_path: Path) -> None:
-        """Each conversation turn should become exactly one AppendUnit."""
+    def test_each_step_becomes_one_append_unit(self, tmp_path: Path) -> None:
+        """Each conversation step (message) should become exactly one AppendUnit."""
         client = MockClient()
 
         transcript_path = tmp_path / "transcript.jsonl"
@@ -226,23 +226,25 @@ class TestExecuteSyncUsesBatchAppend:
         transcript_path.write_text(
             "\n".join(
                 [
-                    # Turn 1
+                    # Step 1: user message
                     json.dumps(
                         make_user_message(
                             "msg1", None, "2024-01-21T14:30:00Z", "First question"
                         )
                     ),
+                    # Step 2: assistant message
                     json.dumps(
                         make_assistant_message(
                             "msg2", "msg1", "2024-01-21T14:30:05Z", "First answer"
                         )
                     ),
-                    # Turn 2
+                    # Step 3: user message
                     json.dumps(
                         make_user_message(
                             "msg3", "msg2", "2024-01-21T14:31:00Z", "Second question"
                         )
                     ),
+                    # Step 4: assistant message
                     json.dumps(
                         make_assistant_message(
                             "msg4", "msg3", "2024-01-21T14:31:10Z", "Second answer"
@@ -257,15 +259,20 @@ class TestExecuteSyncUsesBatchAppend:
 
         assert len(client.batch_append_calls) == 1
         _, units, _ = client.batch_append_calls[0]
-        assert len(units) == 2, "Each turn should become one AppendUnit"
+        assert len(units) == 4, "Each step should become one AppendUnit"
 
+        # Each step has point-in-time timestamps (time_start == time_end)
         assert units[0].time_start == "2024-01-21T14:30:00Z"
-        assert units[0].time_end == "2024-01-21T14:30:05Z"
-        assert units[1].time_start == "2024-01-21T14:31:00Z"
-        assert units[1].time_end == "2024-01-21T14:31:10Z"
+        assert units[0].time_end == "2024-01-21T14:30:00Z"
+        assert units[1].time_start == "2024-01-21T14:30:05Z"
+        assert units[1].time_end == "2024-01-21T14:30:05Z"
+        assert units[2].time_start == "2024-01-21T14:31:00Z"
+        assert units[2].time_end == "2024-01-21T14:31:00Z"
+        assert units[3].time_start == "2024-01-21T14:31:10Z"
+        assert units[3].time_end == "2024-01-21T14:31:10Z"
 
-    def test_turn_content_is_correctly_transcribed(self, tmp_path: Path) -> None:
-        """Each turn's AppendUnit should contain transcribed content from all messages."""
+    def test_step_content_is_correctly_transcribed(self, tmp_path: Path) -> None:
+        """Each step's AppendUnit should contain transcribed content from that message."""
         client = MockClient()
 
         transcript_path = tmp_path / "transcript.jsonl"
@@ -298,9 +305,10 @@ class TestExecuteSyncUsesBatchAppend:
         execute_sync(transcript_path, document_id, client)
 
         _, units, _ = client.batch_append_calls[0]
-        assert len(units) == 1
-        assert "XYZ123" in units[0].text, "User content should be in turn text"
-        assert "ABC456" in units[0].text, "Assistant content should be in turn text"
+        # With step-level chunking, each message is its own unit
+        assert len(units) == 2
+        assert "XYZ123" in units[0].text, "User content should be in first step"
+        assert "ABC456" in units[1].text, "Assistant content should be in second step"
 
     def test_incremental_sync_uses_batch_append(self, tmp_path: Path) -> None:
         """Incremental syncs should also use batch_append."""
