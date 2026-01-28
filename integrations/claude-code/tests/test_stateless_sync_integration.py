@@ -278,7 +278,7 @@ class TestStatelessSyncIntegration:
 
         # Verify sync succeeded
         assert result.document_id == document_id
-        assert result.turns_appended >= 1
+        assert result.steps_appended >= 1
 
         # Verify no state files were created
         # State files would be in RAGZOOM_STATE_DIR or alongside transcript
@@ -334,7 +334,7 @@ class TestStatelessSyncIntegration:
         )
 
         result1 = execute_sync(transcript_path, document_id, client)
-        assert result1.turns_appended >= 1
+        assert result1.steps_appended >= 1
         assert not result1.truncated
 
         # Append new turn to transcript
@@ -384,7 +384,7 @@ class TestStatelessSyncIntegration:
 
         # Sync again - should append new content
         result2 = execute_sync(transcript_path, document_id, client)
-        assert result2.turns_appended >= 1
+        assert result2.steps_appended >= 1
         assert not result2.truncated
 
         # Verify document has content from both syncs
@@ -446,7 +446,7 @@ class TestStatelessSyncIntegration:
         )
 
         result1 = execute_sync(transcript_path, document_id, client)
-        assert result1.turns_appended >= 1
+        assert result1.steps_appended >= 1
 
         # Simulate revert: user went back to msg2 and created new branch
         # msg3, msg4 are orphaned; msg5, msg6 are the new branch
@@ -512,7 +512,7 @@ class TestStatelessSyncIntegration:
         assert result2.truncated
         assert result2.truncate_cutoff_time is not None
         # Should have appended new branch
-        assert result2.turns_appended >= 1
+        assert result2.steps_appended >= 1
 
     def test_sync_mid_turn_revert(
         self, sqlite_backend: SQLiteStorageBackend, tmp_path: Path
@@ -577,7 +577,7 @@ class TestStatelessSyncIntegration:
         )
 
         result1 = execute_sync(transcript_path, document_id, client)
-        assert result1.turns_appended >= 1
+        assert result1.steps_appended >= 1
 
         # Revert mid-turn: from msg3 (start of turn 2) with different response
         transcript_path.write_text(
@@ -650,7 +650,7 @@ class TestStatelessSyncIntegration:
         # Should detect revert and truncate
         assert result2.truncated
         # Should append the new turn
-        assert result2.turns_appended >= 1
+        assert result2.steps_appended >= 1
 
     def test_sync_first_sync(
         self, sqlite_backend: SQLiteStorageBackend, tmp_path: Path
@@ -711,7 +711,7 @@ class TestStatelessSyncIntegration:
         result = execute_sync(transcript_path, document_id, client)
 
         # Should have indexed all turns
-        assert result.turns_appended >= 1
+        assert result.steps_appended >= 1
         assert not result.truncated  # No truncation on first sync
 
         # Verify document now exists with content
@@ -758,7 +758,7 @@ class TestStatelessSyncIntegration:
 
         # First sync
         result1 = execute_sync(transcript_path, document_id, client)
-        assert result1.turns_appended >= 1
+        assert result1.steps_appended >= 1
 
         # Get state after first sync
         store = sqlite_backend.for_document(document_id)
@@ -769,7 +769,7 @@ class TestStatelessSyncIntegration:
         result2 = execute_sync(transcript_path, document_id, client)
 
         # Should be a no-op (or minimal operation)
-        assert result2.turns_appended == 0  # Nothing new to append
+        assert result2.steps_appended == 0  # Nothing new to append
         assert not result2.truncated  # No truncation needed
 
         # Verify no duplicates
@@ -830,7 +830,7 @@ class TestStatelessSyncIntegration:
 
         # First sync succeeds
         result1 = execute_sync(transcript_path, document_id, client)
-        assert result1.turns_appended >= 1
+        assert result1.steps_appended >= 1
 
         # Simulate "crash" by simply running sync again
         # In the old state-file approach, losing state would cause issues
@@ -844,7 +844,7 @@ class TestStatelessSyncIntegration:
         result2 = execute_sync(transcript_path, document_id, client2)
 
         # Should be idempotent - no new turns to append
-        assert result2.turns_appended == 0
+        assert result2.steps_appended == 0
         assert not result2.truncated
 
         # Add more content and sync again
@@ -901,5 +901,5 @@ class TestStatelessSyncIntegration:
 
         # Sync with new content
         result3 = execute_sync(transcript_path, document_id, client2)
-        assert result3.turns_appended >= 1  # New content appended
+        assert result3.steps_appended >= 1  # New content appended
         assert not result3.truncated  # No revert, just append

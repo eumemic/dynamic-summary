@@ -263,7 +263,7 @@ class TestTurnBasedBatching:
         result = execute_sync(transcript_path, document_id, client)
 
         # Should have appended both turns
-        assert result.turns_appended == 2
+        assert result.steps_appended == 2
 
         # Should have batch appended
         assert len(client.batch_append_calls) == 1

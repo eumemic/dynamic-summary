@@ -820,8 +820,8 @@ class SyncResult:
     truncate_cutoff_time: str | None
     """ISO 8601 timestamp used for truncation, if truncated is True."""
 
-    turns_appended: int
-    """Number of conversation turns appended to the document."""
+    steps_appended: int
+    """Number of conversation steps appended to the document."""
 
 
 def _handle_revert_detection(
@@ -903,7 +903,7 @@ def execute_sync(
             document_id=document_id,
             truncated=False,
             truncate_cutoff_time=None,
-            turns_appended=0,
+            steps_appended=0,
         )
 
     # Get indexed state from RagZoom document status
@@ -942,7 +942,7 @@ def execute_sync(
             document_id=document_id,
             truncated=truncate_cutoff_time is not None,
             truncate_cutoff_time=truncate_cutoff_time,
-            turns_appended=0,
+            steps_appended=0,
         )
 
     # Group UUIDs into conversation turns
@@ -952,7 +952,7 @@ def execute_sync(
             document_id=document_id,
             truncated=truncate_cutoff_time is not None,
             truncate_cutoff_time=truncate_cutoff_time,
-            turns_appended=0,
+            steps_appended=0,
         )
 
     # Convert turns to AppendUnits and filter out empty ones
@@ -964,7 +964,7 @@ def execute_sync(
             document_id=document_id,
             truncated=truncate_cutoff_time is not None,
             truncate_cutoff_time=truncate_cutoff_time,
-            turns_appended=0,
+            steps_appended=0,
         )
 
     # Batch append all units with conversation-specific summarization guidance
@@ -979,5 +979,5 @@ def execute_sync(
         document_id=document_id,
         truncated=truncate_cutoff_time is not None,
         truncate_cutoff_time=truncate_cutoff_time,
-        turns_appended=len(non_empty),
+        steps_appended=len(non_empty),
     )

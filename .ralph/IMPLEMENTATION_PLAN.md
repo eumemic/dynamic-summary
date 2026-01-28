@@ -17,11 +17,11 @@ Replace turn-based transcript chunking with step-based chunking. Currently, mess
   - Test: `test_step_dataclass.py::TestStepDataclass::test_step_has_uuid_field`, `test_step_has_timestamp_field`
   - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:86-99
 
-- [ ] Update `SyncResult` to use `steps_appended`
+- [x] Update `SyncResult` to use `steps_appended`
   - Spec: specs/step-level-chunking.md § 5. Update `SyncResult`
   - Success: `SyncResult.steps_appended` field replaces `turns_appended`
   - Test: `test_stateless_sync.py::TestExecuteSyncStateless` (after migration)
-  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:790-808
+  - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:806-825
 
 ### Phase 2: New Step-Based Functions
 
@@ -57,7 +57,7 @@ Replace turn-based transcript chunking with step-based chunking. Currently, mess
   - Test: `test_stateless_sync.py::TestExecuteSyncStateless`, `test_execute_sync_batch_append.py`
   - Location: integrations/claude-code/src/ragzoom_claude_code/transcript_sync.py:859-967 (lines 932-943)
 
-- [ ] Update CLI output messages (turns -> steps)
+- [x] Update CLI output messages (turns -> steps)
   - Spec: specs/step-level-chunking.md § 5. Update `SyncResult` (implied)
   - Success: CLI output says "Synced N steps" instead of "Synced N turns"
   - Test: `test_cli.py::TestSyncCommand`
@@ -133,7 +133,7 @@ Replace turn-based transcript chunking with step-based chunking. Currently, mess
   - Test: `pytest integrations/claude-code/tests/test_stateless_sync.py -v`
   - Location: integrations/claude-code/tests/test_stateless_sync.py:20-75 (remove), :77-388 (update)
 
-- [ ] Update test files referencing `turns_appended` to use `steps_appended`
+- [x] Update test files referencing `turns_appended` to use `steps_appended`
   - Spec: specs/step-level-chunking.md § 5. Update `SyncResult`
   - Success: All 9 test files updated to use `steps_appended`
   - Test: `grep -r "turns_appended" integrations/claude-code/tests/` returns empty

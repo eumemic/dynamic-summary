@@ -204,7 +204,7 @@ class TestDocumentIdFlagPriority:
             patch("ragzoom.wrapper.RagZoom"),
         ):
             mock_sync.return_value.document_id = "flag-wins"
-            mock_sync.return_value.turns_appended = 1
+            mock_sync.return_value.steps_appended = 1
             mock_sync.return_value.truncated = False
 
             result = runner.invoke(
@@ -369,7 +369,7 @@ class TestResetCommandStateless:
             mock_grpc.clear_document.return_value.deleted_nodes = 10
 
             mock_exec_sync.return_value.document_id = "session-to-reset"
-            mock_exec_sync.return_value.turns_appended = 1
+            mock_exec_sync.return_value.steps_appended = 1
             mock_exec_sync.return_value.truncated = False
 
             result = runner.invoke(cli, ["reset", str(jsonl_file)])

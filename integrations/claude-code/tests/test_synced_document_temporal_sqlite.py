@@ -228,7 +228,7 @@ class TestSyncedDocumentIsTemporal:
 
         # Verify document was created and is temporal
         assert result.document_id == "transcript"
-        assert result.turns_appended >= 1
+        assert result.steps_appended >= 1
 
         # Check the is_temporal flag
         is_temporal = sqlite_backend.doc_repo.get_document_is_temporal(

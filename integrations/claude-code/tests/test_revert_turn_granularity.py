@@ -135,7 +135,7 @@ class TestRevertDetectionAtTurnGranularity:
         assert truncate_time == "2024-01-01T10:01:00Z"  # msg2's timestamp
 
         # After truncation, we re-index Turn 2
-        assert result2.turns_appended >= 1
+        assert result2.steps_appended >= 1
 
     def test_revert_at_turn_boundary_truncates_correctly(self, tmp_path: Path) -> None:
         """If user reverts to the END of a turn (turn boundary), truncate
@@ -250,7 +250,7 @@ class TestRevertDetectionAtTurnGranularity:
         assert truncate_time == "2024-01-01T10:01:00Z"
 
         # Should re-index the new Turn 2
-        assert result2.turns_appended >= 1
+        assert result2.steps_appended >= 1
 
     def test_revert_preserves_untouched_turns(self, tmp_path: Path) -> None:
         """Turns before the revert point should remain indexed.
@@ -376,7 +376,7 @@ class TestRevertDetectionAtTurnGranularity:
         assert truncate_time == "2024-01-01T10:01:00Z"
 
         # New turn should have been appended
-        assert result2.turns_appended >= 1
+        assert result2.steps_appended >= 1
 
     def test_no_revert_continues_normally(self, tmp_path: Path) -> None:
         """When there's no revert, new turns are simply appended."""
@@ -452,4 +452,4 @@ class TestRevertDetectionAtTurnGranularity:
 
         # Should have appended the new turn
         assert len(client.batch_append_calls) == 1
-        assert result2.turns_appended == 1
+        assert result2.steps_appended == 1
