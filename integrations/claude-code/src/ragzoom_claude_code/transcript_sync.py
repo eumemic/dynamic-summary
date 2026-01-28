@@ -99,6 +99,38 @@ class Step:
     """ISO 8601 timestamp of this step."""
 
 
+def _should_include_record(record: dict[str, object]) -> bool:
+    """Include only user and assistant messages, excluding meta/compaction.
+
+    Determines if a JSONL record should become a Step for indexing. This is
+    the positive inclusion filter for step-level chunking.
+
+    Includes:
+    - User messages (type="user")
+    - Assistant messages (type="assistant")
+    - Tool results (type="user" with toolUseResult) - as their own steps
+
+    Excludes:
+    - Queue operations (type="queue-operation")
+    - Compaction summaries (isCompactSummary=True)
+    - Meta records (isMeta=True) - skill expansions, PDFs, templates
+
+    Args:
+        record: The JSONL record to check
+
+    Returns:
+        True if the record should become a Step, False otherwise
+    """
+    record_type = record.get("type")
+    if record_type not in ("user", "assistant"):
+        return False
+    if record.get("isCompactSummary"):
+        return False
+    if record.get("isMeta"):
+        return False
+    return True
+
+
 def _is_command_output_or_expansion(
     record: dict[str, object], records_by_uuid: dict[str, dict[str, object]]
 ) -> bool:
