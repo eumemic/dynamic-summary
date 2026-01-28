@@ -62,9 +62,9 @@ def sync_cmd(jsonl_path: Path, document_id: str | None, server_address: str) -> 
                 f"Reverted document '{result.document_id}' "
                 f"(cutoff: {result.truncate_cutoff_time})"
             )
-        if result.turns_appended > 0:
+        if result.steps_appended > 0:
             click.echo(
-                f"Synced {result.turns_appended} turns to '{result.document_id}'"
+                f"Synced {result.steps_appended} steps to '{result.document_id}'"
             )
         else:
             click.echo(f"No new content to sync for '{result.document_id}'")
@@ -121,9 +121,9 @@ def reset_cmd(jsonl_path: Path, server_address: str, resync: bool) -> None:
         ragzoom_client = RagZoom(server_address=server_address)
         try:
             sync_result = execute_sync(jsonl_path, document_id, ragzoom_client)
-            if sync_result.turns_appended > 0:
+            if sync_result.steps_appended > 0:
                 click.echo(
-                    f"Synced {sync_result.turns_appended} turns to '{sync_result.document_id}'"
+                    f"Synced {sync_result.steps_appended} steps to '{sync_result.document_id}'"
                 )
             else:
                 click.echo(f"No content to sync for '{sync_result.document_id}'")

@@ -267,7 +267,7 @@ class TestExecuteSyncSetsConversationGuidance:
         result = execute_sync(transcript_path, document_id, client)
 
         # Verify sync completed
-        assert result.turns_appended >= 1
+        assert result.steps_appended >= 1
 
         # Verify guidance was passed to batch_append
         assert client.captured_guidance == CONVERSATION_SUMMARIZATION_GUIDANCE
@@ -336,7 +336,7 @@ class TestExecuteSyncSetsConversationGuidance:
 
         # Execute sync
         result = execute_sync(transcript_path, document_id, client)
-        assert result.turns_appended >= 1
+        assert result.steps_appended >= 1
 
         # Verify document was created with guidance stored
         doc = sqlite_backend.doc_repo.get_document_by_id(document_id)
