@@ -17,6 +17,7 @@ from click.testing import CliRunner
 from ragzoom.cli import cli
 from ragzoom.client.grpc_client import (
     ClearedDocumentResult,
+    CostStatsView,
     DocumentInfoView,
     DocumentStatusView,
     DocumentWorkStatus,
@@ -187,6 +188,15 @@ def cli_mocks() -> Iterator[CliMocks]:
             leaf_nodes=5,
             tree_depth=3,
         )
+        grpc_client.get_cost_stats.return_value = [
+            CostStatsView(
+                document_id="doc-123",
+                total_cost=0.0125,
+                total_nodes=15,
+                leaf_nodes=5,
+                summary_nodes=10,
+            )
+        ]
         mock_grpc_client_cls.return_value = grpc_client
 
         yield CliMocks(
@@ -1211,3 +1221,48 @@ def test_cli_validate_server_option(
 
     assert result.exit_code == 0
     cli_mocks["grpc_client"].validate_document.assert_called_once()
+
+
+def test_cli_cost_uses_grpc(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that `cost` command uses gRPC client.get_cost_stats().
+
+    Spec: specs/grpc-cli-architecture.md § Commands Requiring Migration
+    """
+    result = runner.invoke(cli, ["cost", "doc-123"])
+
+    assert result.exit_code == 0
+    cli_mocks["grpc_client"].get_cost_stats.assert_called_once_with("doc-123")
+    assert "Document: doc-123" in result.output
+    assert "Total nodes: 15" in result.output
+    assert "Total cost:" in result.output
+    assert "$0.0125" in result.output
+
+
+def test_cli_cost_server_option(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that `cost` accepts --server-address option.
+
+    Spec: specs/grpc-cli-architecture.md § Shared Server Option
+    """
+    result = runner.invoke(cli, ["cost", "doc-123", "--server-address", "remote:50051"])
+
+    assert result.exit_code == 0
+    cli_mocks["grpc_client"].get_cost_stats.assert_called_once()
+
+
+def test_cli_cost_handles_not_found(
+    runner: CliRunner, cli_mocks: CliMocks, api_key: None
+) -> None:
+    """Test that `cost` handles document not found gracefully.
+
+    Spec: specs/grpc-cli-architecture.md § Error Handling
+    """
+    cli_mocks["grpc_client"].get_cost_stats.return_value = []
+
+    result = runner.invoke(cli, ["cost", "nonexistent-doc"])
+
+    assert result.exit_code == 1
+    assert "not found" in result.output.lower()
