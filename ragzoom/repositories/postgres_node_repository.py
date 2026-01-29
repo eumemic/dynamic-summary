@@ -185,6 +185,8 @@ class PostgresNodeRepository(BaseRepository):
                     preceding_context=data.get("preceding_context"),
                     preceding_context_summary=data.get("preceding_context_summary"),
                     cost=data.get("cost"),
+                    time_start=data.get("time_start"),
+                    time_end=data.get("time_end"),
                 )
                 nodes_pg.append(node)
                 out.append(node)
