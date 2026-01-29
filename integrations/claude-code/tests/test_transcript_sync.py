@@ -796,3 +796,339 @@ class TestAppendOnlyCli:
             mock_sync.assert_called_once()
             call_kwargs = mock_sync.call_args[1]
             assert call_kwargs.get("append_only") is True
+
+
+class TestCollectRecentRecords:
+    """Tests for _collect_recent_records backwards-only reader."""
+
+    def _make_transcript(
+        self, tmp_path: Path, records: list[dict[str, object]]
+    ) -> Path:
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+        return jsonl
+
+    def test_returns_only_records_newer_than_cutoff(self, tmp_path: Path) -> None:
+        """Should collect records with timestamp > cutoff and stop."""
+        from ragzoom_claude_code.transcript_sync import _collect_recent_records
+
+        jsonl = self._make_transcript(
+            tmp_path,
+            [
+                {
+                    "uuid": "msg1",
+                    "parentUuid": None,
+                    "type": "user",
+                    "timestamp": "2024-01-10T10:00:00Z",
+                },
+                {
+                    "uuid": "msg2",
+                    "parentUuid": "msg1",
+                    "type": "assistant",
+                    "timestamp": "2024-01-10T11:00:00Z",
+                },
+                {
+                    "uuid": "msg3",
+                    "parentUuid": "msg2",
+                    "type": "user",
+                    "timestamp": "2024-01-10T12:00:00Z",
+                },
+            ],
+        )
+        cutoff = datetime(2024, 1, 10, 11, 0, tzinfo=timezone.utc)
+
+        records, parent_map, complete = _collect_recent_records(jsonl, cutoff)
+
+        assert complete is True
+        # Only msg3 is newer than cutoff (msg2 timestamp == cutoff, so it stops)
+        assert "msg3" in records
+        assert "msg2" not in records  # timestamp <= cutoff triggers stop
+        assert "msg1" not in records
+
+    def test_signals_incomplete_on_compaction_boundary(self, tmp_path: Path) -> None:
+        """Should return complete=False when hitting parentUuid=None before cutoff."""
+        from ragzoom_claude_code.transcript_sync import _collect_recent_records
+
+        jsonl = self._make_transcript(
+            tmp_path,
+            [
+                # Pre-compaction messages (old)
+                {
+                    "uuid": "old1",
+                    "parentUuid": None,
+                    "type": "user",
+                    "timestamp": "2024-01-10T09:00:00Z",
+                },
+                {
+                    "uuid": "old2",
+                    "parentUuid": "old1",
+                    "type": "assistant",
+                    "timestamp": "2024-01-10T09:30:00Z",
+                },
+                # Compaction summary
+                {
+                    "uuid": "compact1",
+                    "parentUuid": "old2",
+                    "isCompactSummary": True,
+                    "type": "assistant",
+                    "timestamp": "2024-01-10T09:31:00Z",
+                },
+                # Post-compaction: parentUuid=None (compaction boundary)
+                {
+                    "uuid": "new1",
+                    "parentUuid": None,
+                    "type": "user",
+                    "timestamp": "2024-01-10T10:00:00Z",
+                },
+                {
+                    "uuid": "new2",
+                    "parentUuid": "new1",
+                    "type": "assistant",
+                    "timestamp": "2024-01-10T11:00:00Z",
+                },
+            ],
+        )
+        # cutoff is before old messages — we need to read back past the
+        # compaction boundary to reach it
+        cutoff = datetime(2024, 1, 10, 8, 0, tzinfo=timezone.utc)
+
+        records, parent_map, complete = _collect_recent_records(jsonl, cutoff)
+
+        assert complete is False
+
+    def test_complete_when_cutoff_reached(self, tmp_path: Path) -> None:
+        """Should return complete=True when cutoff is within recent records."""
+        from ragzoom_claude_code.transcript_sync import _collect_recent_records
+
+        jsonl = self._make_transcript(
+            tmp_path,
+            [
+                {
+                    "uuid": "msg1",
+                    "parentUuid": None,
+                    "type": "user",
+                    "timestamp": "2024-01-10T10:00:00Z",
+                },
+                {
+                    "uuid": "msg2",
+                    "parentUuid": "msg1",
+                    "type": "assistant",
+                    "timestamp": "2024-01-10T11:00:00Z",
+                },
+                {
+                    "uuid": "msg3",
+                    "parentUuid": "msg2",
+                    "type": "user",
+                    "timestamp": "2024-01-10T12:00:00Z",
+                },
+            ],
+        )
+        cutoff = datetime(2024, 1, 10, 10, 30, tzinfo=timezone.utc)
+
+        records, parent_map, complete = _collect_recent_records(jsonl, cutoff)
+
+        assert complete is True
+        assert "msg3" in records
+        assert "msg2" in records
+
+
+class TestBuildRecordsAndParentMap:
+    """Tests for _build_records_and_parent_map merged function."""
+
+    def test_matches_separate_calls(self, tmp_path: Path) -> None:
+        """Merged function should produce same output as calling both separately."""
+        from ragzoom_claude_code.transcript_sync import (
+            _build_records_and_parent_map,
+            _build_records_map,
+            build_parent_map,
+        )
+
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text(
+            "\n".join(
+                [
+                    json.dumps({"uuid": "msg1", "parentUuid": None, "type": "user"}),
+                    json.dumps(
+                        {"uuid": "msg2", "parentUuid": "msg1", "type": "assistant"}
+                    ),
+                    json.dumps({"uuid": "msg3", "parentUuid": "msg2", "type": "user"}),
+                ]
+            )
+            + "\n"
+        )
+
+        # Separate calls
+        records_sep = _build_records_map(jsonl)
+        parent_map_sep = build_parent_map(jsonl)
+
+        # Merged call
+        records_merged, parent_map_merged = _build_records_and_parent_map(jsonl)
+
+        assert records_merged == records_sep
+        assert parent_map_merged == parent_map_sep
+
+    def test_matches_with_compaction(self, tmp_path: Path) -> None:
+        """Merged function handles compaction bridging identically."""
+        from ragzoom_claude_code.transcript_sync import (
+            _build_records_and_parent_map,
+            _build_records_map,
+            build_parent_map,
+        )
+
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text(
+            "\n".join(
+                [
+                    json.dumps({"uuid": "msg1", "parentUuid": None, "type": "user"}),
+                    json.dumps(
+                        {"uuid": "msg2", "parentUuid": "msg1", "type": "assistant"}
+                    ),
+                    # Post-compaction boundary
+                    json.dumps({"uuid": "msg3", "parentUuid": None, "type": "user"}),
+                    json.dumps(
+                        {
+                            "uuid": "compact1",
+                            "parentUuid": "msg3",
+                            "isCompactSummary": True,
+                            "type": "assistant",
+                        }
+                    ),
+                    json.dumps(
+                        {"uuid": "msg4", "parentUuid": "compact1", "type": "user"}
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        records_sep = _build_records_map(jsonl)
+        parent_map_sep = build_parent_map(jsonl)
+
+        records_merged, parent_map_merged = _build_records_and_parent_map(jsonl)
+
+        assert records_merged == records_sep
+        assert parent_map_merged == parent_map_sep
+
+
+class TestAppendOnlyBackwardsRead:
+    """Tests that the backwards-read optimization produces the same sync result."""
+
+    def _make_transcript(
+        self, tmp_path: Path, records: list[dict[str, object]]
+    ) -> Path:
+        jsonl = tmp_path / "transcript.jsonl"
+        jsonl.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+        return jsonl
+
+    def _make_mock_client(
+        self, exists: bool = False, time_end: str | None = None
+    ) -> MagicMock:
+        client = MagicMock()
+        doc_status = MagicMock()
+        doc_status.exists = exists
+        doc_status.time_end = time_end
+        client.get_document_status.return_value = doc_status
+        client.batch_append.return_value = None
+        client.truncate_from_time.return_value = None
+        return client
+
+    def test_backwards_read_same_result_as_full_scan(self, tmp_path: Path) -> None:
+        """Optimized path should produce same steps_appended as full scan."""
+        from ragzoom_claude_code.transcript_sync import execute_sync
+
+        transcript_records = [
+            {
+                "uuid": "msg1",
+                "parentUuid": None,
+                "type": "user",
+                "timestamp": "2024-01-10T10:00:00Z",
+                "message": {"content": "Hello"},
+            },
+            {
+                "uuid": "msg2",
+                "parentUuid": "msg1",
+                "type": "assistant",
+                "timestamp": "2024-01-10T10:01:00Z",
+                "message": {"content": [{"type": "text", "text": "Hi"}]},
+            },
+            {
+                "uuid": "msg3",
+                "parentUuid": "msg2",
+                "type": "user",
+                "timestamp": "2024-01-10T10:02:00Z",
+                "message": {"content": "New question"},
+            },
+            {
+                "uuid": "msg4",
+                "parentUuid": "msg3",
+                "type": "assistant",
+                "timestamp": "2024-01-10T10:03:00Z",
+                "message": {"content": [{"type": "text", "text": "Answer"}]},
+            },
+        ]
+        jsonl = self._make_transcript(tmp_path, transcript_records)
+
+        # Already indexed up to msg2
+        client = self._make_mock_client(exists=True, time_end="2024-01-10T10:01:00Z")
+
+        result = execute_sync(jsonl, "test-doc", client, append_only=True)
+
+        # Should append msg3 and msg4
+        assert result.steps_appended == 2
+        assert result.truncated is False
+
+    def test_compaction_boundary_fallback(self, tmp_path: Path) -> None:
+        """When compaction boundary triggers fallback, result is still correct."""
+        from ragzoom_claude_code.transcript_sync import execute_sync
+
+        transcript_records = [
+            {
+                "uuid": "old1",
+                "parentUuid": None,
+                "type": "user",
+                "timestamp": "2024-01-10T09:00:00Z",
+                "message": {"content": "Old msg"},
+            },
+            {
+                "uuid": "old2",
+                "parentUuid": "old1",
+                "type": "assistant",
+                "timestamp": "2024-01-10T09:30:00Z",
+                "message": {"content": [{"type": "text", "text": "Old response"}]},
+            },
+            # Post-compaction: parentUuid=None
+            {
+                "uuid": "new1",
+                "parentUuid": None,
+                "type": "user",
+                "timestamp": "2024-01-10T10:00:00Z",
+                "message": {"content": "After compaction"},
+            },
+            {
+                "uuid": "compact1",
+                "parentUuid": "new1",
+                "isCompactSummary": True,
+                "type": "assistant",
+                "timestamp": "2024-01-10T10:01:00Z",
+                "message": {"content": [{"type": "text", "text": "Summary"}]},
+            },
+            {
+                "uuid": "new2",
+                "parentUuid": "compact1",
+                "type": "user",
+                "timestamp": "2024-01-10T11:00:00Z",
+                "message": {"content": "New question"},
+            },
+        ]
+        jsonl = self._make_transcript(tmp_path, transcript_records)
+
+        # Indexed up to old2 — cutoff is before compaction boundary
+        client = self._make_mock_client(exists=True, time_end="2024-01-10T09:30:00Z")
+
+        result = execute_sync(jsonl, "test-doc", client, append_only=True)
+
+        # Should still find and append new records after cutoff
+        # new1 (10:00) and new2 (11:00) are after cutoff (09:30)
+        # compact1 is isCompactSummary so filtered out by filter_to_steps
+        assert result.steps_appended == 2
+        assert result.truncated is False

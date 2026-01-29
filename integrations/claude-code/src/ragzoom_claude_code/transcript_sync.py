@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -10,19 +11,23 @@ from typing import Protocol, runtime_checkable
 
 from claude_transcriber import Transcriber
 
+from ragzoom.client.grpc_client import DocumentStatusView
 from ragzoom.wrapper import AppendUnit
 from ragzoom_claude_code.jsonl_reader import iter_jsonl, iter_jsonl_reversed
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
 class TranscriptSyncClient(Protocol):
     """Client contract for transcript sync operations."""
 
-    def get_document_status(self, document_id: str) -> object: ...
+    def get_document_status(self, document_id: str) -> DocumentStatusView: ...
     def batch_append(
         self,
         document_id: str,
-        units: list[AppendUnit],
+        units: list[str] | list[AppendUnit],
+        *,
         summarization_guidance: str | None = None,
     ) -> object: ...
     def truncate_from_time(self, document_id: str, cutoff_time: str) -> object: ...
@@ -725,6 +730,125 @@ def _build_records_map(transcript_path: Path) -> dict[str, dict[str, object]]:
     return records
 
 
+def _collect_recent_records(
+    transcript_path: Path,
+    cutoff_time: datetime,
+) -> tuple[dict[str, dict[str, object]], dict[str, str | None], bool]:
+    """Read backwards from EOF, collecting records newer than cutoff_time.
+
+    Optimized for the append_only hot path where only the last few records
+    are needed. Reads ~64KB chunks from EOF instead of scanning the full file.
+
+    Stops when a record with timestamp <= cutoff_time is reached (complete=True),
+    or when a non-compaction record with parentUuid=None is encountered before
+    reaching the cutoff (complete=False, meaning a compaction boundary was hit
+    and the caller should fall back to a full scan).
+
+    Args:
+        transcript_path: Path to the JSONL transcript.
+        cutoff_time: Only collect records with timestamp > cutoff_time.
+
+    Returns:
+        (records, parent_map, complete) where:
+        - records: UUID -> record mapping for collected records
+        - parent_map: UUID -> parentUuid mapping (no compaction bridging)
+        - complete: True if we reached the cutoff normally, False if we hit
+          a compaction boundary and the caller should fall back to full scan
+    """
+    records: dict[str, dict[str, object]] = {}
+    parent_map: dict[str, str | None] = {}
+
+    for record in iter_jsonl_reversed(transcript_path):
+        uuid = record.get("uuid")
+        if not isinstance(uuid, str):
+            continue
+
+        # Check timestamp to see if we've reached the cutoff
+        timestamp_str = record.get("timestamp")
+        if isinstance(timestamp_str, str):
+            try:
+                record_time = _parse_timestamp(timestamp_str)
+                if record_time <= cutoff_time:
+                    # Reached indexed content — we have everything we need
+                    return records, parent_map, True
+            except ValueError:
+                pass
+
+        records[uuid] = record
+
+        parent_uuid = record.get("parentUuid")
+        if parent_uuid is not None and not isinstance(parent_uuid, str):
+            continue
+        is_compact = bool(record.get("isCompactSummary"))
+
+        if parent_uuid is None and not is_compact:
+            # Hit a compaction boundary before reaching cutoff.
+            # We can't build a reliable parent chain, fall back.
+            return records, parent_map, False
+
+        parent_map[uuid] = parent_uuid
+
+    # Exhausted entire file without finding cutoff — complete
+    return records, parent_map, True
+
+
+def _build_records_and_parent_map(
+    transcript_path: Path,
+) -> tuple[dict[str, dict[str, object]], dict[str, str | None]]:
+    """Build both records map and parent map in a single forward pass.
+
+    Merges the logic of _build_records_map() and build_parent_map() to avoid
+    reading the JSONL file twice. The compaction bridging logic from
+    build_parent_map() is applied in an in-memory second pass over collected
+    tuples.
+
+    Returns:
+        (records, parent_map) where records maps UUID -> record and
+        parent_map maps UUID -> parentUuid with compaction bridging.
+    """
+    records: dict[str, dict[str, object]] = {}
+    # Collect (uuid, parentUuid, is_compact) tuples for parent map construction
+    entries: list[tuple[str, str | None, bool]] = []
+
+    for record, _ in iter_jsonl(transcript_path):
+        uuid = record.get("uuid")
+        if isinstance(uuid, str):
+            records[uuid] = record
+            parent_uuid = record.get("parentUuid")
+            if parent_uuid is not None and not isinstance(parent_uuid, str):
+                continue
+            is_compact = bool(record.get("isCompactSummary"))
+            entries.append((uuid, parent_uuid, is_compact))
+
+    # In-memory pass: build parent map with compaction bridging
+    parent_map: dict[str, str | None] = {}
+    last_regular_uuid: str | None = None
+
+    for i, (uuid, parent_uuid, is_compact) in enumerate(entries):
+        if parent_uuid is None and not is_compact:
+            is_followed_by_compact = False
+            for j in range(i + 1, len(entries)):
+                _, _, next_is_compact = entries[j]
+                if next_is_compact:
+                    is_followed_by_compact = True
+                    break
+                _, next_parent, _ = entries[j]
+                if next_parent != uuid:
+                    break
+
+            if is_followed_by_compact and last_regular_uuid is not None:
+                parent_map[uuid] = last_regular_uuid
+            else:
+                parent_map[uuid] = None
+        else:
+            parent_map[uuid] = parent_uuid
+
+        if not is_compact:
+            last_regular_uuid = uuid
+
+    return records, parent_map
+
+
 def execute_sync(
     transcript_path: Path,
     document_id: str,
@@ -772,29 +896,33 @@ def execute_sync(
     if doc_status.exists and doc_status.time_end is not None:
         indexed_time_end = _parse_timestamp(doc_status.time_end)
 
-    # Build records map for stateless algorithm
-    records = _build_records_map(transcript_path)
-
-    # Build parent map with compaction bridging for ancestry traversal
-    parent_map = build_parent_map(transcript_path)
-
     # Fork logic based on append_only mode
     truncate_cutoff_time: str | None = None
 
     if append_only:
         # Append-only mode: skip revert detection, just find entries after time_end
         if indexed_time_end is None:
-            # First sync - include everything from head to root
+            # First sync — full scan needed to build parent chain
+            records, parent_map = _build_records_and_parent_map(transcript_path)
             uuids_to_append = build_ancestry_chain(
                 current_head, None, records, parent_map
             )
         else:
-            # Find entries newer than indexed_time_end
+            # Hot path: backwards read, only recent records
+            records, parent_map, complete = _collect_recent_records(
+                transcript_path, indexed_time_end
+            )
+            if not complete:
+                # Compaction boundary before cutoff — fall back to full scan
+                logger.debug("Compaction boundary hit, falling back to full scan")
+                records, parent_map = _build_records_and_parent_map(transcript_path)
             uuids_to_append = find_entries_after_time(
                 current_head, records, parent_map, indexed_time_end
             )
     else:
-        # Revert-aware mode: full truncation detection
+        # Revert-aware mode: single-pass build of records + parent map
+        records, parent_map = _build_records_and_parent_map(transcript_path)
+
         r_uuid, s_uuid = find_truncation_point(current_head, records, indexed_time_end)
 
         # Build list of UUIDs to append (using parent_map to bridge compactions)

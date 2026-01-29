@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TypeVar
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -30,7 +33,10 @@ def iter_jsonl(
         for line in f:
             line_str = line.decode("utf-8").strip()
             if line_str:
-                yield json.loads(line_str), f.tell()
+                try:
+                    yield json.loads(line_str), f.tell()
+                except json.JSONDecodeError:
+                    logger.warning("Skipping corrupt JSONL line: %s", line_str[:200])
 
 
 def iter_jsonl_reversed(
@@ -76,10 +82,18 @@ def iter_jsonl_reversed(
             for line in reversed(lines[1:]):
                 line_str = line.decode("utf-8").strip()
                 if line_str:
-                    yield json.loads(line_str)
+                    try:
+                        yield json.loads(line_str)
+                    except json.JSONDecodeError:
+                        logger.warning(
+                            "Skipping corrupt JSONL line: %s", line_str[:200]
+                        )
 
         # Yield the first line (was kept in buffer)
         if buffer:
             line_str = buffer.decode("utf-8").strip()
             if line_str:
-                yield json.loads(line_str)
+                try:
+                    yield json.loads(line_str)
+                except json.JSONDecodeError:
+                    logger.warning("Skipping corrupt JSONL line: %s", line_str[:200])
