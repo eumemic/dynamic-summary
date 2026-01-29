@@ -12,6 +12,13 @@ def test_ragzoom_wrapper_satisfies_protocol() -> None:
     assert issubclass(RagZoom, TranscriptSyncClient)
 
 
+def test_grpc_client_satisfies_protocol() -> None:
+    """GrpcRagzoomClient must satisfy the TranscriptSyncClient protocol."""
+    from ragzoom.client.grpc_client import GrpcRagzoomClient
+
+    assert issubclass(GrpcRagzoomClient, TranscriptSyncClient)
+
+
 def test_execute_sync_client_param_is_typed() -> None:
     """execute_sync must type its client parameter as TranscriptSyncClient."""
     from typing import get_type_hints
