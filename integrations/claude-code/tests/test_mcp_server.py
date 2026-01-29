@@ -124,34 +124,25 @@ class TestRememberToolDocumentId:
     """Tests for recall tool document ID handling."""
 
     def test_recall_tool_uses_correct_document_id(self) -> None:
-        """Remember tool uses string doc_id from _get_session_id(), not tuple."""
+        """Recall tool passes string doc_id from _get_session_id() to execute_recall."""
         expected_doc_id = "test-session-doc"
+
+        mock_result = MagicMock()
+        mock_result.nodes = []
 
         with (
             patch.dict(os.environ, {"RAGZOOM_DOCUMENT_ID": expected_doc_id}),
             patch(
-                "ragzoom_claude_code.mcp_server.GrpcRagzoomClient"
-            ) as mock_client_class,
+                "ragzoom_claude_code.mcp_server.execute_recall",
+                return_value=mock_result,
+            ) as mock_execute,
         ):
-            # Set up mock client (context manager pattern)
-            mock_client = MagicMock()
-            mock_client_class.return_value.__enter__.return_value = mock_client
-
-            # Set up mock response
-            mock_node = MagicMock(
-                text="test summary", time_start=None, time_end=None, height=0
-            )
-            mock_retrieval = MagicMock(tiling_ids=["node1"], nodes={"node1": mock_node})
-            mock_client.execute_query.return_value = MagicMock(retrieval=mock_retrieval)
-
             from ragzoom_claude_code.mcp_server import recall
 
-            result = recall(query="test query", token_budget=1000)
+            recall(query="test query", token_budget=1000)
 
-            # Verify execute_query was called with string document_id
-            mock_client.execute_query.assert_called_once()
-            call_kwargs = mock_client.execute_query.call_args.kwargs
+            # Verify execute_recall was called with string document_id
+            mock_execute.assert_called_once()
+            call_kwargs = mock_execute.call_args.kwargs
             assert call_kwargs["document_id"] == expected_doc_id
             assert isinstance(call_kwargs["document_id"], str)
-
-            assert "test summary" in result
