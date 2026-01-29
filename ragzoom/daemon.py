@@ -24,6 +24,9 @@ PORT_FILENAME = "daemon.port"
 LOG_FILENAME = "daemon.log"
 CONFIG_FILENAME = "daemon.config.json"
 
+# Config directory (shared across dev/prod)
+PRODUCTION_CONFIG_DIR = "~/.config/ragzoom"
+
 # Dev/Prod separation
 PRODUCTION_STATE_DIR = "~/.local/state/ragzoom"
 DEV_STATE_DIR = "~/.local/state/ragzoom-dev"
@@ -59,6 +62,16 @@ def _resolve_path(path_str: str) -> Path:
     if not path.is_absolute():
         path = Path.cwd() / path
     return path
+
+
+def get_config_dir() -> Path:
+    """XDG config directory for ragzoom settings.
+
+    Returns ~/.config/ragzoom/ (or $XDG_CONFIG_HOME/ragzoom/ if set).
+    Does NOT vary by dev/prod - config is shared.
+    """
+    xdg_config = os.environ.get("XDG_CONFIG_HOME", "~/.config")
+    return Path(xdg_config).expanduser() / "ragzoom"
 
 
 def get_daemon_state_dir() -> Path:

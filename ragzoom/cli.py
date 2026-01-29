@@ -38,6 +38,7 @@ from ragzoom.constants import (
 from ragzoom.daemon import (
     cleanup_stale_state,
     daemonize,
+    get_config_dir,
     get_log_file_path,
     get_process_uptime,
     install_shutdown_handlers,
@@ -77,8 +78,9 @@ class AppendTextCallable(Protocol):
     ) -> IndexingResult: ...
 
 
-# Load environment variables
+# Load environment variables: CWD .env first (dev override), then XDG config (production)
 load_dotenv()
+load_dotenv(get_config_dir() / ".env")
 
 # Configure logging
 logging.basicConfig(
