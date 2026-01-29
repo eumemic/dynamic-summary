@@ -1375,7 +1375,7 @@ async def serve(state: ServerState, *, host: str, port: int) -> None:
 
 
 async def _render_indexing_progress(engine: IndexingEngine) -> None:
-    display = WorkerProgressDisplay(focus_documents=None)
+    display = WorkerProgressDisplay(focus_documents=None, line_printer=logger.info)
     try:
         while True:
             status = await engine.status()
