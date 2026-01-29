@@ -6,7 +6,7 @@ import json
 from collections.abc import Iterator
 from dataclasses import dataclass
 from types import TracebackType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import grpc
 
@@ -20,6 +20,9 @@ from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.services.query_service import QueryResult
 from ragzoom.telemetry_types import TelemetryDataDict
+
+if TYPE_CHECKING:
+    from ragzoom.wrapper import AppendUnit
 
 
 def _decode_telemetry(payload: str) -> TelemetryDataDict | None:
@@ -506,6 +509,37 @@ class GrpcRagzoomClient:
         )
 
     # jscpd:ignore-end
+
+    def batch_append(
+        self,
+        document_id: str,
+        units: list[AppendUnit],
+        summarization_guidance: str | None = None,
+    ) -> IndexingResult:
+        """Append AppendUnit objects with forced split boundaries.
+
+        Convenience wrapper matching the TranscriptSyncClient protocol.
+        Extracts text and timestamps from AppendUnit objects and delegates
+        to batch_append_text().
+        """
+        text_units: list[str] = []
+        timestamps: list[str | tuple[str, str]] = []
+        has_timestamps = False
+
+        for unit in units:
+            text_units.append(unit.text)
+            if unit.time_start is not None and unit.time_end is not None:
+                timestamps.append((unit.time_start, unit.time_end))
+                has_timestamps = True
+            else:
+                timestamps.append(("", ""))
+
+        return self.batch_append_text(
+            document_id=document_id,
+            units=text_units,
+            timestamps=timestamps if has_timestamps else None,
+            summarization_guidance=summarization_guidance,
+        )
 
     def execute_query(
         self,
