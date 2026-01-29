@@ -1450,7 +1450,7 @@ class IndexingEngine:
         # Per specs/embedding-text-optimization.md: single-step process that
         # produces text optimized for semantic search (passthrough for small
         # content, LLM-compressed for large content)
-        logger.info("EMBED_LLM_START: leaf=%s prepare_embedding_text", job.leaf_id)
+        logger.debug("EMBED_LLM_START: leaf=%s prepare_embedding_text", job.leaf_id)
         embedding_text_result = await self._llm_service._prepare_embedding_text(
             preceding_context=context_prefix,
             leaf_text=leaf_text,
@@ -1458,7 +1458,7 @@ class IndexingEngine:
             parent_id=job.leaf_id,
             reporter=telemetry,
         )
-        logger.info("EMBED_LLM_END: leaf=%s prepare_embedding_text", job.leaf_id)
+        logger.debug("EMBED_LLM_END: leaf=%s prepare_embedding_text", job.leaf_id)
         text_to_embed = embedding_text_result.summary
 
         # Store the optimized text in preceding_context_summary for debugging/inspection
@@ -1466,9 +1466,9 @@ class IndexingEngine:
 
         # Record embedding start time for telemetry
         embed_start_time = time.time()
-        logger.info("EMBED_API_START: leaf=%s", job.leaf_id)
+        logger.debug("EMBED_API_START: leaf=%s", job.leaf_id)
         embed_result = await self._llm_service.embed_texts_with_usage([text_to_embed])
-        logger.info("EMBED_API_END: leaf=%s", job.leaf_id)
+        logger.debug("EMBED_API_END: leaf=%s", job.leaf_id)
         embeddings = embed_result["embeddings"]
         leaf_embedding_usage = embed_result["usage"]
         if not embeddings:
