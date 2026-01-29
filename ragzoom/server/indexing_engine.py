@@ -1401,7 +1401,7 @@ class IndexingEngine:
                 )
 
         # Retrieve preceding context (pass pre-computed embedding to skip API call)
-        logger.info(
+        logger.debug(
             "EMBED_CONTEXT_START: leaf=%s span_start=%s", job.leaf_id, span_start
         )
         context_result = await self._get_preceding_context(
@@ -1412,7 +1412,7 @@ class IndexingEngine:
             query_text=leaf_text,
             query_embedding=query_embedding,
         )
-        logger.info(
+        logger.debug(
             "EMBED_CONTEXT_END: leaf=%s tiling_count=%s",
             job.leaf_id,
             len(context_result.tiling_ids),
@@ -1719,7 +1719,7 @@ class IndexingEngine:
         import json
 
         retrieval_start_time = time.time()
-        logger.info("CONTEXT_START: span_start=%s doc=%s", span_start, job.document_id)
+        logger.debug("CONTEXT_START: span_start=%s doc=%s", span_start, job.document_id)
         context_result = await self._get_preceding_context(
             store=store,
             document_id=job.document_id,
@@ -1727,7 +1727,7 @@ class IndexingEngine:
             config=inner_config,
             query_text=None,
         )
-        logger.info(
+        logger.debug(
             "CONTEXT_END: span_start=%s tiling_count=%s",
             span_start,
             len(context_result.tiling_ids),
@@ -1764,7 +1764,7 @@ class IndexingEngine:
             if left_tokens is not None and right_tokens is not None
             else None
         )
-        logger.info(
+        logger.debug(
             "SUMMARIZE_START: parent_id=%s combined_tokens=%s",
             parent_id,
             combined_tokens,
@@ -1787,7 +1787,7 @@ class IndexingEngine:
             text_tokens=combined_tokens,
             summarization_guidance=document_custom_prompt,
         )
-        logger.info("SUMMARIZE_END: parent_id=%s", parent_id)
+        logger.debug("SUMMARIZE_END: parent_id=%s", parent_id)
         # Fail fast if mock returns wrong type - prevents silent hangs in tests
         if is_strict_mode() and not isinstance(summary_result, SummaryResult):
             raise TypeError(
