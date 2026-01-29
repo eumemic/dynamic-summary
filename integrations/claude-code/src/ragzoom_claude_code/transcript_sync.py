@@ -6,11 +6,27 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 from claude_transcriber import Transcriber
 
 from ragzoom.wrapper import AppendUnit
 from ragzoom_claude_code.jsonl_reader import iter_jsonl, iter_jsonl_reversed
+
+
+@runtime_checkable
+class TranscriptSyncClient(Protocol):
+    """Client contract for transcript sync operations."""
+
+    def get_document_status(self, document_id: str) -> object: ...
+    def batch_append(
+        self,
+        document_id: str,
+        units: list[AppendUnit],
+        summarization_guidance: str | None = None,
+    ) -> object: ...
+    def truncate_from_time(self, document_id: str, cutoff_time: str) -> object: ...
+
 
 # Pattern to extract command name from invocation message
 _COMMAND_NAME_PATTERN = re.compile(r"<command-name>(/[\w-]+)</command-name>")
@@ -666,7 +682,7 @@ def _handle_revert_detection(
     r_uuid: str | None,
     indexed_time_end: datetime | None,
     records: dict[str, dict[str, object]],
-    client: object,
+    client: TranscriptSyncClient,
     document_id: str,
 ) -> str | None:
     """Detect and handle revert by comparing connection point to indexed content.
@@ -690,8 +706,7 @@ def _handle_revert_detection(
         return None
 
     # Revert detected: truncate orphaned content
-    truncate_from_time = getattr(client, "truncate_from_time")
-    truncate_from_time(document_id, r_timestamp_str)
+    client.truncate_from_time(document_id, r_timestamp_str)
     return r_timestamp_str
 
 
@@ -713,7 +728,7 @@ def _build_records_map(transcript_path: Path) -> dict[str, dict[str, object]]:
 def execute_sync(
     transcript_path: Path,
     document_id: str,
-    client: object,
+    client: TranscriptSyncClient,
     *,
     append_only: bool = False,
 ) -> SyncResult:
@@ -750,8 +765,7 @@ def execute_sync(
         )
 
     # Get indexed state from RagZoom document status
-    get_document_status = getattr(client, "get_document_status")
-    doc_status = get_document_status(document_id)
+    doc_status = client.get_document_status(document_id)
 
     # Parse indexed_time_end if document has temporal content
     indexed_time_end: datetime | None = None
@@ -828,10 +842,9 @@ def execute_sync(
     # Batch append in chunks to avoid gRPC timeout on large syncs.
     # Each chunk completes within the default 30s timeout.
     chunk_size = 200
-    batch_append = getattr(client, "batch_append")
     for i in range(0, len(non_empty), chunk_size):
         chunk = non_empty[i : i + chunk_size]
-        batch_append(
+        client.batch_append(
             document_id,
             chunk,
             summarization_guidance=CONVERSATION_SUMMARIZATION_GUIDANCE,

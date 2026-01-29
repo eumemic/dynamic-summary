@@ -118,6 +118,10 @@ class MockClient:
             self._span_counter += len(unit.text)
         return BatchAppendResult(span_start=0, span_end=self._span_counter)
 
+    def truncate_from_time(self, document_id: str, cutoff_time: str) -> None:
+        """Track truncate_from_time calls."""
+        pass
+
     def truncate(self, document_id: str, span_start: int) -> None:
         """Track truncate calls."""
         self.truncate_calls.append((document_id, span_start))
