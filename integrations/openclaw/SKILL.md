@@ -182,20 +182,45 @@ Key insight: window size determines content type. Broad = summaries, tight = ver
 
 ### Auto-Sync with Cron
 
-Set up a cron job to sync every 2-3 minutes:
+Use **system cron** (not OpenClaw's cron tool) for auto-sync. OpenClaw's isolated sessions run in sandboxed containers that can't access host tools like the Python venv.
 
-```python
-# Use the cron tool to create an isolated sync job
-cron.add({
-    "name": "ragzoom-sync",
-    "schedule": {"kind": "every", "everyMs": 120000},  # 2 minutes
-    "sessionTarget": "isolated",
-    "payload": {
-        "kind": "agentTurn",
-        "message": "Run: cd /path/to/dynamic-summary && source .venv/bin/activate && ragzoom-openclaw sync ~/.openclaw/agents/main/sessions/<session-id>.jsonl --document-id <session-key>. Run silently, no report unless error.",
-        "timeoutSeconds": 60
-    }
-})
+**Step 1: Create a sync script**
+
+```bash
+cat > ~/.openclaw/workspace/bin/ragzoom-sync-all << 'EOF'
+#!/bin/bash
+set -e
+cd /path/to/dynamic-summary
+source .venv/bin/activate
+
+SESSIONS_DIR="$HOME/.openclaw/agents/main/sessions"
+
+# Sync your main session (find the session ID in the sessions dir)
+ragzoom-openclaw sync "$SESSIONS_DIR/<your-session-id>.jsonl" \
+    --document-id "agent:main:main" 2>/dev/null || true
+
+# Add more sessions as needed:
+# ragzoom-openclaw sync "$SESSIONS_DIR/<other-session>.jsonl" \
+#     --document-id "agent:main:signal:group:..." 2>/dev/null || true
+EOF
+
+chmod +x ~/.openclaw/workspace/bin/ragzoom-sync-all
+```
+
+**Step 2: Install system crontab**
+
+```bash
+crontab -e
+```
+
+Add this line (syncs every 2 minutes):
+```
+*/2 * * * * ~/.openclaw/workspace/bin/ragzoom-sync-all >> /tmp/ragzoom-sync.log 2>&1
+```
+
+**Why not OpenClaw cron?**
+
+OpenClaw's `cron` tool with `sessionTarget: "isolated"` spawns sandboxed Docker containers (when sandbox mode is enabled). These containers can't access host paths like `/path/to/dynamic-summary/.venv`. System cron runs on the host with full filesystem access.
 ```
 
 ### Finding Your Session Key
