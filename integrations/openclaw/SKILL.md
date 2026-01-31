@@ -125,17 +125,32 @@ print(format_for_cli(result))
 
 Your document ID is your session key (e.g., `agent:main:main`).
 
-To query your own session:
-```bash
-recall "topic"  # uses RAGZOOM_DOCUMENT_ID or defaults to agent:main:main
+### Getting Your Session Key
+
+Call `session_status` to discover your session key:
+```
+🧵 Session: agent:main:main
 ```
 
-To query another session:
+### Querying Your Memory
+
+**Always pass your session key explicitly:**
 ```bash
-recall "topic" --session "agent:main:signal:group:h4zieSM..."
+ragzoom-openclaw recall "topic" --session "agent:main:main"
 ```
 
-The env var `RAGZOOM_DOCUMENT_ID` should be set per-session to your session key.
+**Pattern for agents:** Before calling recall, get your session key:
+1. Call `session_status` tool
+2. Extract the session key from the output
+3. Pass it via `--session`
+
+This ensures you query YOUR memory, not the default `agent:main:main`.
+
+### Querying Another Session
+
+```bash
+ragzoom-openclaw recall "topic" --session "agent:main:signal:group:h4zieSM..."
+```
 
 ## Understanding Results
 
