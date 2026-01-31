@@ -100,9 +100,8 @@ def sync_cmd(
     "--session",
     "-S",
     envvar="RAGZOOM_DOCUMENT_ID",
-    default="agent:main:main",
-    show_default=True,
-    help="Session key / document ID to query",
+    required=True,
+    help="Session key to query (get from session_status tool)",
 )
 @click.option(
     "--start",
@@ -133,18 +132,19 @@ def recall_cmd(
 ) -> None:
     """Query conversation memory with semantic search.
 
+    Requires --session (your session key). Get it via session_status tool first.
+
     Returns time-bounded spans at various summarization levels.
     Use --start/--end to zoom into specific time ranges for more detail.
 
-    The iterative zoom workflow:
-      1. Query broad to find relevant time ranges
-      2. Note the time_start/time_end in results
-      3. Query again with --start/--end to zoom in
+    The workflow:
+      1. Call session_status tool to get your session key
+      2. Query: recall "topic" --session <your-session-key>
+      3. Zoom in with --start/--end on interesting time ranges
 
     Example:
-      ragzoom-openclaw recall "authentication bug"
-      ragzoom-openclaw recall "auth bug" --start 2026-01-31T14:00:00Z --end 2026-01-31T15:00:00Z
-      ragzoom-openclaw recall "topic" --session agent:main:signal:group:abc123
+      ragzoom-openclaw recall "auth bug" --session agent:main:main
+      ragzoom-openclaw recall "auth bug" --session agent:main:main --start 2026-01-31T14:00:00Z
     """
     import sys
     sys.path.insert(0, "/Users/jarvis/code/dynamic-summary/integrations/claude-code/src")
