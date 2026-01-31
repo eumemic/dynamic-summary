@@ -42,7 +42,7 @@ print(format_for_cli(result))
 
 ```bash
 # Clone the repo (requires access)
-git clone git@github.com:tomprince/dynamic-summary.git
+git clone git@github.com:eumemic/dynamic-summary.git
 cd dynamic-summary
 
 # Create venv and install
