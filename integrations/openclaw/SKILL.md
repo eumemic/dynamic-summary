@@ -225,72 +225,14 @@ OpenClaw's `cron` tool with `sessionTarget: "isolated"` spawns sandboxed Docker 
 
 ### Recall Script (Docker-aware)
 
-Create a recall script that works from both the host and sandboxed containers:
+The repo includes a recall script at `integrations/openclaw/bin/recall` that auto-detects Docker and routes to `host.docker.internal` when running inside a sandbox. Symlink it into your workspace:
 
 ```bash
-cat > ~/.openclaw/workspace/bin/recall << 'RECALLEOF'
-#!/bin/bash
-# RagZoom recall via HTTP API (works from host and sandboxed sessions)
-# Usage: recall "query" --session <session-key> [--budget N] [--start ISO] [--end ISO]
-set -e
-
-QUERY="" SESSION="" BUDGET="2000" START="" END=""
-
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --session) SESSION="$2"; shift 2 ;;
-        --budget) BUDGET="$2"; shift 2 ;;
-        --start) START="$2"; shift 2 ;;
-        --end) END="$2"; shift 2 ;;
-        -*) echo "Unknown option: $1" >&2; exit 1 ;;
-        *) QUERY="$1"; shift ;;
-    esac
-done
-
-[[ -z "$QUERY" ]] && { echo "Usage: recall \"query\" --session <key> [--budget N]" >&2; exit 1; }
-[[ -z "$SESSION" ]] && { echo "Error: --session is required" >&2; exit 1; }
-
-# Auto-detect Docker: use host.docker.internal to reach host services
-RAGZOOM_HOST="localhost"
-if [ -f /.dockerenv ] || grep -q docker /proc/1/cgroup 2>/dev/null; then
-    RAGZOOM_HOST="host.docker.internal"
-fi
-
-ENCODED_QUERY=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$QUERY'''))")
-ENCODED_SESSION=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''$SESSION'''))")
-
-URL="http://${RAGZOOM_HOST}:50053/recall?q=${ENCODED_QUERY}&document_id=${ENCODED_SESSION}&budget=${BUDGET}"
-[[ -n "$START" ]] && URL="${URL}&start=${START}"
-[[ -n "$END" ]] && URL="${URL}&end=${END}"
-
-RESULT=$(curl -s "$URL")
-
-if echo "$RESULT" | grep -q '"detail"'; then
-    echo "Error: $(echo "$RESULT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('detail','Unknown error'))")" >&2
-    exit 1
-fi
-
-echo "$RESULT" | python3 -c "
-import sys, json
-from datetime import datetime
-data = json.load(sys.stdin)
-nodes = data.get('nodes', [])
-if not nodes:
-    print('No results found.'); sys.exit(0)
-for node in nodes:
-    ts, te, h = node.get('time_start'), node.get('time_end'), node.get('height', 0)
-    if isinstance(ts, (int, float)): ts = datetime.fromtimestamp(ts).isoformat() + 'Z'
-    if isinstance(te, (int, float)): te = datetime.fromtimestamp(te).isoformat() + 'Z'
-    print(f'<Span time_start=\"{ts}\" time_end=\"{te}\" height={h}>')
-    print(node.get('text', ''))
-    print('</Span>\n')
-"
-RECALLEOF
-
-chmod +x ~/.openclaw/workspace/bin/recall
+mkdir -p ~/.openclaw/workspace/bin
+ln -sf /path/to/dynamic-summary/integrations/openclaw/bin/recall ~/.openclaw/workspace/bin/recall
 ```
 
-This script auto-detects if it's running inside Docker and routes to `host.docker.internal` instead of `localhost`. Works from both the host and sandboxed OpenClaw sessions (mounted read-only at `/agent/bin/recall`).
+This way `git pull` updates the script for everyone. The script works from both the host and sandboxed sessions (mounted read-only at `/agent/bin/recall`).
 
 ### Finding Your Session Key
 
