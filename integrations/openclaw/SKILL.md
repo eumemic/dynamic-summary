@@ -252,13 +252,46 @@ ragzoom-openclaw recall "topic" --budget 3000
 
 ```bash
 # Check if running
-curl -s localhost:50052/health || echo "not running"
+curl -s localhost:50053/health || echo "not running"
 
-# Start (from dynamic-summary dir with venv active)
-ragzoom server start --port 50052
+# Start with HTTP API enabled (from dynamic-summary dir with venv active)
+ragzoom server start --port 50052 --http-port 50053
 
 # The server runs in foreground; use tmux/screen for persistence
 ```
+
+### HTTP API (for Sandboxed Sessions)
+
+When OpenClaw sandbox mode is enabled, isolated sessions run in Docker containers that can't access host CLI tools. Use the HTTP API instead:
+
+```bash
+# Start server with HTTP API
+ragzoom server start --port 50052 --http-port 50053
+
+# Query via curl (works from sandboxed containers)
+curl "http://localhost:50053/recall?q=what+did+we+discuss&document_id=agent:main:main&budget=2000"
+
+# Or POST with JSON
+curl -X POST http://localhost:50053/recall \
+  -H "Content-Type: application/json" \
+  -d '{"q": "what did we discuss", "document_id": "agent:main:main", "budget": 2000}'
+```
+
+**Response format:**
+```json
+{
+  "nodes": [
+    {"text": "...", "time_start": "2026-01-31T15:00:00Z", "time_end": "2026-01-31T15:30:00Z", "height": 2}
+  ],
+  "query": "what did we discuss",
+  "document_id": "agent:main:main",
+  "budget": 2000
+}
+```
+
+**Optional parameters:**
+- `start` / `time_start`: ISO timestamp to start from
+- `end` / `time_end`: ISO timestamp to end at
 
 ## Troubleshooting
 

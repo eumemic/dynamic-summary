@@ -33,6 +33,7 @@ class ServerOptions:
 
     host: str = DEFAULT_GRPC_HOST
     port: int = DEFAULT_GRPC_PORT
+    http_port: int | None = None  # HTTP API port (None = disabled)
     config_path: str | None = None
     collect_telemetry: bool = False
     telemetry_dir: str | None = None
@@ -151,7 +152,7 @@ def build_state(
 
 
 async def _serve_async(state: ServerState, options: ServerOptions) -> None:
-    await serve(state, host=options.host, port=options.port)
+    await serve(state, host=options.host, port=options.port, http_port=options.http_port)
 
 
 def _run_startup_migrations(store: StorageBackend) -> None:
