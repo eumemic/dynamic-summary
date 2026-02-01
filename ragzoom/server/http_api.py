@@ -39,8 +39,8 @@ class RecallRequest(BaseModel):
 class RecallNode(BaseModel):
     """A single node from the recall tiling."""
     text: str
-    time_start: str | None
-    time_end: str | None
+    time_start: str | float | None
+    time_end: str | float | None
     height: int
 
 
@@ -120,21 +120,42 @@ async def _execute_recall(
         raise HTTPException(status_code=500, detail="Server state not initialized")
     
     try:
+        from openai import OpenAI
         from ragzoom.retrieval.budget_planner import BudgetPlanner
         from ragzoom.retrieval.embedding_service import EmbeddingService
         from ragzoom.retrieve import Retriever
+        from ragzoom.vector_factory import create_vector_index
         
-        embedding_service = EmbeddingService(_state.query_config)
-        budget_planner = BudgetPlanner(_state.query_config)
-        retriever = Retriever(
-            store=_state.store,
-            embedding_service=embedding_service,
-            budget_planner=budget_planner,
-            query_config=_state.query_config,
+        # Build retriever the same way as the gRPC servicer
+        resolved_embedding = _state.query_config.embedding_model
+        document_store = _state.store.for_document(document_id)
+        client = OpenAI(
+            api_key=_state.operational_config.openai_api_key.get_secret_value(),
+            timeout=_state.operational_config.openai_timeout,
+        )
+        embedding_service = EmbeddingService(client, document_store, resolved_embedding)
+        
+        chunk_tokens = (
+            _state.index_config.target_chunk_tokens
+            if _state.index_config.target_chunk_tokens is not None
+            else _state.index_config.target_embedding_tokens
+        )
+        budget_planner = BudgetPlanner(document_store, chunk_tokens)
+        vector_index = create_vector_index(
+            _state.operational_config.vector_backend,
+            _state.operational_config.database_url,
+            resolved_embedding,
         )
         
-        result = retriever.query(
-            document_id=document_id,
+        retriever = Retriever(
+            _state.query_config,
+            document_store,
+            embedding_service,
+            budget_planner,
+            vector_index,
+        )
+        
+        result = await retriever.retrieve_async(
             query=query,
             budget_tokens=budget,
             time_start=time_start,
@@ -143,15 +164,16 @@ async def _execute_recall(
         
         # Format response
         nodes = []
-        for node_id in result.tiling_ids:
-            node = result.nodes.get(node_id)
-            if node and node.text:
-                nodes.append(RecallNode(
-                    text=node.text,
-                    time_start=node.time_start,
-                    time_end=node.time_end,
-                    height=node.height,
-                ))
+        if result.tiling and result.nodes:
+            for node_id in result.tiling:
+                node = result.nodes.get(node_id)
+                if node and node.text:
+                    nodes.append(RecallNode(
+                        text=node.text,
+                        time_start=getattr(node, 'time_start', None),
+                        time_end=getattr(node, 'time_end', None),
+                        height=getattr(node, 'height', 0),
+                    ))
         
         return RecallResponse(
             nodes=nodes,
