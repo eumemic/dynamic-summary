@@ -268,8 +268,11 @@ When OpenClaw sandbox mode is enabled, isolated sessions run in Docker container
 # Start server with HTTP API
 ragzoom server start --port 50052 --http-port 50053
 
-# Query via curl (works from sandboxed containers)
+# Query via curl (from host)
 curl "http://localhost:50053/recall?q=what+did+we+discuss&document_id=agent:main:main&budget=2000"
+
+# From inside Docker sandbox, use host.docker.internal instead of localhost:
+curl "http://host.docker.internal:50053/recall?q=what+did+we+discuss&document_id=agent:main:main&budget=2000"
 
 # Or POST with JSON
 curl -X POST http://localhost:50053/recall \
