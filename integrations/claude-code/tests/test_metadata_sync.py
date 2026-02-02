@@ -482,7 +482,7 @@ class TestFullRevertBug:
     but it SHOULD truncate everything and re-index.
     """
 
-    @pytest.mark.xfail(reason="Bug: full revert does not truncate indexed content")
+    
     def test_full_revert_should_truncate_everything(self) -> None:
         """Full revert should truncate all indexed content.
 

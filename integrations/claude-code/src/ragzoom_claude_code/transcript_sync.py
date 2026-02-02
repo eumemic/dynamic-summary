@@ -872,9 +872,23 @@ def _handle_revert_detection_from_meta(
     """Detect and handle revert using lightweight metadata.
 
     Memory-efficient version of _handle_revert_detection.
+
+    Handles three cases:
+    1. First sync (indexed_time_end is None): No truncation needed
+    2. Full revert (r_uuid is None but indexed_time_end exists): Truncate everything
+    3. Partial revert (r_uuid.timestamp < indexed_time_end): Truncate from r_uuid
     """
-    if r_uuid is None or indexed_time_end is None:
+    # First sync: nothing indexed yet, no truncation needed
+    if indexed_time_end is None:
         return None
+
+    # Full revert: we have indexed content but no connection point found.
+    # The entire current transcript is disjoint from indexed content.
+    # Truncate everything by using epoch as cutoff.
+    if r_uuid is None:
+        epoch = "1970-01-01T00:00:00Z"
+        client.truncate_from_time(document_id, epoch)
+        return epoch
 
     meta = metadata.get(r_uuid)
     if meta is None or meta.timestamp is None:
@@ -884,6 +898,7 @@ def _handle_revert_detection_from_meta(
     if r_timestamp >= indexed_time_end:
         return None
 
+    # Partial revert: truncate orphaned content after r_uuid
     client.truncate_from_time(document_id, meta.timestamp)
     return meta.timestamp
 
@@ -899,9 +914,23 @@ def _handle_revert_detection(
 
     Returns the cutoff timestamp string if a revert was detected and truncation
     was performed, or None if no revert occurred.
+
+    Handles three cases:
+    1. First sync (indexed_time_end is None): No truncation needed
+    2. Full revert (r_uuid is None but indexed_time_end exists): Truncate everything
+    3. Partial revert (r_uuid.timestamp < indexed_time_end): Truncate from r_uuid
     """
-    if r_uuid is None or indexed_time_end is None:
+    # First sync: nothing indexed yet, no truncation needed
+    if indexed_time_end is None:
         return None
+
+    # Full revert: we have indexed content but no connection point found.
+    # The entire current transcript is disjoint from indexed content.
+    # Truncate everything by using epoch as cutoff.
+    if r_uuid is None:
+        epoch = "1970-01-01T00:00:00Z"
+        client.truncate_from_time(document_id, epoch)
+        return epoch
 
     r_record = records.get(r_uuid)
     if r_record is None:
@@ -915,7 +944,7 @@ def _handle_revert_detection(
     if r_timestamp >= indexed_time_end:
         return None
 
-    # Revert detected: truncate orphaned content
+    # Partial revert: truncate orphaned content after r_uuid
     client.truncate_from_time(document_id, r_timestamp_str)
     return r_timestamp_str
 
