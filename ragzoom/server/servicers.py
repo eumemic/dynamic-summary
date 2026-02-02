@@ -1320,7 +1320,9 @@ async def shutdown_gracefully(server: GrpcServerProto) -> None:
     await server.wait_for_termination()
 
 
-async def serve(state: ServerState, *, host: str, port: int, http_port: int | None = None) -> None:
+async def serve(
+    state: ServerState, *, host: str, port: int, http_port: int | None = None
+) -> None:
     # 100MB max message size for large transcript uploads
     max_message_size = 100 * 1024 * 1024
     server = cast(
@@ -1343,11 +1345,12 @@ async def serve(state: ServerState, *, host: str, port: int, http_port: int | No
     listen_addr = f"{host}:{port}"
     server.add_insecure_port(listen_addr)
     logger.info("Starting RagZoom gRPC server on %s", listen_addr)
-    
+
     # Start HTTP API server for REST access (useful for sandboxed clients)
     http_runner = None
     if http_port is not None:
         from ragzoom.server.http_api import start_http_server
+
         http_runner = await start_http_server(state, host=host, port=http_port)
 
     # IndexingEngine doesn't require explicit start - it auto-discovers work
