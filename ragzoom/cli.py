@@ -1844,6 +1844,13 @@ def _persist_daemon_config(config_path: Path) -> None:
     is_flag=True,
     help="Run as background daemon (fork to background, redirect output to log file)",
 )
+@click.option(
+    "--http-port",
+    "http_port",
+    default=None,
+    type=int,
+    help="Enable HTTP REST API on this port (for sandboxed clients using curl)",
+)
 def start_server(
     host: str,
     port: int | None,
@@ -1861,6 +1868,7 @@ def start_server(
     preceding_context_inner_min_forest_completeness: float | None,
     preceding_context_inner_token_cap: int | None,
     daemon: bool,
+    http_port: int | None,
 ) -> None:
     """Start the RagZoom gRPC server."""
 
@@ -1896,6 +1904,7 @@ def start_server(
     options = ServerOptions(
         host=host,
         port=resolved_port,
+        http_port=http_port,
         config_path=str(config_path) if config_path else None,
         collect_telemetry=collect_telemetry,
         telemetry_dir=str(telemetry_dir) if telemetry_dir else None,
