@@ -152,7 +152,9 @@ def build_state(
 
 
 async def _serve_async(state: ServerState, options: ServerOptions) -> None:
-    await serve(state, host=options.host, port=options.port, http_port=options.http_port)
+    await serve(
+        state, host=options.host, port=options.port, http_port=options.http_port
+    )
 
 
 def _run_startup_migrations(store: StorageBackend) -> None:

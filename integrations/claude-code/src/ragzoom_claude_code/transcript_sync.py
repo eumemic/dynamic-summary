@@ -86,6 +86,34 @@ def get_session_document_id(pid: int) -> str | None:
 
 
 @dataclass
+class RecordMeta:
+    """Lightweight metadata for navigation without full record content.
+
+    Used to dramatically reduce memory during sync operations. Full records
+    can be 10KB+ each (assistant responses with code, tool results), but
+    navigation only needs these ~100 bytes of metadata per record.
+    """
+
+    uuid: str
+    """Record's unique identifier."""
+
+    parent_uuid: str | None
+    """Parent record's UUID for chain traversal."""
+
+    timestamp: str | None
+    """ISO 8601 timestamp, if present."""
+
+    record_type: str | None
+    """Record type: 'user', 'assistant', 'queue-operation', etc."""
+
+    is_compact_summary: bool
+    """True if this is a compaction summary record."""
+
+    is_meta: bool
+    """True if this is a meta record (skill expansions, PDFs, templates)."""
+
+
+@dataclass
 class Step:
     """A single conversation step with timestamp.
 
@@ -98,6 +126,27 @@ class Step:
 
     timestamp: str
     """ISO 8601 timestamp of this step."""
+
+
+def _should_include_meta(meta: RecordMeta) -> bool:
+    """Check if a record should become a Step based on metadata.
+
+    Includes:
+    - User messages (type="user")
+    - Assistant messages (type="assistant")
+
+    Excludes:
+    - Queue operations (type="queue-operation")
+    - Compaction summaries
+    - Meta records (skill expansions, PDFs, templates)
+    """
+    if meta.record_type not in ("user", "assistant"):
+        return False
+    if meta.is_compact_summary:
+        return False
+    if meta.is_meta:
+        return False
+    return True
 
 
 def _should_include_record(record: dict[str, object]) -> bool:
@@ -130,6 +179,35 @@ def _should_include_record(record: dict[str, object]) -> bool:
     if record.get("isMeta"):
         return False
     return True
+
+
+def filter_to_steps_from_meta(
+    uuids: list[str],
+    metadata_by_uuid: dict[str, RecordMeta],
+) -> list[Step]:
+    """Filter UUIDs to steps using lightweight metadata.
+
+    Memory-efficient version of filter_to_steps that works with RecordMeta
+    instead of full records.
+
+    Args:
+        uuids: Message UUIDs in chronological order
+        metadata_by_uuid: UUID -> RecordMeta mapping
+
+    Returns:
+        List of Step objects for records that pass filtering
+    """
+    steps: list[Step] = []
+    for uuid in uuids:
+        meta = metadata_by_uuid.get(uuid)
+        if meta is None:
+            continue
+        if not _should_include_meta(meta):
+            continue
+        if meta.timestamp is None:
+            continue
+        steps.append(Step(uuid=uuid, timestamp=meta.timestamp))
+    return steps
 
 
 def filter_to_steps(
@@ -224,6 +302,48 @@ def _get_parent_uuid(rec: dict[str, object]) -> str | None:
     return parent if isinstance(parent, str) else None
 
 
+def find_truncation_point_from_meta(
+    head_uuid: str,
+    metadata: dict[str, RecordMeta],
+    indexed_time_end: datetime | None,
+) -> tuple[str | None, str | None]:
+    """Find connection point using lightweight metadata.
+
+    Memory-efficient version of find_truncation_point that works with RecordMeta.
+    See find_truncation_point for full documentation.
+    """
+    if indexed_time_end is None:
+        return (None, head_uuid)
+
+    s_uuid: str | None = None
+    r_uuid: str | None = head_uuid
+
+    while r_uuid is not None:
+        meta = metadata.get(r_uuid)
+        if meta is None:
+            break
+
+        if meta.timestamp is None:
+            s_uuid = r_uuid
+            r_uuid = meta.parent_uuid
+            continue
+
+        try:
+            record_time = _parse_timestamp(meta.timestamp)
+        except ValueError:
+            s_uuid = r_uuid
+            r_uuid = meta.parent_uuid
+            continue
+
+        if record_time <= indexed_time_end:
+            return (r_uuid, s_uuid)
+
+        s_uuid = r_uuid
+        r_uuid = meta.parent_uuid
+
+    return (None, head_uuid)
+
+
 def find_truncation_point(
     head_uuid: str,
     records: dict[str, dict[str, object]],
@@ -302,6 +422,39 @@ def find_truncation_point(
     return (None, head_uuid)
 
 
+def find_entries_after_time_from_meta(
+    head_uuid: str,
+    metadata: dict[str, RecordMeta],
+    parent_map: dict[str, str | None],
+    cutoff_time: datetime,
+) -> list[str]:
+    """Walk backward from head using metadata, collect UUIDs after cutoff_time.
+
+    Memory-efficient version of find_entries_after_time that works with RecordMeta.
+    """
+    chain: list[str] = []
+    current: str | None = head_uuid
+
+    while current is not None:
+        meta = metadata.get(current)
+        if meta is None:
+            break
+
+        if meta.timestamp is not None:
+            try:
+                record_time = _parse_timestamp(meta.timestamp)
+                if record_time <= cutoff_time:
+                    break
+            except ValueError:
+                pass
+
+        chain.append(current)
+        current = parent_map.get(current)
+
+    chain.reverse()
+    return chain
+
+
 def find_entries_after_time(
     head_uuid: str,
     records: dict[str, dict[str, object]],
@@ -347,6 +500,32 @@ def find_entries_after_time(
         current = parent_map.get(current)
 
     # Reverse to get chronological order (oldest first)
+    chain.reverse()
+    return chain
+
+
+def build_ancestry_chain_from_meta(
+    head_uuid: str,
+    stop_uuid: str | None,
+    metadata: dict[str, RecordMeta],
+    parent_map: dict[str, str | None],
+) -> list[str]:
+    """Collect UUIDs from stop_uuid to head_uuid using metadata.
+
+    Memory-efficient version of build_ancestry_chain that works with RecordMeta.
+    """
+    if head_uuid == stop_uuid:
+        return []
+
+    chain: list[str] = []
+    current: str | None = head_uuid
+
+    while current is not None and current != stop_uuid:
+        if current not in metadata:
+            break
+        chain.append(current)
+        current = parent_map.get(current)
+
     chain.reverse()
     return chain
 
@@ -683,6 +862,32 @@ class SyncResult:
     """Number of conversation steps appended to the document."""
 
 
+def _handle_revert_detection_from_meta(
+    r_uuid: str | None,
+    indexed_time_end: datetime | None,
+    metadata: dict[str, RecordMeta],
+    client: TranscriptSyncClient,
+    document_id: str,
+) -> str | None:
+    """Detect and handle revert using lightweight metadata.
+
+    Memory-efficient version of _handle_revert_detection.
+    """
+    if r_uuid is None or indexed_time_end is None:
+        return None
+
+    meta = metadata.get(r_uuid)
+    if meta is None or meta.timestamp is None:
+        return None
+
+    r_timestamp = _parse_timestamp(meta.timestamp)
+    if r_timestamp >= indexed_time_end:
+        return None
+
+    client.truncate_from_time(document_id, meta.timestamp)
+    return meta.timestamp
+
+
 def _handle_revert_detection(
     r_uuid: str | None,
     indexed_time_end: datetime | None,
@@ -792,10 +997,126 @@ def _collect_recent_records(
     return records, parent_map, True
 
 
+def _extract_metadata(record: dict[str, object]) -> RecordMeta | None:
+    """Extract navigation metadata from a JSONL record.
+
+    Returns None if the record lacks a valid UUID.
+    """
+    uuid = record.get("uuid")
+    if not isinstance(uuid, str):
+        return None
+
+    parent_uuid = record.get("parentUuid")
+    if parent_uuid is not None and not isinstance(parent_uuid, str):
+        parent_uuid = None
+
+    timestamp = record.get("timestamp")
+    if not isinstance(timestamp, str):
+        timestamp = None
+
+    record_type = record.get("type")
+    if not isinstance(record_type, str):
+        record_type = None
+
+    return RecordMeta(
+        uuid=uuid,
+        parent_uuid=parent_uuid,
+        timestamp=timestamp,
+        record_type=record_type,
+        is_compact_summary=bool(record.get("isCompactSummary")),
+        is_meta=bool(record.get("isMeta")),
+    )
+
+
+def _build_metadata_and_parent_map(
+    transcript_path: Path,
+) -> tuple[dict[str, RecordMeta], dict[str, str | None]]:
+    """Build metadata map and parent map in a single forward pass.
+
+    Memory-efficient alternative to _build_records_and_parent_map that stores
+    only navigation metadata (~100 bytes/record) instead of full records
+    (~10KB+ each). Full records are loaded on-demand later for transcription.
+
+    Returns:
+        (metadata_by_uuid, parent_map) where metadata_by_uuid maps UUID -> RecordMeta
+        and parent_map maps UUID -> parentUuid with compaction bridging.
+    """
+    metadata_by_uuid: dict[str, RecordMeta] = {}
+    entries: list[tuple[str, str | None, bool]] = []
+
+    for record, _ in iter_jsonl(transcript_path):
+        meta = _extract_metadata(record)
+        if meta is None:
+            continue
+        metadata_by_uuid[meta.uuid] = meta
+        entries.append((meta.uuid, meta.parent_uuid, meta.is_compact_summary))
+
+    # In-memory pass: build parent map with compaction bridging
+    parent_map: dict[str, str | None] = {}
+    last_regular_uuid: str | None = None
+
+    for i, (uuid, parent_uuid, is_compact) in enumerate(entries):
+        if parent_uuid is None and not is_compact:
+            is_followed_by_compact = False
+            for j in range(i + 1, len(entries)):
+                _, _, next_is_compact = entries[j]
+                if next_is_compact:
+                    is_followed_by_compact = True
+                    break
+                _, next_parent, _ = entries[j]
+                if next_parent != uuid:
+                    break
+
+            if is_followed_by_compact and last_regular_uuid is not None:
+                parent_map[uuid] = last_regular_uuid
+            else:
+                parent_map[uuid] = None
+        else:
+            parent_map[uuid] = parent_uuid
+
+        if not is_compact:
+            last_regular_uuid = uuid
+
+    return metadata_by_uuid, parent_map
+
+
+def load_records_for_uuids(
+    transcript_path: Path,
+    uuids_needed: set[str],
+) -> dict[str, dict[str, object]]:
+    """Load full records for specific UUIDs only.
+
+    Memory-efficient on-demand loading that scans the file once and
+    extracts only the records needed for transcription.
+
+    Args:
+        transcript_path: Path to the JSONL transcript
+        uuids_needed: Set of UUIDs whose full records are needed
+
+    Returns:
+        Mapping of UUID -> full record for requested UUIDs
+    """
+    if not uuids_needed:
+        return {}
+
+    records: dict[str, dict[str, object]] = {}
+    for record, _ in iter_jsonl(transcript_path):
+        uuid = record.get("uuid")
+        if isinstance(uuid, str) and uuid in uuids_needed:
+            records[uuid] = record
+            if len(records) == len(uuids_needed):
+                break  # Found all needed records, stop early
+    return records
+
+
 def _build_records_and_parent_map(
     transcript_path: Path,
 ) -> tuple[dict[str, dict[str, object]], dict[str, str | None]]:
     """Build both records map and parent map in a single forward pass.
+
+    DEPRECATED: This function loads ALL records into memory, causing OOM
+    on large transcripts. Use _build_metadata_and_parent_map() instead,
+    then load_records_for_uuids() for the specific records needed.
 
     Merges the logic of _build_records_map() and build_parent_map() to avoid
     reading the JSONL file twice. The compaction bridging logic from
@@ -864,6 +1185,10 @@ def execute_sync(
 
     This makes sync idempotent and crash-safe, eliminating external state files.
 
+    Memory-efficient: Uses metadata-only loading for navigation, then lazy-loads
+    only the records needed for transcription. This reduces memory from O(file_size)
+    to O(metadata_size + records_to_append).
+
     Args:
         transcript_path: Path to the JSONL transcript
         document_id: Document ID to sync to (typically the transcript filename stem)
@@ -899,42 +1224,38 @@ def execute_sync(
     # Fork logic based on append_only mode
     truncate_cutoff_time: str | None = None
 
+    # Build metadata-only map for memory-efficient navigation
+    metadata, parent_map = _build_metadata_and_parent_map(transcript_path)
+
     if append_only:
         # Append-only mode: skip revert detection, just find entries after time_end
         if indexed_time_end is None:
-            # First sync — full scan needed to build parent chain
-            records, parent_map = _build_records_and_parent_map(transcript_path)
-            uuids_to_append = build_ancestry_chain(
-                current_head, None, records, parent_map
+            # First sync — append everything from head
+            uuids_to_append = build_ancestry_chain_from_meta(
+                current_head, None, metadata, parent_map
             )
         else:
-            # Hot path: backwards read, only recent records
-            records, parent_map, complete = _collect_recent_records(
-                transcript_path, indexed_time_end
-            )
-            if not complete:
-                # Compaction boundary before cutoff — fall back to full scan
-                logger.debug("Compaction boundary hit, falling back to full scan")
-                records, parent_map = _build_records_and_parent_map(transcript_path)
-            uuids_to_append = find_entries_after_time(
-                current_head, records, parent_map, indexed_time_end
+            uuids_to_append = find_entries_after_time_from_meta(
+                current_head, metadata, parent_map, indexed_time_end
             )
     else:
-        # Revert-aware mode: single-pass build of records + parent map
-        records, parent_map = _build_records_and_parent_map(transcript_path)
-
-        r_uuid, s_uuid = find_truncation_point(current_head, records, indexed_time_end)
+        # Revert-aware mode: use metadata for navigation
+        r_uuid, s_uuid = find_truncation_point_from_meta(
+            current_head, metadata, indexed_time_end
+        )
 
         # Build list of UUIDs to append (using parent_map to bridge compactions)
         uuids_to_append = (
             []
             if s_uuid is None
-            else build_ancestry_chain(current_head, r_uuid, records, parent_map)
+            else build_ancestry_chain_from_meta(
+                current_head, r_uuid, metadata, parent_map
+            )
         )
 
         # Detect and handle revert (returns cutoff time if truncation occurred)
-        truncate_cutoff_time = _handle_revert_detection(
-            r_uuid, indexed_time_end, records, client, document_id
+        truncate_cutoff_time = _handle_revert_detection_from_meta(
+            r_uuid, indexed_time_end, metadata, client, document_id
         )
 
     if not uuids_to_append:
@@ -946,8 +1267,8 @@ def execute_sync(
             steps_appended=0,
         )
 
-    # Filter UUIDs to conversation steps (user/assistant messages only)
-    steps = filter_to_steps(uuids_to_append, records)
+    # Filter UUIDs to conversation steps using metadata (no full records yet)
+    steps = filter_to_steps_from_meta(uuids_to_append, metadata)
     if not steps:
         return SyncResult(
             document_id=document_id,
@@ -955,6 +1276,10 @@ def execute_sync(
             truncate_cutoff_time=truncate_cutoff_time,
             steps_appended=0,
         )
+
+    # NOW load only the full records we need for transcription (lazy loading)
+    step_uuids = {step.uuid for step in steps}
+    records = load_records_for_uuids(transcript_path, step_uuids)
 
     # Convert steps to AppendUnits (steps_to_append_units already filters empty)
     non_empty = steps_to_append_units(steps, records)
