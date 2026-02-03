@@ -1075,6 +1075,11 @@ def _build_metadata_and_parent_map(
     """
     metadata_by_uuid: dict[str, RecordMeta] = {}
     entries: list[tuple[str, str | None, bool]] = []
+    hook_uuids: set[str] = set()
+    # Maps each hook UUID to the last non-hook UUID that preceded it in
+    # file order, so children of excluded hooks can be re-parented.
+    hook_predecessor: dict[str, str | None] = {}
+    last_non_hook_uuid: str | None = None
 
     for record, _ in iter_jsonl(transcript_path):
         meta = _extract_metadata(record)
@@ -1084,15 +1089,22 @@ def _build_metadata_and_parent_map(
         # (first hook points to final assistant of the turn, which chains
         # back through the hook list, creating a loop).
         if meta.record_type == "saved_hook_context":
+            hook_uuids.add(meta.uuid)
+            hook_predecessor[meta.uuid] = last_non_hook_uuid
             continue
         metadata_by_uuid[meta.uuid] = meta
         entries.append((meta.uuid, meta.parent_uuid, meta.is_compact_summary))
+        last_non_hook_uuid = meta.uuid
 
     # In-memory pass: build parent map with compaction bridging
     parent_map: dict[str, str | None] = {}
     last_regular_uuid: str | None = None
 
     for i, (uuid, parent_uuid, is_compact) in enumerate(entries):
+        # Re-parent records whose parent was an excluded hook
+        if parent_uuid in hook_uuids:
+            parent_uuid = hook_predecessor.get(parent_uuid)
+
         if parent_uuid is None and not is_compact:
             is_followed_by_compact = False
             for j in range(i + 1, len(entries)):
@@ -1167,25 +1179,35 @@ def _build_records_and_parent_map(
     records: dict[str, dict[str, object]] = {}
     # Collect (uuid, parentUuid, is_compact) tuples for parent map construction
     entries: list[tuple[str, str | None, bool]] = []
+    hook_uuids: set[str] = set()
+    hook_predecessor: dict[str, str | None] = {}
+    last_non_hook_uuid: str | None = None
 
     for record, _ in iter_jsonl(transcript_path):
         uuid = record.get("uuid")
         if isinstance(uuid, str):
             # Skip saved_hook_context — these form parentUuid cycles
             if record.get("type") == "saved_hook_context":
+                hook_uuids.add(uuid)
+                hook_predecessor[uuid] = last_non_hook_uuid
                 continue
             records[uuid] = record
             parent_uuid = record.get("parentUuid")
             if parent_uuid is not None and not isinstance(parent_uuid, str):
+                last_non_hook_uuid = uuid
                 continue
             is_compact = bool(record.get("isCompactSummary"))
             entries.append((uuid, parent_uuid, is_compact))
+            last_non_hook_uuid = uuid
 
     # In-memory pass: build parent map with compaction bridging
     parent_map: dict[str, str | None] = {}
     last_regular_uuid: str | None = None
 
     for i, (uuid, parent_uuid, is_compact) in enumerate(entries):
+        # Re-parent records whose parent was an excluded hook
+        if parent_uuid in hook_uuids:
+            parent_uuid = hook_predecessor.get(parent_uuid)
         if parent_uuid is None and not is_compact:
             is_followed_by_compact = False
             for j in range(i + 1, len(entries)):
