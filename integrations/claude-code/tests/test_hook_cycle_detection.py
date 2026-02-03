@@ -219,6 +219,204 @@ class TestBuildMetadataExcludesHookContext:
             path.unlink()
 
 
+class TestHookChildrenReparenting:
+    """Non-hook records whose parent is a saved_hook_context must be re-parented.
+
+    Real-world pattern from we-stay-waco.jsonl:
+
+        user2 (parent=asst1)
+        hook1 (parent=asst2)     ← saved_hook_context, forms cycle to future asst
+        asst2 (parent=hook1)     ← non-hook record, parent will be excluded
+
+    When hook1 is excluded, asst2's parent dangles. The parent map must re-link
+    asst2 to the last non-hook record before hook1 in file order (user2).
+    """
+
+    def test_children_of_excluded_hooks_are_reparented(self) -> None:
+        """Records whose parentUuid points to an excluded hook get re-parented."""
+        path = _write_jsonl(
+            [
+                {
+                    "uuid": "user1",
+                    "parentUuid": None,
+                    "timestamp": "2024-01-01T10:00:00Z",
+                    "type": "user",
+                },
+                {
+                    "uuid": "asst1",
+                    "parentUuid": "user1",
+                    "timestamp": "2024-01-01T10:01:00Z",
+                    "type": "assistant",
+                },
+                {
+                    "uuid": "user2",
+                    "parentUuid": "asst1",
+                    "timestamp": "2024-01-01T10:02:00Z",
+                    "type": "user",
+                },
+                # Hook inserted between user and assistant.
+                # Its parentUuid points to asst2 (forming a cycle).
+                {
+                    "uuid": "hook1",
+                    "parentUuid": "asst2",
+                    "timestamp": "2024-01-01T10:02:01Z",
+                    "type": "saved_hook_context",
+                },
+                # Assistant's parentUuid points to the hook (not user2).
+                {
+                    "uuid": "asst2",
+                    "parentUuid": "hook1",
+                    "timestamp": "2024-01-01T10:03:00Z",
+                    "type": "assistant",
+                },
+                {
+                    "uuid": "user3",
+                    "parentUuid": "asst2",
+                    "timestamp": "2024-01-01T10:04:00Z",
+                    "type": "user",
+                },
+                {
+                    "uuid": "asst3",
+                    "parentUuid": "user3",
+                    "timestamp": "2024-01-01T10:05:00Z",
+                    "type": "assistant",
+                },
+            ]
+        )
+
+        try:
+            metadata, parent_map = _build_metadata_and_parent_map(path)
+
+            # hook1 must be excluded
+            assert "hook1" not in metadata
+            assert "hook1" not in parent_map
+
+            # asst2 must be re-parented to user2 (last non-hook before hook1)
+            assert (
+                parent_map["asst2"] == "user2"
+            ), f"asst2 should be re-parented to user2, got {parent_map.get('asst2')}"
+
+            # Full chain from head must reach root
+            chain = build_ancestry_chain_from_meta("asst3", None, metadata, parent_map)
+            assert chain == ["user1", "asst1", "user2", "asst2", "user3", "asst3"]
+        finally:
+            path.unlink()
+
+    def test_multiple_hooks_in_chain(self) -> None:
+        """Multiple consecutive hooks: children re-parent through all of them."""
+        path = _write_jsonl(
+            [
+                {
+                    "uuid": "user1",
+                    "parentUuid": None,
+                    "timestamp": "2024-01-01T10:00:00Z",
+                    "type": "user",
+                },
+                {
+                    "uuid": "asst1",
+                    "parentUuid": "user1",
+                    "timestamp": "2024-01-01T10:01:00Z",
+                    "type": "assistant",
+                },
+                {
+                    "uuid": "user2",
+                    "parentUuid": "asst1",
+                    "timestamp": "2024-01-01T10:02:00Z",
+                    "type": "user",
+                },
+                # Chain of hooks (each pointing to previous hook)
+                {
+                    "uuid": "hook1",
+                    "parentUuid": "asst2",
+                    "timestamp": "2024-01-01T10:02:01Z",
+                    "type": "saved_hook_context",
+                },
+                {
+                    "uuid": "hook2",
+                    "parentUuid": "hook1",
+                    "timestamp": "2024-01-01T10:02:02Z",
+                    "type": "saved_hook_context",
+                },
+                {
+                    "uuid": "hook3",
+                    "parentUuid": "hook2",
+                    "timestamp": "2024-01-01T10:02:03Z",
+                    "type": "saved_hook_context",
+                },
+                # Assistant parented to last hook in chain
+                {
+                    "uuid": "asst2",
+                    "parentUuid": "hook3",
+                    "timestamp": "2024-01-01T10:03:00Z",
+                    "type": "assistant",
+                },
+                {
+                    "uuid": "user3",
+                    "parentUuid": "asst2",
+                    "timestamp": "2024-01-01T10:04:00Z",
+                    "type": "user",
+                },
+            ]
+        )
+
+        try:
+            metadata, parent_map = _build_metadata_and_parent_map(path)
+
+            # All hooks excluded
+            for hook_id in ("hook1", "hook2", "hook3"):
+                assert hook_id not in metadata
+
+            # asst2 re-parented to user2
+            assert parent_map["asst2"] == "user2"
+
+            chain = build_ancestry_chain_from_meta("user3", None, metadata, parent_map)
+            assert chain == ["user1", "asst1", "user2", "asst2", "user3"]
+        finally:
+            path.unlink()
+
+    def test_deprecated_path_also_reparents(self) -> None:
+        """_build_records_and_parent_map (deprecated) also re-parents hook children."""
+        path = _write_jsonl(
+            [
+                {
+                    "uuid": "user1",
+                    "parentUuid": None,
+                    "timestamp": "2024-01-01T10:00:00Z",
+                    "type": "user",
+                },
+                {
+                    "uuid": "user2",
+                    "parentUuid": "user1",
+                    "timestamp": "2024-01-01T10:02:00Z",
+                    "type": "user",
+                },
+                {
+                    "uuid": "hook1",
+                    "parentUuid": "asst1",
+                    "timestamp": "2024-01-01T10:02:01Z",
+                    "type": "saved_hook_context",
+                },
+                {
+                    "uuid": "asst1",
+                    "parentUuid": "hook1",
+                    "timestamp": "2024-01-01T10:03:00Z",
+                    "type": "assistant",
+                },
+            ]
+        )
+
+        try:
+            records, parent_map = _build_records_and_parent_map(path)
+
+            assert "hook1" not in records
+            assert parent_map["asst1"] == "user2"
+
+            chain = build_ancestry_chain("asst1", None, records, parent_map)
+            assert chain == ["user1", "user2", "asst1"]
+        finally:
+            path.unlink()
+
+
 class TestBuildRecordsAndParentMapExcludesHookContext:
     """_build_records_and_parent_map (deprecated) must also skip saved_hook_context."""
 
