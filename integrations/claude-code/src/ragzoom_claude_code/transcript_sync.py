@@ -518,11 +518,13 @@ def build_ancestry_chain_from_meta(
         return []
 
     chain: list[str] = []
+    visited: set[str] = set()
     current: str | None = head_uuid
 
     while current is not None and current != stop_uuid:
-        if current not in metadata:
+        if current not in metadata or current in visited:
             break
+        visited.add(current)
         chain.append(current)
         current = parent_map.get(current)
 
@@ -561,12 +563,13 @@ def build_ancestry_chain(
 
     # Walk backward from head, collecting UUIDs that exist in records
     chain: list[str] = []
+    visited: set[str] = set()
     current: str | None = head_uuid
 
     while current is not None and current != stop_uuid:
-        if current not in records:
-            # Current UUID not in records - can't include or trace further
+        if current not in records or current in visited:
             break
+        visited.add(current)
         chain.append(current)
         current = parent_map.get(current)
 
@@ -1077,6 +1080,11 @@ def _build_metadata_and_parent_map(
         meta = _extract_metadata(record)
         if meta is None:
             continue
+        # Skip saved_hook_context records — they form parentUuid cycles
+        # (first hook points to final assistant of the turn, which chains
+        # back through the hook list, creating a loop).
+        if meta.record_type == "saved_hook_context":
+            continue
         metadata_by_uuid[meta.uuid] = meta
         entries.append((meta.uuid, meta.parent_uuid, meta.is_compact_summary))
 
@@ -1163,6 +1171,9 @@ def _build_records_and_parent_map(
     for record, _ in iter_jsonl(transcript_path):
         uuid = record.get("uuid")
         if isinstance(uuid, str):
+            # Skip saved_hook_context — these form parentUuid cycles
+            if record.get("type") == "saved_hook_context":
+                continue
             records[uuid] = record
             parent_uuid = record.get("parentUuid")
             if parent_uuid is not None and not isinstance(parent_uuid, str):
