@@ -1096,35 +1096,30 @@ def _build_metadata_and_parent_map(
         entries.append((meta.uuid, meta.parent_uuid, meta.is_compact_summary))
         last_non_hook_uuid = meta.uuid
 
-    # In-memory pass: build parent map with compaction bridging
+    # In-memory pass: build parent map with discontinuity bridging.
+    # Any record with parentUuid=None that isn't the first in the file gets
+    # bridged to the last step (user/assistant) before it in file order.
+    # This handles compaction boundaries, sub-agent context resets, and any
+    # future parentUuid=None pattern uniformly.
+    #
+    # We bridge to steps (not progress/system) because progress records form
+    # parallel branches that can create cycles if used as bridge targets.
     parent_map: dict[str, str | None] = {}
-    last_regular_uuid: str | None = None
+    last_step_uuid: str | None = None
 
-    for i, (uuid, parent_uuid, is_compact) in enumerate(entries):
+    for uuid, parent_uuid, is_compact in entries:
         # Re-parent records whose parent was an excluded hook
         if parent_uuid in hook_uuids:
             parent_uuid = hook_predecessor.get(parent_uuid)
 
         if parent_uuid is None and not is_compact:
-            is_followed_by_compact = False
-            for j in range(i + 1, len(entries)):
-                _, _, next_is_compact = entries[j]
-                if next_is_compact:
-                    is_followed_by_compact = True
-                    break
-                _, next_parent, _ = entries[j]
-                if next_parent != uuid:
-                    break
-
-            if is_followed_by_compact and last_regular_uuid is not None:
-                parent_map[uuid] = last_regular_uuid
-            else:
-                parent_map[uuid] = None
+            parent_map[uuid] = last_step_uuid
         else:
             parent_map[uuid] = parent_uuid
 
-        if not is_compact:
-            last_regular_uuid = uuid
+        record_type = metadata_by_uuid[uuid].record_type
+        if record_type in ("user", "assistant"):
+            last_step_uuid = uuid
 
     return metadata_by_uuid, parent_map
 
@@ -1200,34 +1195,23 @@ def _build_records_and_parent_map(
             entries.append((uuid, parent_uuid, is_compact))
             last_non_hook_uuid = uuid
 
-    # In-memory pass: build parent map with compaction bridging
+    # In-memory pass: build parent map with discontinuity bridging
     parent_map: dict[str, str | None] = {}
-    last_regular_uuid: str | None = None
+    last_step_uuid: str | None = None
 
-    for i, (uuid, parent_uuid, is_compact) in enumerate(entries):
+    for uuid, parent_uuid, is_compact in entries:
         # Re-parent records whose parent was an excluded hook
         if parent_uuid in hook_uuids:
             parent_uuid = hook_predecessor.get(parent_uuid)
-        if parent_uuid is None and not is_compact:
-            is_followed_by_compact = False
-            for j in range(i + 1, len(entries)):
-                _, _, next_is_compact = entries[j]
-                if next_is_compact:
-                    is_followed_by_compact = True
-                    break
-                _, next_parent, _ = entries[j]
-                if next_parent != uuid:
-                    break
 
-            if is_followed_by_compact and last_regular_uuid is not None:
-                parent_map[uuid] = last_regular_uuid
-            else:
-                parent_map[uuid] = None
+        if parent_uuid is None and not is_compact:
+            parent_map[uuid] = last_step_uuid
         else:
             parent_map[uuid] = parent_uuid
 
-        if not is_compact:
-            last_regular_uuid = uuid
+        record_type = records[uuid].get("type")
+        if record_type in ("user", "assistant"):
+            last_step_uuid = uuid
 
     return records, parent_map
 
