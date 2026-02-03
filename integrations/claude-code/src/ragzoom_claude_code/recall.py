@@ -124,19 +124,18 @@ def format_for_cli(result: RecallResult) -> str:
     lines.append("")
 
     for node in result.nodes:
-        start = node.time_start or "?"
-        end = node.time_end or "?"
-
-        # XML-style opening tag with copy-pasteable timestamps
-        lines.append(
-            f'<Span time_start="{start}" time_end="{end}" height={node.height}>'
-        )
-
-        # Text content
-        lines.append(node.text)
-
-        # Closing tag
-        lines.append("</Span>")
-        lines.append("")
+        if node.height == 0:
+            # Verbatim transcript — no wrapper needed, timestamps are inline
+            lines.append(node.text)
+            lines.append("")
+        else:
+            start = node.time_start or "?"
+            end = node.time_end or "?"
+            lines.append(
+                f'<Span time_start="{start}" time_end="{end}" height={node.height}>'
+            )
+            lines.append(node.text)
+            lines.append("</Span>")
+            lines.append("")
 
     return "\n".join(lines).rstrip()
