@@ -59,6 +59,12 @@ chroma_db/
 logs/
 agent_logs/
 
+# Profiling artifacts
+*.stats
+
+# Telemetry reports
+telemetry_reports/
+
 # Docker helper state
 .docker-bin/
 .docker-config/
