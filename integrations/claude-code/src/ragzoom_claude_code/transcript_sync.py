@@ -39,7 +39,10 @@ _COMMAND_NAME_PATTERN = re.compile(r"<command-name>(/[\w-]+)</command-name>")
 # Summarization guidance for conversation transcripts
 # Instructs the LLM to preserve narrative structure, identity, and decision outcomes
 CONVERSATION_SUMMARIZATION_GUIDANCE = """
-This is a conversation transcript between a human and an AI assistant.
+This is an interaction log between you (the agent) and one or more users.
+Incoming events (user messages, system notifications) are marked with "❯".
+Your outgoing messages and actions are marked with "⏺".
+Timestamps appear in brackets like [2026-01-16T23:22:00.490Z].
 
 When summarizing, preserve:
 - **Identity and agency**: Who said what, who performed which actions
