@@ -417,6 +417,233 @@ class TestHookChildrenReparenting:
             path.unlink()
 
 
+class TestBareSystemRootBridging:
+    """Bare system roots (no compaction summary) must be bridged to preceding chain.
+
+    Claude Code inserts system records with parentUuid=None when sub-agents
+    return results. These are NOT session resumptions (no compaction summary
+    follows). Without bridging, the ancestry chain terminates at these roots,
+    losing all earlier conversation history.
+
+    Real-world pattern from metals-and-ai.jsonl:
+
+        user2 (parent=asst1)             ← main conversation
+        system1 (parentUuid=None)        ← sub-agent context reset
+        asst2 (parent=system1)           ← continues from bare root
+        user3 (parent=asst2)             ← head
+
+    Chain from head reaches system1 and stops. It should bridge to user2.
+    """
+
+    def test_bare_system_root_bridges_to_predecessor(self) -> None:
+        """A system root not followed by compaction is bridged to preceding record."""
+        path = _write_jsonl(
+            [
+                {
+                    "uuid": "user1",
+                    "parentUuid": None,
+                    "timestamp": "2024-01-01T10:00:00Z",
+                    "type": "user",
+                },
+                {
+                    "uuid": "asst1",
+                    "parentUuid": "user1",
+                    "timestamp": "2024-01-01T10:01:00Z",
+                    "type": "assistant",
+                },
+                {
+                    "uuid": "user2",
+                    "parentUuid": "asst1",
+                    "timestamp": "2024-01-01T10:02:00Z",
+                    "type": "user",
+                },
+                # Sub-agent return: bare system root, NO compaction follows
+                {
+                    "uuid": "sys1",
+                    "parentUuid": None,
+                    "timestamp": "2024-01-01T10:02:01Z",
+                    "type": "system",
+                },
+                {
+                    "uuid": "asst2",
+                    "parentUuid": "sys1",
+                    "timestamp": "2024-01-01T10:03:00Z",
+                    "type": "assistant",
+                },
+                {
+                    "uuid": "user3",
+                    "parentUuid": "asst2",
+                    "timestamp": "2024-01-01T10:04:00Z",
+                    "type": "user",
+                },
+            ]
+        )
+
+        try:
+            metadata, parent_map = _build_metadata_and_parent_map(path)
+
+            # sys1 must be bridged to user2 (last record before it)
+            assert (
+                parent_map["sys1"] == "user2"
+            ), f"sys1 should bridge to user2, got {parent_map.get('sys1')}"
+
+            # Full chain from head must reach root
+            chain = build_ancestry_chain_from_meta("user3", None, metadata, parent_map)
+            assert chain == ["user1", "asst1", "user2", "sys1", "asst2", "user3"]
+        finally:
+            path.unlink()
+
+    def test_multiple_bare_roots_all_bridged(self) -> None:
+        """Multiple consecutive bare system roots are each bridged."""
+        path = _write_jsonl(
+            [
+                {
+                    "uuid": "user1",
+                    "parentUuid": None,
+                    "timestamp": "2024-01-01T10:00:00Z",
+                    "type": "user",
+                },
+                {
+                    "uuid": "asst1",
+                    "parentUuid": "user1",
+                    "timestamp": "2024-01-01T10:01:00Z",
+                    "type": "assistant",
+                },
+                # First sub-agent return
+                {
+                    "uuid": "sys1",
+                    "parentUuid": None,
+                    "timestamp": "2024-01-01T10:01:01Z",
+                    "type": "system",
+                },
+                {
+                    "uuid": "asst2",
+                    "parentUuid": "sys1",
+                    "timestamp": "2024-01-01T10:01:02Z",
+                    "type": "assistant",
+                },
+                # Second sub-agent return
+                {
+                    "uuid": "sys2",
+                    "parentUuid": None,
+                    "timestamp": "2024-01-01T10:01:03Z",
+                    "type": "system",
+                },
+                {
+                    "uuid": "asst3",
+                    "parentUuid": "sys2",
+                    "timestamp": "2024-01-01T10:02:00Z",
+                    "type": "assistant",
+                },
+                {
+                    "uuid": "user2",
+                    "parentUuid": "asst3",
+                    "timestamp": "2024-01-01T10:03:00Z",
+                    "type": "user",
+                },
+            ]
+        )
+
+        try:
+            metadata, parent_map = _build_metadata_and_parent_map(path)
+
+            assert parent_map["sys1"] == "asst1"
+            assert parent_map["sys2"] == "asst2"
+
+            chain = build_ancestry_chain_from_meta("user2", None, metadata, parent_map)
+            assert chain == [
+                "user1",
+                "asst1",
+                "sys1",
+                "asst2",
+                "sys2",
+                "asst3",
+                "user2",
+            ]
+        finally:
+            path.unlink()
+
+    def test_compaction_bridging_still_works(self) -> None:
+        """Compaction-preceded roots still bridge correctly (no regression)."""
+        path = _write_jsonl(
+            [
+                {
+                    "uuid": "user1",
+                    "parentUuid": None,
+                    "timestamp": "2024-01-01T10:00:00Z",
+                    "type": "user",
+                },
+                {
+                    "uuid": "asst1",
+                    "parentUuid": "user1",
+                    "timestamp": "2024-01-01T10:01:00Z",
+                    "type": "assistant",
+                },
+                # Session resumption with compaction
+                {
+                    "uuid": "sys1",
+                    "parentUuid": None,
+                    "timestamp": "2024-01-01T11:00:00Z",
+                    "type": "system",
+                },
+                {
+                    "uuid": "compact1",
+                    "parentUuid": "sys1",
+                    "timestamp": "2024-01-01T11:00:00Z",
+                    "type": "user",
+                    "isCompactSummary": True,
+                },
+                {
+                    "uuid": "user2",
+                    "parentUuid": "compact1",
+                    "timestamp": "2024-01-01T11:01:00Z",
+                    "type": "user",
+                },
+            ]
+        )
+
+        try:
+            metadata, parent_map = _build_metadata_and_parent_map(path)
+
+            # sys1 bridges to asst1 via compaction logic
+            assert parent_map["sys1"] == "asst1"
+
+            chain = build_ancestry_chain_from_meta("user2", None, metadata, parent_map)
+            assert chain == ["user1", "asst1", "sys1", "compact1", "user2"]
+        finally:
+            path.unlink()
+
+    def test_first_root_not_bridged(self) -> None:
+        """The very first root in the file has no predecessor — stays None."""
+        path = _write_jsonl(
+            [
+                {
+                    "uuid": "user1",
+                    "parentUuid": None,
+                    "timestamp": "2024-01-01T10:00:00Z",
+                    "type": "user",
+                },
+                {
+                    "uuid": "asst1",
+                    "parentUuid": "user1",
+                    "timestamp": "2024-01-01T10:01:00Z",
+                    "type": "assistant",
+                },
+            ]
+        )
+
+        try:
+            metadata, parent_map = _build_metadata_and_parent_map(path)
+
+            # First root stays None
+            assert parent_map["user1"] is None
+
+            chain = build_ancestry_chain_from_meta("asst1", None, metadata, parent_map)
+            assert chain == ["user1", "asst1"]
+        finally:
+            path.unlink()
+
+
 class TestBuildRecordsAndParentMapExcludesHookContext:
     """_build_records_and_parent_map (deprecated) must also skip saved_hook_context."""
 
