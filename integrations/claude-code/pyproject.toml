@@ -9,7 +9,7 @@ description = "Claude Code integration for RagZoom memory"
 requires-python = ">=3.10"
 dependencies = [
     "ragzoom>=0.1.0",
-    "claude-transcriber>=0.2.1",
+    "claude-transcriber>=0.3.1",
     "mcp>=1.0.0",
     "click>=8.0.0",
 ]
