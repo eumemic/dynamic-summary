@@ -106,5 +106,9 @@ jscpd-report.json
 report/
 /results/
 
+# Benchmark datasets and results
+test_data/
+locomo_results/
+
 # Local data (DB and vector index)
 data/
