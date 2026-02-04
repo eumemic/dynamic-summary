@@ -63,6 +63,17 @@ class LoCoMoConversation:
 
 
 @dataclass(frozen=True)
+class CostMetrics:
+    """Token usage and iteration counts for one agentic answer."""
+
+    total_input_tokens: int
+    total_output_tokens: int
+    retrieval_call_count: int
+    reasoning_turn_count: int
+    retrieved_tokens_per_call: tuple[int, ...]
+
+
+@dataclass(frozen=True)
 class AnswerResult:
     """Result of evaluating one QA pair at a specific token budget."""
 
@@ -75,6 +86,7 @@ class AnswerResult:
     generated_answer: str
     judge_verdict: JudgeVerdict | None  # A=correct, B=incorrect, C=not attempted
     token_f1: float
+    cost: CostMetrics | None = None  # Populated for agentic evaluations
 
 
 @dataclass(frozen=True)

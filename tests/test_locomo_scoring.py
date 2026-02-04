@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from ragzoom.evaluation.locomo.report import save_markdown
+from ragzoom.evaluation.locomo.report import save_json, save_markdown
 from ragzoom.evaluation.locomo.runner import LoCoMoConfig, _aggregate_budget
 from ragzoom.evaluation.locomo.scoring import compute_token_f1
 from ragzoom.evaluation.locomo.types import (
@@ -17,6 +17,7 @@ from ragzoom.evaluation.locomo.types import (
     BenchmarkReport,
     BudgetPoint,
     CategoryScore,
+    CostMetrics,
     LoCoMoConversation,
     QACategory,
     parse_locomo_file,
@@ -290,9 +291,157 @@ class TestReportF1Only:
 # ---------------------------------------------------------------------------
 
 
-class TestAnswerPrompt:
+class TestAgentPrompt:
     def test_prompt_is_information_dense(self) -> None:
-        from ragzoom.evaluation.locomo.answer import _ANSWER_SYSTEM_PROMPT
+        from ragzoom.evaluation.locomo.agent.prompt import AGENT_SYSTEM_PROMPT
 
-        assert "information-dense" in _ANSWER_SYSTEM_PROMPT
-        assert "1-3 sentences" not in _ANSWER_SYSTEM_PROMPT
+        assert "information-dense" in AGENT_SYSTEM_PROMPT
+        assert "1-3 sentences" not in AGENT_SYSTEM_PROMPT
+
+    def test_prompt_teaches_zoom_workflow(self) -> None:
+        from ragzoom.evaluation.locomo.agent.prompt import AGENT_SYSTEM_PROMPT
+
+        assert "SURVEY" in AGENT_SYSTEM_PROMPT
+        assert "ZOOM" in AGENT_SYSTEM_PROMPT
+
+
+class TestCostMetrics:
+    def test_frozen(self) -> None:
+        cost = CostMetrics(
+            total_input_tokens=100,
+            total_output_tokens=50,
+            retrieval_call_count=2,
+            reasoning_turn_count=3,
+            retrieved_tokens_per_call=(500, 800),
+        )
+        with pytest.raises(AttributeError):
+            cost.total_input_tokens = 999  # type: ignore[misc]
+
+    def test_fields(self) -> None:
+        cost = CostMetrics(
+            total_input_tokens=100,
+            total_output_tokens=50,
+            retrieval_call_count=2,
+            reasoning_turn_count=3,
+            retrieved_tokens_per_call=(500, 800),
+        )
+        assert cost.total_input_tokens == 100
+        assert cost.retrieved_tokens_per_call == (500, 800)
+
+
+class TestAnswerResultBackwardCompat:
+    def test_cost_defaults_to_none(self) -> None:
+        result = _make_result("A", 1.0)
+        assert result.cost is None
+
+    def test_cost_can_be_set(self) -> None:
+        cost = CostMetrics(
+            total_input_tokens=100,
+            total_output_tokens=50,
+            retrieval_call_count=1,
+            reasoning_turn_count=2,
+            retrieved_tokens_per_call=(500,),
+        )
+        result = AnswerResult(
+            sample_id="test",
+            question="q?",
+            gold_answer="a",
+            category=QACategory.SINGLE_HOP,
+            budget_tokens=2000,
+            retrieved_token_count=500,
+            generated_answer="a",
+            judge_verdict="A",
+            token_f1=1.0,
+            cost=cost,
+        )
+        assert result.cost is not None
+        assert result.cost.retrieval_call_count == 1
+
+
+class TestReportCostSerialization:
+    def test_json_includes_cost_when_present(self) -> None:
+        cost = CostMetrics(
+            total_input_tokens=100,
+            total_output_tokens=50,
+            retrieval_call_count=1,
+            reasoning_turn_count=2,
+            retrieved_tokens_per_call=(500,),
+        )
+        result = AnswerResult(
+            sample_id="test",
+            question="q?",
+            gold_answer="a",
+            category=QACategory.SINGLE_HOP,
+            budget_tokens=2000,
+            retrieved_token_count=500,
+            generated_answer="a",
+            judge_verdict="A",
+            token_f1=1.0,
+            cost=cost,
+        )
+        report = BenchmarkReport(
+            answer_model="test-model",
+            judge_model="test-judge",
+            num_conversations=1,
+            num_questions=1,
+            budget_curve=[],
+            per_question=[result],
+        )
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = Path(f.name)
+        save_json(report, path)
+        data = json.loads(path.read_text())
+        assert "cost" in data["per_question"][0]
+        assert data["per_question"][0]["cost"]["retrieval_call_count"] == 1
+        assert data["metadata"]["max_iterations"] == 1
+
+    def test_json_omits_cost_when_none(self) -> None:
+        result = _make_result("A", 1.0)
+        report = BenchmarkReport(
+            answer_model="test-model",
+            judge_model="test-judge",
+            num_conversations=1,
+            num_questions=1,
+            budget_curve=[],
+            per_question=[result],
+        )
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = Path(f.name)
+        save_json(report, path)
+        data = json.loads(path.read_text())
+        assert "cost" not in data["per_question"][0]
+
+    def test_markdown_includes_cost_summary(self) -> None:
+        cost = CostMetrics(
+            total_input_tokens=1000,
+            total_output_tokens=200,
+            retrieval_call_count=3,
+            reasoning_turn_count=4,
+            retrieved_tokens_per_call=(500, 800, 1200),
+        )
+        result = AnswerResult(
+            sample_id="test",
+            question="q?",
+            gold_answer="a",
+            category=QACategory.SINGLE_HOP,
+            budget_tokens=2000,
+            retrieved_token_count=2500,
+            generated_answer="a",
+            judge_verdict=None,
+            token_f1=0.8,
+            cost=cost,
+        )
+        report = BenchmarkReport(
+            answer_model="test-model",
+            judge_model="test-judge",
+            num_conversations=1,
+            num_questions=1,
+            budget_curve=[],
+            per_question=[result],
+        )
+        with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
+            path = Path(f.name)
+        save_markdown(report, path)
+        content = path.read_text()
+        assert "Agent Cost Summary" in content
+        assert "Avg retrieval calls" in content

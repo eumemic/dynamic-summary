@@ -15,7 +15,7 @@ from openai import AsyncOpenAI
 
 from ragzoom.adapters.openai_chat_model import OpenAIChatModel
 from ragzoom.constants import DEV_GRPC_PORT
-from ragzoom.evaluation.locomo.answer import generate_answer
+from ragzoom.evaluation.locomo.agent.backends.openai import OpenAIAgentBackend
 from ragzoom.evaluation.locomo.ingest import (
     doc_id_for,
     ingest_all,
@@ -54,6 +54,8 @@ class LoCoMoConfig:
     sample_size: int | None = None
     f1_only: bool = False
     rejudge_path: Path | None = None
+    max_iterations: int = 1
+    agent_model: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -62,25 +64,25 @@ class LoCoMoConfig:
 
 
 async def _evaluate_one(
-    rz: RagZoom,
-    answer_model: OpenAIChatModel,
+    backend: OpenAIAgentBackend,
     judge_model: OpenAIChatModel | None,
     doc_id: str,
     qa: QAPair,
     budget: int,
+    max_iterations: int,
     semaphore: asyncio.Semaphore,
 ) -> AnswerResult:
-    """Evaluate a single QA pair at a given budget."""
+    """Evaluate a single QA pair using the agentic zoom loop."""
     async with semaphore:
-        generated, token_count = await generate_answer(
-            rz, answer_model, doc_id, qa.question, budget
+        agent_result = await backend.generate(
+            doc_id, qa.question, budget, max_iterations
         )
         verdict: JudgeVerdict | None = None
         if judge_model is not None:
             verdict = await judge_answer(
-                judge_model, qa.question, qa.gold_answer, generated
+                judge_model, qa.question, qa.gold_answer, agent_result.answer
             )
-        f1 = compute_token_f1(generated, qa.gold_answer)
+        f1 = compute_token_f1(agent_result.answer, qa.gold_answer)
 
         return AnswerResult(
             sample_id=qa.sample_id,
@@ -88,10 +90,11 @@ async def _evaluate_one(
             gold_answer=qa.gold_answer,
             category=qa.category,
             budget_tokens=budget,
-            retrieved_token_count=token_count,
-            generated_answer=generated,
+            retrieved_token_count=sum(agent_result.cost.retrieved_tokens_per_call),
+            generated_answer=agent_result.answer,
             judge_verdict=verdict,
             token_f1=f1,
+            cost=agent_result.cost,
         )
 
 
@@ -160,14 +163,23 @@ async def run_benchmark(config: LoCoMoConfig) -> BenchmarkReport:
         ingest_all(rz, conversations)
         wait_for_indexing(rz, conversations)
 
-    # 4. Set up LLM clients
+    # 3. Set up agent backend and judge
     openai_client = AsyncOpenAI()
-    answer_model = OpenAIChatModel(openai_client, config.answer_model)
+    agent_model_id = config.agent_model or config.answer_model
+    backend = OpenAIAgentBackend(openai_client, rz, agent_model_id)
+
     judge: OpenAIChatModel | None = None
     if not config.f1_only:
         judge = OpenAIChatModel(openai_client, config.judge_model)
 
-    # 5. Collect non-adversarial QA pairs
+    if config.max_iterations > 1:
+        logger.info(
+            "Agentic mode: max_iterations=%d, model=%s",
+            config.max_iterations,
+            agent_model_id,
+        )
+
+    # 4. Collect non-adversarial QA pairs
     qa_items: list[tuple[str, QAPair]] = []
     for conv in conversations:
         did = doc_id_for(conv)
@@ -186,14 +198,16 @@ async def run_benchmark(config: LoCoMoConfig) -> BenchmarkReport:
         len(qa_items) * len(config.budgets),
     )
 
-    # 6. Sweep budgets
+    # 5. Sweep budgets
     all_results: list[AnswerResult] = []
     semaphore = asyncio.Semaphore(config.max_concurrent)
 
     for budget in config.budgets:
         logger.info("Starting budget=%d", budget)
         tasks = [
-            _evaluate_one(rz, answer_model, judge, doc_id, qa, budget, semaphore)
+            _evaluate_one(
+                backend, judge, doc_id, qa, budget, config.max_iterations, semaphore
+            )
             for doc_id, qa in qa_items
         ]
         budget_results = await asyncio.gather(*tasks)
@@ -214,11 +228,11 @@ async def run_benchmark(config: LoCoMoConfig) -> BenchmarkReport:
         else:
             logger.info("Budget=%d: F1=%.3f (f1-only)", budget, avg_f1)
 
-    # 7. Aggregate
+    # 6. Aggregate
     budget_curve = [_aggregate_budget(all_results, b) for b in config.budgets]
 
     return BenchmarkReport(
-        answer_model=config.answer_model,
+        answer_model=agent_model_id,
         judge_model=config.judge_model,
         num_conversations=len(conversations),
         num_questions=len(qa_items),
