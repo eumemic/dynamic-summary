@@ -140,4 +140,4 @@ If the dev database was cleared, drop `--skip-ingest`. Ingestion takes ~5 min.
 
 - **`references/letta-comparison.md`** — Detailed Letta Leaderboard methodology, their exact grader prompt, and how to ensure apples-to-apples comparison
 - **`references/dataset-format.md`** — LoCoMo JSON format gotchas discovered during implementation
-- **`references/competitive-landscape.md`** — Summary of competing systems and benchmarks. Full research at `docs/research/agent-memory-benchmarks.md`
+- **`references/competitive-landscape.md`** — Summary of competing systems and benchmarks. Full research at `docs/benchmarking/competitive-landscape.md`

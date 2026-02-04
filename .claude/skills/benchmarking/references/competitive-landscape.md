@@ -1,6 +1,6 @@
 # Competitive Landscape Summary
 
-Full research document: `docs/research/agent-memory-benchmarks.md`
+Full research document: `docs/benchmarking/competitive-landscape.md`
 
 ## Key Competitors on LoCoMo
 
