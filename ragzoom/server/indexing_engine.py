@@ -1341,8 +1341,18 @@ class IndexingEngine:
                 # Wake up any waiters to re-check their conditions
                 self._idle_event.set()
 
-                # Request scheduling (coalesced with other job completions)
-                self._request_scheduling(document_id)
+                # Request scheduling for ALL active documents, not just the
+                # completing job's document.  Other documents may have been
+                # turned away earlier because all parallelism slots were full;
+                # now that a slot freed up they need a chance to claim it.
+                for active_doc_id in self._active_documents:
+                    self._dirty_documents.add(active_doc_id)
+                # Also ensure the completing document is included (it may
+                # have already been removed from _active_documents).
+                self._dirty_documents.add(document_id)
+
+                if self._scheduler_task is None or self._scheduler_task.done():
+                    self._scheduler_task = asyncio.create_task(self._run_scheduler())
             await self._maybe_complete_runs(document_id)
 
     async def _embed_leaf(self, job: EmbeddingJob) -> None:
