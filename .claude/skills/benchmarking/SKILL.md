@@ -1,6 +1,6 @@
 ---
 name: benchmarking
-description: This skill should be used when the user asks to "run the benchmark", "run locomo", "benchmark ragzoom", "evaluate recall quality", "compare with letta", "check accuracy", "run the evaluation harness", "budget-accuracy curve", or mentions benchmarking, evaluation, or competitive comparison of the memory system.
+description: This skill should be used when the user asks to "run the benchmark", "run locomo", "benchmark ragzoom", "evaluate recall quality", "compare with letta", "check accuracy", "run the evaluation harness", "budget-accuracy curve", "agentic evaluation", "max iterations", or mentions benchmarking, evaluation, or competitive comparison of the memory system.
 ---
 
 # RagZoom Benchmarking
@@ -14,13 +14,13 @@ LoCoMo is the de facto standard benchmark for conversational memory systems. Eve
 ### Prerequisites
 
 1. Dev server running on port 50052 (`python -m ragzoom.cli server start`)
-2. `OPENAI_API_KEY` exported (lives in `~/.config/ragzoom/.env`)
+2. Source the `.env` file: `set -a && source .env && set +a`
 3. Dataset at `test_data/locomo10.json` (10 conversations, ~1500 QA pairs)
 
 ### First Run (with ingestion)
 
 ```bash
-export $(grep -v '^#' ~/.config/ragzoom/.env | xargs)
+set -a && source .env && set +a
 PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --budgets 2000
 ```
 
@@ -29,17 +29,29 @@ Ingestion takes ~5 minutes (summarization tree building). Evaluation takes ~5 mi
 ### Subsequent Runs (skip ingestion)
 
 ```bash
-export $(grep -v '^#' ~/.config/ragzoom/.env | xargs)
+set -a && source .env && set +a
 PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest --budgets 2000
 ```
 
-### Full Budget Sweep
+### Agentic Evaluation
+
+The evaluator uses an agent loop where an LLM iteratively calls `recall` to zoom into relevant context before answering. Controlled by `--max-iterations`:
+
+- `--max-iterations 1` (default): Single recall call then answer. Equivalent to single-shot.
+- `--max-iterations 3`: Agent gets 3 recall calls to survey → zoom → zoom before answering.
 
 ```bash
-PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest
+# Single-shot (backward compatible)
+PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest --budgets 2000
+
+# Agentic zoom with 3 iterations
+PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest --budgets 2000 --max-iterations 3
+
+# Use a different model for the agent (defaults to --answer-model)
+PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest --max-iterations 3 --agent-model gpt-5-mini
 ```
 
-Default budgets: 500, 1000, 2000, 4000, 8000. Results saved to `locomo_results/`.
+Cost metrics (input/output tokens, retrieval calls, reasoning turns) are tracked per question and reported in both JSON and markdown output.
 
 ### Cheap Iteration Modes
 
@@ -60,7 +72,7 @@ PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ing
 PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --rejudge locomo_results/results.json
 ```
 
-Modes combine: `--sample 200 --f1-only` evaluates 200 questions with F1 only (~$0.15).
+Modes combine: `--sample 50 --f1-only --max-iterations 3` is the cheapest way to smoke-test agentic evaluation.
 
 ## Apples-to-Apples Comparison with Letta Leaderboard
 
@@ -91,6 +103,10 @@ The unique RagZoom metric. Shows how accuracy scales with token budget:
 - **Mid budgets (2000-4000)**: Mix of summaries and verbatim. Accuracy inflection point.
 - **High budgets (8000+)**: More leaf nodes. Approaching full-context performance.
 
+### Agent Cost Summary
+
+When running with `--max-iterations > 1`, the markdown report includes an Agent Cost Summary with average retrieval calls, reasoning turns, and input/output/retrieved tokens per question. Compare across iterations to assess the cost-accuracy tradeoff.
+
 ### Category Breakdown
 
 | Category | Tests | RagZoom's Challenge |
@@ -110,12 +126,17 @@ The unique RagZoom metric. Shows how accuracy scales with token budget:
 
 ```
 ragzoom/evaluation/locomo/
-├── types.py      # Data types, JSON parsing, QACategory enum
-├── ingest.py     # Conversation → AppendUnit ingestion, timestamp parsing
-├── answer.py     # RagZoom query → LLM answer generation
-├── scoring.py    # Token F1 + Letta GRADER_TEMPLATE judge
-├── runner.py     # Orchestration: ingest → sweep budgets → aggregate
-└── report.py     # JSON + Markdown output
+├── types.py          # Data types, JSON parsing, CostMetrics, QACategory enum
+├── ingest.py         # Conversation → AppendUnit ingestion, timestamp parsing
+├── scoring.py        # Token F1 + Letta GRADER_TEMPLATE judge
+├── runner.py         # Orchestration: ingest → sweep budgets → aggregate
+├── report.py         # JSON + Markdown output with cost metrics
+└── agent/
+    ├── protocol.py   # AgentBackend protocol, AgentResult
+    ├── prompt.py     # System prompt + recall tool schema
+    └── backends/
+        ├── openai.py     # OpenAI function-calling agent loop
+        └── anthropic.py  # Stub for future Claude Agent SDK backend
 ```
 
 CLI entry point: `scripts/run-locomo`
@@ -125,14 +146,21 @@ CLI entry point: `scripts/run-locomo`
 ### "No module named ragzoom.evaluation.locomo"
 Production ragzoom is installed non-editable. Use `PYTHONPATH=.` to pick up local code.
 
-### Stale database after code changes
-If server hits missing column errors, kill server, delete `data/sqlite.db`, restart.
+### Stale indexer lease blocking server start
+If the dev server won't start with "Failed to acquire indexer lease after 90s", the previous server left a non-expired lease. Clear it:
+```bash
+sqlite3 data/sqlite.db "DELETE FROM indexer_leases;"
+```
+Note: dev mode stores its database in the worktree's `data/sqlite.db`, not in `~/.local/state/`.
 
 ### API key not propagating
-`source .env` doesn't export. Use: `export $(grep -v '^#' ~/.config/ragzoom/.env | xargs)`
+`source .env` doesn't export. Use: `set -a && source .env && set +a`
 
 ### Re-ingestion after server restart
 If the dev database was cleared, drop `--skip-ingest`. Ingestion takes ~5 min.
+
+### Agent zoom errors
+If the agent zooms into a time range with no content, `rz.query` may error. The backend handles this gracefully by returning the error as a tool result, letting the agent try a different approach.
 
 ## Additional Resources
 
@@ -141,3 +169,8 @@ If the dev database was cleared, drop `--skip-ingest`. Ingestion takes ~5 min.
 - **`references/letta-comparison.md`** — Detailed Letta Leaderboard methodology, their exact grader prompt, and how to ensure apples-to-apples comparison
 - **`references/dataset-format.md`** — LoCoMo JSON format gotchas discovered during implementation
 - **`references/competitive-landscape.md`** — Summary of competing systems and benchmarks. Full research at `docs/benchmarking/competitive-landscape.md`
+
+### Strategy Documents
+
+- **`docs/benchmarking/strategy.md`** — Multi-objective optimization framework, Pareto frontiers, parameter space design
+- **`docs/benchmarking/TODO.md`** — Roadmap for model coverage, parameter sweep framework, duration tracking
