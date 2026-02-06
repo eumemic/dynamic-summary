@@ -11,7 +11,7 @@ import logging
 import re
 from collections import Counter
 
-from ragzoom.contracts.chat_model import ChatModel, Message
+from ragzoom.evaluation.locomo.agent.protocol import BenchmarkingAgent
 from ragzoom.evaluation.locomo.types import JudgeVerdict
 from ragzoom.exceptions import LLMError
 
@@ -187,11 +187,12 @@ _VERDICT_RE = re.compile(r"[ABC]")
 
 
 async def judge_answer(
-    chat_model: ChatModel,
+    backend: BenchmarkingAgent,
     question: str,
     gold_answer: str,
     generated_answer: str,
     *,
+    model_id: str = "unknown",
     max_retries: int = 3,
 ) -> JudgeVerdict:
     """Three-way LLM-as-Judge using Letta's grader rubric.
@@ -206,18 +207,16 @@ async def judge_answer(
         target=gold_answer,
         predicted_answer=generated_answer,
     )
-    messages: list[Message] = [
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": prompt},
-    ]
 
     last_error: LLMError | None = None
     for attempt in range(max_retries + 1):
         try:
-            result = await chat_model.complete(messages, temperature=0.0)
-            match = _VERDICT_RE.search(result["content"])
+            result = await backend.generate(
+                "You are a helpful assistant.", prompt, temperature=0.0
+            )
+            match = _VERDICT_RE.search(result.answer)
             if match is None:
-                raise ValueError(f"No A/B/C verdict found in: {result['content']!r}")
+                raise ValueError(f"No A/B/C verdict found in: {result.answer!r}")
             verdict = match.group(0)
             assert verdict in ("A", "B", "C")
             return verdict  # type: ignore[return-value]
@@ -225,7 +224,7 @@ async def judge_answer(
         except ValueError as e:
             last_error = LLMError(
                 operation="locomo_judge",
-                model=chat_model.model_id,
+                model=model_id,
                 message=f"Judge response parse error: {e}",
             )
             if attempt < max_retries:
@@ -242,7 +241,7 @@ async def judge_answer(
                 raise
             raise LLMError(
                 operation="locomo_judge",
-                model=chat_model.model_id,
+                model=model_id,
                 message=f"Judge failed: {e}",
             ) from e
 

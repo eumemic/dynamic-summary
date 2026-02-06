@@ -304,6 +304,111 @@ class TestAgentPrompt:
         assert "SURVEY" in AGENT_SYSTEM_PROMPT
         assert "ZOOM" in AGENT_SYSTEM_PROMPT
 
+    def test_no_tool_schemas_in_prompt_module(self) -> None:
+        """Tool schemas moved to ToolDefinition; prompt.py should be clean."""
+        import ragzoom.evaluation.locomo.agent.prompt as prompt_mod
+
+        assert not hasattr(prompt_mod, "RECALL_TOOL_SCHEMA")
+        assert not hasattr(prompt_mod, "RECALL_TOOL_SCHEMA_ANTHROPIC")
+
+
+# ---------------------------------------------------------------------------
+# judge_answer with BenchmarkingAgent
+# ---------------------------------------------------------------------------
+
+
+class TestJudgeAnswerWithBenchmarkingAgent:
+    """Verify judge_answer works with the unified BenchmarkingAgent protocol."""
+
+    @pytest.mark.asyncio
+    async def test_judge_returns_correct_verdict(self) -> None:
+        from collections.abc import Sequence
+
+        from ragzoom.evaluation.locomo.agent.protocol import (
+            AgentResult,
+            ToolDefinition,
+        )
+        from ragzoom.evaluation.locomo.scoring import judge_answer
+        from ragzoom.evaluation.locomo.types import CostMetrics
+
+        class FakeBackend:
+            async def generate(
+                self,
+                system_prompt: str,
+                user_prompt: str,
+                *,
+                tools: Sequence[ToolDefinition] = (),
+                max_turns: int = 1,
+                temperature: float | None = None,
+            ) -> AgentResult:
+                return AgentResult(
+                    answer="A",
+                    cost=CostMetrics(
+                        total_input_tokens=10,
+                        total_output_tokens=1,
+                        retrieval_call_count=0,
+                        reasoning_turn_count=1,
+                        retrieved_tokens_per_call=(),
+                    ),
+                )
+
+        verdict = await judge_answer(
+            FakeBackend(),
+            question="What color is the sky?",
+            gold_answer="blue",
+            generated_answer="blue",
+            model_id="fake-model",
+        )
+        assert verdict == "A"
+
+    @pytest.mark.asyncio
+    async def test_judge_retries_on_bad_response(self) -> None:
+        from collections.abc import Sequence
+
+        from ragzoom.evaluation.locomo.agent.protocol import (
+            AgentResult,
+            ToolDefinition,
+        )
+        from ragzoom.evaluation.locomo.scoring import judge_answer
+        from ragzoom.evaluation.locomo.types import CostMetrics
+
+        call_count = 0
+
+        class FlakeyBackend:
+            async def generate(
+                self,
+                system_prompt: str,
+                user_prompt: str,
+                *,
+                tools: Sequence[ToolDefinition] = (),
+                max_turns: int = 1,
+                temperature: float | None = None,
+            ) -> AgentResult:
+                nonlocal call_count
+                call_count += 1
+                # First call returns garbage, second returns valid verdict
+                answer = "hmm not sure" if call_count == 1 else "B"
+                return AgentResult(
+                    answer=answer,
+                    cost=CostMetrics(
+                        total_input_tokens=10,
+                        total_output_tokens=1,
+                        retrieval_call_count=0,
+                        reasoning_turn_count=1,
+                        retrieved_tokens_per_call=(),
+                    ),
+                )
+
+        verdict = await judge_answer(
+            FlakeyBackend(),
+            question="What color is the sky?",
+            gold_answer="blue",
+            generated_answer="red",
+            model_id="flakey-model",
+        )
+        assert verdict == "B"
+        assert call_count == 2
+
 
 class TestCostMetrics:
     def test_frozen(self) -> None:

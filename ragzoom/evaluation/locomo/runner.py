@@ -13,10 +13,13 @@ from statistics import mean
 
 from openai import AsyncOpenAI
 
-from ragzoom.adapters.openai_chat_model import OpenAIChatModel
 from ragzoom.constants import DEV_GRPC_PORT
-from ragzoom.evaluation.locomo.agent.backends.openai import OpenAIAgentBackend
-from ragzoom.evaluation.locomo.agent.protocol import AgentBackend
+from ragzoom.evaluation.locomo.agent.backends.openai import OpenAIBackend
+from ragzoom.evaluation.locomo.agent.protocol import (
+    BenchmarkingAgent,
+    ToolDefinition,
+    ToolResult,
+)
 from ragzoom.evaluation.locomo.ingest import (
     doc_id_for,
     ingest_all,
@@ -62,7 +65,7 @@ class LoCoMoConfig:
 
 
 # ---------------------------------------------------------------------------
-# Single-question evaluation
+# Tool & backend factories
 # ---------------------------------------------------------------------------
 
 
@@ -71,9 +74,92 @@ def _is_anthropic_model(model_id: str) -> bool:
     return model_id.startswith("claude-")
 
 
+def _create_backend(model_id: str, openai_client: AsyncOpenAI) -> BenchmarkingAgent:
+    """Create a BenchmarkingAgent for the given model ID."""
+    if _is_anthropic_model(model_id):
+        from ragzoom.evaluation.locomo.agent.backends.anthropic import AnthropicBackend
+
+        return AnthropicBackend(model_id)
+    return OpenAIBackend(openai_client, model_id)
+
+
+def make_recall_tool(rz: RagZoom, doc_id: str, default_budget: int) -> ToolDefinition:
+    """Create a recall ToolDefinition bound to a specific document."""
+
+    async def handler(args: dict[str, object]) -> ToolResult:
+        query_text = str(args.get("query", ""))
+        raw_budget = args.get("budget_tokens")
+        call_budget = int(str(raw_budget)) if raw_budget is not None else default_budget
+        raw_start = args.get("time_start")
+        time_start: str | None = (
+            str(raw_start) if raw_start and raw_start != "" else None
+        )
+        raw_end = args.get("time_end")
+        time_end: str | None = str(raw_end) if raw_end and raw_end != "" else None
+
+        try:
+            query_response = await asyncio.to_thread(
+                rz.query,
+                doc_id,
+                query_text,
+                budget_tokens=call_budget,
+                time_start=time_start,
+                time_end=time_end,
+            )
+            logger.debug(
+                "recall(%s, budget=%d) → %d tokens",
+                query_text[:50],
+                call_budget,
+                query_response.token_count,
+            )
+            return ToolResult(
+                content=query_response.summary,
+                token_count=query_response.token_count,
+            )
+        except Exception as exc:
+            logger.warning("recall(%s) failed: %s", query_text[:50], exc)
+            return ToolResult(content=f"Error: {exc}", is_error=True)
+
+    return ToolDefinition(
+        name="recall",
+        description=(
+            "Retrieve summarized context from the conversation. "
+            "Use budget_tokens to control detail level (higher = more content). "
+            "Use time_start/time_end (ISO 8601) to zoom into specific time ranges."
+        ),
+        parameters={
+            "query": {
+                "type": "string",
+                "description": "Search query to find relevant content",
+            },
+            "budget_tokens": {
+                "type": "integer",
+                "description": "Maximum tokens in response (higher = more detail)",
+            },
+            "time_start": {
+                "type": "string",
+                "description": "ISO 8601 timestamp to start from (optional)",
+            },
+            "time_end": {
+                "type": "string",
+                "description": "ISO 8601 timestamp to end at (optional)",
+            },
+        },
+        required=("query", "budget_tokens"),
+        handler=handler,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Single-question evaluation
+# ---------------------------------------------------------------------------
+
+
 async def _evaluate_one(
-    backend: AgentBackend,
-    judge_model: OpenAIChatModel | None,
+    backend: BenchmarkingAgent,
+    judge: BenchmarkingAgent | None,
+    judge_model_id: str,
+    rz: RagZoom,
     doc_id: str,
     qa: QAPair,
     budget: int,
@@ -81,14 +167,30 @@ async def _evaluate_one(
     semaphore: asyncio.Semaphore,
 ) -> AnswerResult:
     """Evaluate a single QA pair using the agentic zoom loop."""
+    from ragzoom.evaluation.locomo.agent.prompt import AGENT_SYSTEM_PROMPT
+
     async with semaphore:
-        agent_result = await backend.generate(
-            doc_id, qa.question, budget, max_iterations
+        recall_tool = make_recall_tool(rz, doc_id, budget)
+        user_prompt = (
+            f"Question: {qa.question}\n\n"
+            f"You have {max_iterations} recall calls available. "
+            f"Default budget per call: {budget} tokens."
         )
+        agent_result = await backend.generate(
+            AGENT_SYSTEM_PROMPT,
+            user_prompt,
+            tools=(recall_tool,),
+            max_turns=max_iterations,
+        )
+
         verdict: JudgeVerdict | None = None
-        if judge_model is not None:
+        if judge is not None:
             verdict = await judge_answer(
-                judge_model, qa.question, qa.gold_answer, agent_result.answer
+                judge,
+                qa.question,
+                qa.gold_answer,
+                agent_result.answer,
+                model_id=judge_model_id,
             )
         f1 = compute_token_f1(agent_result.answer, qa.gold_answer)
 
@@ -188,21 +290,11 @@ async def _run_benchmark_impl(config: LoCoMoConfig) -> BenchmarkReport:
     agent_model_id = config.agent_model or config.answer_model
     openai_client = AsyncOpenAI()
 
-    backend: AgentBackend
-    if _is_anthropic_model(agent_model_id):
-        from ragzoom.evaluation.locomo.agent.backends.anthropic import (
-            AnthropicAgentBackend,
-        )
+    backend = _create_backend(agent_model_id, openai_client)
 
-        # Claude Agent SDK handles authentication automatically
-        # (uses ANTHROPIC_API_KEY or Claude Code OAuth token)
-        backend = AnthropicAgentBackend(rz, agent_model_id)
-    else:
-        backend = OpenAIAgentBackend(openai_client, rz, agent_model_id)
-
-    judge: OpenAIChatModel | None = None
+    judge: BenchmarkingAgent | None = None
     if not config.f1_only:
-        judge = OpenAIChatModel(openai_client, config.judge_model)
+        judge = _create_backend(config.judge_model, openai_client)
 
     if config.max_iterations > 1:
         logger.info(
@@ -238,7 +330,15 @@ async def _run_benchmark_impl(config: LoCoMoConfig) -> BenchmarkReport:
         logger.info("Starting budget=%d", budget)
         tasks = [
             _evaluate_one(
-                backend, judge, doc_id, qa, budget, config.max_iterations, semaphore
+                backend,
+                judge,
+                config.judge_model,
+                rz,
+                doc_id,
+                qa,
+                budget,
+                config.max_iterations,
+                semaphore,
             )
             for doc_id, qa in qa_items
         ]
@@ -295,7 +395,7 @@ async def rejudge(config: LoCoMoConfig) -> BenchmarkReport:
     assert isinstance(per_question_raw, list)
 
     openai_client = AsyncOpenAI()
-    judge_model = OpenAIChatModel(openai_client, config.judge_model)
+    judge_backend = _create_backend(config.judge_model, openai_client)
     semaphore = asyncio.Semaphore(config.max_concurrent)
 
     async def _rejudge_one(entry: dict[str, object]) -> AnswerResult:
@@ -304,7 +404,11 @@ async def rejudge(config: LoCoMoConfig) -> BenchmarkReport:
         generated_answer = str(entry["generated_answer"])
         async with semaphore:
             verdict = await judge_answer(
-                judge_model, question, gold_answer, generated_answer
+                judge_backend,
+                question,
+                gold_answer,
+                generated_answer,
+                model_id=config.judge_model,
             )
         f1 = compute_token_f1(generated_answer, gold_answer)
         category_str = str(entry["category"])

@@ -1,153 +1,197 @@
-"""Claude Agent SDK backend that iteratively zooms via recall."""
+"""Claude Agent SDK backend implementing the BenchmarkingAgent protocol."""
 
 from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Sequence
 
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
     ResultMessage,
+    SdkMcpTool,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
     create_sdk_mcp_server,
-    tool,
+    query,
 )
 
-from ragzoom.evaluation.locomo.agent.prompt import AGENT_SYSTEM_PROMPT
-from ragzoom.evaluation.locomo.agent.protocol import AgentResult
-from ragzoom.evaluation.locomo.types import CostMetrics
-from ragzoom.wrapper import RagZoom
+from ragzoom.evaluation.locomo.agent.protocol import (
+    AgentResult,
+    ToolDefinition,
+    ToolResult,
+    make_agent_result,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class AnthropicAgentBackend:
-    """Claude Agent SDK backend that iteratively zooms via recall.
+def _build_sdk_tool(
+    td: ToolDefinition,
+    retrieved_tokens: list[int],
+) -> SdkMcpTool[dict[str, object]]:
+    """Convert a ToolDefinition into an SdkMcpTool, tracking token counts."""
+    param_types: dict[str, type] = {}
+    for pname, pschema in td.parameters.items():
+        if isinstance(pschema, dict):
+            json_type = pschema.get("type", "string")
+            if json_type == "integer":
+                param_types[pname] = int
+            elif json_type == "number":
+                param_types[pname] = float
+            elif json_type == "boolean":
+                param_types[pname] = bool
+            else:
+                param_types[pname] = str
+        else:
+            param_types[pname] = str
 
-    Uses the official Claude Agent SDK with a custom MCP tool for memory
-    retrieval. The SDK handles the agentic loop, tool execution, and
-    authentication (including OAuth tokens) automatically.
+    async def handler(args: dict[str, object]) -> dict[str, object]:
+        tr: ToolResult = await td.handler(args)
+        if tr.token_count > 0:
+            retrieved_tokens.append(tr.token_count)
+        if tr.is_error:
+            return {
+                "content": [{"type": "text", "text": tr.content}],
+                "is_error": True,
+            }
+        return {"content": [{"type": "text", "text": tr.content}]}
+
+    return SdkMcpTool(
+        name=td.name,
+        description=td.description,
+        input_schema=param_types,
+        handler=handler,
+    )
+
+
+def _extract_usage(message: ResultMessage) -> tuple[int, int]:
+    """Extract (input_tokens, output_tokens) from a ResultMessage."""
+    if message.usage is None:
+        return 0, 0
+    return (
+        int(message.usage.get("input_tokens", 0)),
+        int(message.usage.get("output_tokens", 0)),
+    )
+
+
+class AnthropicBackend:
+    """Claude backend for both agentic answers and single-shot judging.
+
+    Uses ``query()`` for tool-free single-shot calls (judge path) and
+    ``ClaudeSDKClient`` with MCP tools for agentic multi-turn answers.
     """
 
-    def __init__(self, rz: RagZoom, model_id: str) -> None:
-        self._rz = rz
+    def __init__(self, model_id: str) -> None:
         self._model_id = model_id
 
+    # jscpd:ignore-start (BenchmarkingAgent protocol implementation)
     async def generate(
         self,
-        doc_id: str,
-        question: str,
-        budget_tokens: int,
-        max_iterations: int,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        tools: Sequence[ToolDefinition] = (),
+        max_turns: int = 1,
+        temperature: float | None = None,
     ) -> AgentResult:
-        """Run the agentic zoom loop to answer a question.
+        # jscpd:ignore-end
+        """Generate a response, optionally using tools over multiple turns."""
+        if temperature is not None:
+            logger.warning(
+                "AnthropicBackend: temperature=%.2f ignored (SDK does not support it)",
+                temperature,
+            )
 
-        The agent gets up to *max_iterations* recall tool calls. After
-        exhausting its calls (or choosing to stop early), it must produce
-        a text answer.
-        """
+        if not tools:
+            return await self._generate_single_shot(system_prompt, user_prompt)
+        return await self._generate_agentic(
+            system_prompt, user_prompt, tools, max_turns
+        )
+
+    async def _generate_single_shot(
+        self, system_prompt: str, user_prompt: str
+    ) -> AgentResult:
+        """Single-shot call via ``query()`` — used for judging."""
+        start_time = time.monotonic()
+
+        options = ClaudeAgentOptions(
+            model=self._model_id,
+            system_prompt=system_prompt,
+            max_turns=1,
+            permission_mode="bypassPermissions",
+        )
+
+        answer = ""
+        total_input = 0
+        total_output = 0
+
+        async for message in query(prompt=user_prompt, options=options):
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        answer = block.text
+            elif isinstance(message, ResultMessage):
+                total_input, total_output = _extract_usage(message)
+
+        if not answer.strip():
+            answer = "I don't know."
+
+        return make_agent_result(
+            answer=answer,
+            total_input=total_input,
+            total_output=total_output,
+            retrieved_tokens=[],
+            reasoning_turns=1,
+            elapsed=time.monotonic() - start_time,
+        )
+
+    async def _generate_agentic(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        tools: Sequence[ToolDefinition],
+        max_turns: int,
+    ) -> AgentResult:
+        """Multi-turn agentic call via ``ClaudeSDKClient`` with MCP tools."""
         start_time = time.monotonic()
         retrieved_tokens: list[int] = []
-        retrieval_call_count = 0
 
-        # Create the recall tool that captures doc_id and budget_tokens
-        @tool(
-            "recall",
-            "Retrieve summarized context from the conversation. "
-            "Use budget_tokens to control detail level (higher = more content). "
-            "Use time_start/time_end (ISO 8601) to zoom into specific time ranges.",
-            {
-                "query": str,
-                "budget_tokens": int,
-                "time_start": str,
-                "time_end": str,
-            },
-        )
-        async def recall_tool(args: dict[str, object]) -> dict[str, object]:
-            nonlocal retrieval_call_count
-            retrieval_call_count += 1
+        sdk_tools = [_build_sdk_tool(td, retrieved_tokens) for td in tools]
 
-            query_text = str(args.get("query", ""))
-            raw_budget = args.get("budget_tokens")
-            call_budget = (
-                int(str(raw_budget)) if raw_budget is not None else budget_tokens
-            )
-
-            # Parse time bounds, converting empty strings to None
-            raw_start = args.get("time_start")
-            time_start: str | None = (
-                str(raw_start) if raw_start and raw_start != "" else None
-            )
-            raw_end = args.get("time_end")
-            time_end: str | None = str(raw_end) if raw_end and raw_end != "" else None
-
-            try:
-                # RagZoom query is synchronous - wrap in executor would be
-                # ideal but the SDK runs in-process so blocking is acceptable
-                query_response = self._rz.query(
-                    doc_id,
-                    query_text,
-                    budget_tokens=call_budget,
-                    time_start=time_start,
-                    time_end=time_end,
-                )
-                retrieved_tokens.append(query_response.token_count)
-                logger.debug(
-                    "recall(%s, budget=%d) → %d tokens",
-                    query_text[:50],
-                    call_budget,
-                    query_response.token_count,
-                )
-                return {"content": [{"type": "text", "text": query_response.summary}]}
-            except Exception as exc:
-                logger.warning("recall(%s) failed: %s", query_text[:50], exc)
-                retrieved_tokens.append(0)
-                return {
-                    "content": [{"type": "text", "text": f"Error: {exc}"}],
-                    "is_error": True,
-                }
-
-        # Create SDK MCP server with the recall tool
         memory_server = create_sdk_mcp_server(
             name="memory",
             version="1.0.0",
-            tools=[recall_tool],
+            tools=sdk_tools,
         )
 
-        # Configure agent options
+        allowed_tools = [f"mcp__mem__{td.name}" for td in tools]
+
         options = ClaudeAgentOptions(
             model=self._model_id,
-            system_prompt=AGENT_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             mcp_servers={"mem": memory_server},
-            allowed_tools=["mcp__mem__recall"],
-            max_turns=max_iterations + 1,  # +1 for final answer turn
-            permission_mode="bypassPermissions",  # No user prompts during benchmark
+            allowed_tools=allowed_tools,
+            max_turns=max_turns + 1,  # +1 for final answer turn
+            permission_mode="bypassPermissions",
         )
 
-        # Run the agent
         answer = ""
         total_input = 0
         total_output = 0
         reasoning_turns = 0
 
         async with ClaudeSDKClient(options=options) as client:
-            prompt = (
-                f"Question: {question}\n\n"
-                f"You have {max_iterations} recall calls available. "
-                f"Default budget per call: {budget_tokens} tokens."
-            )
-            await client.query(prompt)
+            await client.query(user_prompt)
 
             async for message in client.receive_response():
                 if isinstance(message, AssistantMessage):
                     reasoning_turns += 1
                     for block in message.content:
                         if isinstance(block, TextBlock):
-                            # Capture the last text block as the answer
                             answer = block.text
                         elif isinstance(block, ToolUseBlock):
                             logger.debug(
@@ -156,27 +200,19 @@ class AnthropicAgentBackend:
                                 str(block.input)[:100],
                             )
                         elif isinstance(block, ToolResultBlock):
-                            pass  # Tool results are logged in the tool itself
+                            pass  # Logged in the tool handler
 
                 elif isinstance(message, ResultMessage):
-                    # Extract usage metrics from the result
-                    if message.usage is not None:
-                        usage = message.usage
-                        total_input = int(usage.get("input_tokens", 0))
-                        total_output = int(usage.get("output_tokens", 0))
+                    total_input, total_output = _extract_usage(message)
 
-        # If no answer was captured, use a fallback
         if not answer.strip():
             answer = "I don't know."
 
-        return AgentResult(
+        return make_agent_result(
             answer=answer,
-            cost=CostMetrics(
-                total_input_tokens=total_input,
-                total_output_tokens=total_output,
-                retrieval_call_count=len(retrieved_tokens),
-                reasoning_turn_count=reasoning_turns,
-                retrieved_tokens_per_call=tuple(retrieved_tokens),
-                query_duration_seconds=time.monotonic() - start_time,
-            ),
+            total_input=total_input,
+            total_output=total_output,
+            retrieved_tokens=retrieved_tokens,
+            reasoning_turns=reasoning_turns,
+            elapsed=time.monotonic() - start_time,
         )
