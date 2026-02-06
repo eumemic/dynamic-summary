@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Sequence
+from typing import NamedTuple
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -25,6 +26,7 @@ from ragzoom.evaluation.locomo.agent.protocol import (
     ToolResult,
     make_agent_result,
 )
+from ragzoom.model_info import ModelInfo
 
 logger = logging.getLogger(__name__)
 
@@ -68,14 +70,58 @@ def _build_sdk_tool(
     )
 
 
-def _extract_usage(message: ResultMessage) -> tuple[int, int]:
-    """Extract (input_tokens, output_tokens) from a ResultMessage."""
+class _UsageBreakdown(NamedTuple):
+    """Detailed token usage from Anthropic's ResultMessage.
+
+    Anthropic reports three categories of input tokens, each priced differently:
+    - input_tokens: tokens after the last cache breakpoint (full input price)
+    - cache_creation_tokens: newly written to cache (1.25x input price)
+    - cache_read_tokens: served from cache (0.1x input price, 90% discount)
+    """
+
+    input_tokens: int
+    cache_creation_tokens: int
+    cache_read_tokens: int
+    output_tokens: int
+
+    @property
+    def total_input(self) -> int:
+        """Total input tokens across all three categories."""
+        return self.input_tokens + self.cache_creation_tokens + self.cache_read_tokens
+
+
+def _extract_usage(message: ResultMessage) -> _UsageBreakdown:
+    """Extract detailed token usage from a ResultMessage."""
     if message.usage is None:
-        return 0, 0
-    return (
-        int(message.usage.get("input_tokens", 0)),
-        int(message.usage.get("output_tokens", 0)),
+        return _UsageBreakdown(0, 0, 0, 0)
+    return _UsageBreakdown(
+        input_tokens=int(message.usage.get("input_tokens", 0)),
+        cache_creation_tokens=int(message.usage.get("cache_creation_input_tokens", 0)),
+        cache_read_tokens=int(message.usage.get("cache_read_input_tokens", 0)),
+        output_tokens=int(message.usage.get("output_tokens", 0)),
     )
+
+
+def _compute_cost(model_id: str, usage: _UsageBreakdown) -> float | None:
+    """Compute total cost in USD from usage breakdown and model pricing.
+
+    Returns None if the model is not found in models.json.
+    """
+    try:
+        info = ModelInfo()
+        input_price, output_price = info.get_llm_costs(model_id)
+        cache_discount = info.get_cache_discount(model_id)
+        write_mult = info.get_cache_write_multiplier(model_id)
+    except ValueError:
+        logger.warning("Model %r not in models.json; cost not computed", model_id)
+        return None
+
+    input_cost = (usage.input_tokens / 1000) * input_price
+    write_cost = (usage.cache_creation_tokens / 1000) * input_price * write_mult
+    read_cost = (usage.cache_read_tokens / 1000) * input_price * (1 - cache_discount)
+    output_cost = (usage.output_tokens / 1000) * output_price
+
+    return input_cost + write_cost + read_cost + output_cost
 
 
 class AnthropicBackend:
@@ -126,8 +172,7 @@ class AnthropicBackend:
         )
 
         answer = ""
-        total_input = 0
-        total_output = 0
+        usage = _UsageBreakdown(0, 0, 0, 0)
 
         async for message in query(prompt=user_prompt, options=options):
             if isinstance(message, AssistantMessage):
@@ -135,18 +180,19 @@ class AnthropicBackend:
                     if isinstance(block, TextBlock):
                         answer = block.text
             elif isinstance(message, ResultMessage):
-                total_input, total_output = _extract_usage(message)
+                usage = _extract_usage(message)
 
         if not answer.strip():
             answer = "I don't know."
 
         return make_agent_result(
             answer=answer,
-            total_input=total_input,
-            total_output=total_output,
+            total_input=usage.total_input,
+            total_output=usage.output_tokens,
             retrieved_tokens=[],
             reasoning_turns=1,
             elapsed=time.monotonic() - start_time,
+            total_cost_usd=_compute_cost(self._model_id, usage),
         )
 
     async def _generate_agentic(
@@ -180,8 +226,7 @@ class AnthropicBackend:
         )
 
         answer = ""
-        total_input = 0
-        total_output = 0
+        usage = _UsageBreakdown(0, 0, 0, 0)
         reasoning_turns = 0
 
         async with ClaudeSDKClient(options=options) as client:
@@ -203,16 +248,17 @@ class AnthropicBackend:
                             pass  # Logged in the tool handler
 
                 elif isinstance(message, ResultMessage):
-                    total_input, total_output = _extract_usage(message)
+                    usage = _extract_usage(message)
 
         if not answer.strip():
             answer = "I don't know."
 
         return make_agent_result(
             answer=answer,
-            total_input=total_input,
-            total_output=total_output,
+            total_input=usage.total_input,
+            total_output=usage.output_tokens,
             retrieved_tokens=retrieved_tokens,
             reasoning_turns=reasoning_turns,
             elapsed=time.monotonic() - start_time,
+            total_cost_usd=_compute_cost(self._model_id, usage),
         )

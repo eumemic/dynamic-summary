@@ -52,6 +52,8 @@ def _cost_to_dict(cost: CostMetrics) -> dict[str, object]:
     }
     if cost.query_duration_seconds is not None:
         d["query_duration_seconds"] = round(cost.query_duration_seconds, 3)
+    if cost.total_cost_usd is not None:
+        d["total_cost_usd"] = round(cost.total_cost_usd, 6)
     return d
 
 
@@ -204,6 +206,10 @@ def save_markdown(report: BenchmarkReport, path: Path) -> None:
         )
         total_retrieved = [sum(c.retrieved_tokens_per_call) for c in costs]
         lines.append(f"- **Avg retrieved tokens**: {mean(total_retrieved):,.0f}")
+        cost_values = [c.total_cost_usd for c in costs if c.total_cost_usd is not None]
+        if cost_values:
+            lines.append(f"- **Avg cost per question**: ${mean(cost_values):.4f}")
+            lines.append(f"- **Total cost**: ${sum(cost_values):.4f}")
         durations = [
             c.query_duration_seconds
             for c in costs

@@ -72,6 +72,7 @@ class CostMetrics:
     reasoning_turn_count: int
     retrieved_tokens_per_call: tuple[int, ...]
     query_duration_seconds: float | None = None
+    total_cost_usd: float | None = None
 
 
 @dataclass(frozen=True)

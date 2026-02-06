@@ -24,6 +24,7 @@ class LLMModelConfigDict(TypedDict):
     input: float
     output: float
     cache_discount: NotRequired[float]
+    cache_write_multiplier: NotRequired[float]
     context_window: int
     reasoning_levels: NotRequired[list[str]]
 
@@ -158,6 +159,29 @@ class ModelInfo:
         # cache_discount is optional (NotRequired in TypedDict).
         # Default to 0.0 (no discount) for models without caching support.
         return float(self._data["llms"][model].get("cache_discount", 0.0))
+
+    def get_cache_write_multiplier(self, model: str) -> float:
+        """Get the cache write cost multiplier for an LLM.
+
+        Anthropic charges a premium for cache writes (1.25x input price).
+        OpenAI and other providers cache automatically at no extra cost (1.0x).
+
+        Args:
+            model: The LLM model name
+
+        Returns:
+            Multiplier applied to input price for cache write tokens (e.g., 1.25)
+
+        Raises:
+            ValueError: If the model is not found
+        """
+        if model not in self._data.get("llms", {}):
+            available = list(self._data.get("llms", {}).keys())
+            raise ValueError(
+                f"LLM model '{model}' not found. Available models: {available}"
+            )
+
+        return float(self._data["llms"][model].get("cache_write_multiplier", 1.0))
 
     def get_reasoning_levels(self, model: str) -> list[str] | None:
         """Get the supported reasoning effort levels for an LLM.

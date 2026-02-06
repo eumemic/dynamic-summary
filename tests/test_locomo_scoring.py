@@ -433,6 +433,74 @@ class TestCostMetrics:
         assert cost.total_input_tokens == 100
         assert cost.retrieved_tokens_per_call == (500, 800)
 
+    def test_total_cost_usd_default_none(self) -> None:
+        cost = CostMetrics(
+            total_input_tokens=100,
+            total_output_tokens=50,
+            retrieval_call_count=0,
+            reasoning_turn_count=1,
+            retrieved_tokens_per_call=(),
+        )
+        assert cost.total_cost_usd is None
+
+    def test_total_cost_usd_set(self) -> None:
+        cost = CostMetrics(
+            total_input_tokens=100,
+            total_output_tokens=50,
+            retrieval_call_count=0,
+            reasoning_turn_count=1,
+            retrieved_tokens_per_call=(),
+            total_cost_usd=0.0042,
+        )
+        assert cost.total_cost_usd == pytest.approx(0.0042)
+
+
+class TestAnthropicUsageBreakdown:
+    """Verify the Anthropic _UsageBreakdown and _compute_cost helpers."""
+
+    def test_total_input_sums_all_three_fields(self) -> None:
+        from ragzoom.evaluation.locomo.agent.backends.anthropic import _UsageBreakdown
+
+        usage = _UsageBreakdown(
+            input_tokens=3,
+            cache_creation_tokens=2019,
+            cache_read_tokens=13882,
+            output_tokens=472,
+        )
+        assert usage.total_input == 3 + 2019 + 13882
+
+    def test_compute_cost_sonnet(self) -> None:
+        from ragzoom.evaluation.locomo.agent.backends.anthropic import (
+            _compute_cost,
+            _UsageBreakdown,
+        )
+
+        usage = _UsageBreakdown(
+            input_tokens=3,
+            cache_creation_tokens=2019,
+            cache_read_tokens=13882,
+            output_tokens=472,
+        )
+        cost = _compute_cost("claude-sonnet-4-5-20250929", usage)
+        assert cost is not None
+        # Sonnet 4.5: input=$0.003/1K, cache_write=1.25x, cache_read=0.1x, output=$0.015/1K
+        expected = (
+            (3 / 1000) * 0.003  # uncached input
+            + (2019 / 1000) * 0.003 * 1.25  # cache writes (1.25x premium)
+            + (13882 / 1000) * 0.003 * 0.1  # cache reads (90% discount)
+            + (472 / 1000) * 0.015  # output
+        )
+        assert cost == pytest.approx(expected)
+
+    def test_compute_cost_unknown_model(self) -> None:
+        from ragzoom.evaluation.locomo.agent.backends.anthropic import (
+            _compute_cost,
+            _UsageBreakdown,
+        )
+
+        usage = _UsageBreakdown(100, 0, 0, 50)
+        assert _compute_cost("unknown-model-xyz", usage) is None
+
 
 class TestAnswerResultBackwardCompat:
     def test_cost_defaults_to_none(self) -> None:
@@ -523,6 +591,7 @@ class TestReportCostSerialization:
             retrieval_call_count=3,
             reasoning_turn_count=4,
             retrieved_tokens_per_call=(500, 800, 1200),
+            total_cost_usd=0.0123,
         )
         result = AnswerResult(
             sample_id="test",
@@ -550,3 +619,43 @@ class TestReportCostSerialization:
         content = path.read_text()
         assert "Agent Cost Summary" in content
         assert "Avg retrieval calls" in content
+        assert "Avg cost per question" in content
+        assert "Total cost" in content
+
+    def test_json_includes_cost_usd_when_present(self) -> None:
+        cost = CostMetrics(
+            total_input_tokens=100,
+            total_output_tokens=50,
+            retrieval_call_count=1,
+            reasoning_turn_count=2,
+            retrieved_tokens_per_call=(500,),
+            total_cost_usd=0.004567,
+        )
+        result = AnswerResult(
+            sample_id="test",
+            question="q?",
+            gold_answer="a",
+            category=QACategory.SINGLE_HOP,
+            budget_tokens=2000,
+            retrieved_token_count=500,
+            generated_answer="a",
+            judge_verdict="A",
+            token_f1=1.0,
+            cost=cost,
+        )
+        report = BenchmarkReport(
+            answer_model="test-model",
+            judge_model="test-judge",
+            num_conversations=1,
+            num_questions=1,
+            budget_curve=[],
+            per_question=[result],
+        )
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = Path(f.name)
+        save_json(report, path)
+        data = json.loads(path.read_text())
+        assert "total_cost_usd" in data["per_question"][0]["cost"]
+        assert data["per_question"][0]["cost"]["total_cost_usd"] == pytest.approx(
+            0.004567, abs=1e-6
+        )

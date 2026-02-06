@@ -65,8 +65,50 @@
       "output": 0.0015,
       "cache_discount": 0.5,
       "context_window": 16385
+    },
+    "claude-sonnet-4-5-20250929": {
+      "input": 0.003,
+      "output": 0.015,
+      "cache_discount": 0.9,
+      "cache_write_multiplier": 1.25,
+      "context_window": 200000
+    },
+    "claude-sonnet-4-20250514": {
+      "input": 0.003,
+      "output": 0.015,
+      "cache_discount": 0.9,
+      "cache_write_multiplier": 1.25,
+      "context_window": 200000
+    },
+    "claude-opus-4-6": {
+      "input": 0.005,
+      "output": 0.025,
+      "cache_discount": 0.9,
+      "cache_write_multiplier": 1.25,
+      "context_window": 200000
+    },
+    "claude-opus-4-5-20250514": {
+      "input": 0.005,
+      "output": 0.025,
+      "cache_discount": 0.9,
+      "cache_write_multiplier": 1.25,
+      "context_window": 200000
+    },
+    "claude-haiku-4-5-20251001": {
+      "input": 0.001,
+      "output": 0.005,
+      "cache_discount": 0.9,
+      "cache_write_multiplier": 1.25,
+      "context_window": 200000
+    },
+    "claude-3-5-haiku-20241022": {
+      "input": 0.0008,
+      "output": 0.004,
+      "cache_discount": 0.9,
+      "cache_write_multiplier": 1.25,
+      "context_window": 200000
     }
   },
-  "last_updated": "2025-12-15",
-  "note": "Prices are per 1K tokens in USD. cache_discount is the discount percentage for cached prompt tokens (0.9 = 90% discount, 0.5 = 50% discount). context_window is the maximum input tokens. reasoning_levels lists supported reasoning effort values (null = uses temperature instead)."
+  "last_updated": "2026-02-06",
+  "note": "Prices are per 1K tokens in USD. cache_discount is the discount percentage for cached prompt tokens (0.9 = 90% discount, 0.5 = 50% discount). cache_write_multiplier is the cost multiplier for cache write tokens (1.25 for Anthropic, omit or 1.0 for providers where writes are free). context_window is the maximum input tokens. reasoning_levels lists supported reasoning effort values (null = uses temperature instead)."
 }

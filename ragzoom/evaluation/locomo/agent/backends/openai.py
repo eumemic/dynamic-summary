@@ -19,13 +19,40 @@ from openai.types.chat.chat_completion_message_function_tool_call import (
     ChatCompletionMessageFunctionToolCall,
 )
 
+from ragzoom.cost import calculate_completion_cost, calculate_prompt_cost_with_cache
 from ragzoom.evaluation.locomo.agent.protocol import (
     AgentResult,
     ToolDefinition,
     make_agent_result,
 )
+from ragzoom.model_info import ModelInfo
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_cost(
+    model_id: str,
+    total_input: int,
+    cached_input: int,
+    total_output: int,
+) -> float | None:
+    """Compute total cost in USD using model pricing from models.json.
+
+    Returns None if the model is not found in models.json.
+    """
+    try:
+        info = ModelInfo()
+        input_price, output_price = info.get_llm_costs(model_id)
+        cache_discount = info.get_cache_discount(model_id)
+    except ValueError:
+        logger.warning("Model %r not in models.json; cost not computed", model_id)
+        return None
+
+    prompt_cost = calculate_prompt_cost_with_cache(
+        total_input, cached_input, input_price, cache_discount
+    )
+    output_cost = calculate_completion_cost(total_output, output_price)
+    return prompt_cost + output_cost
 
 
 def _to_openai_tool(td: ToolDefinition) -> ChatCompletionToolParam:
@@ -76,6 +103,7 @@ class OpenAIBackend:
 
         total_input = 0
         total_output = 0
+        cached_input = 0
         reasoning_turns = 0
         retrieved_tokens: list[int] = []
         answer = ""
@@ -100,6 +128,9 @@ class OpenAIBackend:
             if response.usage:
                 total_input += response.usage.prompt_tokens
                 total_output += response.usage.completion_tokens
+                details = response.usage.prompt_tokens_details
+                if details is not None and details.cached_tokens is not None:
+                    cached_input += details.cached_tokens
 
             choice = response.choices[0]
 
@@ -152,4 +183,7 @@ class OpenAIBackend:
             retrieved_tokens=retrieved_tokens,
             reasoning_turns=reasoning_turns,
             elapsed=time.monotonic() - start_time,
+            total_cost_usd=_compute_cost(
+                self._model_id, total_input, cached_input, total_output
+            ),
         )

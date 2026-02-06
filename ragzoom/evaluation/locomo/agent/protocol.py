@@ -49,6 +49,7 @@ def make_agent_result(
     retrieved_tokens: list[int],
     reasoning_turns: int,
     elapsed: float,
+    total_cost_usd: float | None = None,
 ) -> AgentResult:
     """Build an AgentResult with CostMetrics from raw counters."""
     return AgentResult(
@@ -60,6 +61,7 @@ def make_agent_result(
             reasoning_turn_count=reasoning_turns,
             retrieved_tokens_per_call=tuple(retrieved_tokens),
             query_duration_seconds=elapsed,
+            total_cost_usd=total_cost_usd,
         ),
     )
 
