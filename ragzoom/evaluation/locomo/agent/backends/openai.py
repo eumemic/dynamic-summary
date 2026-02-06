@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import cast
 
 from openai import AsyncOpenAI
@@ -74,6 +75,7 @@ class OpenAIAgentBackend:
         reasoning_turns = 0
         retrieved_tokens: list[int] = []
         answer = ""
+        start_time = time.monotonic()
 
         for _ in range(max_iterations + 1):  # +1 for final answer turn
             reasoning_turns += 1
@@ -164,6 +166,7 @@ class OpenAIAgentBackend:
             else:
                 answer = "I don't know."
 
+        # jscpd:ignore-start (same structure as AnthropicAgentBackend)
         return AgentResult(
             answer=answer,
             cost=CostMetrics(
@@ -172,5 +175,7 @@ class OpenAIAgentBackend:
                 retrieval_call_count=len(retrieved_tokens),
                 reasoning_turn_count=reasoning_turns,
                 retrieved_tokens_per_call=tuple(retrieved_tokens),
+                query_duration_seconds=time.monotonic() - start_time,
             ),
         )
+        # jscpd:ignore-end

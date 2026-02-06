@@ -12,6 +12,7 @@ from ragzoom.evaluation.locomo.types import (
     AnswerResult,
     BenchmarkReport,
     BudgetPoint,
+    ConversationMetrics,
     CostMetrics,
     QACategory,
 )
@@ -42,12 +43,25 @@ def _budget_point_to_dict(bp: BudgetPoint) -> dict[str, object]:
 
 def _cost_to_dict(cost: CostMetrics) -> dict[str, object]:
     """Serialize CostMetrics for JSON output."""
-    return {
+    d: dict[str, object] = {
         "total_input_tokens": cost.total_input_tokens,
         "total_output_tokens": cost.total_output_tokens,
         "retrieval_call_count": cost.retrieval_call_count,
         "reasoning_turn_count": cost.reasoning_turn_count,
         "retrieved_tokens_per_call": list(cost.retrieved_tokens_per_call),
+    }
+    if cost.query_duration_seconds is not None:
+        d["query_duration_seconds"] = round(cost.query_duration_seconds, 3)
+    return d
+
+
+def _conv_metrics_to_dict(m: ConversationMetrics) -> dict[str, object]:
+    """Serialize ConversationMetrics for JSON output."""
+    return {
+        "sample_id": m.sample_id,
+        "num_turns": m.num_turns,
+        "num_sessions": m.num_sessions,
+        "indexing_duration_seconds": round(m.indexing_duration_seconds, 3),
     }
 
 
@@ -89,6 +103,10 @@ def save_json(report: BenchmarkReport, path: Path) -> None:
         ],
         "per_question": [_result_to_dict(r) for r in report.per_question],
     }
+    if report.conversation_metrics:
+        data["conversation_metrics"] = [
+            _conv_metrics_to_dict(m) for m in report.conversation_metrics
+        ]
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
@@ -186,6 +204,25 @@ def save_markdown(report: BenchmarkReport, path: Path) -> None:
         )
         total_retrieved = [sum(c.retrieved_tokens_per_call) for c in costs]
         lines.append(f"- **Avg retrieved tokens**: {mean(total_retrieved):,.0f}")
+        durations = [
+            c.query_duration_seconds
+            for c in costs
+            if c.query_duration_seconds is not None
+        ]
+        if durations:
+            lines.append(f"- **Avg query duration**: {mean(durations):.2f}s")
+            lines.append(f"- **Min query duration**: {min(durations):.2f}s")
+            lines.append(f"- **Max query duration**: {max(durations):.2f}s")
+        lines.append("")
+
+    if report.conversation_metrics:
+        idx_durations = [
+            m.indexing_duration_seconds for m in report.conversation_metrics
+        ]
+        lines.append("## Indexing Duration")
+        lines.append("")
+        lines.append(f"- **Total**: {sum(idx_durations):.1f}s")
+        lines.append(f"- **Avg per conversation**: {mean(idx_durations):.1f}s")
         lines.append("")
 
     path.parent.mkdir(parents=True, exist_ok=True)

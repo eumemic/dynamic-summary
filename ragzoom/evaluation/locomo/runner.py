@@ -16,6 +16,7 @@ from openai import AsyncOpenAI
 from ragzoom.adapters.openai_chat_model import OpenAIChatModel
 from ragzoom.constants import DEV_GRPC_PORT
 from ragzoom.evaluation.locomo.agent.backends.openai import OpenAIAgentBackend
+from ragzoom.evaluation.locomo.agent.protocol import AgentBackend
 from ragzoom.evaluation.locomo.ingest import (
     doc_id_for,
     ingest_all,
@@ -27,6 +28,7 @@ from ragzoom.evaluation.locomo.types import (
     BenchmarkReport,
     BudgetPoint,
     CategoryScore,
+    ConversationMetrics,
     JudgeVerdict,
     QACategory,
     QAPair,
@@ -56,6 +58,7 @@ class LoCoMoConfig:
     rejudge_path: Path | None = None
     max_iterations: int = 1
     agent_model: str | None = None
+    use_isolated_server: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -63,8 +66,13 @@ class LoCoMoConfig:
 # ---------------------------------------------------------------------------
 
 
+def _is_anthropic_model(model_id: str) -> bool:
+    """Check if a model ID corresponds to an Anthropic model."""
+    return model_id.startswith("claude-")
+
+
 async def _evaluate_one(
-    backend: OpenAIAgentBackend,
+    backend: AgentBackend,
     judge_model: OpenAIChatModel | None,
     doc_id: str,
     qa: QAPair,
@@ -145,28 +153,52 @@ def _aggregate_budget(results: list[AnswerResult], budget: int) -> BudgetPoint:
 async def run_benchmark(config: LoCoMoConfig) -> BenchmarkReport:
     """Run the full LoCoMo benchmark pipeline.
 
-    1. Parse the dataset
-    2. Ingest all conversations into RagZoom
-    3. Wait for indexing to complete
-    4. For each budget, evaluate all non-adversarial QA pairs
-    5. Aggregate and return results
+    1. Optionally start an isolated server
+    2. Parse the dataset
+    3. Ingest all conversations into RagZoom
+    4. Wait for indexing to complete
+    5. For each budget, evaluate all non-adversarial QA pairs
+    6. Aggregate and return results
     """
+    if config.use_isolated_server:
+        from ragzoom.evaluation.locomo.server_manager import BenchmarkServerManager
+
+        async with BenchmarkServerManager() as mgr:
+            config.server_address = mgr.address
+            return await _run_benchmark_impl(config)
+    return await _run_benchmark_impl(config)
+
+
+async def _run_benchmark_impl(config: LoCoMoConfig) -> BenchmarkReport:
+    """Core benchmark implementation."""
     # 1. Parse
     conversations = parse_locomo_file(config.data_path)
     logger.info("Parsed %d conversations", len(conversations))
 
     # 2. Ingest (skip if docs are already indexed)
     rz = RagZoom(server_address=config.server_address)
+    conv_metrics: tuple[ConversationMetrics, ...] = ()
     if config.skip_ingest:
         logger.info("Skipping ingestion (--skip-ingest)")
     else:
-        ingest_all(rz, conversations)
-        wait_for_indexing(rz, conversations)
+        conv_metrics = ingest_all(rz, conversations)
+        conv_metrics = wait_for_indexing(rz, conversations, conv_metrics)
 
     # 3. Set up agent backend and judge
-    openai_client = AsyncOpenAI()
     agent_model_id = config.agent_model or config.answer_model
-    backend = OpenAIAgentBackend(openai_client, rz, agent_model_id)
+    openai_client = AsyncOpenAI()
+
+    backend: AgentBackend
+    if _is_anthropic_model(agent_model_id):
+        from ragzoom.evaluation.locomo.agent.backends.anthropic import (
+            AnthropicAgentBackend,
+        )
+
+        # Claude Agent SDK handles authentication automatically
+        # (uses ANTHROPIC_API_KEY or Claude Code OAuth token)
+        backend = AnthropicAgentBackend(rz, agent_model_id)
+    else:
+        backend = OpenAIAgentBackend(openai_client, rz, agent_model_id)
 
     judge: OpenAIChatModel | None = None
     if not config.f1_only:
@@ -238,6 +270,7 @@ async def run_benchmark(config: LoCoMoConfig) -> BenchmarkReport:
         num_questions=len(qa_items),
         budget_curve=budget_curve,
         per_question=all_results,
+        conversation_metrics=conv_metrics,
     )
 
 

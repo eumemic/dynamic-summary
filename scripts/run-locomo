@@ -87,6 +87,11 @@ def main() -> None:
         help="Model for agentic evaluation (defaults to --answer-model)",
     )
     parser.add_argument(
+        "--isolated-server",
+        action="store_true",
+        help="Spawn an isolated RagZoom server for the benchmark (port 50053, temp state dir)",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -125,6 +130,7 @@ def main() -> None:
         rejudge_path=args.rejudge,
         max_iterations=args.max_iterations,
         agent_model=args.agent_model,
+        use_isolated_server=args.isolated_server,
     )
 
     if config.rejudge_path is not None:

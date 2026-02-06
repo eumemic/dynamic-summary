@@ -32,3 +32,12 @@ Current objectives tracked per question: accuracy (judge verdict), token F1, cos
 
 - [ ] Benchmark should manage its own isolated RagZoom server (dedicated port + state directory) so it doesn't interfere with dev or production
 - [ ] Script the full benchmark lifecycle: start server → ingest → evaluate → stop server — no manual server management
+
+## Multi-Objective Optimization
+
+- [ ] Develop full multi-objective optimization with Pareto frontier discovery
+  - Sweep all parameters jointly (model choices × reasoning effort × token budgets × max iterations)
+  - Compute Pareto frontiers over multiple objectives (accuracy, cost, duration)
+  - Identify non-dominated configurations that represent optimal tradeoffs
+  - Produce visualizations (2D projections, parallel coordinates) for parameter exploration
+  - Store results in a format that supports incremental runs (don't re-evaluate known points)

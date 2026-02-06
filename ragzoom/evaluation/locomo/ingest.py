@@ -7,7 +7,7 @@ import re
 import time
 from datetime import datetime, timezone
 
-from ragzoom.evaluation.locomo.types import LoCoMoConversation
+from ragzoom.evaluation.locomo.types import ConversationMetrics, LoCoMoConversation
 from ragzoom.wrapper import AppendUnit, RagZoom
 
 logger = logging.getLogger(__name__)
@@ -70,13 +70,16 @@ def doc_id_for(conv: LoCoMoConversation) -> str:
     return f"locomo-{conv.sample_id}"
 
 
-def ingest_conversation(rz: RagZoom, conv: LoCoMoConversation) -> None:
+def ingest_conversation(rz: RagZoom, conv: LoCoMoConversation) -> ConversationMetrics:
     """Ingest one conversation into RagZoom as a temporal document.
 
     Clears any existing document first, then batch-appends all turns
     with one AppendUnit per turn. Each turn gets its session's timestamp
     converted from LoCoMo's human-readable format to ISO 8601.
+
+    Returns metrics including wall-clock duration of the API calls.
     """
+    start = time.monotonic()
     did = doc_id_for(conv)
     rz.clear(did)
 
@@ -96,29 +99,42 @@ def ingest_conversation(rz: RagZoom, conv: LoCoMoConversation) -> None:
         raise ValueError(f"Conversation {conv.sample_id} has no turns")
 
     rz.batch_append(did, units)
+    elapsed = time.monotonic() - start
     logger.info(
-        "Ingested %s: %d turns across %d sessions",
+        "Ingested %s: %d turns across %d sessions (%.1fs)",
         did,
         len(units),
         len(conv.sessions),
+        elapsed,
+    )
+    return ConversationMetrics(
+        sample_id=conv.sample_id,
+        num_turns=len(units),
+        num_sessions=len(conv.sessions),
+        indexing_duration_seconds=elapsed,
     )
 
 
-def ingest_all(rz: RagZoom, conversations: list[LoCoMoConversation]) -> None:
+def ingest_all(
+    rz: RagZoom, conversations: list[LoCoMoConversation]
+) -> tuple[ConversationMetrics, ...]:
     """Ingest all conversations. Idempotent via clear-then-append."""
-    for conv in conversations:
-        ingest_conversation(rz, conv)
+    return tuple(ingest_conversation(rz, conv) for conv in conversations)
 
 
 def wait_for_indexing(
     rz: RagZoom,
     conversations: list[LoCoMoConversation],
+    metrics: tuple[ConversationMetrics, ...],
     poll_interval: float = 2.0,
-) -> None:
+) -> tuple[ConversationMetrics, ...]:
     """Block until all conversations are fully indexed.
 
     Polls document status until completion_pct >= 100 for every document.
+    Returns updated metrics with indexing duration that includes the
+    summarization/embedding wait time.
     """
+    start = time.monotonic()
     pending = {doc_id_for(conv) for conv in conversations}
 
     while pending:
@@ -138,4 +154,20 @@ def wait_for_indexing(
 
         pending = still_pending
 
-    logger.info("All %d documents fully indexed", len(conversations))
+    wait_elapsed = time.monotonic() - start
+    logger.info(
+        "All %d documents fully indexed (waited %.1fs)",
+        len(conversations),
+        wait_elapsed,
+    )
+
+    # Update each conversation's duration to include the wait time
+    return tuple(
+        ConversationMetrics(
+            sample_id=m.sample_id,
+            num_turns=m.num_turns,
+            num_sessions=m.num_sessions,
+            indexing_duration_seconds=m.indexing_duration_seconds + wait_elapsed,
+        )
+        for m in metrics
+    )

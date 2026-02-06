@@ -71,6 +71,7 @@ class CostMetrics:
     retrieval_call_count: int
     reasoning_turn_count: int
     retrieved_tokens_per_call: tuple[int, ...]
+    query_duration_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -108,6 +109,16 @@ class BudgetPoint:
     by_category: dict[QACategory, CategoryScore]
 
 
+@dataclass(frozen=True)
+class ConversationMetrics:
+    """Timing and size metadata for one ingested conversation."""
+
+    sample_id: str
+    num_turns: int
+    num_sessions: int
+    indexing_duration_seconds: float
+
+
 @dataclass
 class BenchmarkReport:
     """Full benchmark output."""
@@ -118,6 +129,7 @@ class BenchmarkReport:
     num_questions: int
     budget_curve: list[BudgetPoint]
     per_question: list[AnswerResult]
+    conversation_metrics: tuple[ConversationMetrics, ...] = ()
 
 
 # ---------------------------------------------------------------------------

@@ -63,3 +63,35 @@ RECALL_TOOL_SCHEMA: dict[str, object] = {
         },
     },
 }
+
+# Anthropic Messages API tool format (same semantics, different schema layout)
+RECALL_TOOL_SCHEMA_ANTHROPIC: dict[str, object] = {
+    "name": "recall",
+    "description": (
+        "Retrieve summarized context from the conversation. "
+        "Use budget_tokens to control detail level (higher = more content). "
+        "Use time_start/time_end (ISO 8601) to zoom into specific time ranges."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Search query to find relevant content",
+            },
+            "budget_tokens": {
+                "type": "integer",
+                "description": "Maximum tokens in response (higher = more detail)",
+            },
+            "time_start": {
+                "type": "string",
+                "description": "ISO 8601 timestamp to start from (optional)",
+            },
+            "time_end": {
+                "type": "string",
+                "description": "ISO 8601 timestamp to end at (optional)",
+            },
+        },
+        "required": ["query", "budget_tokens"],
+    },
+}
