@@ -77,6 +77,7 @@ class BenchmarkServerManager:
 
         env = os.environ.copy()
         env["RAGZOOM_STATE_DIR"] = str(self._state_dir)
+        env["RAGZOOM_DATA_DIR"] = str(self._state_dir)  # SQLite DB path
 
         self._process = subprocess.Popen(
             [
