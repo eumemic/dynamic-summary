@@ -6,7 +6,8 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 
-from ragzoom_claude_code.recall import execute_recall, format_for_mcp
+from ragzoom.output_formatters import format_tiling_spans
+from ragzoom_claude_code.recall import execute_recall
 from ragzoom_claude_code.transcript_sync import get_session_document_id
 
 mcp = FastMCP(name="RagZoom Memory")
@@ -116,7 +117,7 @@ def recall(
         server_address=server_address,
     )
 
-    return format_for_mcp(result)
+    return format_tiling_spans(result)
 
 
 if __name__ == "__main__":

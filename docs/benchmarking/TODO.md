@@ -3,7 +3,7 @@
 ## Model Coverage
 
 - [ ] Add other OpenAI models (gpt-5.2, gpt-5-mini, gpt-5-nano) to benchmark sweeps
-- [ ] Implement Anthropic agent backend using Claude Agent SDK, add Claude models (haiku, sonnet, opus) to benchmark sweeps
+- [x] Implement Anthropic agent backend using Claude Agent SDK, add Claude models (haiku, sonnet, opus) to benchmark sweeps
 
 ## Parameter Space
 
@@ -23,14 +23,16 @@ The **judge model** is fixed and outside the parameter space — it's the measur
 
 ## Objectives
 
-Current objectives tracked per question: accuracy (judge verdict), token F1, cost (input/output/retrieved tokens).
+Current objectives tracked per question: accuracy (judge verdict), token F1, cost (input/output/retrieved tokens), USD cost, wall-clock duration.
 
-- [ ] Track wall-clock duration per question (query-time latency) — matters independently from cost for user experience
-- [ ] Track indexing duration per conversation — invisible in token cost but varies with summarization/embedding model choice
+- [x] Track wall-clock duration per question (query-time latency)
+- [x] Track indexing duration per conversation
+- [x] Track USD cost per question using model pricing from models.json
 
 ## Infrastructure
 
-- [ ] Benchmark should manage its own isolated RagZoom server (dedicated port + state directory) so it doesn't interfere with dev or production
+- [x] Benchmark should manage its own isolated RagZoom server (dedicated port + state directory)
+- [x] Recall tool output matches production format (Span tags with temporal metadata)
 - [ ] Script the full benchmark lifecycle: start server → ingest → evaluate → stop server — no manual server management
 
 ## Multi-Objective Optimization

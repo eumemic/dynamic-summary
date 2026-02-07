@@ -127,15 +127,18 @@ class TestRememberToolDocumentId:
         """Recall tool passes string doc_id from _get_session_id() to execute_recall."""
         expected_doc_id = "test-session-doc"
 
-        mock_result = MagicMock()
-        mock_result.nodes = []
+        mock_output = MagicMock()
 
         with (
             patch.dict(os.environ, {"RAGZOOM_DOCUMENT_ID": expected_doc_id}),
             patch(
                 "ragzoom_claude_code.mcp_server.execute_recall",
-                return_value=mock_result,
+                return_value=mock_output,
             ) as mock_execute,
+            patch(
+                "ragzoom_claude_code.mcp_server.format_tiling_spans",
+                return_value="formatted output",
+            ),
         ):
             from ragzoom_claude_code.mcp_server import recall
 

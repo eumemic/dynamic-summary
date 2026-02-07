@@ -37,6 +37,7 @@ from ragzoom.evaluation.locomo.types import (
     QAPair,
     parse_locomo_file,
 )
+from ragzoom.output_formatters import format_tiling_spans
 from ragzoom.wrapper import RagZoom
 
 logger = logging.getLogger(__name__)
@@ -113,7 +114,7 @@ def make_recall_tool(rz: RagZoom, doc_id: str, default_budget: int) -> ToolDefin
                 query_response.token_count,
             )
             return ToolResult(
-                content=query_response.summary,
+                content=format_tiling_spans(query_response.raw),
                 token_count=query_response.token_count,
             )
         except Exception as exc:

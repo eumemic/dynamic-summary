@@ -7,10 +7,8 @@ from pathlib import Path
 
 import click
 
-from ragzoom_claude_code.recall import (
-    execute_recall,
-    format_for_cli,
-)
+from ragzoom.output_formatters import format_tiling_spans
+from ragzoom_claude_code.recall import execute_recall
 from ragzoom_claude_code.transcript_sync import execute_sync
 
 
@@ -240,6 +238,7 @@ def recall_cmd(
         )
 
         if json_output:
+            retrieval = result.retrieval
             output = {
                 "nodes": [
                     {
@@ -248,12 +247,13 @@ def recall_cmd(
                         "time_end": node.time_end,
                         "height": node.height,
                     }
-                    for node in result.nodes
+                    for node_id in retrieval.tiling_ids
+                    if (node := retrieval.nodes.get(node_id)) and node.text
                 ]
             }
             click.echo(json.dumps(output, indent=2))
         else:
-            click.echo(format_for_cli(result))
+            click.echo(format_tiling_spans(result))
 
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
