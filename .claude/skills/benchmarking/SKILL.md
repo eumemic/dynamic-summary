@@ -33,25 +33,22 @@ set -a && source .env && set +a
 PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest --budgets 2000
 ```
 
-### Agentic Evaluation
+### Server-Side Agentic Search
 
-The evaluator uses an agent loop where an LLM iteratively calls `recall` to zoom into relevant context before answering. Controlled by `--max-iterations`:
-
-- `--max-iterations 1` (default): Single recall call then answer. Equivalent to single-shot.
-- `--max-iterations 3`: Agent gets 3 recall calls to survey → zoom → zoom before answering.
+The benchmark delegates answer generation to the RagZoom server's built-in search agent (`SearchAgent`). The server's `--search-agent-model` flag controls which LLM drives the iterative zoom loop. This is model-agnostic — both OpenAI and Anthropic models work:
 
 ```bash
-# Single-shot (backward compatible)
-PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest --budgets 2000
+# Start dev server with default model (gpt-4.1-mini)
+python -m ragzoom.cli server start
 
-# Agentic zoom with 3 iterations
-PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest --budgets 2000 --max-iterations 3
+# Start dev server with a specific model
+python -m ragzoom.cli server start --search-agent-model gpt-4.1
 
-# Use a different model for the agent (defaults to --answer-model)
-PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest --max-iterations 3 --agent-model gpt-5-mini
+# Use Claude via the Anthropic backend (requires ANTHROPIC_API_KEY or Claude Max auth)
+python -m ragzoom.cli server start --search-agent-model claude-sonnet-4-5-20250929
 ```
 
-Cost metrics (input/output tokens, retrieval calls, reasoning turns) are tracked per question and reported in both JSON and markdown output.
+The search agent iteratively calls `recall` to survey and zoom into conversation context before answering. Max iterations and token budget are configured at server startup via `SearchConfig`.
 
 ### Cheap Iteration Modes
 
@@ -72,7 +69,7 @@ PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ing
 PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --rejudge locomo_results/results.json
 ```
 
-Modes combine: `--sample 50 --f1-only --max-iterations 3` is the cheapest way to smoke-test agentic evaluation.
+Modes combine: `--sample 50 --f1-only` is the cheapest way to smoke-test evaluation.
 
 ## Apples-to-Apples Comparison with Letta Leaderboard
 
@@ -105,7 +102,7 @@ The unique RagZoom metric. Shows how accuracy scales with token budget:
 
 ### Agent Cost Summary
 
-When running with `--max-iterations > 1`, the markdown report includes an Agent Cost Summary with average retrieval calls, reasoning turns, and input/output/retrieved tokens per question. Compare across iterations to assess the cost-accuracy tradeoff.
+When the server's search agent uses multiple iterations, the markdown report includes an Agent Cost Summary with average retrieval calls, reasoning turns, and input/output/retrieved tokens per question. Compare across models/configs to assess the cost-accuracy tradeoff.
 
 ### Category Breakdown
 
@@ -125,18 +122,27 @@ When running with `--max-iterations > 1`, the markdown report includes an Agent 
 ## Architecture
 
 ```
-ragzoom/evaluation/locomo/
-├── types.py          # Data types, JSON parsing, CostMetrics, QACategory enum
-├── ingest.py         # Conversation → AppendUnit ingestion, timestamp parsing
-├── scoring.py        # Token F1 + Letta GRADER_TEMPLATE judge
-├── runner.py         # Orchestration: ingest → sweep budgets → aggregate
-├── report.py         # JSON + Markdown output with cost metrics
+ragzoom/agent/                    # Model-agnostic agent layer (shared by search + evaluation)
+├── protocol.py                   # BenchmarkingAgent protocol, CostMetrics, ToolDefinition
+├── factory.py                    # create_backend() — routes to OpenAI or Anthropic
+└── backends/
+    ├── openai.py                 # OpenAI function-calling agent loop
+    └── anthropic.py              # Claude Agent SDK backend
+
+ragzoom/search/                   # Production search agent
+├── agent.py                      # SearchAgent — uses BenchmarkingAgent backend
+├── retrospective.py              # Self-critique via backend (profiling only)
+├── config.py                     # SearchConfig (model, iterations, budget)
+└── prompt.py                     # System prompt + retrospective prompt
+
+ragzoom/evaluation/locomo/        # Benchmark harness
+├── types.py                      # Data types, JSON parsing, QACategory enum
+├── ingest.py                     # Conversation → AppendUnit ingestion
+├── scoring.py                    # Token F1 + Letta GRADER_TEMPLATE judge
+├── runner.py                     # Orchestration: ingest → evaluate via server search → aggregate
+├── report.py                     # JSON + Markdown output with cost metrics
 └── agent/
-    ├── protocol.py   # AgentBackend protocol, AgentResult
-    ├── prompt.py     # System prompt + recall tool schema
-    └── backends/
-        ├── openai.py     # OpenAI function-calling agent loop
-        └── anthropic.py  # Stub for future Claude Agent SDK backend
+    └── prompt.py                 # Benchmark-specific system prompt
 ```
 
 CLI entry point: `scripts/run-locomo`
