@@ -15,11 +15,7 @@ from openai import AsyncOpenAI
 
 from ragzoom.constants import DEV_GRPC_PORT
 from ragzoom.evaluation.locomo.agent.backends.openai import OpenAIBackend
-from ragzoom.evaluation.locomo.agent.protocol import (
-    BenchmarkingAgent,
-    ToolDefinition,
-    ToolResult,
-)
+from ragzoom.evaluation.locomo.agent.protocol import BenchmarkingAgent
 from ragzoom.evaluation.locomo.ingest import (
     doc_id_for,
     ingest_all,
@@ -32,17 +28,15 @@ from ragzoom.evaluation.locomo.types import (
     BudgetPoint,
     CategoryScore,
     ConversationMetrics,
+    CostMetrics,
     JudgeVerdict,
     QACategory,
     QAPair,
     parse_locomo_file,
 )
-from ragzoom.output_formatters import format_tiling_spans
 from ragzoom.wrapper import RagZoom
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_BUDGETS = [500, 1000, 2000, 4000, 8000]
 
 
 @dataclass
@@ -51,18 +45,19 @@ class LoCoMoConfig:
 
     data_path: Path
     server_address: str = f"127.0.0.1:{DEV_GRPC_PORT}"
-    answer_model: str = "gpt-4o-mini"
     judge_model: str = "gpt-4.1"
-    budgets: list[int] = field(default_factory=lambda: list(DEFAULT_BUDGETS))
     max_concurrent: int = 10
     output_dir: Path = field(default_factory=lambda: Path("locomo_results"))
     skip_ingest: bool = False
     sample_size: int | None = None
     f1_only: bool = False
     rejudge_path: Path | None = None
+    use_isolated_server: bool = False
+    # Legacy fields kept for backward compatibility with saved configs
+    answer_model: str = "gpt-4o-mini"
+    budgets: list[int] = field(default_factory=lambda: [0])
     max_iterations: int = 1
     agent_model: str | None = None
-    use_isolated_server: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -84,105 +79,23 @@ def _create_backend(model_id: str, openai_client: AsyncOpenAI) -> BenchmarkingAg
     return OpenAIBackend(openai_client, model_id)
 
 
-def make_recall_tool(rz: RagZoom, doc_id: str, default_budget: int) -> ToolDefinition:
-    """Create a recall ToolDefinition bound to a specific document."""
-
-    async def handler(args: dict[str, object]) -> ToolResult:
-        query_text = str(args.get("query", ""))
-        raw_budget = args.get("budget_tokens")
-        call_budget = int(str(raw_budget)) if raw_budget is not None else default_budget
-        raw_start = args.get("time_start")
-        time_start: str | None = (
-            str(raw_start) if raw_start and raw_start != "" else None
-        )
-        raw_end = args.get("time_end")
-        time_end: str | None = str(raw_end) if raw_end and raw_end != "" else None
-
-        try:
-            query_response = await asyncio.to_thread(
-                rz.query,
-                doc_id,
-                query_text,
-                budget_tokens=call_budget,
-                time_start=time_start,
-                time_end=time_end,
-            )
-            logger.debug(
-                "recall(%s, budget=%d) → %d tokens",
-                query_text[:50],
-                call_budget,
-                query_response.token_count,
-            )
-            return ToolResult(
-                content=format_tiling_spans(query_response.raw),
-                token_count=query_response.token_count,
-            )
-        except Exception as exc:
-            logger.warning("recall(%s) failed: %s", query_text[:50], exc)
-            return ToolResult(content=f"Error: {exc}", is_error=True)
-
-    return ToolDefinition(
-        name="recall",
-        description=(
-            "Retrieve summarized context from the conversation. "
-            "Use budget_tokens to control detail level (higher = more content). "
-            "Use time_start/time_end (ISO 8601) to zoom into specific time ranges."
-        ),
-        parameters={
-            "query": {
-                "type": "string",
-                "description": "Search query to find relevant content",
-            },
-            "budget_tokens": {
-                "type": "integer",
-                "description": "Maximum tokens in response (higher = more detail)",
-            },
-            "time_start": {
-                "type": "string",
-                "description": "ISO 8601 timestamp to start from (optional)",
-            },
-            "time_end": {
-                "type": "string",
-                "description": "ISO 8601 timestamp to end at (optional)",
-            },
-        },
-        required=("query", "budget_tokens"),
-        handler=handler,
-    )
-
-
 # ---------------------------------------------------------------------------
 # Single-question evaluation
 # ---------------------------------------------------------------------------
 
 
 async def _evaluate_one(
-    backend: BenchmarkingAgent,
     judge: BenchmarkingAgent | None,
     judge_model_id: str,
     rz: RagZoom,
     doc_id: str,
     qa: QAPair,
-    budget: int,
-    max_iterations: int,
     semaphore: asyncio.Semaphore,
 ) -> AnswerResult:
-    """Evaluate a single QA pair using the agentic zoom loop."""
-    from ragzoom.evaluation.locomo.agent.prompt import AGENT_SYSTEM_PROMPT
-
+    """Evaluate a single QA pair using server-side agentic search."""
     async with semaphore:
-        recall_tool = make_recall_tool(rz, doc_id, budget)
-        user_prompt = (
-            f"Question: {qa.question}\n\n"
-            f"You have {max_iterations} recall calls available. "
-            f"Default budget per call: {budget} tokens."
-        )
-        agent_result = await backend.generate(
-            AGENT_SYSTEM_PROMPT,
-            user_prompt,
-            tools=(recall_tool,),
-            max_turns=max_iterations,
-        )
+        search_result = await asyncio.to_thread(rz.search, qa.question, doc_id)
+        generated_answer = search_result.answer
 
         verdict: JudgeVerdict | None = None
         if judge is not None:
@@ -190,22 +103,24 @@ async def _evaluate_one(
                 judge,
                 qa.question,
                 qa.gold_answer,
-                agent_result.answer,
+                generated_answer,
                 model_id=judge_model_id,
             )
-        f1 = compute_token_f1(agent_result.answer, qa.gold_answer)
+        f1 = compute_token_f1(generated_answer, qa.gold_answer)
+
+        cost: CostMetrics | None = None
 
         return AnswerResult(
             sample_id=qa.sample_id,
             question=qa.question,
             gold_answer=qa.gold_answer,
             category=qa.category,
-            budget_tokens=budget,
-            retrieved_token_count=sum(agent_result.cost.retrieved_tokens_per_call),
-            generated_answer=agent_result.answer,
+            budget_tokens=0,
+            retrieved_token_count=0,
+            generated_answer=generated_answer,
             judge_verdict=verdict,
             token_f1=f1,
-            cost=agent_result.cost,
+            cost=cost,
         )
 
 
@@ -260,7 +175,7 @@ async def run_benchmark(config: LoCoMoConfig) -> BenchmarkReport:
     2. Parse the dataset
     3. Ingest all conversations into RagZoom
     4. Wait for indexing to complete
-    5. For each budget, evaluate all non-adversarial QA pairs
+    5. Evaluate all non-adversarial QA pairs via server-side search
     6. Aggregate and return results
     """
     if config.use_isolated_server:
@@ -287,22 +202,12 @@ async def _run_benchmark_impl(config: LoCoMoConfig) -> BenchmarkReport:
         conv_metrics = ingest_all(rz, conversations)
         conv_metrics = wait_for_indexing(rz, conversations, conv_metrics)
 
-    # 3. Set up agent backend and judge
-    agent_model_id = config.agent_model or config.answer_model
+    # 3. Set up judge
     openai_client = AsyncOpenAI()
-
-    backend = _create_backend(agent_model_id, openai_client)
 
     judge: BenchmarkingAgent | None = None
     if not config.f1_only:
         judge = _create_backend(config.judge_model, openai_client)
-
-    if config.max_iterations > 1:
-        logger.info(
-            "Agentic mode: max_iterations=%d, model=%s",
-            config.max_iterations,
-            agent_model_id,
-        )
 
     # 4. Collect non-adversarial QA pairs
     qa_items: list[tuple[str, QAPair]] = []
@@ -317,55 +222,40 @@ async def _run_benchmark_impl(config: LoCoMoConfig) -> BenchmarkReport:
         qa_items = random.sample(qa_items, min(config.sample_size, len(qa_items)))
 
     logger.info(
-        "Evaluating %d questions at %d budgets (%d total evaluations)",
+        "Evaluating %d questions via server-side search",
         len(qa_items),
-        len(config.budgets),
-        len(qa_items) * len(config.budgets),
     )
 
-    # 5. Sweep budgets
+    # 5. Evaluate all questions via server-side search
     all_results: list[AnswerResult] = []
     semaphore = asyncio.Semaphore(config.max_concurrent)
 
-    for budget in config.budgets:
-        logger.info("Starting budget=%d", budget)
-        tasks = [
-            _evaluate_one(
-                backend,
-                judge,
-                config.judge_model,
-                rz,
-                doc_id,
-                qa,
-                budget,
-                config.max_iterations,
-                semaphore,
-            )
-            for doc_id, qa in qa_items
-        ]
-        budget_results = await asyncio.gather(*tasks)
-        all_results.extend(budget_results)
+    tasks = [
+        _evaluate_one(judge, config.judge_model, rz, doc_id, qa, semaphore)
+        for doc_id, qa in qa_items
+    ]
+    all_results = list(await asyncio.gather(*tasks))
 
-        # Log intermediate results
-        avg_f1 = mean(r.token_f1 for r in budget_results)
-        if judge is not None:
-            correct = sum(1 for r in budget_results if r.judge_verdict == "A")
-            logger.info(
-                "Budget=%d: %d/%d correct (%.1f%%), F1=%.3f",
-                budget,
-                correct,
-                len(budget_results),
-                100.0 * correct / len(budget_results),
-                avg_f1,
-            )
-        else:
-            logger.info("Budget=%d: F1=%.3f (f1-only)", budget, avg_f1)
+    # Log results
+    if judge is not None:
+        correct = sum(1 for r in all_results if r.judge_verdict == "A")
+        logger.info(
+            "%d/%d correct (%.1f%%), F1=%.3f",
+            correct,
+            len(all_results),
+            100.0 * correct / len(all_results),
+            mean(r.token_f1 for r in all_results),
+        )
+    else:
+        logger.info("F1=%.3f (f1-only)", mean(r.token_f1 for r in all_results))
 
-    # 6. Aggregate
-    budget_curve = [_aggregate_budget(all_results, b) for b in config.budgets]
+    # 6. Aggregate (single budget=0 point for search mode)
+    budget_curve = [_aggregate_budget(all_results, 0)]
+
+    answer_model = config.agent_model or config.answer_model
 
     return BenchmarkReport(
-        answer_model=agent_model_id,
+        answer_model=answer_model,
         judge_model=config.judge_model,
         num_conversations=len(conversations),
         num_questions=len(qa_items),

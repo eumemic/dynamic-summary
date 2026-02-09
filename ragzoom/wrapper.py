@@ -12,6 +12,7 @@ from ragzoom.client.grpc_client import (
     DocumentStatusView,
     ExecuteQueryOutput,
     GrpcRagzoomClient,
+    SearchResultView,
     TruncateFromTimeResult,
     TruncateResult,
 )
@@ -467,6 +468,27 @@ class RagZoom:
             raw=output,
         )
 
+    def search(self, question: str, document_id: str) -> SearchResultView:
+        """Run agentic search: question in, answer out.
+
+        The server-side search agent iteratively zooms into the document
+        to find the best answer.
+
+        Args:
+            question: Natural language question to answer.
+            document_id: Document to search within.
+
+        Returns:
+            SearchResultView with the answer.
+        """
+        if not question:
+            raise ValueError("question must be non-empty")
+        if not document_id:
+            raise ValueError("document_id is required")
+
+        with self._client() as client:
+            return client.search(question=question, document_id=document_id)
+
 
 class AsyncRagZoom:
     """Async wrapper around the RagZoom gRPC services.
@@ -720,6 +742,18 @@ class AsyncRagZoom:
             use_token_coords=use_token_coords,
             time_start=time_start,
             time_end=time_end,
+        )
+
+    async def search(self, question: str, document_id: str) -> SearchResultView:
+        """Run agentic search: question in, answer out.
+
+        The server-side search agent iteratively zooms into the document
+        to find the best answer.
+        """
+        return await self._call_sync(
+            self._get_sync().search,
+            question,
+            document_id,
         )
 
     # jscpd:ignore-end

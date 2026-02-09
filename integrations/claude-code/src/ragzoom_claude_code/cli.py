@@ -8,7 +8,7 @@ from pathlib import Path
 import click
 
 from ragzoom.output_formatters import format_tiling_spans
-from ragzoom_claude_code.recall import execute_recall
+from ragzoom_claude_code.recall import execute_recall, execute_search
 from ragzoom_claude_code.transcript_sync import execute_sync
 
 
@@ -255,6 +255,48 @@ def recall_cmd(
         else:
             click.echo(format_tiling_spans(result))
 
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1) from e
+
+
+@cli.command("search")
+@click.argument("question")
+@click.option(
+    "--document-id",
+    "-d",
+    envvar="RAGZOOM_DOCUMENT_ID",
+    required=True,
+    help="Document ID to search (required)",
+)
+@click.option(
+    "--server-address",
+    "-s",
+    envvar="RAGZOOM_SERVER_ADDRESS",
+    default="localhost:50051",
+    show_default=True,
+    help="RagZoom gRPC server address",
+)
+def search_cmd(
+    question: str,
+    document_id: str,
+    server_address: str,
+) -> None:
+    """Agentic search: question in, answer out.
+
+    The server-side search agent iteratively zooms into the document
+    to find the best answer.
+
+    Example:
+      ragzoom-claude-code search "What was the auth bug?" -d session-id
+    """
+    try:
+        result = execute_search(
+            question=question,
+            document_id=document_id,
+            server_address=server_address,
+        )
+        click.echo(result.answer)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1) from e

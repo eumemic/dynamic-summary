@@ -9,6 +9,12 @@ import importlib.util
 import sys
 from pathlib import Path
 
+# Add integration src to path first so worktree version takes priority
+# over the editable install (which may point to the main repo)
+_integration_src = Path(__file__).parent.parent / "src"
+if str(_integration_src) not in sys.path:
+    sys.path.insert(0, str(_integration_src))
+
 # Add repo root and tests directory to path to access shared fixtures
 _repo_root = Path(__file__).parent.parent.parent.parent
 _tests_dir = _repo_root / "tests"

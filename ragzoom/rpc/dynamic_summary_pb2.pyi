@@ -681,3 +681,65 @@ class ResetSessionCursorResponse:
     message: str
 
     def __init__(self, *, success: bool = ..., message: str = ...) -> None: ...
+
+class SearchRequest:
+    question: str
+    document_id: str
+
+    def __init__(self, *, question: str = ..., document_id: str = ...) -> None: ...
+
+class SearchIterationProto:
+    query: str
+    budget_tokens: int
+    time_start: str
+    time_end: str
+    result_text: str
+    result_token_count: int
+    agent_reasoning: str
+
+    def __init__(
+        self,
+        *,
+        query: str = ...,
+        budget_tokens: int = ...,
+        time_start: str = ...,
+        time_end: str = ...,
+        result_text: str = ...,
+        result_token_count: int = ...,
+        agent_reasoning: str = ...,
+    ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
+
+class SearchProfileProto:
+    iterations: list[SearchIterationProto]
+    total_input_tokens: int
+    total_output_tokens: int
+    total_cost_usd: float
+    duration_seconds: float
+    retrospective: str
+    transcript: str
+
+    def __init__(
+        self,
+        *,
+        iterations: Iterable[SearchIterationProto] = ...,
+        total_input_tokens: int = ...,
+        total_output_tokens: int = ...,
+        total_cost_usd: float = ...,
+        duration_seconds: float = ...,
+        retrospective: str = ...,
+        transcript: str = ...,
+    ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...
+
+class SearchResponse:
+    answer: str
+    profile: SearchProfileProto
+
+    def __init__(
+        self,
+        *,
+        answer: str = ...,
+        profile: SearchProfileProto = ...,
+    ) -> None: ...
+    def HasField(self, field_name: str) -> bool: ...

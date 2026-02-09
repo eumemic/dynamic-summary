@@ -1851,6 +1851,33 @@ def _persist_daemon_config(config_path: Path) -> None:
     type=int,
     help="Enable HTTP REST API on this port (for sandboxed clients using curl)",
 )
+@click.option(
+    "--search-agent-model",
+    "search_agent_model",
+    type=str,
+    default=None,
+    help="LLM model for the agentic search agent (default: gpt-4.1-mini)",
+)
+@click.option(
+    "--search-max-iterations",
+    "search_max_iterations",
+    type=int,
+    default=None,
+    help="Maximum recall iterations for search agent (default: 5)",
+)
+@click.option(
+    "--search-max-budget",
+    "search_max_budget",
+    type=int,
+    default=None,
+    help="Maximum token budget per recall call in search (default: 4000)",
+)
+@click.option(
+    "--search-profiling",
+    "search_profiling",
+    is_flag=True,
+    help="Enable search profiling (iteration traces, retrospective, cost)",
+)
 def start_server(
     host: str,
     port: int | None,
@@ -1869,6 +1896,10 @@ def start_server(
     preceding_context_inner_token_cap: int | None,
     daemon: bool,
     http_port: int | None,
+    search_agent_model: str | None,
+    search_max_iterations: int | None,
+    search_max_budget: int | None,
+    search_profiling: bool,
 ) -> None:
     """Start the RagZoom gRPC server."""
 
@@ -1917,6 +1948,10 @@ def start_server(
         preceding_context_inner_verbatim_tokens=preceding_context_inner_verbatim_tokens,
         preceding_context_inner_min_forest_completeness=preceding_context_inner_min_forest_completeness,
         preceding_context_inner_token_cap=preceding_context_inner_token_cap,
+        search_agent_model=search_agent_model,
+        search_max_iterations=search_max_iterations,
+        search_max_budget=search_max_budget,
+        search_profiling=search_profiling,
     )
 
     # In daemon mode, wrap run_server in try/finally for belt-and-suspenders cleanup.

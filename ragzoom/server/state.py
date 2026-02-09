@@ -7,12 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.indexing import IndexerRuntime
 from ragzoom.query_log import QueryLog
+from ragzoom.search.agent import SearchAgent
+from ragzoom.search.config import SearchConfig
 from ragzoom.server.append_executor import AppendExecutor
 from ragzoom.server.indexing_engine import IndexingEngine
 from ragzoom.server.run_manager import TelemetryRunManager
@@ -40,6 +42,8 @@ class ServerState:
     append_executor: AppendExecutor
     indexing_engine: IndexingEngine
     index_runtime: IndexerRuntime
+    search_config: SearchConfig
+    search_agent: SearchAgent
 
     @classmethod
     def create(
@@ -52,6 +56,7 @@ class ServerState:
         telemetry_dir: Path | None = None,
         max_parallelism: int | None = None,
         store: StorageBackend | None = None,
+        search_config: SearchConfig | None = None,
     ) -> ServerState:
         """Instantiate server state using the provided or default configs.
 
@@ -124,6 +129,13 @@ class ServerState:
             vector_index_factory=vector_factory,
         )
 
+        search_cfg = search_config or SearchConfig()
+        async_openai_client = AsyncOpenAI(
+            api_key=operational_cfg.openai_api_key.get_secret_value(),
+            timeout=operational_cfg.openai_timeout,
+        )
+        search_agent = SearchAgent(search_cfg, async_openai_client)
+
         return cls(
             index_config=index_cfg,
             query_config=query_cfg,
@@ -137,6 +149,8 @@ class ServerState:
             append_executor=append_executor,
             indexing_engine=indexing_engine,
             index_runtime=index_runtime,
+            search_config=search_cfg,
+            search_agent=search_agent,
         )
 
 

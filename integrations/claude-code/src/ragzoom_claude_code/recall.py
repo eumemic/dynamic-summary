@@ -1,8 +1,12 @@
-"""Shared recall logic for CLI and MCP server."""
+"""Shared recall and search logic for CLI and MCP server."""
 
 from __future__ import annotations
 
-from ragzoom.client.grpc_client import ExecuteQueryOutput, GrpcRagzoomClient
+from ragzoom.client.grpc_client import (
+    ExecuteQueryOutput,
+    GrpcRagzoomClient,
+    SearchResultView,
+)
 from ragzoom.output_formatters import format_tiling_spans
 
 
@@ -43,4 +47,32 @@ def execute_recall(
         )
 
 
-__all__ = ["ExecuteQueryOutput", "execute_recall", "format_tiling_spans"]
+def execute_search(
+    question: str,
+    document_id: str,
+    server_address: str = "localhost:50051",
+) -> SearchResultView:
+    """Execute an agentic search against RagZoom.
+
+    The server-side search agent iteratively zooms into the document
+    to find the best answer. Question in, answer out.
+
+    Args:
+        question: Natural language question to answer.
+        document_id: Document to search within.
+        server_address: RagZoom gRPC server address.
+
+    Returns:
+        SearchResultView with the answer.
+    """
+    with GrpcRagzoomClient(server_address) as client:
+        return client.search(question=question, document_id=document_id)
+
+
+__all__ = [
+    "ExecuteQueryOutput",
+    "SearchResultView",
+    "execute_recall",
+    "execute_search",
+    "format_tiling_spans",
+]

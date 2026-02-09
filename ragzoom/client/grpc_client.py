@@ -335,6 +335,13 @@ class DocumentStatusView:
     time_end: str | None = None
 
 
+@dataclass
+class SearchResultView:
+    """Result from the agentic search endpoint."""
+
+    answer: str
+
+
 class GrpcRagzoomClient:
     """Synchronous convenience wrapper for the RagZoom gRPC services."""
 
@@ -369,6 +376,9 @@ class GrpcRagzoomClient:
         )
         self._session: pb2_grpc.SessionIngestionServiceStub = (
             pb2_grpc.SessionIngestionServiceStub(self._channel)
+        )
+        self._search: pb2_grpc.SearchServiceStub = pb2_grpc.SearchServiceStub(
+            self._channel
         )
 
     def __enter__(self) -> GrpcRagzoomClient:
@@ -1100,3 +1110,29 @@ class GrpcRagzoomClient:
                 )
             )
         return stats_list
+
+    def search(
+        self,
+        *,
+        question: str,
+        document_id: str,
+    ) -> SearchResultView:
+        """Run agentic search: question in, answer out.
+
+        Args:
+            question: The question to answer.
+            document_id: Document to search within.
+
+        Returns:
+            SearchResultView with the answer.
+        """
+        request = pb2.SearchRequest(
+            question=question,
+            document_id=document_id,
+        )
+        try:
+            response = self._search.Search(request, timeout=self._stream_timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        return SearchResultView(answer=response.answer)

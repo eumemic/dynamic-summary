@@ -120,32 +120,30 @@ class TestMcpServerPidTempFileDiscovery:
             _get_session_id()
 
 
-class TestRememberToolDocumentId:
-    """Tests for recall tool document ID handling."""
+class TestRecallToolSearch:
+    """Tests for recall tool using the agentic search endpoint."""
 
-    def test_recall_tool_uses_correct_document_id(self) -> None:
-        """Recall tool passes string doc_id from _get_session_id() to execute_recall."""
+    def test_recall_tool_calls_execute_search(self) -> None:
+        """Recall tool passes question to execute_search and returns answer."""
         expected_doc_id = "test-session-doc"
 
-        mock_output = MagicMock()
+        mock_result = MagicMock()
+        mock_result.answer = "The auth bug was in the JWT validation."
 
         with (
             patch.dict(os.environ, {"RAGZOOM_DOCUMENT_ID": expected_doc_id}),
             patch(
-                "ragzoom_claude_code.mcp_server.execute_recall",
-                return_value=mock_output,
-            ) as mock_execute,
-            patch(
-                "ragzoom_claude_code.mcp_server.format_tiling_spans",
-                return_value="formatted output",
-            ),
+                "ragzoom_claude_code.mcp_server.execute_search",
+                return_value=mock_result,
+            ) as mock_search,
         ):
             from ragzoom_claude_code.mcp_server import recall
 
-            recall(query="test query", token_budget=1000)
+            result = recall(query="What was the auth bug?")
 
-            # Verify execute_recall was called with string document_id
-            mock_execute.assert_called_once()
-            call_kwargs = mock_execute.call_args.kwargs
-            assert call_kwargs["document_id"] == expected_doc_id
-            assert isinstance(call_kwargs["document_id"], str)
+            mock_search.assert_called_once_with(
+                question="What was the auth bug?",
+                document_id=expected_doc_id,
+                server_address="localhost:50051",
+            )
+            assert result == "The auth bug was in the JWT validation."
