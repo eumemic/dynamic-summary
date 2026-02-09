@@ -13,9 +13,9 @@ from statistics import mean
 
 from openai import AsyncOpenAI
 
+from ragzoom.agent.factory import create_backend
+from ragzoom.agent.protocol import BenchmarkingAgent
 from ragzoom.constants import DEV_GRPC_PORT
-from ragzoom.evaluation.locomo.agent.backends.openai import OpenAIBackend
-from ragzoom.evaluation.locomo.agent.protocol import BenchmarkingAgent
 from ragzoom.evaluation.locomo.ingest import (
     doc_id_for,
     ingest_all,
@@ -58,25 +58,6 @@ class LoCoMoConfig:
     budgets: list[int] = field(default_factory=lambda: [0])
     max_iterations: int = 1
     agent_model: str | None = None
-
-
-# ---------------------------------------------------------------------------
-# Tool & backend factories
-# ---------------------------------------------------------------------------
-
-
-def _is_anthropic_model(model_id: str) -> bool:
-    """Check if a model ID corresponds to an Anthropic model."""
-    return model_id.startswith("claude-")
-
-
-def _create_backend(model_id: str, openai_client: AsyncOpenAI) -> BenchmarkingAgent:
-    """Create a BenchmarkingAgent for the given model ID."""
-    if _is_anthropic_model(model_id):
-        from ragzoom.evaluation.locomo.agent.backends.anthropic import AnthropicBackend
-
-        return AnthropicBackend(model_id)
-    return OpenAIBackend(openai_client, model_id)
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +188,7 @@ async def _run_benchmark_impl(config: LoCoMoConfig) -> BenchmarkReport:
 
     judge: BenchmarkingAgent | None = None
     if not config.f1_only:
-        judge = _create_backend(config.judge_model, openai_client)
+        judge = create_backend(config.judge_model, openai_client)
 
     # 4. Collect non-adversarial QA pairs
     qa_items: list[tuple[str, QAPair]] = []
@@ -286,7 +267,7 @@ async def rejudge(config: LoCoMoConfig) -> BenchmarkReport:
     assert isinstance(per_question_raw, list)
 
     openai_client = AsyncOpenAI()
-    judge_backend = _create_backend(config.judge_model, openai_client)
+    judge_backend = create_backend(config.judge_model, openai_client)
     semaphore = asyncio.Semaphore(config.max_concurrent)
 
     async def _rejudge_one(entry: dict[str, object]) -> AnswerResult:

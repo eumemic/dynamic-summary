@@ -11,7 +11,7 @@ import logging
 import re
 from collections import Counter
 
-from ragzoom.evaluation.locomo.agent.protocol import BenchmarkingAgent
+from ragzoom.agent.protocol import BenchmarkingAgent
 from ragzoom.evaluation.locomo.types import JudgeVerdict
 from ragzoom.exceptions import LLMError
 

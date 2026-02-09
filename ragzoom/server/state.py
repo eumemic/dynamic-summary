@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from openai import AsyncOpenAI, OpenAI
 
+from ragzoom.agent.factory import create_backend
 from ragzoom.config import IndexConfig, OperationalConfig, QueryConfig
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.indexing import IndexerRuntime
@@ -134,7 +135,8 @@ class ServerState:
             api_key=operational_cfg.openai_api_key.get_secret_value(),
             timeout=operational_cfg.openai_timeout,
         )
-        search_agent = SearchAgent(search_cfg, async_openai_client)
+        search_backend = create_backend(search_cfg.agent_model, async_openai_client)
+        search_agent = SearchAgent(search_cfg, search_backend)
 
         return cls(
             index_config=index_cfg,

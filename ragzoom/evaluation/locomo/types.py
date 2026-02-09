@@ -62,17 +62,9 @@ class LoCoMoConversation:
     qa_pairs: tuple[QAPair, ...]
 
 
-@dataclass(frozen=True)
-class CostMetrics:
-    """Token usage and iteration counts for one agentic answer."""
-
-    total_input_tokens: int
-    total_output_tokens: int
-    retrieval_call_count: int
-    reasoning_turn_count: int
-    retrieved_tokens_per_call: tuple[int, ...]
-    query_duration_seconds: float | None = None
-    total_cost_usd: float | None = None
+# CostMetrics is canonical in ragzoom.agent.protocol; re-exported for
+# backward compatibility with code that imports from this module.
+from ragzoom.agent.protocol import CostMetrics as CostMetrics  # noqa: E402
 
 
 @dataclass(frozen=True)

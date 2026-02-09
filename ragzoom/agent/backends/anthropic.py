@@ -20,7 +20,7 @@ from claude_agent_sdk import (
     query,
 )
 
-from ragzoom.evaluation.locomo.agent.protocol import (
+from ragzoom.agent.protocol import (
     AgentResult,
     ToolDefinition,
     ToolResult,

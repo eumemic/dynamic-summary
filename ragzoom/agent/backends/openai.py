@@ -19,12 +19,12 @@ from openai.types.chat.chat_completion_message_function_tool_call import (
     ChatCompletionMessageFunctionToolCall,
 )
 
-from ragzoom.cost import calculate_completion_cost, calculate_prompt_cost_with_cache
-from ragzoom.evaluation.locomo.agent.protocol import (
+from ragzoom.agent.protocol import (
     AgentResult,
     ToolDefinition,
     make_agent_result,
 )
+from ragzoom.cost import calculate_completion_cost, calculate_prompt_cost_with_cache
 from ragzoom.model_info import ModelInfo
 
 logger = logging.getLogger(__name__)

@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from openai import AsyncOpenAI
-
+from ragzoom.agent.protocol import BenchmarkingAgent
 from ragzoom.search.prompt import RETROSPECTIVE_PROMPT
 
 
 async def run_retrospective(
-    client: AsyncOpenAI,
-    model: str,
+    backend: BenchmarkingAgent,
     *,
     question: str,
     answer: str,
@@ -20,11 +18,10 @@ async def run_retrospective(
     Only called when ``SearchConfig.profiling_enabled`` is True.
 
     Args:
-        client: Async OpenAI client.
-        model: Model ID to use for the retrospective.
+        backend: Agent backend for the retrospective call.
         question: The original question that was searched.
         answer: The final answer the agent produced.
-        transcript: Full formatted trace of the search session.
+        transcript: Formatted trace of the search iterations.
 
     Returns:
         Brief self-critique text (3-5 sentences).
@@ -35,9 +32,5 @@ async def run_retrospective(
         transcript=transcript,
     )
 
-    response = await client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    return response.choices[0].message.content or ""
+    result = await backend.generate(system_prompt="", user_prompt=prompt)
+    return result.answer

@@ -1,4 +1,4 @@
-"""Protocol and types for benchmarking agent backends.
+"""Protocol and types for model-agnostic agent backends.
 
 A single ``BenchmarkingAgent`` protocol unifies both agentic answer generation
 (multi-turn with tools) and single-shot judge calls (no tools, one turn).
@@ -10,7 +10,18 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from ragzoom.evaluation.locomo.types import CostMetrics
+
+@dataclass(frozen=True)
+class CostMetrics:
+    """Token usage and iteration counts for one agent call."""
+
+    total_input_tokens: int
+    total_output_tokens: int
+    retrieval_call_count: int
+    reasoning_turn_count: int
+    retrieved_tokens_per_call: tuple[int, ...]
+    query_duration_seconds: float | None = None
+    total_cost_usd: float | None = None
 
 
 @dataclass(frozen=True)
@@ -35,7 +46,7 @@ class ToolDefinition:
 
 @dataclass(frozen=True)
 class AgentResult:
-    """Result from a benchmarking agent call."""
+    """Result from an agent call."""
 
     answer: str
     cost: CostMetrics
