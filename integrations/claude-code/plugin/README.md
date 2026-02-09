@@ -27,7 +27,7 @@ Persistent conversation memory for Claude Code via RagZoom hierarchical summariz
 
 After installation, Claude Code automatically:
 1. Syncs your conversation to RagZoom
-2. Can use `recall(query, ...)` to recall pre-compaction context
+2. Can use `recall(query)` to recall pre-compaction context
 
 ## Configuration
 
