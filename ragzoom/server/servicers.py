@@ -19,7 +19,7 @@ from ragzoom.progress_display import DocumentProgressTotals, WorkerProgressDispl
 from ragzoom.rpc import dynamic_summary_pb2 as pb2
 from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
 from ragzoom.server.indexing_engine import IndexingEngine, IndexingStatus
-from ragzoom.server.query_executor import build_retriever
+from ragzoom.server.query_executor import build_retriever, build_server_query_executor
 from ragzoom.server.state import ServerState
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.telemetry_embeddings import annotate_telemetry_fidelity
@@ -1294,10 +1294,11 @@ class SearchServicer(pb2_grpc.SearchServiceServicer):
                 message="Search requires `document_id`.",
             )
 
+        executor = build_server_query_executor(self._state)
         result = await self._state.search_agent.search(
             request.question,
             request.document_id,
-            self._state,
+            executor,
         )
 
         profile_proto = None

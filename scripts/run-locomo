@@ -20,21 +20,14 @@ def main() -> None:
         help="Path to locomo10.json (required unless --rejudge is used)",
     )
     parser.add_argument(
-        "--answer-model",
-        default="gpt-4o-mini",
-        help="Model for answer generation (default: gpt-4o-mini)",
+        "--search-model",
+        default="gpt-4.1-mini",
+        help="Model for agentic search (default: gpt-4.1-mini)",
     )
     parser.add_argument(
         "--judge-model",
         default="gpt-4.1",
         help="Model for LLM-as-Judge (default: gpt-4.1, matching Letta Leaderboard)",
-    )
-    parser.add_argument(
-        "--budgets",
-        nargs="+",
-        type=int,
-        default=[500, 1000, 2000, 4000, 8000],
-        help="Token budgets to sweep (default: 500 1000 2000 4000 8000)",
     )
     parser.add_argument(
         "--output-dir",
@@ -78,13 +71,19 @@ def main() -> None:
     parser.add_argument(
         "--max-iterations",
         type=int,
-        default=1,
-        help="Max recall calls per question (1=single-shot, >1=agentic zoom, default: 1)",
+        default=5,
+        help="Max recall iterations per question (default: 5)",
     )
     parser.add_argument(
-        "--agent-model",
-        default=None,
-        help="Model for agentic evaluation (defaults to --answer-model)",
+        "--max-budget",
+        type=int,
+        default=4000,
+        help="Max token budget per recall call (default: 4000)",
+    )
+    parser.add_argument(
+        "--profiling",
+        action="store_true",
+        help="Enable search profiling (retrospective analysis per question)",
     )
     parser.add_argument(
         "--isolated-server",
@@ -119,18 +118,18 @@ def main() -> None:
     config = LoCoMoConfig(
         data_path=args.data or Path("/unused"),
         server_address=args.server,
-        answer_model=args.answer_model,
         judge_model=args.judge_model,
-        budgets=args.budgets,
         max_concurrent=args.max_concurrent,
         output_dir=args.output_dir,
         skip_ingest=args.skip_ingest,
         sample_size=args.sample,
         f1_only=args.f1_only,
         rejudge_path=args.rejudge,
-        max_iterations=args.max_iterations,
-        agent_model=args.agent_model,
         use_isolated_server=args.isolated_server,
+        search_model=args.search_model,
+        max_iterations=args.max_iterations,
+        max_budget=args.max_budget,
+        profiling=args.profiling,
     )
 
     if config.rejudge_path is not None:

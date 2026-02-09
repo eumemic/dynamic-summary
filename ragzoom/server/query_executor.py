@@ -22,6 +22,7 @@ from ragzoom.document_store import DocumentStore
 from ragzoom.retrieval.budget_planner import BudgetPlanner
 from ragzoom.retrieval.embedding_service import EmbeddingService
 from ragzoom.retrieve import Retriever
+from ragzoom.search.agent import QueryExecutor
 from ragzoom.services.query_service import QueryResult
 from ragzoom.vector_factory import create_vector_index
 
@@ -169,3 +170,31 @@ async def execute_query_internal(
         visualization="",
         validation_warning="",
     )
+
+
+def build_server_query_executor(state: ServerState) -> QueryExecutor:
+    """Create a ``QueryExecutor`` backed by in-process retrieval.
+
+    The returned closure captures ``state`` and delegates to
+    ``execute_query_internal``, satisfying the ``QueryExecutor`` protocol
+    without requiring the search agent to know about ``ServerState``.
+    """
+
+    async def _execute(
+        *,
+        document_id: str,
+        query: str,
+        budget_tokens: int,
+        time_start: str | None = None,
+        time_end: str | None = None,
+    ) -> ExecuteQueryOutput:
+        return await execute_query_internal(
+            state,
+            document_id=document_id,
+            query=query,
+            budget_tokens=budget_tokens,
+            time_start=time_start,
+            time_end=time_end,
+        )
+
+    return _execute

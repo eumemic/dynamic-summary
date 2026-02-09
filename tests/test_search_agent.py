@@ -13,7 +13,9 @@ from ragzoom.agent.protocol import (
     ToolDefinition,
     make_agent_result,
 )
+from ragzoom.client.grpc_client import ExecuteQueryOutput, RetrievalView
 from ragzoom.search.config import SearchConfig
+from ragzoom.services.query_service import QueryResult
 
 
 def _make_cost(**overrides: object) -> CostMetrics:
@@ -28,6 +30,52 @@ def _make_cost(**overrides: object) -> CostMetrics:
     }
     defaults.update(overrides)
     return CostMetrics(**defaults)  # type: ignore[arg-type]
+
+
+def _make_query_output(token_count: int = 42) -> ExecuteQueryOutput:
+    """Build a minimal ExecuteQueryOutput for testing."""
+    return ExecuteQueryOutput(
+        query_result=QueryResult(
+            summary="spans",
+            token_count=token_count,
+            nodes_retrieved=1,
+            tiling_size=1,
+            query_id="",
+            seed_count=1,
+            verbatim_count=0,
+            actual_start=0,
+            actual_end=0,
+        ),
+        retrieval=RetrievalView(
+            selected_ids=[],
+            tiling_ids=[],
+            scores={},
+            coverage_map={},
+            nodes={},
+        ),
+        visualization="",
+        validation_warning="",
+    )
+
+
+class _MockQueryExecutor:
+    """Test double satisfying the QueryExecutor protocol."""
+
+    def __init__(self, token_count: int = 42) -> None:
+        self._output = _make_query_output(token_count)
+        self.call_count = 0
+
+    async def __call__(
+        self,
+        *,
+        document_id: str,
+        query: str,
+        budget_tokens: int,
+        time_start: str | None = None,
+        time_end: str | None = None,
+    ) -> ExecuteQueryOutput:
+        self.call_count += 1
+        return self._output
 
 
 class _NoToolBackend:
@@ -95,9 +143,9 @@ class TestSearchReturnsAnswer:
 
         config = SearchConfig(profiling_enabled=False)
         agent = SearchAgent(config, _NoToolBackend(answer="42"))
-        state = AsyncMock()
+        executor = _MockQueryExecutor()
 
-        result = await agent.search("What is the meaning of life?", "doc-1", state)
+        result = await agent.search("What is the meaning of life?", "doc-1", executor)
 
         assert result.answer == "42"
         assert result.profile is None
@@ -105,28 +153,17 @@ class TestSearchReturnsAnswer:
 
 class TestSearchInvokesToolHandler:
     @pytest.mark.asyncio
-    async def test_tool_handler_calls_execute_recall(self) -> None:
+    async def test_tool_handler_calls_query_executor(self) -> None:
         from ragzoom.search.agent import SearchAgent
 
         config = SearchConfig(profiling_enabled=False)
         agent = SearchAgent(config, _ToolCallingBackend())
-        state = AsyncMock()
+        executor = _MockQueryExecutor()
 
-        with patch(
-            "ragzoom.search.agent.execute_query_internal",
-            new_callable=AsyncMock,
-        ) as mock_exec:
-            mock_output = AsyncMock()
-            mock_output.query_result.token_count = 42
-            mock_exec.return_value = mock_output
+        result = await agent.search("question", "doc-1", executor)
 
-            with patch(
-                "ragzoom.search.agent.format_tiling_spans", return_value="spans"
-            ):
-                result = await agent.search("question", "doc-1", state)
-
-            mock_exec.assert_called_once()
-            assert result.answer == "Paris"
+        assert executor.call_count == 1
+        assert result.answer == "Paris"
 
 
 class TestSearchCapturesIterationsWhenProfiling:
@@ -137,25 +174,14 @@ class TestSearchCapturesIterationsWhenProfiling:
         config = SearchConfig(profiling_enabled=True)
         backend = _ToolCallingBackend()
         agent = SearchAgent(config, backend)
-        state = AsyncMock()
+        executor = _MockQueryExecutor()
 
         with patch(
-            "ragzoom.search.agent.execute_query_internal",
+            "ragzoom.search.agent.run_retrospective",
             new_callable=AsyncMock,
-        ) as mock_exec:
-            mock_output = AsyncMock()
-            mock_output.query_result.token_count = 42
-            mock_exec.return_value = mock_output
-
-            with patch(
-                "ragzoom.search.agent.format_tiling_spans", return_value="spans"
-            ):
-                with patch(
-                    "ragzoom.search.agent.run_retrospective",
-                    new_callable=AsyncMock,
-                    return_value="Looks good.",
-                ):
-                    result = await agent.search("question", "doc-1", state)
+            return_value="Looks good.",
+        ):
+            result = await agent.search("question", "doc-1", executor)
 
         assert result.profile is not None
         assert len(result.profile.iterations) == 1
@@ -175,14 +201,14 @@ class TestSearchCostFromBackend:
         )
         config = SearchConfig(profiling_enabled=True)
         agent = SearchAgent(config, _NoToolBackend(cost=cost))
-        state = AsyncMock()
+        executor = _MockQueryExecutor()
 
         with patch(
             "ragzoom.search.agent.run_retrospective",
             new_callable=AsyncMock,
             return_value="Fine.",
         ):
-            result = await agent.search("question", "doc-1", state)
+            result = await agent.search("question", "doc-1", executor)
 
         assert result.profile is not None
         assert result.profile.total_input_tokens == 500
@@ -197,9 +223,9 @@ class TestSearchNoProfileWhenDisabled:
 
         config = SearchConfig(profiling_enabled=False)
         agent = SearchAgent(config, _NoToolBackend())
-        state = AsyncMock()
+        executor = _MockQueryExecutor()
 
-        result = await agent.search("question", "doc-1", state)
+        result = await agent.search("question", "doc-1", executor)
 
         assert result.profile is None
 
@@ -241,9 +267,9 @@ class TestRetrospectiveUsesBackend:
         backend = _RetroBackend()
         config = SearchConfig(profiling_enabled=True)
         agent = SearchAgent(config, backend)
-        state = AsyncMock()
+        executor = _MockQueryExecutor()
 
-        result = await agent.search("question", "doc-1", state)
+        result = await agent.search("question", "doc-1", executor)
 
         assert result.profile is not None
         assert result.profile.retrospective == "The search was efficient."

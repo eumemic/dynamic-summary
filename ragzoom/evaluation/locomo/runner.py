@@ -15,6 +15,7 @@ from openai import AsyncOpenAI
 
 from ragzoom.agent.factory import create_backend
 from ragzoom.agent.protocol import BenchmarkingAgent
+from ragzoom.client.grpc_client import ExecuteQueryOutput
 from ragzoom.constants import DEV_GRPC_PORT
 from ragzoom.evaluation.locomo.ingest import (
     doc_id_for,
@@ -34,6 +35,7 @@ from ragzoom.evaluation.locomo.types import (
     QAPair,
     parse_locomo_file,
 )
+from ragzoom.search import SearchAgent, SearchConfig
 from ragzoom.wrapper import RagZoom
 
 logger = logging.getLogger(__name__)
@@ -53,11 +55,10 @@ class LoCoMoConfig:
     f1_only: bool = False
     rejudge_path: Path | None = None
     use_isolated_server: bool = False
-    # Legacy fields kept for backward compatibility with saved configs
-    answer_model: str = "gpt-4o-mini"
-    budgets: list[int] = field(default_factory=lambda: [0])
-    max_iterations: int = 1
-    agent_model: str | None = None
+    search_model: str = "gpt-4.1-mini"
+    max_iterations: int = 5
+    max_budget: int = 4000
+    profiling: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -65,17 +66,44 @@ class LoCoMoConfig:
 # ---------------------------------------------------------------------------
 
 
+class _GrpcQueryExecutor:
+    """QueryExecutor backed by gRPC ``ExecuteQuery`` via ``RagZoom.query()``."""
+
+    def __init__(self, rz: RagZoom) -> None:
+        self._rz = rz
+
+    async def __call__(
+        self,
+        *,
+        document_id: str,
+        query: str,
+        budget_tokens: int,
+        time_start: str | None = None,
+        time_end: str | None = None,
+    ) -> ExecuteQueryOutput:
+        response = await asyncio.to_thread(
+            self._rz.query,
+            document_id,
+            query,
+            budget_tokens=budget_tokens,
+            time_start=time_start,
+            time_end=time_end,
+        )
+        return response.raw
+
+
 async def _evaluate_one(
     judge: BenchmarkingAgent | None,
     judge_model_id: str,
-    rz: RagZoom,
+    search_agent: SearchAgent,
+    query_executor: _GrpcQueryExecutor,
     doc_id: str,
     qa: QAPair,
     semaphore: asyncio.Semaphore,
 ) -> AnswerResult:
-    """Evaluate a single QA pair using server-side agentic search."""
+    """Evaluate a single QA pair using client-side agentic search."""
     async with semaphore:
-        search_result = await asyncio.to_thread(rz.search, qa.question, doc_id)
+        search_result = await search_agent.search(qa.question, doc_id, query_executor)
         generated_answer = search_result.answer
 
         verdict: JudgeVerdict | None = None
@@ -202,17 +230,39 @@ async def _run_benchmark_impl(config: LoCoMoConfig) -> BenchmarkReport:
         random.seed(42)
         qa_items = random.sample(qa_items, min(config.sample_size, len(qa_items)))
 
+    # 5. Build client-side SearchAgent with gRPC executor
+    search_config = SearchConfig(
+        agent_model=config.search_model,
+        max_iterations=config.max_iterations,
+        max_token_budget=config.max_budget,
+        profiling_enabled=config.profiling,
+    )
+    search_backend = create_backend(config.search_model, openai_client)
+    search_agent = SearchAgent(search_config, search_backend)
+    query_executor = _GrpcQueryExecutor(rz)
+
     logger.info(
-        "Evaluating %d questions via server-side search",
+        "Evaluating %d questions (model=%s, max_iter=%d, budget=%d)",
         len(qa_items),
+        config.search_model,
+        config.max_iterations,
+        config.max_budget,
     )
 
-    # 5. Evaluate all questions via server-side search
+    # 6. Evaluate all questions via client-side agentic search
     all_results: list[AnswerResult] = []
     semaphore = asyncio.Semaphore(config.max_concurrent)
 
     tasks = [
-        _evaluate_one(judge, config.judge_model, rz, doc_id, qa, semaphore)
+        _evaluate_one(
+            judge,
+            config.judge_model,
+            search_agent,
+            query_executor,
+            doc_id,
+            qa,
+            semaphore,
+        )
         for doc_id, qa in qa_items
     ]
     all_results = list(await asyncio.gather(*tasks))
@@ -230,13 +280,11 @@ async def _run_benchmark_impl(config: LoCoMoConfig) -> BenchmarkReport:
     else:
         logger.info("F1=%.3f (f1-only)", mean(r.token_f1 for r in all_results))
 
-    # 6. Aggregate (single budget=0 point for search mode)
+    # 7. Aggregate (single budget=0 point for search mode)
     budget_curve = [_aggregate_budget(all_results, 0)]
 
-    answer_model = config.agent_model or config.answer_model
-
     return BenchmarkReport(
-        answer_model=answer_model,
+        answer_model=config.search_model,
         judge_model=config.judge_model,
         num_conversations=len(conversations),
         num_questions=len(qa_items),
@@ -318,7 +366,7 @@ async def rejudge(config: LoCoMoConfig) -> BenchmarkReport:
     assert isinstance(num_conversations_raw, int)
 
     return BenchmarkReport(
-        answer_model=str(metadata.get("answer_model", config.answer_model)),
+        answer_model=str(metadata.get("answer_model", config.search_model)),
         judge_model=config.judge_model,
         num_conversations=num_conversations_raw,
         num_questions=num_questions,

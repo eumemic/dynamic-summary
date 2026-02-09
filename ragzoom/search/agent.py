@@ -5,26 +5,42 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import Protocol
 
 from ragzoom.agent.protocol import BenchmarkingAgent, ToolDefinition, ToolResult
+from ragzoom.client.grpc_client import ExecuteQueryOutput
 from ragzoom.output_formatters import format_tiling_spans
 from ragzoom.search.config import SearchConfig
 from ragzoom.search.prompt import SEARCH_SYSTEM_PROMPT
 from ragzoom.search.retrospective import run_retrospective
 from ragzoom.search.types import SearchIteration, SearchProfile, SearchResult
-from ragzoom.server.query_executor import execute_query_internal
-
-if TYPE_CHECKING:
-    from ragzoom.server.state import ServerState
 
 logger = logging.getLogger(__name__)
+
+
+class QueryExecutor(Protocol):
+    """Async callable that executes a retrieval query.
+
+    Implementations:
+    - Server-side: wraps ``execute_query_internal`` (in-process).
+    - Client-side: wraps ``RagZoom.query()`` over gRPC.
+    """
+
+    async def __call__(
+        self,
+        *,
+        document_id: str,
+        query: str,
+        budget_tokens: int,
+        time_start: str | None = ...,
+        time_end: str | None = ...,
+    ) -> ExecuteQueryOutput: ...
 
 
 def _build_recall_tool(
     config: SearchConfig,
     document_id: str,
-    state: ServerState,
+    query_executor: QueryExecutor,
     iterations: list[SearchIteration],
     profiling: bool,
 ) -> ToolDefinition:
@@ -44,8 +60,7 @@ def _build_recall_tool(
         time_end = str(raw_end) if raw_end and raw_end != "" else None
 
         try:
-            query_output = await execute_query_internal(
-                state,
+            query_output = await query_executor(
                 document_id=document_id,
                 query=query_text,
                 budget_tokens=budget,
@@ -123,14 +138,14 @@ class SearchAgent:
         self,
         question: str,
         document_id: str,
-        state: ServerState,
+        query_executor: QueryExecutor,
     ) -> SearchResult:
         """Run the agentic search loop.
 
         Args:
             question: The user's question to answer.
             document_id: Document to search within.
-            state: Server state for in-process query execution.
+            query_executor: Callable that executes retrieval queries.
 
         Returns:
             SearchResult with the answer and optional profiling data.
@@ -141,7 +156,7 @@ class SearchAgent:
 
         iterations: list[SearchIteration] = []
         recall_tool = _build_recall_tool(
-            config, document_id, state, iterations, profiling
+            config, document_id, query_executor, iterations, profiling
         )
 
         result = await self._backend.generate(

@@ -218,8 +218,11 @@ async def search_post(request: SearchHttpRequest) -> SearchHttpResponse:
         raise HTTPException(status_code=500, detail="Server state not initialized")
 
     try:
+        from ragzoom.server.query_executor import build_server_query_executor
+
+        executor = build_server_query_executor(_state)
         result = await _state.search_agent.search(
-            request.question, request.document_id, _state
+            request.question, request.document_id, executor
         )
         return SearchHttpResponse(answer=result.answer)
     except Exception as e:
