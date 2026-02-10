@@ -1,6 +1,6 @@
 ---
 name: benchmarking
-description: This skill should be used when the user asks to "run the benchmark", "run locomo", "benchmark ragzoom", "evaluate recall quality", "compare with letta", "check accuracy", "run the evaluation harness", "budget-accuracy curve", "agentic evaluation", "max iterations", or mentions benchmarking, evaluation, or competitive comparison of the memory system.
+description: This skill should be used when the user asks to "run the benchmark", "run locomo", "benchmark ragzoom", "evaluate recall quality", "compare with letta", "check accuracy", "run the evaluation harness", "agentic evaluation", "max iterations", or mentions benchmarking, evaluation, or competitive comparison of the memory system.
 ---
 
 # RagZoom Benchmarking
@@ -11,44 +11,46 @@ Run and interpret memory system benchmarks to measure RagZoom's recall quality a
 
 LoCoMo is the de facto standard benchmark for conversational memory systems. Every competitor reports numbers here.
 
+**Dataset location**: `test_data/locomo10.json` (10 conversations, ~1500 QA pairs)
+
 ### Prerequisites
 
-1. Dev server running on port 50052 (`python -m ragzoom.cli server start`)
-2. Source the `.env` file: `set -a && source .env && set +a`
-3. Dataset at `test_data/locomo10.json` (10 conversations, ~1500 QA pairs)
+1. Source the `.env` file: `set -a && source .env && set +a`
+2. Dataset at `test_data/locomo10.json` (already in the repo)
 
-### First Run (with ingestion)
-
-```bash
-set -a && source .env && set +a
-PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --budgets 2000
-```
-
-Ingestion takes ~5 minutes (summarization tree building). Evaluation takes ~5 minutes per budget level at concurrency=10.
-
-### Subsequent Runs (skip ingestion)
+### First Run (with ingestion + isolated server)
 
 ```bash
 set -a && source .env && set +a
-PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest --budgets 2000
+PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --isolated-server
 ```
 
-### Server-Side Agentic Search
+`--isolated-server` spawns a temporary server on port 50053 with a fresh state directory. Ingestion takes ~5 minutes (summarization tree building). Evaluation takes ~5 minutes at concurrency=10.
 
-The benchmark delegates answer generation to the RagZoom server's built-in search agent (`SearchAgent`). The server's `--search-agent-model` flag controls which LLM drives the iterative zoom loop. This is model-agnostic — both OpenAI and Anthropic models work:
+### Subsequent Runs (skip ingestion, dev server)
 
 ```bash
-# Start dev server with default model (gpt-4.1-mini)
-python -m ragzoom.cli server start
-
-# Start dev server with a specific model
-python -m ragzoom.cli server start --search-agent-model gpt-4.1
-
-# Use Claude via the Anthropic backend (requires ANTHROPIC_API_KEY or Claude Max auth)
-python -m ragzoom.cli server start --search-agent-model claude-sonnet-4-5-20250929
+set -a && source .env && set +a
+PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest
 ```
 
-The search agent iteratively calls `recall` to survey and zoom into conversation context before answering. Max iterations and token budget are configured at server startup via `SearchConfig`.
+Requires a running dev server on port 50052 (`python -m ragzoom.cli server start`).
+
+### Key CLI Parameters
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--search-model MODEL` | `gpt-4.1-mini` | LLM for agentic search (OpenAI or Anthropic) |
+| `--judge-model MODEL` | `gpt-4.1` | LLM-as-Judge (matches Letta leaderboard) |
+| `--sample N` | all | Random subset of N questions (seed=42) |
+| `--max-iterations N` | 5 | Max recall iterations per question |
+| `--max-budget N` | 4000 | Max token budget per recall call |
+| `--f1-only` | off | Skip LLM judge, token F1 only |
+| `--rejudge PATH` | — | Re-judge from previous results.json |
+| `--isolated-server` | off | Spawn isolated server (clean slate) |
+| `--skip-ingest` | off | Skip ingestion (docs already indexed) |
+| `--profiling` | off | Search profiling (retrospective per question) |
+| `-v` | off | Verbose logging |
 
 ### Cheap Iteration Modes
 
@@ -56,12 +58,12 @@ Three modes to reduce benchmark cost from ~$22 to <$1 or $0:
 
 **Sample mode** (`--sample N`): Evaluate a random subset of N questions (seed=42 for reproducibility).
 ```bash
-PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest --budgets 2000 --sample 200
+PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --sample 20 --isolated-server
 ```
 
 **F1-only mode** (`--f1-only`): Skip the LLM judge entirely, compute token F1 only. No judge API costs.
 ```bash
-PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest --f1-only --budgets 2000
+PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest --f1-only
 ```
 
 **Rejudge mode** (`--rejudge PATH`): Re-run the LLM judge on previously cached answers. No RagZoom server needed.
@@ -92,17 +94,15 @@ For detailed comparison methodology, see **`references/letta-comparison.md`**.
 
 ## Interpreting Results
 
-### Budget-Accuracy Curve
+### Accuracy and F1
 
-The unique RagZoom metric. Shows how accuracy scales with token budget:
-
-- **Low budgets (500-1000)**: Mostly summary nodes. Good for open-domain, poor for specific facts.
-- **Mid budgets (2000-4000)**: Mix of summaries and verbatim. Accuracy inflection point.
-- **High budgets (8000+)**: More leaf nodes. Approaching full-context performance.
+The report outputs aggregate scores (overall + per-category accuracy and F1):
+- **Accuracy**: Judge verdict A=1.0, B/C=0.0 (only present with a judge, not in `--f1-only` mode)
+- **Token F1**: Token-level overlap between generated and gold answer
 
 ### Agent Cost Summary
 
-When the server's search agent uses multiple iterations, the markdown report includes an Agent Cost Summary with average retrieval calls, reasoning turns, and input/output/retrieved tokens per question. Compare across models/configs to assess the cost-accuracy tradeoff.
+The markdown report includes an Agent Cost Summary with average retrieval calls, reasoning turns, and input/output/retrieved tokens per question. Compare across models/configs to assess the cost-accuracy tradeoff.
 
 ### Category Breakdown
 
@@ -136,10 +136,10 @@ ragzoom/search/                   # Production search agent
 └── prompt.py                     # System prompt + retrospective prompt
 
 ragzoom/evaluation/locomo/        # Benchmark harness
-├── types.py                      # Data types, JSON parsing, QACategory enum
+├── types.py                      # Data types: AnswerResult, AggregateScores, BenchmarkReport
 ├── ingest.py                     # Conversation → AppendUnit ingestion
 ├── scoring.py                    # Token F1 + Letta GRADER_TEMPLATE judge
-├── runner.py                     # Orchestration: ingest → evaluate via server search → aggregate
+├── runner.py                     # Orchestration: ingest → evaluate via agentic search → aggregate
 ├── report.py                     # JSON + Markdown output with cost metrics
 └── agent/
     └── prompt.py                 # Benchmark-specific system prompt
