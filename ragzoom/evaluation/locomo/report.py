@@ -211,6 +211,20 @@ def save_markdown(report: BenchmarkReport, path: Path) -> None:
         lines.append(f"- **Avg per conversation**: {mean(idx_durations):.1f}s")
         lines.append("")
 
+    # Per-question retrospectives (only present with --profiling)
+    retros = [
+        (r.question, r.retrospective)
+        for r in report.per_question
+        if r.retrospective is not None
+    ]
+    if retros:
+        lines.append("## Agent Retrospectives")
+        lines.append("")
+        for question, retro in retros:
+            lines.append(f"**Q: {question}**")
+            lines.append(f"> {retro}")
+            lines.append("")
+
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w") as f:
         f.write("\n".join(lines) + "\n")
