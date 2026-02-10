@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import tempfile
@@ -32,9 +33,13 @@ from ragzoom.model_info import ModelInfo
 
 logger = logging.getLogger(__name__)
 
-# Bump the SDK's initialize timeout from the default 60s to 120s as a safety
-# margin.  The env var is in milliseconds; the SDK uses max(value/1000, 60).
-os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "120000")
+# Bump the SDK's initialize timeout from the default 60s to 300s.  Claude Max
+# can be slow to respond under load.  The env var is in milliseconds; the SDK
+# uses max(value/1000, 60).
+os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "300000")
+
+_SDK_MAX_RETRIES = 2
+_SDK_RETRY_BACKOFF_BASE = 5.0  # seconds; retries at 5s, 10s
 
 
 def _build_sdk_tool(
@@ -229,21 +234,46 @@ class AnthropicBackend:
 
         allowed_tools = [f"mcp__mem__{td.name}" for td in tools]
 
-        with tempfile.TemporaryDirectory(prefix="claude_sdk_") as tmpdir:
-            options = ClaudeAgentOptions(
-                model=self._model_id,
-                system_prompt=system_prompt,
-                mcp_servers={"mem": memory_server},
-                allowed_tools=allowed_tools,
-                max_turns=max_turns + 1,  # +1 for final answer turn
-                permission_mode="bypassPermissions",
-                env={"XDG_DATA_HOME": tmpdir},
-            )
-
-            async with ClaudeSDKClient(options=options) as client:
-                answer, usage, reasoning_turns = await self._run_sdk_conversation(
-                    client, user_prompt
+        answer = ""
+        usage = _UsageBreakdown(0, 0, 0, 0)
+        reasoning_turns = 0
+        last_err: Exception | None = None
+        for attempt in range(_SDK_MAX_RETRIES + 1):
+            if attempt > 0:
+                backoff = _SDK_RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
+                logger.warning(
+                    "SDK init retry %d/%d after %.0fs backoff",
+                    attempt,
+                    _SDK_MAX_RETRIES,
+                    backoff,
                 )
+                await asyncio.sleep(backoff)
+
+            with tempfile.TemporaryDirectory(prefix="claude_sdk_") as tmpdir:
+                options = ClaudeAgentOptions(
+                    model=self._model_id,
+                    system_prompt=system_prompt,
+                    mcp_servers={"mem": memory_server},
+                    allowed_tools=allowed_tools,
+                    max_turns=max_turns + 1,  # +1 for final answer turn
+                    permission_mode="bypassPermissions",
+                    env={"XDG_DATA_HOME": tmpdir},
+                )
+
+                try:
+                    async with ClaudeSDKClient(options=options) as client:
+                        answer, usage, reasoning_turns = (
+                            await self._run_sdk_conversation(client, user_prompt)
+                        )
+                    break
+                except Exception as exc:
+                    last_err = exc
+                    if attempt < _SDK_MAX_RETRIES:
+                        logger.warning("SDK attempt %d failed: %s", attempt + 1, exc)
+                        continue
+                    raise RuntimeError(
+                        f"ClaudeSDKClient failed after {_SDK_MAX_RETRIES + 1} attempts"
+                    ) from last_err
 
         if not answer.strip():
             answer = "I don't know."

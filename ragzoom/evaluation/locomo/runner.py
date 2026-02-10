@@ -103,8 +103,14 @@ async def _evaluate_one(
 ) -> AnswerResult:
     """Evaluate a single QA pair using client-side agentic search."""
     async with semaphore:
-        search_result = await search_agent.search(qa.question, doc_id, query_executor)
-        generated_answer = search_result.answer
+        try:
+            search_result = await search_agent.search(
+                qa.question, doc_id, query_executor
+            )
+            generated_answer = search_result.answer
+        except Exception:
+            logger.exception("Search failed for %s", qa.sample_id)
+            generated_answer = "I don't know."
 
         verdict: JudgeVerdict | None = None
         if judge is not None:
