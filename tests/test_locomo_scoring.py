@@ -202,6 +202,7 @@ def _make_result(
         generated_answer="a",
         judge_verdict=verdict,  # type: ignore[arg-type]
         token_f1=f1,
+        cost=CostMetrics.zero(),
     )
 
 
@@ -500,10 +501,10 @@ class TestAnthropicUsageBreakdown:
 _EMPTY_SCORES = AggregateScores(overall_accuracy=None, overall_f1=0.0, by_category={})
 
 
-class TestAnswerResultBackwardCompat:
-    def test_cost_defaults_to_none(self) -> None:
+class TestAnswerResultCost:
+    def test_cost_defaults_to_zero(self) -> None:
         result = _make_result("A", 1.0)
-        assert result.cost is None
+        assert result.cost == CostMetrics.zero()
 
     def test_cost_can_be_set(self) -> None:
         cost = CostMetrics(
@@ -562,7 +563,7 @@ class TestReportCostSerialization:
         assert data["per_question"][0]["cost"]["retrieval_call_count"] == 1
         assert data["metadata"]["max_iterations"] == 1
 
-    def test_json_omits_cost_when_none(self) -> None:
+    def test_json_includes_zero_cost(self) -> None:
         result = _make_result("A", 1.0)
         report = BenchmarkReport(
             answer_model="test-model",
@@ -576,7 +577,8 @@ class TestReportCostSerialization:
             path = Path(f.name)
         save_json(report, path)
         data = json.loads(path.read_text())
-        assert "cost" not in data["per_question"][0]
+        assert "cost" in data["per_question"][0]
+        assert data["per_question"][0]["cost"]["total_input_tokens"] == 0
 
     def test_markdown_includes_cost_summary(self) -> None:
         cost = CostMetrics(

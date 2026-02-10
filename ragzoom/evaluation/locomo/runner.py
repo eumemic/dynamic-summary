@@ -103,7 +103,7 @@ async def _evaluate_one(
 ) -> AnswerResult:
     """Evaluate a single QA pair using client-side agentic search."""
     async with semaphore:
-        cost: CostMetrics | None = None
+        cost: CostMetrics = CostMetrics.zero()
         retrospective: str | None = None
         try:
             search_result = await search_agent.search(
@@ -345,6 +345,22 @@ async def rejudge(config: LoCoMoConfig) -> BenchmarkReport:
             )
         f1 = compute_token_f1(generated_answer, gold_answer)
         category_str = str(entry["category"])
+        cost_raw = entry.get("cost")
+        if isinstance(cost_raw, dict):
+            cost = CostMetrics(
+                total_input_tokens=int(cost_raw.get("total_input_tokens", 0)),
+                total_output_tokens=int(cost_raw.get("total_output_tokens", 0)),
+                retrieval_call_count=int(cost_raw.get("retrieval_call_count", 0)),
+                reasoning_turn_count=int(cost_raw.get("reasoning_turn_count", 0)),
+                retrieved_tokens_per_call=tuple(
+                    int(t) for t in cost_raw.get("retrieved_tokens_per_call", ())
+                ),
+                query_duration_seconds=cost_raw.get("query_duration_seconds"),
+                total_cost_usd=cost_raw.get("total_cost_usd"),
+            )
+        else:
+            cost = CostMetrics.zero()
+
         return AnswerResult(
             sample_id=str(entry["sample_id"]),
             question=question,
@@ -353,6 +369,7 @@ async def rejudge(config: LoCoMoConfig) -> BenchmarkReport:
             generated_answer=generated_answer,
             judge_verdict=verdict,
             token_f1=f1,
+            cost=cost,
         )
 
     all_results = list(

@@ -23,6 +23,17 @@ class CostMetrics:
     query_duration_seconds: float | None = None
     total_cost_usd: float | None = None
 
+    @classmethod
+    def zero(cls) -> CostMetrics:
+        """Return a zero-valued sentinel for failed or cost-free calls."""
+        return cls(
+            total_input_tokens=0,
+            total_output_tokens=0,
+            retrieval_call_count=0,
+            reasoning_turn_count=0,
+            retrieved_tokens_per_call=(),
+        )
+
 
 @dataclass(frozen=True)
 class ToolResult:

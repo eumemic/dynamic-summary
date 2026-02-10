@@ -77,8 +77,7 @@ def _result_to_dict(r: AnswerResult) -> dict[str, object]:
         "verdict": r.judge_verdict,  # A/B/C
         "f1": round(r.token_f1, 4),
     }
-    if r.cost is not None:
-        d["cost"] = _cost_to_dict(r.cost)
+    d["cost"] = _cost_to_dict(r.cost)
     if r.retrospective is not None:
         d["retrospective"] = r.retrospective
     return d
