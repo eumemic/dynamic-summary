@@ -9,9 +9,9 @@ from pathlib import Path
 from statistics import mean
 
 from ragzoom.evaluation.locomo.types import (
+    AggregateScores,
     AnswerResult,
     BenchmarkReport,
-    BudgetPoint,
     ConversationMetrics,
     CostMetrics,
     QACategory,
@@ -27,17 +27,16 @@ _CATEGORY_NAMES: dict[QACategory, str] = {
 }
 
 
-def _budget_point_to_dict(bp: BudgetPoint) -> dict[str, object]:
-    """Serialize a BudgetPoint, converting QACategory keys to strings."""
+def _scores_to_dict(scores: AggregateScores) -> dict[str, object]:
+    """Serialize AggregateScores, converting QACategory keys to strings."""
     result: dict[str, object] = {
-        "budget_tokens": bp.budget_tokens,
-        "overall_f1": round(bp.overall_f1, 4),
+        "overall_f1": round(scores.overall_f1, 4),
         "by_category": {
-            cat.name.lower(): asdict(score) for cat, score in bp.by_category.items()
+            cat.name.lower(): asdict(score) for cat, score in scores.by_category.items()
         },
     }
-    if bp.overall_accuracy is not None:
-        result["overall_accuracy"] = round(bp.overall_accuracy, 4)
+    if scores.overall_accuracy is not None:
+        result["overall_accuracy"] = round(scores.overall_accuracy, 4)
     return result
 
 
@@ -74,8 +73,6 @@ def _result_to_dict(r: AnswerResult) -> dict[str, object]:
         "question": r.question,
         "gold_answer": r.gold_answer,
         "category": r.category.name.lower(),
-        "budget_tokens": r.budget_tokens,
-        "retrieved_token_count": r.retrieved_token_count,
         "generated_answer": r.generated_answer,
         "verdict": r.judge_verdict,  # A/B/C
         "f1": round(r.token_f1, 4),
@@ -100,9 +97,7 @@ def save_json(report: BenchmarkReport, path: Path) -> None:
             "max_iterations": max_iterations,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         },
-        "budget_accuracy_curve": [
-            _budget_point_to_dict(bp) for bp in report.budget_curve
-        ],
+        "scores": _scores_to_dict(report.scores),
         "per_question": [_result_to_dict(r) for r in report.per_question],
     }
     if report.conversation_metrics:
@@ -121,41 +116,31 @@ def _format_pct(value: float) -> str:
 
 
 def _has_accuracy(report: BenchmarkReport) -> bool:
-    """Check if any budget point has accuracy data (i.e., not f1-only mode)."""
-    return any(bp.overall_accuracy is not None for bp in report.budget_curve)
+    """Check if the report has accuracy data (i.e., not f1-only mode)."""
+    return report.scores.overall_accuracy is not None
 
 
-def _budget_accuracy_table(report: BenchmarkReport) -> str:
-    """Render the budget-accuracy curve as a markdown table."""
-    # Collect all categories that appear
-    all_cats: list[QACategory] = sorted(
-        {cat for bp in report.budget_curve for cat in bp.by_category}
-    )
+def _accuracy_table(report: BenchmarkReport) -> str:
+    """Render category accuracy scores as a markdown table."""
+    scores = report.scores
+    all_cats: list[QACategory] = sorted(scores.by_category)
 
-    # Header
     cat_headers = [_CATEGORY_NAMES.get(c, c.name) for c in all_cats]
-    header = "| Budget | Overall |" + " | ".join(cat_headers) + " |"
-    sep = "|" + "|".join(["---"] * (2 + len(all_cats))) + "|"
+    header = "| Overall |" + " | ".join(cat_headers) + " |"
+    sep = "|" + "|".join(["---"] * (1 + len(all_cats))) + "|"
 
-    rows = [header, sep]
-    for bp in report.budget_curve:
-        overall = (
-            _format_pct(bp.overall_accuracy) if bp.overall_accuracy is not None else "—"
-        )
-        cat_cells = []
-        for cat in all_cats:
-            if cat in bp.by_category:
-                cs = bp.by_category[cat]
-                cat_cells.append(
-                    _format_pct(cs.accuracy) if cs.accuracy is not None else "—"
-                )
-            else:
-                cat_cells.append("—")
+    overall = (
+        _format_pct(scores.overall_accuracy)
+        if scores.overall_accuracy is not None
+        else "—"
+    )
+    cat_cells = []
+    for cat in all_cats:
+        cs = scores.by_category[cat]
+        cat_cells.append(_format_pct(cs.accuracy) if cs.accuracy is not None else "—")
 
-        row = f"| {bp.budget_tokens:,} | {overall} |" + " | ".join(cat_cells) + " |"
-        rows.append(row)
-
-    return "\n".join(rows)
+    row = f"| {overall} |" + " | ".join(cat_cells) + " |"
+    return "\n".join([header, sep, row])
 
 
 def save_markdown(report: BenchmarkReport, path: Path) -> None:
@@ -173,18 +158,12 @@ def save_markdown(report: BenchmarkReport, path: Path) -> None:
     lines.append("")
 
     if _has_accuracy(report):
-        lines.append("## Budget-Accuracy Curve (Judge Accuracy)")
+        lines.append("## Accuracy by Category (Judge)")
         lines.append("")
-        lines.append(_budget_accuracy_table(report))
+        lines.append(_accuracy_table(report))
         lines.append("")
 
-    # F1 table
-    lines.append("## Budget-F1 Curve (Token F1)")
-    lines.append("")
-    lines.append("| Budget | Overall F1 |")
-    lines.append("|---|---|")
-    for bp in report.budget_curve:
-        lines.append(f"| {bp.budget_tokens:,} | {bp.overall_f1:.3f} |")
+    lines.append(f"**Overall F1**: {report.scores.overall_f1:.3f}")
     lines.append("")
 
     # Agent cost summary (only when cost data is present)

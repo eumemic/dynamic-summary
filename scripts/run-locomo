@@ -147,20 +147,11 @@ def main() -> None:
     print(f"\nResults saved to {json_path} and {md_path}")
 
     # Print summary to stdout
-    has_accuracy = any(
-        bp.overall_accuracy is not None for bp in report.budget_curve
-    )
-    if has_accuracy:
-        print(f"\n{'Budget':>8}  {'Accuracy':>8}  {'F1':>6}")
-        print("-" * 28)
-        for bp in report.budget_curve:
-            acc = f"{bp.overall_accuracy * 100:>7.1f}%" if bp.overall_accuracy is not None else "    N/A"
-            print(f"{bp.budget_tokens:>8,}  {acc}  {bp.overall_f1:>.3f}")
+    scores = report.scores
+    if scores.overall_accuracy is not None:
+        print(f"\nAccuracy: {scores.overall_accuracy * 100:.1f}%  F1: {scores.overall_f1:.3f}")
     else:
-        print(f"\n{'Budget':>8}  {'F1':>6}")
-        print("-" * 18)
-        for bp in report.budget_curve:
-            print(f"{bp.budget_tokens:>8,}  {bp.overall_f1:>.3f}")
+        print(f"\nF1: {scores.overall_f1:.3f}")
 
 
 if __name__ == "__main__":

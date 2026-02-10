@@ -10,12 +10,12 @@ from pathlib import Path
 import pytest
 
 from ragzoom.evaluation.locomo.report import save_json, save_markdown
-from ragzoom.evaluation.locomo.runner import LoCoMoConfig, _aggregate_budget
+from ragzoom.evaluation.locomo.runner import LoCoMoConfig, _aggregate
 from ragzoom.evaluation.locomo.scoring import compute_token_f1
 from ragzoom.evaluation.locomo.types import (
+    AggregateScores,
     AnswerResult,
     BenchmarkReport,
-    BudgetPoint,
     CategoryScore,
     CostMetrics,
     LoCoMoConversation,
@@ -185,14 +185,13 @@ class TestLoCoMoConfig:
 
 
 # ---------------------------------------------------------------------------
-# _aggregate_budget with and without verdicts
+# _aggregate with and without verdicts
 # ---------------------------------------------------------------------------
 
 
 def _make_result(
     verdict: str | None,
     f1: float,
-    budget: int = 2000,
     category: QACategory = QACategory.SINGLE_HOP,
 ) -> AnswerResult:
     return AnswerResult(
@@ -200,34 +199,32 @@ def _make_result(
         question="q?",
         gold_answer="a",
         category=category,
-        budget_tokens=budget,
-        retrieved_token_count=100,
         generated_answer="a",
         judge_verdict=verdict,  # type: ignore[arg-type]
         token_f1=f1,
     )
 
 
-class TestAggregateBudget:
+class TestAggregate:
     def test_with_verdicts(self) -> None:
         results = [
             _make_result("A", 1.0),
             _make_result("B", 0.5),
         ]
-        bp = _aggregate_budget(results, 2000)
-        assert bp.overall_accuracy == pytest.approx(0.5)
-        assert bp.overall_f1 == pytest.approx(0.75)
+        scores = _aggregate(results)
+        assert scores.overall_accuracy == pytest.approx(0.5)
+        assert scores.overall_f1 == pytest.approx(0.75)
 
     def test_without_verdicts_f1_only(self) -> None:
         results = [
             _make_result(None, 0.8),
             _make_result(None, 0.6),
         ]
-        bp = _aggregate_budget(results, 2000)
-        assert bp.overall_accuracy is None
-        assert bp.overall_f1 == pytest.approx(0.7)
+        scores = _aggregate(results)
+        assert scores.overall_accuracy is None
+        assert scores.overall_f1 == pytest.approx(0.7)
         # Category accuracy should also be None
-        for cs in bp.by_category.values():
+        for cs in scores.by_category.values():
             assert cs.accuracy is None
 
 
@@ -238,8 +235,7 @@ class TestAggregateBudget:
 
 class TestReportF1Only:
     def test_markdown_skips_accuracy_table_when_no_verdicts(self) -> None:
-        bp = BudgetPoint(
-            budget_tokens=2000,
+        scores = AggregateScores(
             overall_accuracy=None,
             overall_f1=0.75,
             by_category={
@@ -251,19 +247,18 @@ class TestReportF1Only:
             judge_model="gpt-4.1",
             num_conversations=1,
             num_questions=10,
-            budget_curve=[bp],
+            scores=scores,
             per_question=[],
         )
         with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
             path = Path(f.name)
         save_markdown(report, path)
         content = path.read_text()
-        assert "Judge Accuracy" not in content
-        assert "Token F1" in content
+        assert "Accuracy by Category" not in content
+        assert "F1" in content
 
     def test_markdown_includes_accuracy_table_when_verdicts_present(self) -> None:
-        bp = BudgetPoint(
-            budget_tokens=2000,
+        scores = AggregateScores(
             overall_accuracy=0.8,
             overall_f1=0.75,
             by_category={
@@ -275,15 +270,15 @@ class TestReportF1Only:
             judge_model="gpt-4.1",
             num_conversations=1,
             num_questions=10,
-            budget_curve=[bp],
+            scores=scores,
             per_question=[],
         )
         with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
             path = Path(f.name)
         save_markdown(report, path)
         content = path.read_text()
-        assert "Judge Accuracy" in content
-        assert "Token F1" in content
+        assert "Accuracy by Category" in content
+        assert "F1" in content
 
 
 # ---------------------------------------------------------------------------
@@ -502,6 +497,9 @@ class TestAnthropicUsageBreakdown:
         assert _compute_cost("unknown-model-xyz", usage) is None
 
 
+_EMPTY_SCORES = AggregateScores(overall_accuracy=None, overall_f1=0.0, by_category={})
+
+
 class TestAnswerResultBackwardCompat:
     def test_cost_defaults_to_none(self) -> None:
         result = _make_result("A", 1.0)
@@ -520,8 +518,6 @@ class TestAnswerResultBackwardCompat:
             question="q?",
             gold_answer="a",
             category=QACategory.SINGLE_HOP,
-            budget_tokens=2000,
-            retrieved_token_count=500,
             generated_answer="a",
             judge_verdict="A",
             token_f1=1.0,
@@ -545,8 +541,6 @@ class TestReportCostSerialization:
             question="q?",
             gold_answer="a",
             category=QACategory.SINGLE_HOP,
-            budget_tokens=2000,
-            retrieved_token_count=500,
             generated_answer="a",
             judge_verdict="A",
             token_f1=1.0,
@@ -557,7 +551,7 @@ class TestReportCostSerialization:
             judge_model="test-judge",
             num_conversations=1,
             num_questions=1,
-            budget_curve=[],
+            scores=_EMPTY_SCORES,
             per_question=[result],
         )
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
@@ -575,7 +569,7 @@ class TestReportCostSerialization:
             judge_model="test-judge",
             num_conversations=1,
             num_questions=1,
-            budget_curve=[],
+            scores=_EMPTY_SCORES,
             per_question=[result],
         )
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
@@ -598,8 +592,6 @@ class TestReportCostSerialization:
             question="q?",
             gold_answer="a",
             category=QACategory.SINGLE_HOP,
-            budget_tokens=2000,
-            retrieved_token_count=2500,
             generated_answer="a",
             judge_verdict=None,
             token_f1=0.8,
@@ -610,7 +602,7 @@ class TestReportCostSerialization:
             judge_model="test-judge",
             num_conversations=1,
             num_questions=1,
-            budget_curve=[],
+            scores=_EMPTY_SCORES,
             per_question=[result],
         )
         with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as f:
@@ -636,8 +628,6 @@ class TestReportCostSerialization:
             question="q?",
             gold_answer="a",
             category=QACategory.SINGLE_HOP,
-            budget_tokens=2000,
-            retrieved_token_count=500,
             generated_answer="a",
             judge_verdict="A",
             token_f1=1.0,
@@ -648,7 +638,7 @@ class TestReportCostSerialization:
             judge_model="test-judge",
             num_conversations=1,
             num_questions=1,
-            budget_curve=[],
+            scores=_EMPTY_SCORES,
             per_question=[result],
         )
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:

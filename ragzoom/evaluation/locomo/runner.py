@@ -24,9 +24,9 @@ from ragzoom.evaluation.locomo.ingest import (
 )
 from ragzoom.evaluation.locomo.scoring import compute_token_f1, judge_answer
 from ragzoom.evaluation.locomo.types import (
+    AggregateScores,
     AnswerResult,
     BenchmarkReport,
-    BudgetPoint,
     CategoryScore,
     ConversationMetrics,
     CostMetrics,
@@ -124,8 +124,6 @@ async def _evaluate_one(
             question=qa.question,
             gold_answer=qa.gold_answer,
             category=qa.category,
-            budget_tokens=0,
-            retrieved_token_count=0,
             generated_answer=generated_answer,
             judge_verdict=verdict,
             token_f1=f1,
@@ -138,14 +136,13 @@ async def _evaluate_one(
 # ---------------------------------------------------------------------------
 
 
-def _aggregate_budget(results: list[AnswerResult], budget: int) -> BudgetPoint:
-    """Aggregate results for a single budget level."""
-    budget_results = [r for r in results if r.budget_tokens == budget]
-    has_verdicts = any(r.judge_verdict is not None for r in budget_results)
+def _aggregate(results: list[AnswerResult]) -> AggregateScores:
+    """Aggregate accuracy and F1 across all results."""
+    has_verdicts = any(r.judge_verdict is not None for r in results)
 
     by_category: dict[QACategory, CategoryScore] = {}
     grouped: dict[QACategory, list[AnswerResult]] = defaultdict(list)
-    for r in budget_results:
+    for r in results:
         grouped[r.category].append(r)
 
     for cat, cat_results in sorted(grouped.items()):
@@ -160,14 +157,11 @@ def _aggregate_budget(results: list[AnswerResult], budget: int) -> BudgetPoint:
 
     overall_accuracy: float | None = None
     if has_verdicts:
-        overall_accuracy = mean(
-            1.0 if r.judge_verdict == "A" else 0.0 for r in budget_results
-        )
+        overall_accuracy = mean(1.0 if r.judge_verdict == "A" else 0.0 for r in results)
 
-    return BudgetPoint(
-        budget_tokens=budget,
+    return AggregateScores(
         overall_accuracy=overall_accuracy,
-        overall_f1=mean(r.token_f1 for r in budget_results),
+        overall_f1=mean(r.token_f1 for r in results),
         by_category=by_category,
     )
 
@@ -280,15 +274,15 @@ async def _run_benchmark_impl(config: LoCoMoConfig) -> BenchmarkReport:
     else:
         logger.info("F1=%.3f (f1-only)", mean(r.token_f1 for r in all_results))
 
-    # 7. Aggregate (single budget=0 point for search mode)
-    budget_curve = [_aggregate_budget(all_results, 0)]
+    # 7. Aggregate
+    scores = _aggregate(all_results)
 
     return BenchmarkReport(
         answer_model=config.search_model,
         judge_model=config.judge_model,
         num_conversations=len(conversations),
         num_questions=len(qa_items),
-        budget_curve=budget_curve,
+        scores=scores,
         per_question=all_results,
         conversation_metrics=conv_metrics,
     )
@@ -332,21 +326,11 @@ async def rejudge(config: LoCoMoConfig) -> BenchmarkReport:
             )
         f1 = compute_token_f1(generated_answer, gold_answer)
         category_str = str(entry["category"])
-        budget_raw = entry["budget_tokens"]
-        assert isinstance(
-            budget_raw, int
-        ), f"budget_tokens must be int, got {type(budget_raw)}"
-        retrieved_raw = entry["retrieved_token_count"]
-        assert isinstance(
-            retrieved_raw, int
-        ), f"retrieved_token_count must be int, got {type(retrieved_raw)}"
         return AnswerResult(
             sample_id=str(entry["sample_id"]),
             question=question,
             gold_answer=gold_answer,
             category=QACategory[category_str.upper()],
-            budget_tokens=budget_raw,
-            retrieved_token_count=retrieved_raw,
             generated_answer=generated_answer,
             judge_verdict=verdict,
             token_f1=f1,
@@ -355,9 +339,6 @@ async def rejudge(config: LoCoMoConfig) -> BenchmarkReport:
     all_results = list(
         await asyncio.gather(*[_rejudge_one(entry) for entry in per_question_raw])
     )
-
-    budgets = sorted({r.budget_tokens for r in all_results})
-    budget_curve = [_aggregate_budget(all_results, b) for b in budgets]
 
     metadata = data.get("metadata", {})
     assert isinstance(metadata, dict)
@@ -370,6 +351,6 @@ async def rejudge(config: LoCoMoConfig) -> BenchmarkReport:
         judge_model=config.judge_model,
         num_conversations=num_conversations_raw,
         num_questions=num_questions,
-        budget_curve=budget_curve,
+        scores=_aggregate(all_results),
         per_question=all_results,
     )

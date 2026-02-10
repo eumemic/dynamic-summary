@@ -69,14 +69,12 @@ from ragzoom.agent.protocol import CostMetrics as CostMetrics  # noqa: E402
 
 @dataclass(frozen=True)
 class AnswerResult:
-    """Result of evaluating one QA pair at a specific token budget."""
+    """Result of evaluating one QA pair."""
 
     sample_id: str
     question: str
     gold_answer: str
     category: QACategory
-    budget_tokens: int
-    retrieved_token_count: int
     generated_answer: str
     judge_verdict: JudgeVerdict | None  # A=correct, B=incorrect, C=not attempted
     token_f1: float
@@ -93,10 +91,9 @@ class CategoryScore:
 
 
 @dataclass(frozen=True)
-class BudgetPoint:
-    """Aggregated scores at one token budget."""
+class AggregateScores:
+    """Aggregated scores across all evaluated questions."""
 
-    budget_tokens: int
     overall_accuracy: float | None  # None when running in f1-only mode
     overall_f1: float
     by_category: dict[QACategory, CategoryScore]
@@ -120,7 +117,7 @@ class BenchmarkReport:
     judge_model: str
     num_conversations: int
     num_questions: int
-    budget_curve: list[BudgetPoint]
+    scores: AggregateScores
     per_question: list[AnswerResult]
     conversation_metrics: tuple[ConversationMetrics, ...] = ()
 
