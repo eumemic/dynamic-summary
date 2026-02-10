@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 import signal
@@ -46,6 +47,7 @@ class BenchmarkServerManager:
         self._process: subprocess.Popen[bytes] | None = None
         self._temp_dir: tempfile.TemporaryDirectory[str] | None = None
         self._state_dir: Path | None = None
+        self._log_file: io.TextIOWrapper | None = None
 
     @property
     def address(self) -> str:
@@ -79,6 +81,9 @@ class BenchmarkServerManager:
         env["RAGZOOM_STATE_DIR"] = str(self._state_dir)
         env["RAGZOOM_DATA_DIR"] = str(self._state_dir)  # SQLite DB path
 
+        log_path = self._state_dir / "server.log"
+        self._log_file = log_path.open("w")
+
         self._process = subprocess.Popen(
             [
                 sys.executable,
@@ -90,8 +95,8 @@ class BenchmarkServerManager:
                 str(self._config.port),
             ],
             env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=self._log_file,
+            stderr=self._log_file,
         )
 
         self._wait_for_healthy()
@@ -105,12 +110,12 @@ class BenchmarkServerManager:
         while time.monotonic() < deadline:
             # Check if process died
             if self._process.poll() is not None:
-                stdout = self._process.stdout.read() if self._process.stdout else b""
-                stderr = self._process.stderr.read() if self._process.stderr else b""
+                assert self._state_dir is not None
+                log_path = self._state_dir / "server.log"
+                log_tail = log_path.read_text()[-2000:] if log_path.exists() else ""
                 raise BenchmarkServerError(
                     f"Benchmark server exited with code {self._process.returncode}.\n"
-                    f"stdout: {stdout.decode(errors='replace')}\n"
-                    f"stderr: {stderr.decode(errors='replace')}"
+                    f"server.log (last 2000 chars):\n{log_tail}"
                 )
 
             if grpc_health_check(self.address, timeout=1.0):
@@ -136,6 +141,10 @@ class BenchmarkServerManager:
                 logger.warning("Server did not exit gracefully, sending SIGKILL")
                 self._kill()
         self._process = None
+
+        if self._log_file is not None:
+            self._log_file.close()
+            self._log_file = None
 
         if self._temp_dir is not None:
             self._temp_dir.cleanup()
