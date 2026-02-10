@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 import time
 from collections.abc import Sequence
 from typing import NamedTuple
@@ -29,6 +31,10 @@ from ragzoom.agent.protocol import (
 from ragzoom.model_info import ModelInfo
 
 logger = logging.getLogger(__name__)
+
+# Bump the SDK's initialize timeout from the default 60s to 120s as a safety
+# margin.  The env var is in milliseconds; the SDK uses max(value/1000, 60).
+os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "120000")
 
 
 def _build_sdk_tool(
@@ -164,23 +170,25 @@ class AnthropicBackend:
         """Single-shot call via ``query()`` — used for judging."""
         start_time = time.monotonic()
 
-        options = ClaudeAgentOptions(
-            model=self._model_id,
-            system_prompt=system_prompt,
-            max_turns=1,
-            permission_mode="bypassPermissions",
-        )
+        with tempfile.TemporaryDirectory(prefix="claude_sdk_") as tmpdir:
+            options = ClaudeAgentOptions(
+                model=self._model_id,
+                system_prompt=system_prompt,
+                max_turns=1,
+                permission_mode="bypassPermissions",
+                env={"XDG_DATA_HOME": tmpdir},
+            )
 
-        answer = ""
-        usage = _UsageBreakdown(0, 0, 0, 0)
+            answer = ""
+            usage = _UsageBreakdown(0, 0, 0, 0)
 
-        async for message in query(prompt=user_prompt, options=options):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        answer = block.text
-            elif isinstance(message, ResultMessage):
-                usage = _extract_usage(message)
+            async for message in query(prompt=user_prompt, options=options):
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            answer = block.text
+                elif isinstance(message, ResultMessage):
+                    usage = _extract_usage(message)
 
         if not answer.strip():
             answer = "I don't know."
@@ -202,7 +210,12 @@ class AnthropicBackend:
         tools: Sequence[ToolDefinition],
         max_turns: int,
     ) -> AgentResult:
-        """Multi-turn agentic call via ``ClaudeSDKClient`` with MCP tools."""
+        """Multi-turn agentic call via ``ClaudeSDKClient`` with MCP tools.
+
+        Each subprocess gets an isolated ``XDG_DATA_HOME`` so the Claude CLI's
+        PID lock (on ``$XDG_DATA_HOME/claude/versions/<ver>``) doesn't collide
+        across concurrent clients.
+        """
         start_time = time.monotonic()
         retrieved_tokens: list[int] = []
 
@@ -216,39 +229,21 @@ class AnthropicBackend:
 
         allowed_tools = [f"mcp__mem__{td.name}" for td in tools]
 
-        options = ClaudeAgentOptions(
-            model=self._model_id,
-            system_prompt=system_prompt,
-            mcp_servers={"mem": memory_server},
-            allowed_tools=allowed_tools,
-            max_turns=max_turns + 1,  # +1 for final answer turn
-            permission_mode="bypassPermissions",
-        )
+        with tempfile.TemporaryDirectory(prefix="claude_sdk_") as tmpdir:
+            options = ClaudeAgentOptions(
+                model=self._model_id,
+                system_prompt=system_prompt,
+                mcp_servers={"mem": memory_server},
+                allowed_tools=allowed_tools,
+                max_turns=max_turns + 1,  # +1 for final answer turn
+                permission_mode="bypassPermissions",
+                env={"XDG_DATA_HOME": tmpdir},
+            )
 
-        answer = ""
-        usage = _UsageBreakdown(0, 0, 0, 0)
-        reasoning_turns = 0
-
-        async with ClaudeSDKClient(options=options) as client:
-            await client.query(user_prompt)
-
-            async for message in client.receive_response():
-                if isinstance(message, AssistantMessage):
-                    reasoning_turns += 1
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            answer = block.text
-                        elif isinstance(block, ToolUseBlock):
-                            logger.debug(
-                                "Tool call: %s(%s)",
-                                block.name,
-                                str(block.input)[:100],
-                            )
-                        elif isinstance(block, ToolResultBlock):
-                            pass  # Logged in the tool handler
-
-                elif isinstance(message, ResultMessage):
-                    usage = _extract_usage(message)
+            async with ClaudeSDKClient(options=options) as client:
+                answer, usage, reasoning_turns = await self._run_sdk_conversation(
+                    client, user_prompt
+                )
 
         if not answer.strip():
             answer = "I don't know."
@@ -262,3 +257,34 @@ class AnthropicBackend:
             elapsed=time.monotonic() - start_time,
             total_cost_usd=_compute_cost(self._model_id, usage),
         )
+
+    @staticmethod
+    async def _run_sdk_conversation(
+        client: ClaudeSDKClient, user_prompt: str
+    ) -> tuple[str, _UsageBreakdown, int]:
+        """Drive the SDK conversation after initialization."""
+        await client.query(user_prompt)
+
+        answer = ""
+        usage = _UsageBreakdown(0, 0, 0, 0)
+        reasoning_turns = 0
+
+        async for message in client.receive_response():
+            if isinstance(message, AssistantMessage):
+                reasoning_turns += 1
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        answer = block.text
+                    elif isinstance(block, ToolUseBlock):
+                        logger.debug(
+                            "Tool call: %s(%s)",
+                            block.name,
+                            str(block.input)[:100],
+                        )
+                    elif isinstance(block, ToolResultBlock):
+                        pass  # Logged in the tool handler
+
+            elif isinstance(message, ResultMessage):
+                usage = _extract_usage(message)
+
+        return answer, usage, reasoning_turns
