@@ -79,6 +79,8 @@ def _result_to_dict(r: AnswerResult) -> dict[str, object]:
     }
     if r.cost is not None:
         d["cost"] = _cost_to_dict(r.cost)
+    if r.retrospective is not None:
+        d["retrospective"] = r.retrospective
     return d
 
 

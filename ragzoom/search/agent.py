@@ -13,7 +13,12 @@ from ragzoom.output_formatters import format_tiling_spans
 from ragzoom.search.config import SearchConfig
 from ragzoom.search.prompt import SEARCH_SYSTEM_PROMPT
 from ragzoom.search.retrospective import run_retrospective
-from ragzoom.search.types import SearchIteration, SearchProfile, SearchResult
+from ragzoom.search.types import (
+    SearchCost,
+    SearchIteration,
+    SearchProfile,
+    SearchResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +194,17 @@ class SearchAgent:
                 transcript=transcript,
             )
 
-        return SearchResult(answer=result.answer, profile=profile)
+        cost = SearchCost(
+            total_input_tokens=result.cost.total_input_tokens,
+            total_output_tokens=result.cost.total_output_tokens,
+            retrieval_call_count=result.cost.retrieval_call_count,
+            reasoning_turn_count=result.cost.reasoning_turn_count,
+            retrieved_tokens_per_call=result.cost.retrieved_tokens_per_call,
+            duration_seconds=elapsed,
+            total_cost_usd=result.cost.total_cost_usd,
+        )
+
+        return SearchResult(answer=result.answer, cost=cost, profile=profile)
 
 
 def _format_iterations_transcript(

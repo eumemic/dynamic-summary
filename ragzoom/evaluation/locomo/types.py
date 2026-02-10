@@ -79,6 +79,7 @@ class AnswerResult:
     judge_verdict: JudgeVerdict | None  # A=correct, B=incorrect, C=not attempted
     token_f1: float
     cost: CostMetrics | None = None  # Populated for agentic evaluations
+    retrospective: str | None = None  # Populated when --profiling is enabled
 
 
 @dataclass(frozen=True)

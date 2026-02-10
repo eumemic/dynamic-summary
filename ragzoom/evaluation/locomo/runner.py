@@ -103,11 +103,25 @@ async def _evaluate_one(
 ) -> AnswerResult:
     """Evaluate a single QA pair using client-side agentic search."""
     async with semaphore:
+        cost: CostMetrics | None = None
+        retrospective: str | None = None
         try:
             search_result = await search_agent.search(
                 qa.question, doc_id, query_executor
             )
             generated_answer = search_result.answer
+            sc = search_result.cost
+            cost = CostMetrics(
+                total_input_tokens=sc.total_input_tokens,
+                total_output_tokens=sc.total_output_tokens,
+                retrieval_call_count=sc.retrieval_call_count,
+                reasoning_turn_count=sc.reasoning_turn_count,
+                retrieved_tokens_per_call=sc.retrieved_tokens_per_call,
+                query_duration_seconds=sc.duration_seconds,
+                total_cost_usd=sc.total_cost_usd,
+            )
+            if search_result.profile is not None:
+                retrospective = search_result.profile.retrospective
         except Exception:
             logger.exception("Search failed for %s", qa.sample_id)
             generated_answer = "I don't know."
@@ -123,8 +137,6 @@ async def _evaluate_one(
             )
         f1 = compute_token_f1(generated_answer, qa.gold_answer)
 
-        cost: CostMetrics | None = None
-
         return AnswerResult(
             sample_id=qa.sample_id,
             question=qa.question,
@@ -134,6 +146,7 @@ async def _evaluate_one(
             judge_verdict=verdict,
             token_f1=f1,
             cost=cost,
+            retrospective=retrospective,
         )
 
 

@@ -38,8 +38,23 @@ class SearchProfile:
 class SearchResult:
     """The answer returned by a search invocation.
 
-    ``profile`` is None unless profiling is enabled on the server.
+    ``cost`` is always populated.  ``profile`` is None unless profiling is
+    enabled via ``SearchConfig.profiling_enabled``.
     """
 
     answer: str
+    cost: SearchCost
     profile: SearchProfile | None
+
+
+@dataclass(frozen=True)
+class SearchCost:
+    """Token usage and timing for one search invocation."""
+
+    total_input_tokens: int
+    total_output_tokens: int
+    retrieval_call_count: int
+    reasoning_turn_count: int
+    retrieved_tokens_per_call: tuple[int, ...]
+    duration_seconds: float
+    total_cost_usd: float | None
