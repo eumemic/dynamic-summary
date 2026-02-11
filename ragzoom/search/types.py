@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ragzoom.agent.protocol import MessageHistory
+
 
 @dataclass(frozen=True)
 class SearchIteration:
@@ -26,6 +28,7 @@ class SearchProfile:
     """
 
     iterations: tuple[SearchIteration, ...]
+    history: MessageHistory
     total_input_tokens: int
     total_output_tokens: int
     total_cost_usd: float | None
@@ -40,7 +43,7 @@ class SearchResult:
 
     ``cost`` is always populated.  ``profile`` is None unless profiling is
     enabled via ``SearchConfig.profiling_enabled``.  ``session_id`` is set
-    when a ``SessionStore`` is configured, enabling follow-up questions.
+    when a ``SessionRegistry`` is configured, enabling follow-up questions.
     """
 
     answer: str

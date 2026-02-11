@@ -16,7 +16,7 @@ from ragzoom.indexing import IndexerRuntime
 from ragzoom.query_log import QueryLog
 from ragzoom.search.agent import SearchAgent
 from ragzoom.search.config import SearchConfig
-from ragzoom.search.session import SessionStore
+from ragzoom.search.session import SessionRegistry
 from ragzoom.server.append_executor import AppendExecutor
 from ragzoom.server.indexing_engine import IndexingEngine
 from ragzoom.server.run_manager import TelemetryRunManager
@@ -46,7 +46,7 @@ class ServerState:
     index_runtime: IndexerRuntime
     search_config: SearchConfig
     search_agent: SearchAgent
-    session_store: SessionStore
+    session_registry: SessionRegistry
 
     @classmethod
     def create(
@@ -138,8 +138,8 @@ class ServerState:
             timeout=operational_cfg.openai_timeout,
         )
         search_backend = create_backend(search_cfg.agent_model, async_openai_client)
-        session_store = SessionStore()
-        search_agent = SearchAgent(search_cfg, search_backend, session_store)
+        session_registry = SessionRegistry()
+        search_agent = SearchAgent(search_cfg, search_backend, session_registry)
 
         return cls(
             index_config=index_cfg,
@@ -156,7 +156,7 @@ class ServerState:
             index_runtime=index_runtime,
             search_config=search_cfg,
             search_agent=search_agent,
-            session_store=session_store,
+            session_registry=session_registry,
         )
 
 

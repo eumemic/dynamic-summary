@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 from collections.abc import Sequence
 from typing import cast
 
@@ -76,6 +77,13 @@ def _to_openai_tool(td: ToolDefinition) -> ChatCompletionToolParam:
             },
         },
     )
+
+
+def _msg_role(msg: ChatCompletionMessageParam) -> str:
+    """Extract the role string from an OpenAI message (dict or object)."""
+    if isinstance(msg, dict):
+        return str(msg.get("role", ""))
+    return str(getattr(msg, "role", ""))
 
 
 def _history_to_openai_messages(
@@ -197,6 +205,7 @@ class OpenAIBackend:
     def __init__(self, client: AsyncOpenAI, model_id: str) -> None:
         self._client = client
         self._model_id = model_id
+        self._sessions: dict[str, list[ChatCompletionMessageParam]] = {}
 
     # jscpd:ignore-start (BenchmarkingAgent protocol implementation)
     async def generate(
@@ -207,8 +216,7 @@ class OpenAIBackend:
         tools: Sequence[ToolDefinition] = (),
         max_turns: int = 1,
         temperature: float | None = None,
-        capture_history: bool = False,
-        prior_history: MessageHistory | None = None,
+        resume_session_id: str | None = None,
     ) -> AgentResult:
         # jscpd:ignore-end
         """Generate a response, optionally using tools over multiple turns."""
@@ -216,9 +224,10 @@ class OpenAIBackend:
             {"role": "system", "content": system_prompt},
         ]
 
-        if prior_history is not None:
-            messages.extend(_history_to_openai_messages(prior_history))
-            capture_history = True
+        if resume_session_id is not None:
+            if resume_session_id not in self._sessions:
+                raise KeyError(f"Session '{resume_session_id}' not found")
+            messages.extend(self._sessions[resume_session_id])
 
         messages.append({"role": "user", "content": user_prompt})
 
@@ -300,9 +309,17 @@ class OpenAIBackend:
             last_content = response.choices[0].message.content
             answer = last_content if last_content else "I don't know."
 
-        history: MessageHistory | None = None
-        if capture_history:
-            history = _openai_messages_to_history(messages)
+        history = _openai_messages_to_history(messages)
+
+        # Persist session state for agentic calls (tools present)
+        session_id: str | None = resume_session_id
+        if session_id is None and tools:
+            session_id = uuid.uuid4().hex
+        if session_id is not None:
+            # Store non-system messages for future resume
+            self._sessions[session_id] = [
+                m for m in messages if _msg_role(m) != "system"
+            ]
 
         return make_agent_result(
             answer=answer,
@@ -315,4 +332,5 @@ class OpenAIBackend:
                 self._model_id, total_input, cached_input, total_output
             ),
             history=history,
+            session_id=session_id,
         )

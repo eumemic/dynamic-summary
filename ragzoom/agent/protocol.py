@@ -101,7 +101,8 @@ class AgentResult:
 
     answer: str
     cost: CostMetrics
-    history: MessageHistory | None = None
+    history: MessageHistory
+    session_id: str | None = None
 
 
 def make_agent_result(
@@ -113,7 +114,8 @@ def make_agent_result(
     reasoning_turns: int,
     elapsed: float,
     total_cost_usd: float | None = None,
-    history: MessageHistory | None = None,
+    history: MessageHistory = (),
+    session_id: str | None = None,
 ) -> AgentResult:
     """Build an AgentResult with CostMetrics from raw counters."""
     return AgentResult(
@@ -128,6 +130,7 @@ def make_agent_result(
             total_cost_usd=total_cost_usd,
         ),
         history=history,
+        session_id=session_id,
     )
 
 
@@ -145,6 +148,5 @@ class BenchmarkingAgent(Protocol):
         tools: Sequence[ToolDefinition] = (),
         max_turns: int = 1,
         temperature: float | None = None,
-        capture_history: bool = False,
-        prior_history: MessageHistory | None = None,
+        resume_session_id: str | None = None,
     ) -> AgentResult: ...

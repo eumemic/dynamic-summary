@@ -2,7 +2,7 @@
 
 from ragzoom.search.agent import QueryExecutor, SearchAgent
 from ragzoom.search.config import SearchConfig
-from ragzoom.search.session import SessionStore
+from ragzoom.search.session import SessionRegistry
 from ragzoom.search.types import (
     SearchCost,
     SearchIteration,
@@ -18,5 +18,5 @@ __all__ = [
     "SearchIteration",
     "SearchProfile",
     "SearchResult",
-    "SessionStore",
+    "SessionRegistry",
 ]

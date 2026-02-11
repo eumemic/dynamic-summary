@@ -320,11 +320,7 @@ class TestJudgeAnswerWithBenchmarkingAgent:
     async def test_judge_returns_correct_verdict(self) -> None:
         from collections.abc import Sequence
 
-        from ragzoom.agent.protocol import (
-            AgentResult,
-            MessageHistory,
-            ToolDefinition,
-        )
+        from ragzoom.agent.protocol import AgentResult, ToolDefinition
         from ragzoom.evaluation.locomo.scoring import judge_answer
         from ragzoom.evaluation.locomo.types import CostMetrics
 
@@ -337,8 +333,7 @@ class TestJudgeAnswerWithBenchmarkingAgent:
                 tools: Sequence[ToolDefinition] = (),
                 max_turns: int = 1,
                 temperature: float | None = None,
-                capture_history: bool = False,
-                prior_history: MessageHistory | None = None,
+                resume_session_id: str | None = None,
             ) -> AgentResult:
                 return AgentResult(
                     answer="A",
@@ -349,6 +344,7 @@ class TestJudgeAnswerWithBenchmarkingAgent:
                         reasoning_turn_count=1,
                         retrieved_tokens_per_call=(),
                     ),
+                    history=(),
                 )
 
         verdict = await judge_answer(
@@ -364,11 +360,7 @@ class TestJudgeAnswerWithBenchmarkingAgent:
     async def test_judge_retries_on_bad_response(self) -> None:
         from collections.abc import Sequence
 
-        from ragzoom.agent.protocol import (
-            AgentResult,
-            MessageHistory,
-            ToolDefinition,
-        )
+        from ragzoom.agent.protocol import AgentResult, ToolDefinition
         from ragzoom.evaluation.locomo.scoring import judge_answer
         from ragzoom.evaluation.locomo.types import CostMetrics
 
@@ -383,8 +375,7 @@ class TestJudgeAnswerWithBenchmarkingAgent:
                 tools: Sequence[ToolDefinition] = (),
                 max_turns: int = 1,
                 temperature: float | None = None,
-                capture_history: bool = False,
-                prior_history: MessageHistory | None = None,
+                resume_session_id: str | None = None,
             ) -> AgentResult:
                 nonlocal call_count
                 call_count += 1
@@ -399,6 +390,7 @@ class TestJudgeAnswerWithBenchmarkingAgent:
                         reasoning_turn_count=1,
                         retrieved_tokens_per_call=(),
                     ),
+                    history=(),
                 )
 
         verdict = await judge_answer(

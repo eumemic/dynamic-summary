@@ -16,7 +16,7 @@ from ragzoom.agent.protocol import (
 )
 from ragzoom.client.grpc_client import ExecuteQueryOutput, RetrievalView
 from ragzoom.search.config import SearchConfig
-from ragzoom.search.session import SessionStore
+from ragzoom.search.session import SessionRegistry
 from ragzoom.services.query_service import QueryResult
 
 
@@ -95,10 +95,9 @@ class _NoToolBackend:
         tools: Sequence[ToolDefinition] = (),
         max_turns: int = 1,
         temperature: float | None = None,
-        capture_history: bool = False,
-        prior_history: MessageHistory | None = None,
+        resume_session_id: str | None = None,
     ) -> AgentResult:
-        return AgentResult(answer=self._answer, cost=self._cost)
+        return AgentResult(answer=self._answer, cost=self._cost, history=())
 
 
 class _ToolCallingBackend:
@@ -128,13 +127,12 @@ class _ToolCallingBackend:
         tools: Sequence[ToolDefinition] = (),
         max_turns: int = 1,
         temperature: float | None = None,
-        capture_history: bool = False,
-        prior_history: MessageHistory | None = None,
+        resume_session_id: str | None = None,
     ) -> AgentResult:
         if tools:
             tool = tools[0]
             await tool.handler(self._tool_args)
-        return AgentResult(answer=self._answer, cost=self._cost)
+        return AgentResult(answer=self._answer, cost=self._cost, history=())
 
 
 # ---------------------------------------------------------------------------
@@ -254,13 +252,17 @@ class TestRetrospectiveUsesBackend:
                 tools: Sequence[ToolDefinition] = (),
                 max_turns: int = 1,
                 temperature: float | None = None,
-                capture_history: bool = False,
-                prior_history: MessageHistory | None = None,
+                resume_session_id: str | None = None,
             ) -> AgentResult:
                 self.call_count += 1
                 if not tools:
                     return retro_result
-                return AgentResult(answer="Paris", cost=_make_cost())
+                return AgentResult(
+                    answer="Paris",
+                    cost=_make_cost(),
+                    history=(),
+                    session_id="retro-session",
+                )
 
         backend = _RetroBackend()
         config = SearchConfig(profiling_enabled=True)
@@ -276,19 +278,19 @@ class TestRetrospectiveUsesBackend:
 
 
 # ---------------------------------------------------------------------------
-# History-aware backend for session tests
+# Session-aware backend for session tests
 # ---------------------------------------------------------------------------
 
 _SAMPLE_HISTORY: MessageHistory = ("question", AssistantTurn(text="answer"))
 
 
-class _HistoryCapturingBackend:
-    """Backend that returns history when capture_history is True."""
+class _SessionAwareBackend:
+    """Backend that returns session_id and tracks resume_session_id."""
 
     def __init__(self, answer: str = "Paris") -> None:
         self._answer = answer
         self.call_count = 0
-        self.last_prior_history: MessageHistory | None = None
+        self.last_resume_session_id: str | None = None
 
     async def generate(
         self,
@@ -298,13 +300,17 @@ class _HistoryCapturingBackend:
         tools: Sequence[ToolDefinition] = (),
         max_turns: int = 1,
         temperature: float | None = None,
-        capture_history: bool = False,
-        prior_history: MessageHistory | None = None,
+        resume_session_id: str | None = None,
     ) -> AgentResult:
         self.call_count += 1
-        self.last_prior_history = prior_history
-        history = _SAMPLE_HISTORY if capture_history else None
-        return AgentResult(answer=self._answer, cost=_make_cost(), history=history)
+        self.last_resume_session_id = resume_session_id
+        session_id = resume_session_id or "new-session-id"
+        return AgentResult(
+            answer=self._answer,
+            cost=_make_cost(),
+            history=_SAMPLE_HISTORY,
+            session_id=session_id,
+        )
 
 
 class TestSessionCreation:
@@ -313,26 +319,42 @@ class TestSessionCreation:
         from ragzoom.search.agent import SearchAgent
 
         config = SearchConfig(profiling_enabled=False)
-        store = SessionStore()
-        agent = SearchAgent(config, _HistoryCapturingBackend(), session_store=store)
+        registry = SessionRegistry()
+        agent = SearchAgent(config, _SessionAwareBackend(), session_registry=registry)
+        executor = _MockQueryExecutor()
+
+        result = await agent.search("question", "doc-1", executor)
+
+        assert result.session_id == "new-session-id"
+
+    @pytest.mark.asyncio
+    async def test_session_registered_in_registry(self) -> None:
+        from ragzoom.search.agent import SearchAgent
+
+        config = SearchConfig(profiling_enabled=False)
+        registry = SessionRegistry()
+        agent = SearchAgent(config, _SessionAwareBackend(), session_registry=registry)
         executor = _MockQueryExecutor()
 
         result = await agent.search("question", "doc-1", executor)
 
         assert result.session_id is not None
-        assert isinstance(result.session_id, str)
+        session = registry.get(result.session_id)
+        assert session is not None
+        assert session.document_id == "doc-1"
 
     @pytest.mark.asyncio
-    async def test_no_session_id_without_store(self) -> None:
+    async def test_session_id_without_registry(self) -> None:
+        """Backend-generated session_id is still returned even without a registry."""
         from ragzoom.search.agent import SearchAgent
 
         config = SearchConfig(profiling_enabled=False)
-        agent = SearchAgent(config, _HistoryCapturingBackend())
+        agent = SearchAgent(config, _SessionAwareBackend())
         executor = _MockQueryExecutor()
 
         result = await agent.search("question", "doc-1", executor)
 
-        assert result.session_id is None
+        assert result.session_id == "new-session-id"
 
 
 class TestSessionContinuation:
@@ -340,10 +362,10 @@ class TestSessionContinuation:
     async def test_search_continue_returns_answer(self) -> None:
         from ragzoom.search.agent import SearchAgent
 
-        backend = _HistoryCapturingBackend(answer="Follow-up answer")
+        backend = _SessionAwareBackend(answer="Follow-up answer")
         config = SearchConfig(profiling_enabled=False)
-        store = SessionStore()
-        agent = SearchAgent(config, backend, session_store=store)
+        registry = SessionRegistry()
+        agent = SearchAgent(config, backend, session_registry=registry)
         executor = _MockQueryExecutor()
 
         # Initial search
@@ -357,27 +379,27 @@ class TestSessionContinuation:
 
         assert followup.answer == "Follow-up answer"
         assert followup.session_id == initial.session_id
-        assert backend.last_prior_history == _SAMPLE_HISTORY
+        assert backend.last_resume_session_id == initial.session_id
 
     @pytest.mark.asyncio
     async def test_search_continue_missing_session_raises(self) -> None:
         from ragzoom.search.agent import SearchAgent
 
         config = SearchConfig(profiling_enabled=False)
-        store = SessionStore()
-        agent = SearchAgent(config, _HistoryCapturingBackend(), session_store=store)
+        registry = SessionRegistry()
+        agent = SearchAgent(config, _SessionAwareBackend(), session_registry=registry)
         executor = _MockQueryExecutor()
 
         with pytest.raises(KeyError, match="not found"):
             await agent.search_continue("nonexistent", "question", executor)
 
     @pytest.mark.asyncio
-    async def test_search_continue_without_store_raises(self) -> None:
+    async def test_search_continue_without_registry_raises(self) -> None:
         from ragzoom.search.agent import SearchAgent
 
         config = SearchConfig(profiling_enabled=False)
-        agent = SearchAgent(config, _HistoryCapturingBackend())
+        agent = SearchAgent(config, _SessionAwareBackend())
         executor = _MockQueryExecutor()
 
-        with pytest.raises(RuntimeError, match="requires a SessionStore"):
+        with pytest.raises(RuntimeError, match="requires a SessionRegistry"):
             await agent.search_continue("any-id", "question", executor)

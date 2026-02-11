@@ -1,45 +1,43 @@
-"""In-memory session store for search continuations."""
+"""In-memory session registry for search continuations."""
 
 from __future__ import annotations
 
 import time
-import uuid
 from dataclasses import dataclass
-
-from ragzoom.agent.protocol import MessageHistory
 
 
 @dataclass
 class SessionState:
-    """Server-side state for a search session."""
+    """Server-side state for a search session.
+
+    The backend owns the conversation state; this registry only tracks
+    which document a session belongs to for routing follow-up queries.
+    """
 
     session_id: str
     document_id: str
-    history: MessageHistory
     last_accessed_at: float
     turn_count: int = 1
 
 
-class SessionStore:
-    """In-memory session store with TTL-based expiry.
+class SessionRegistry:
+    """In-memory session registry with TTL-based expiry.
 
-    Sessions are keyed by a UUID and expire after ``ttl_seconds`` of inactivity.
+    Maps backend-generated session IDs to document IDs.  The backends
+    own conversation state; this registry is a lightweight routing table.
     """
 
     def __init__(self, ttl_seconds: float = 1800.0) -> None:
         self._ttl_seconds = ttl_seconds
         self._sessions: dict[str, SessionState] = {}
 
-    def create(self, document_id: str, history: MessageHistory) -> str:
-        """Create a new session and return its ID."""
-        session_id = uuid.uuid4().hex
+    def create(self, session_id: str, document_id: str) -> None:
+        """Register a new session."""
         self._sessions[session_id] = SessionState(
             session_id=session_id,
             document_id=document_id,
-            history=history,
             last_accessed_at=time.monotonic(),
         )
-        return session_id
 
     def get(self, session_id: str) -> SessionState | None:
         """Look up a session, returning None if expired or missing."""
@@ -52,12 +50,11 @@ class SessionStore:
         session.last_accessed_at = time.monotonic()
         return session
 
-    def update(self, session_id: str, history: MessageHistory) -> None:
-        """Update session history after a follow-up turn."""
+    def update(self, session_id: str) -> None:
+        """Refresh timestamp and increment turn count after a follow-up."""
         session = self._sessions.get(session_id)
         if session is None:
             raise KeyError(f"Session '{session_id}' not found")
-        session.history = history
         session.turn_count += 1
         session.last_accessed_at = time.monotonic()
 

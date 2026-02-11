@@ -17,7 +17,7 @@ from ragzoom.client.grpc_client import ExecuteQueryOutput
 from ragzoom.output_formatters import format_tiling_spans
 from ragzoom.search.config import SearchConfig
 from ragzoom.search.prompt import RETROSPECTIVE_FOLLOW_UP, SEARCH_SYSTEM_PROMPT
-from ragzoom.search.session import SessionStore
+from ragzoom.search.session import SessionRegistry
 from ragzoom.search.types import (
     SearchCost,
     SearchIteration,
@@ -157,11 +157,11 @@ class SearchAgent:
         self,
         config: SearchConfig,
         backend: BenchmarkingAgent,
-        session_store: SessionStore | None = None,
+        session_registry: SessionRegistry | None = None,
     ) -> None:
         self._config = config
         self._backend = backend
-        self._session_store = session_store
+        self._session_registry = session_registry
 
     async def search(
         self,
@@ -181,7 +181,6 @@ class SearchAgent:
         """
         config = self._config
         profiling = config.profiling_enabled
-        needs_history = profiling or self._session_store is not None
         start_time = time.monotonic()
 
         iterations: list[SearchIteration] = []
@@ -194,16 +193,14 @@ class SearchAgent:
             question,
             tools=[recall_tool],
             max_turns=config.max_iterations,
-            capture_history=needs_history,
         )
 
         elapsed = time.monotonic() - start_time
 
-        # Create session if a store is configured
-        session_id: str | None = None
-        history = result.history
-        if self._session_store is not None and history is not None:
-            session_id = self._session_store.create(document_id, history)
+        # Register session if a registry is configured
+        session_id = result.session_id
+        if self._session_registry is not None and session_id is not None:
+            self._session_registry.create(session_id, document_id)
 
         profile: SearchProfile | None = None
         if profiling:
@@ -216,10 +213,11 @@ class SearchAgent:
                 SEARCH_SYSTEM_PROMPT,
                 RETROSPECTIVE_FOLLOW_UP,
                 max_turns=1,
-                prior_history=history,
+                resume_session_id=result.session_id,
             )
             profile = SearchProfile(
                 iterations=tuple(iterations),
+                history=result.history,
                 total_input_tokens=result.cost.total_input_tokens,
                 total_output_tokens=result.cost.total_output_tokens,
                 total_cost_usd=result.cost.total_cost_usd,
@@ -254,10 +252,10 @@ class SearchAgent:
         Raises:
             KeyError: If the session is expired or not found.
         """
-        if self._session_store is None:
-            raise RuntimeError("search_continue requires a SessionStore")
+        if self._session_registry is None:
+            raise RuntimeError("search_continue requires a SessionRegistry")
 
-        session = self._session_store.get(session_id)
+        session = self._session_registry.get(session_id)
         if session is None:
             raise KeyError(f"Session '{session_id}' not found or expired")
 
@@ -278,15 +276,12 @@ class SearchAgent:
             question,
             tools=[recall_tool],
             max_turns=config.max_iterations,
-            capture_history=True,
-            prior_history=session.history,
+            resume_session_id=session_id,
         )
 
         elapsed = time.monotonic() - start_time
 
-        # Update session with the new history
-        if result.history is not None:
-            self._session_store.update(session_id, result.history)
+        self._session_registry.update(session_id)
 
         return SearchResult(
             answer=result.answer,
