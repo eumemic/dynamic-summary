@@ -46,24 +46,12 @@ broad surveys and larger budgets when zooming into specific time ranges.
 - Give the most information-dense answer possible.
 - Your final response must be ONLY the answer text — no process explanation."""
 
-RETROSPECTIVE_PROMPT = """\
-You are reviewing a search session where an agent answered a question \
-by iteratively querying a conversation memory system. Analyze the trace below \
-and provide a brief critique:
+RETROSPECTIVE_FOLLOW_UP = """\
+Now critique your own search process. Analyze:
 
-1. Did the agent use its recall calls efficiently?
-2. Could it have found the answer in fewer iterations?
-3. Were the query terms and budget choices appropriate?
-4. Was the final answer well-supported by the retrieved evidence?
+1. Did you use your recall calls efficiently?
+2. Could you have found the answer in fewer iterations?
+3. Were your query terms and budget choices appropriate?
+4. Was your final answer well-supported by the retrieved evidence?
 
-Be concise — 3-5 sentences maximum.
-
-## Search Trace
-
-{transcript}
-
-## Question
-{question}
-
-## Final Answer
-{answer}"""
+Be concise — 3-5 sentences maximum. Respond ONLY with the critique."""

@@ -322,6 +322,7 @@ class TestJudgeAnswerWithBenchmarkingAgent:
 
         from ragzoom.agent.protocol import (
             AgentResult,
+            MessageHistory,
             ToolDefinition,
         )
         from ragzoom.evaluation.locomo.scoring import judge_answer
@@ -336,6 +337,8 @@ class TestJudgeAnswerWithBenchmarkingAgent:
                 tools: Sequence[ToolDefinition] = (),
                 max_turns: int = 1,
                 temperature: float | None = None,
+                capture_history: bool = False,
+                prior_history: MessageHistory | None = None,
             ) -> AgentResult:
                 return AgentResult(
                     answer="A",
@@ -363,6 +366,7 @@ class TestJudgeAnswerWithBenchmarkingAgent:
 
         from ragzoom.agent.protocol import (
             AgentResult,
+            MessageHistory,
             ToolDefinition,
         )
         from ragzoom.evaluation.locomo.scoring import judge_answer
@@ -379,6 +383,8 @@ class TestJudgeAnswerWithBenchmarkingAgent:
                 tools: Sequence[ToolDefinition] = (),
                 max_turns: int = 1,
                 temperature: float | None = None,
+                capture_history: bool = False,
+                prior_history: MessageHistory | None = None,
             ) -> AgentResult:
                 nonlocal call_count
                 call_count += 1

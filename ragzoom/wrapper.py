@@ -468,7 +468,13 @@ class RagZoom:
             raw=output,
         )
 
-    def search(self, question: str, document_id: str) -> SearchResultView:
+    def search(
+        self,
+        question: str,
+        document_id: str = "",
+        *,
+        session_id: str | None = None,
+    ) -> SearchResultView:
         """Run agentic search: question in, answer out.
 
         The server-side search agent iteratively zooms into the document
@@ -476,18 +482,23 @@ class RagZoom:
 
         Args:
             question: Natural language question to answer.
-            document_id: Document to search within.
+            document_id: Document to search within (not needed for continuations).
+            session_id: Continue an existing search session.
 
         Returns:
-            SearchResultView with the answer.
+            SearchResultView with the answer and session_id for follow-ups.
         """
         if not question:
             raise ValueError("question must be non-empty")
-        if not document_id:
-            raise ValueError("document_id is required")
+        if not session_id and not document_id:
+            raise ValueError("document_id is required for new searches")
 
         with self._client() as client:
-            return client.search(question=question, document_id=document_id)
+            return client.search(
+                question=question,
+                document_id=document_id,
+                session_id=session_id,
+            )
 
 
 class AsyncRagZoom:
@@ -744,7 +755,13 @@ class AsyncRagZoom:
             time_end=time_end,
         )
 
-    async def search(self, question: str, document_id: str) -> SearchResultView:
+    async def search(
+        self,
+        question: str,
+        document_id: str = "",
+        *,
+        session_id: str | None = None,
+    ) -> SearchResultView:
         """Run agentic search: question in, answer out.
 
         The server-side search agent iteratively zooms into the document
@@ -754,6 +771,7 @@ class AsyncRagZoom:
             self._get_sync().search,
             question,
             document_id,
+            session_id=session_id,
         )
 
     # jscpd:ignore-end

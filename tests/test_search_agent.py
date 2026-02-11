@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from ragzoom.agent.protocol import (
     AgentResult,
+    AssistantTurn,
     CostMetrics,
+    MessageHistory,
     ToolDefinition,
     make_agent_result,
 )
 from ragzoom.client.grpc_client import ExecuteQueryOutput, RetrievalView
 from ragzoom.search.config import SearchConfig
+from ragzoom.search.session import SessionStore
 from ragzoom.services.query_service import QueryResult
 
 
@@ -93,6 +95,8 @@ class _NoToolBackend:
         tools: Sequence[ToolDefinition] = (),
         max_turns: int = 1,
         temperature: float | None = None,
+        capture_history: bool = False,
+        prior_history: MessageHistory | None = None,
     ) -> AgentResult:
         return AgentResult(answer=self._answer, cost=self._cost)
 
@@ -124,6 +128,8 @@ class _ToolCallingBackend:
         tools: Sequence[ToolDefinition] = (),
         max_turns: int = 1,
         temperature: float | None = None,
+        capture_history: bool = False,
+        prior_history: MessageHistory | None = None,
     ) -> AgentResult:
         if tools:
             tool = tools[0]
@@ -176,12 +182,7 @@ class TestSearchCapturesIterationsWhenProfiling:
         agent = SearchAgent(config, backend)
         executor = _MockQueryExecutor()
 
-        with patch(
-            "ragzoom.search.agent.run_retrospective",
-            new_callable=AsyncMock,
-            return_value="Looks good.",
-        ):
-            result = await agent.search("question", "doc-1", executor)
+        result = await agent.search("question", "doc-1", executor)
 
         assert result.profile is not None
         assert len(result.profile.iterations) == 1
@@ -203,12 +204,7 @@ class TestSearchCostFromBackend:
         agent = SearchAgent(config, _NoToolBackend(cost=cost))
         executor = _MockQueryExecutor()
 
-        with patch(
-            "ragzoom.search.agent.run_retrospective",
-            new_callable=AsyncMock,
-            return_value="Fine.",
-        ):
-            result = await agent.search("question", "doc-1", executor)
+        result = await agent.search("question", "doc-1", executor)
 
         assert result.profile is not None
         assert result.profile.total_input_tokens == 500
@@ -258,6 +254,8 @@ class TestRetrospectiveUsesBackend:
                 tools: Sequence[ToolDefinition] = (),
                 max_turns: int = 1,
                 temperature: float | None = None,
+                capture_history: bool = False,
+                prior_history: MessageHistory | None = None,
             ) -> AgentResult:
                 self.call_count += 1
                 if not tools:
@@ -275,3 +273,111 @@ class TestRetrospectiveUsesBackend:
         assert result.profile.retrospective == "The search was efficient."
         # At least 2 calls: one for search, one for retrospective
         assert backend.call_count >= 2
+
+
+# ---------------------------------------------------------------------------
+# History-aware backend for session tests
+# ---------------------------------------------------------------------------
+
+_SAMPLE_HISTORY: MessageHistory = ("question", AssistantTurn(text="answer"))
+
+
+class _HistoryCapturingBackend:
+    """Backend that returns history when capture_history is True."""
+
+    def __init__(self, answer: str = "Paris") -> None:
+        self._answer = answer
+        self.call_count = 0
+        self.last_prior_history: MessageHistory | None = None
+
+    async def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        tools: Sequence[ToolDefinition] = (),
+        max_turns: int = 1,
+        temperature: float | None = None,
+        capture_history: bool = False,
+        prior_history: MessageHistory | None = None,
+    ) -> AgentResult:
+        self.call_count += 1
+        self.last_prior_history = prior_history
+        history = _SAMPLE_HISTORY if capture_history else None
+        return AgentResult(answer=self._answer, cost=_make_cost(), history=history)
+
+
+class TestSessionCreation:
+    @pytest.mark.asyncio
+    async def test_search_returns_session_id(self) -> None:
+        from ragzoom.search.agent import SearchAgent
+
+        config = SearchConfig(profiling_enabled=False)
+        store = SessionStore()
+        agent = SearchAgent(config, _HistoryCapturingBackend(), session_store=store)
+        executor = _MockQueryExecutor()
+
+        result = await agent.search("question", "doc-1", executor)
+
+        assert result.session_id is not None
+        assert isinstance(result.session_id, str)
+
+    @pytest.mark.asyncio
+    async def test_no_session_id_without_store(self) -> None:
+        from ragzoom.search.agent import SearchAgent
+
+        config = SearchConfig(profiling_enabled=False)
+        agent = SearchAgent(config, _HistoryCapturingBackend())
+        executor = _MockQueryExecutor()
+
+        result = await agent.search("question", "doc-1", executor)
+
+        assert result.session_id is None
+
+
+class TestSessionContinuation:
+    @pytest.mark.asyncio
+    async def test_search_continue_returns_answer(self) -> None:
+        from ragzoom.search.agent import SearchAgent
+
+        backend = _HistoryCapturingBackend(answer="Follow-up answer")
+        config = SearchConfig(profiling_enabled=False)
+        store = SessionStore()
+        agent = SearchAgent(config, backend, session_store=store)
+        executor = _MockQueryExecutor()
+
+        # Initial search
+        initial = await agent.search("first question", "doc-1", executor)
+        assert initial.session_id is not None
+
+        # Follow-up
+        followup = await agent.search_continue(
+            initial.session_id, "second question", executor
+        )
+
+        assert followup.answer == "Follow-up answer"
+        assert followup.session_id == initial.session_id
+        assert backend.last_prior_history == _SAMPLE_HISTORY
+
+    @pytest.mark.asyncio
+    async def test_search_continue_missing_session_raises(self) -> None:
+        from ragzoom.search.agent import SearchAgent
+
+        config = SearchConfig(profiling_enabled=False)
+        store = SessionStore()
+        agent = SearchAgent(config, _HistoryCapturingBackend(), session_store=store)
+        executor = _MockQueryExecutor()
+
+        with pytest.raises(KeyError, match="not found"):
+            await agent.search_continue("nonexistent", "question", executor)
+
+    @pytest.mark.asyncio
+    async def test_search_continue_without_store_raises(self) -> None:
+        from ragzoom.search.agent import SearchAgent
+
+        config = SearchConfig(profiling_enabled=False)
+        agent = SearchAgent(config, _HistoryCapturingBackend())
+        executor = _MockQueryExecutor()
+
+        with pytest.raises(RuntimeError, match="requires a SessionStore"):
+            await agent.search_continue("any-id", "question", executor)

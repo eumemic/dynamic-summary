@@ -114,6 +114,11 @@ ignore_missing_imports = true
 module = "tomllib"
 ignore_missing_imports = true
 
+# Generated protobuf stubs have unparameterized Mapping types
+[[tool.mypy.overrides]]
+module = "ragzoom.rpc.*"
+ignore_errors = true
+
 # grpc does not ship type information yet
 [[tool.mypy.overrides]]
 module = "grpc"

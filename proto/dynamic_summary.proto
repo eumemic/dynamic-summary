@@ -405,6 +405,7 @@ service SessionIngestionService {
 message SearchRequest {
   string question = 1;
   string document_id = 2;
+  optional string session_id = 3;  // Continue an existing search session
 }
 
 message SearchIterationProto {
@@ -430,6 +431,7 @@ message SearchProfileProto {
 message SearchResponse {
   string answer = 1;
   optional SearchProfileProto profile = 2;
+  optional string session_id = 3;  // Session ID for follow-up questions
 }
 
 service SearchService {

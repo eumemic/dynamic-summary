@@ -788,7 +788,7 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         request: pb2.RunWorkersRequest,
         context: ServicerContextProto,
     ) -> AsyncIterator[pb2.RunWorkersResponse]:
-        mode = request.mode
+        mode: int = request.mode
         if mode == _UNSPECIFIED_WORKER_MODE:
             mode = _UNTIL_IDLE_WORKER_MODE
         if mode not in {_UNTIL_IDLE_WORKER_MODE, _CONTINUOUS_WORKER_MODE}:
@@ -1287,19 +1287,35 @@ class SearchServicer(pb2_grpc.SearchServiceServicer):
                 code=grpc.StatusCode.INVALID_ARGUMENT,
                 message="Search requires `question`.",
             )
-        if not request.document_id:
-            await _abort(
-                context,
-                code=grpc.StatusCode.INVALID_ARGUMENT,
-                message="Search requires `document_id`.",
-            )
 
         executor = build_server_query_executor(self._state)
-        result = await self._state.search_agent.search(
-            request.question,
-            request.document_id,
-            executor,
-        )
+
+        # Route: session continuation vs new search
+        if request.HasField("session_id"):
+            try:
+                result = await self._state.search_agent.search_continue(
+                    request.session_id,
+                    request.question,
+                    executor,
+                )
+            except KeyError:
+                await _abort(
+                    context,
+                    code=grpc.StatusCode.NOT_FOUND,
+                    message=f"Session '{request.session_id}' not found or expired.",
+                )
+        else:
+            if not request.document_id:
+                await _abort(
+                    context,
+                    code=grpc.StatusCode.INVALID_ARGUMENT,
+                    message="Search requires `document_id`.",
+                )
+            result = await self._state.search_agent.search(
+                request.question,
+                request.document_id,
+                executor,
+            )
 
         profile_proto = None
         if result.profile is not None:
@@ -1326,12 +1342,15 @@ class SearchServicer(pb2_grpc.SearchServiceServicer):
             if result.profile.total_cost_usd is not None:
                 profile_proto.total_cost_usd = result.profile.total_cost_usd
 
+        response = pb2.SearchResponse(answer=result.answer)
         if profile_proto is not None:
-            return pb2.SearchResponse(
+            response = pb2.SearchResponse(
                 answer=result.answer,
                 profile=profile_proto,
             )
-        return pb2.SearchResponse(answer=result.answer)
+        if result.session_id is not None:
+            response.session_id = result.session_id
+        return response
 
 
 async def shutdown_gracefully(server: GrpcServerProto) -> None:

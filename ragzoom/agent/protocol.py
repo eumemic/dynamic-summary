@@ -55,12 +55,53 @@ class ToolDefinition:
     handler: Callable[[dict[str, object]], Awaitable[ToolResult]]
 
 
+# ---------------------------------------------------------------------------
+# Conversation history types (backend-agnostic)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ToolCallRecord:
+    """A single tool call made by the assistant."""
+
+    call_id: str
+    tool_name: str
+    arguments_json: str
+
+
+@dataclass(frozen=True)
+class ToolResultRecord:
+    """Result returned for a tool call."""
+
+    call_id: str
+    content: str
+    is_error: bool = False
+
+
+@dataclass(frozen=True)
+class AssistantTurn:
+    """An assistant message, optionally with tool calls."""
+
+    text: str | None
+    tool_calls: tuple[ToolCallRecord, ...] = ()
+
+
+# Flat sequence: str = user msg, AssistantTurn = assistant, ToolResultRecord = tool result
+MessageHistory = tuple[str | AssistantTurn | ToolResultRecord, ...]
+
+
+# ---------------------------------------------------------------------------
+# Agent result
+# ---------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class AgentResult:
     """Result from an agent call."""
 
     answer: str
     cost: CostMetrics
+    history: MessageHistory | None = None
 
 
 def make_agent_result(
@@ -72,6 +113,7 @@ def make_agent_result(
     reasoning_turns: int,
     elapsed: float,
     total_cost_usd: float | None = None,
+    history: MessageHistory | None = None,
 ) -> AgentResult:
     """Build an AgentResult with CostMetrics from raw counters."""
     return AgentResult(
@@ -85,6 +127,7 @@ def make_agent_result(
             query_duration_seconds=elapsed,
             total_cost_usd=total_cost_usd,
         ),
+        history=history,
     )
 
 
@@ -102,4 +145,6 @@ class BenchmarkingAgent(Protocol):
         tools: Sequence[ToolDefinition] = (),
         max_turns: int = 1,
         temperature: float | None = None,
+        capture_history: bool = False,
+        prior_history: MessageHistory | None = None,
     ) -> AgentResult: ...

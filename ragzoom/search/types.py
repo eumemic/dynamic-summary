@@ -39,12 +39,14 @@ class SearchResult:
     """The answer returned by a search invocation.
 
     ``cost`` is always populated.  ``profile`` is None unless profiling is
-    enabled via ``SearchConfig.profiling_enabled``.
+    enabled via ``SearchConfig.profiling_enabled``.  ``session_id`` is set
+    when a ``SessionStore`` is configured, enabling follow-up questions.
     """
 
     answer: str
     cost: SearchCost
     profile: SearchProfile | None
+    session_id: str | None = None
 
 
 @dataclass(frozen=True)

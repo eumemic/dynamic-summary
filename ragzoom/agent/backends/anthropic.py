@@ -25,8 +25,11 @@ from claude_agent_sdk import (
 
 from ragzoom.agent.protocol import (
     AgentResult,
+    AssistantTurn,
+    MessageHistory,
     ToolDefinition,
     ToolResult,
+    ToolResultRecord,
     make_agent_result,
 )
 from ragzoom.model_info import ModelInfo
@@ -135,6 +138,32 @@ def _compute_cost(model_id: str, usage: _UsageBreakdown) -> float | None:
     return input_cost + write_cost + read_cost + output_cost
 
 
+def _format_history_as_context(history: MessageHistory) -> str:
+    """Format prior conversation turns as readable text for the system prompt.
+
+    The Anthropic SDK manages its own internal message list, so we can't inject
+    native messages. Instead, we append a formatted transcript to the system
+    prompt so the model has full context from prior turns.
+    """
+    lines: list[str] = ["## Prior conversation turns"]
+    for entry in history:
+        if isinstance(entry, str):
+            lines.append(f"\n[User]\n{entry}")
+        elif isinstance(entry, AssistantTurn):
+            if entry.text:
+                lines.append(f"\n[Assistant]\n{entry.text}")
+            for tc in entry.tool_calls:
+                lines.append(f"\n[Tool call: {tc.tool_name}({tc.arguments_json})]")
+        elif isinstance(entry, ToolResultRecord):
+            prefix = "[Tool error]" if entry.is_error else "[Tool result]"
+            # Truncate long tool results to keep system prompt manageable
+            content = entry.content
+            if len(content) > 500:
+                content = content[:500] + "..."
+            lines.append(f"\n{prefix}\n{content}")
+    return "\n".join(lines)
+
+
 class AnthropicBackend:
     """Claude backend for both agentic answers and single-shot judging.
 
@@ -154,6 +183,8 @@ class AnthropicBackend:
         tools: Sequence[ToolDefinition] = (),
         max_turns: int = 1,
         temperature: float | None = None,
+        capture_history: bool = False,
+        prior_history: MessageHistory | None = None,
     ) -> AgentResult:
         # jscpd:ignore-end
         """Generate a response, optionally using tools over multiple turns."""
@@ -163,11 +194,32 @@ class AnthropicBackend:
                 temperature,
             )
 
+        if prior_history is not None:
+            system_prompt = (
+                system_prompt + "\n\n" + _format_history_as_context(prior_history)
+            )
+            capture_history = True
+
         if not tools:
-            return await self._generate_single_shot(system_prompt, user_prompt)
-        return await self._generate_agentic(
-            system_prompt, user_prompt, tools, max_turns
+            result = await self._generate_single_shot(system_prompt, user_prompt)
+        else:
+            result = await self._generate_agentic(
+                system_prompt, user_prompt, tools, max_turns
+            )
+
+        if not capture_history:
+            return result
+
+        # Build minimal history: prior turns + this turn
+        new_turn: tuple[str | AssistantTurn | ToolResultRecord, ...] = (
+            user_prompt,
+            AssistantTurn(text=result.answer),
         )
+        if prior_history is not None:
+            combined = prior_history + new_turn
+        else:
+            combined = new_turn
+        return AgentResult(answer=result.answer, cost=result.cost, history=combined)
 
     async def _generate_single_shot(
         self, system_prompt: str, user_prompt: str
