@@ -18,23 +18,35 @@ LoCoMo is the de facto standard benchmark for conversational memory systems. Eve
 1. Source the `.env` file: `set -a && source .env && set +a`
 2. Dataset at `test_data/locomo10.json` (already in the repo)
 
-### First Run (with ingestion + isolated server)
+### Running a Benchmark
+
+**Always use `--isolated-server`**. This spawns a temporary server on port 50053 with a fresh state directory, completely isolated from dev and production servers. No stale leases, no port conflicts, no state bleed.
 
 ```bash
 set -a && source .env && set +a
 PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --isolated-server
 ```
 
-`--isolated-server` spawns a temporary server on port 50053 with a fresh state directory. Ingestion takes ~5 minutes (summarization tree building). Evaluation takes ~5 minutes at concurrency=10.
+Ingestion takes ~5 minutes (summarization tree building). Evaluation takes ~5 minutes at concurrency=10.
 
-### Subsequent Runs (skip ingestion, dev server)
+**Never use a shared dev server for benchmarks.** The `--skip-ingest` shortcut without `--isolated-server` depends on a running dev server, which creates stale lease, port conflict, and state bleed problems.
+
+### Pre-Run Cleanup
+
+Before each benchmark run, kill any stale server processes from crashed previous runs:
 
 ```bash
-set -a && source .env && set +a
-PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest
+# Kill stale benchmark server on port 50053 ONLY
+lsof -ti :50053 | xargs kill -9 2>/dev/null
 ```
 
-Requires a running dev server on port 50052 (`python -m ragzoom.cli server start`).
+**CRITICAL: NEVER use `pkill -f ragzoom` or other broad patterns.** This will kill the production daemon on port 50051, breaking the MCP server, stop hooks, and CLI. Always target the specific benchmark port (50053).
+
+The `--isolated-server` flag uses a temp directory that gets cleaned up automatically when the server exits cleanly. If a run crashes mid-flight, the temp dir lives in `/tmp/ragzoom-bench-*` and gets cleaned by the OS eventually. To force-clean:
+
+```bash
+rm -rf /tmp/ragzoom-bench-*
+```
 
 ### Key CLI Parameters
 
@@ -63,7 +75,7 @@ PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --sample 2
 
 **F1-only mode** (`--f1-only`): Skip the LLM judge entirely, compute token F1 only. No judge API costs.
 ```bash
-PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest --f1-only
+PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --f1-only --isolated-server
 ```
 
 **Rejudge mode** (`--rejudge PATH`): Re-run the LLM judge on previously cached answers. No RagZoom server needed.
@@ -71,7 +83,7 @@ PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ing
 PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --rejudge locomo_results/results.json
 ```
 
-Modes combine: `--sample 50 --f1-only` is the cheapest way to smoke-test evaluation.
+Modes combine: `--sample 5 --f1-only --isolated-server` is the cheapest way to smoke-test evaluation.
 
 ## Apples-to-Apples Comparison with Letta Leaderboard
 
@@ -152,18 +164,14 @@ CLI entry point: `scripts/run-locomo`
 ### "No module named ragzoom.evaluation.locomo"
 Production ragzoom is installed non-editable. Use `PYTHONPATH=.` to pick up local code.
 
-### Stale indexer lease blocking server start
-If the dev server won't start with "Failed to acquire indexer lease after 90s", the previous server left a non-expired lease. Clear it:
+### Stale server process blocking port 50053
+If `--isolated-server` fails with a port binding error, a previous benchmark server didn't exit cleanly:
 ```bash
-sqlite3 data/sqlite.db "DELETE FROM indexer_leases;"
+lsof -ti :50053 | xargs kill -9 2>/dev/null
 ```
-Note: dev mode stores its database in the worktree's `data/sqlite.db`, not in `~/.local/state/`.
 
 ### API key not propagating
 `source .env` doesn't export. Use: `set -a && source .env && set +a`
-
-### Re-ingestion after server restart
-If the dev database was cleared, drop `--skip-ingest`. Ingestion takes ~5 min.
 
 ### Agent zoom errors
 If the agent zooms into a time range with no content, `rz.query` may error. The backend handles this gracefully by returning the error as a tool result, letting the agent try a different approach.
