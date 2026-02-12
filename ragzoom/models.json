@@ -42,6 +42,12 @@
       "context_window": 400000,
       "reasoning_levels": ["none", "low", "medium", "high", "xhigh"]
     },
+    "gpt-4.1-mini": {
+      "input": 0.0004,
+      "output": 0.0016,
+      "cache_discount": 0.75,
+      "context_window": 1047576
+    },
     "gpt-4o-mini": {
       "input": 0.00015,
       "output": 0.0006,
