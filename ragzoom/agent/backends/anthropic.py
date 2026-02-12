@@ -11,6 +11,7 @@ import time
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import NamedTuple
 
 from claude_agent_sdk import (
@@ -228,8 +229,9 @@ class AnthropicBackend:
     enabling SDK-native resume via ``ClaudeAgentOptions(resume=...)``.
     """
 
-    def __init__(self, model_id: str) -> None:
+    def __init__(self, model_id: str, *, cli_path: str | Path | None = None) -> None:
         self._model_id = model_id
+        self._cli_path = cli_path
         self._session_base = get_daemon_state_dir() / "sdk-sessions"
         self._session_base.mkdir(parents=True, exist_ok=True)
         # Maps our session_id → SDK's ResultMessage.session_id (for resume=)
@@ -274,6 +276,7 @@ class AnthropicBackend:
                 max_turns=1,
                 permission_mode="bypassPermissions",
                 env={"XDG_DATA_HOME": tmpdir},
+                cli_path=self._cli_path,
             )
 
             answer = ""
@@ -368,6 +371,7 @@ class AnthropicBackend:
                 permission_mode="bypassPermissions",
                 env={"XDG_DATA_HOME": str(session_dir)},
                 resume=sdk_resume,
+                cli_path=self._cli_path,
             )
 
             try:

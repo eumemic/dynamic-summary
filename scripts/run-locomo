@@ -21,8 +21,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--search-model",
-        default="gpt-4.1-mini",
-        help="Model for agentic search (default: gpt-4.1-mini)",
+        default="gpt-5-mini",
+        help="Model for agentic search (default: gpt-5-mini)",
     )
     parser.add_argument(
         "--judge-model",
@@ -91,6 +91,11 @@ def main() -> None:
         help="Spawn an isolated RagZoom server for the benchmark (port 50053, temp state dir)",
     )
     parser.add_argument(
+        "--docker-cli",
+        action="store_true",
+        help="Run Claude CLI in a Docker container for fast cold-starts (~5s vs ~55s)",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -130,6 +135,7 @@ def main() -> None:
         max_iterations=args.max_iterations,
         max_budget=args.max_budget,
         profiling=args.profiling,
+        use_docker_cli=args.docker_cli,
     )
 
     if config.rejudge_path is not None:

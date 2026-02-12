@@ -1,16 +1,21 @@
-"""Isolated RagZoom server lifecycle manager for benchmarks."""
+"""Persistent benchmark server lifecycle manager.
+
+The benchmark server lives on port 50053 with state in /tmp/ragzoom-bench-state.
+It is started fresh (killing any existing instance) when ingesting, and reused
+as-is for --skip-ingest follow-up runs.  It is never cleaned up automatically —
+the user can always do more follow-ups.
+"""
 
 from __future__ import annotations
 
 import io
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from ragzoom.daemon import grpc_health_check
@@ -18,73 +23,104 @@ from ragzoom.daemon import grpc_health_check
 logger = logging.getLogger(__name__)
 
 BENCHMARK_PORT = 50053
+BENCHMARK_STATE_DIR = Path("/tmp/ragzoom-bench-state")
 HEALTH_CHECK_INTERVAL = 0.5
-
-
-@dataclass
-class BenchmarkServerConfig:
-    """Configuration for an isolated benchmark server."""
-
-    port: int = BENCHMARK_PORT
-    state_dir: Path | None = field(default=None)
-    startup_timeout: float = 60.0
+STARTUP_TIMEOUT = 60.0
 
 
 class BenchmarkServerError(Exception):
-    """Raised when the benchmark server fails to start or stop."""
+    """Raised when the benchmark server fails to start or is not running."""
 
 
 class BenchmarkServerManager:
-    """Async context manager that runs an isolated RagZoom server.
+    """Manages a persistent, isolated RagZoom server for benchmarks.
 
-    Spawns a development-mode server on a dedicated port with a temporary
-    state directory, ensuring complete isolation from dev and production
-    servers.
+    Two modes of operation:
+
+    - ``start_fresh()``: Kill any existing benchmark server, wipe the state
+      directory, and start a new server.  Use this when ingesting data.
+    - ``verify_running()``: Check that a benchmark server is already healthy.
+      Use this with ``--skip-ingest`` to reuse an existing index.
+
+    The server is never stopped automatically — it stays alive for follow-up
+    ``--skip-ingest`` runs.
     """
 
-    def __init__(self, config: BenchmarkServerConfig | None = None) -> None:
-        self._config = config or BenchmarkServerConfig()
-        self._process: subprocess.Popen[bytes] | None = None
-        self._temp_dir: tempfile.TemporaryDirectory[str] | None = None
-        self._state_dir: Path | None = None
-        self._log_file: io.TextIOWrapper | None = None
+    def __init__(self, port: int = BENCHMARK_PORT) -> None:
+        self._port = port
+        self._state_dir = BENCHMARK_STATE_DIR
 
     @property
     def address(self) -> str:
         """Server address in host:port format."""
-        return f"127.0.0.1:{self._config.port}"
+        return f"127.0.0.1:{self._port}"
 
-    async def __aenter__(self) -> BenchmarkServerManager:
+    def start_fresh(self) -> str:
+        """Kill existing server, wipe state, start a new server.
+
+        Returns the server address (host:port).
+        """
+        self._kill_existing()
+        self._clean_state()
         self._start()
-        return self
+        return self.address
 
-    async def __aexit__(self, *exc: object) -> None:
-        self._stop()
+    def verify_running(self) -> str:
+        """Verify that a benchmark server is already healthy.
+
+        Returns the server address (host:port).
+
+        Raises ``BenchmarkServerError`` if no server is running.
+        """
+        if not grpc_health_check(self.address, timeout=2.0):
+            raise BenchmarkServerError(
+                f"No benchmark server running on {self.address}. "
+                "Run without --skip-ingest first to start one."
+            )
+        logger.info("Benchmark server healthy at %s", self.address)
+        return self.address
+
+    def _kill_existing(self) -> None:
+        """Kill any process listening on the benchmark port."""
+        result = subprocess.run(
+            ["lsof", "-ti", f":{self._port}"],
+            capture_output=True,
+            text=True,
+        )
+        pids = result.stdout.strip()
+        if pids:
+            for pid in pids.splitlines():
+                try:
+                    os.kill(int(pid), signal.SIGKILL)
+                    logger.info("Killed existing benchmark server (pid %s)", pid)
+                except (ProcessLookupError, ValueError):
+                    pass
+            # Brief pause for port release
+            time.sleep(0.5)
+
+    def _clean_state(self) -> None:
+        """Remove and recreate the state directory."""
+        if self._state_dir.exists():
+            shutil.rmtree(self._state_dir)
+            logger.info("Cleaned state dir: %s", self._state_dir)
+        self._state_dir.mkdir(parents=True)
 
     def _start(self) -> None:
-        """Start the isolated server subprocess and wait for it to be healthy."""
-        # Set up state directory
-        if self._config.state_dir is not None:
-            self._state_dir = self._config.state_dir
-            self._state_dir.mkdir(parents=True, exist_ok=True)
-        else:
-            self._temp_dir = tempfile.TemporaryDirectory(prefix="ragzoom-bench-")
-            self._state_dir = Path(self._temp_dir.name)
-
+        """Start the server subprocess and wait for it to be healthy."""
         logger.info(
             "Starting benchmark server on port %d (state: %s)",
-            self._config.port,
+            self._port,
             self._state_dir,
         )
 
         env = os.environ.copy()
         env["RAGZOOM_STATE_DIR"] = str(self._state_dir)
-        env["RAGZOOM_DATA_DIR"] = str(self._state_dir)  # SQLite DB path
+        env["RAGZOOM_DATA_DIR"] = str(self._state_dir)
 
         log_path = self._state_dir / "server.log"
-        self._log_file = log_path.open("w")
+        log_file: io.TextIOWrapper = log_path.open("w")
 
-        self._process = subprocess.Popen(
+        process = subprocess.Popen(
             [
                 sys.executable,
                 "-m",
@@ -92,29 +128,28 @@ class BenchmarkServerManager:
                 "server",
                 "start",
                 "--port",
-                str(self._config.port),
+                str(self._port),
             ],
             env=env,
-            stdout=self._log_file,
-            stderr=self._log_file,
+            stdout=log_file,
+            stderr=log_file,
         )
 
-        self._wait_for_healthy()
-        logger.info("Benchmark server healthy at %s", self.address)
+        self._wait_for_healthy(process)
+        logger.info(
+            "Benchmark server healthy at %s (pid %d)", self.address, process.pid
+        )
 
-    def _wait_for_healthy(self) -> None:
+    def _wait_for_healthy(self, process: subprocess.Popen[bytes]) -> None:
         """Poll until the server responds to gRPC health checks."""
-        assert self._process is not None
-        deadline = time.monotonic() + self._config.startup_timeout
+        deadline = time.monotonic() + STARTUP_TIMEOUT
 
         while time.monotonic() < deadline:
-            # Check if process died
-            if self._process.poll() is not None:
-                assert self._state_dir is not None
+            if process.poll() is not None:
                 log_path = self._state_dir / "server.log"
                 log_tail = log_path.read_text()[-2000:] if log_path.exists() else ""
                 raise BenchmarkServerError(
-                    f"Benchmark server exited with code {self._process.returncode}.\n"
+                    f"Benchmark server exited with code {process.returncode}.\n"
                     f"server.log (last 2000 chars):\n{log_tail}"
                 )
 
@@ -123,35 +158,8 @@ class BenchmarkServerManager:
 
             time.sleep(HEALTH_CHECK_INTERVAL)
 
-        # Timed out — kill and report
-        self._kill()
+        process.kill()
+        process.wait(timeout=5.0)
         raise BenchmarkServerError(
-            f"Benchmark server did not become healthy within "
-            f"{self._config.startup_timeout}s"
+            f"Benchmark server did not become healthy within {STARTUP_TIMEOUT}s"
         )
-
-    def _stop(self) -> None:
-        """Gracefully stop the server and clean up state."""
-        if self._process is not None and self._process.poll() is None:
-            logger.info("Stopping benchmark server (pid %d)", self._process.pid)
-            self._process.send_signal(signal.SIGTERM)
-            try:
-                self._process.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                logger.warning("Server did not exit gracefully, sending SIGKILL")
-                self._kill()
-        self._process = None
-
-        if self._log_file is not None:
-            self._log_file.close()
-            self._log_file = None
-
-        if self._temp_dir is not None:
-            self._temp_dir.cleanup()
-            self._temp_dir = None
-
-    def _kill(self) -> None:
-        """Force-kill the server process."""
-        if self._process is not None and self._process.poll() is None:
-            self._process.kill()
-            self._process.wait(timeout=5.0)

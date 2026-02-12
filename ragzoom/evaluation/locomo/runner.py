@@ -10,6 +10,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import mean
+from typing import TYPE_CHECKING
 
 from openai import AsyncOpenAI
 
@@ -38,6 +39,9 @@ from ragzoom.evaluation.locomo.types import (
 from ragzoom.search import SearchAgent, SearchConfig
 from ragzoom.wrapper import RagZoom
 
+if TYPE_CHECKING:
+    from ragzoom.evaluation.docker_claude import DockerClaudeContainer
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,10 +59,11 @@ class LoCoMoConfig:
     f1_only: bool = False
     rejudge_path: Path | None = None
     use_isolated_server: bool = False
-    search_model: str = "gpt-4.1-mini"
+    search_model: str = "gpt-5-mini"
     max_iterations: int = 5
     max_budget: int = 4000
     profiling: bool = False
+    use_docker_cli: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -203,14 +208,39 @@ async def run_benchmark(config: LoCoMoConfig) -> BenchmarkReport:
     if config.use_isolated_server:
         from ragzoom.evaluation.locomo.server_manager import BenchmarkServerManager
 
-        async with BenchmarkServerManager() as mgr:
-            config.server_address = mgr.address
-            return await _run_benchmark_impl(config)
+        mgr = BenchmarkServerManager()
+        if config.skip_ingest:
+            config.server_address = mgr.verify_running()
+        else:
+            config.server_address = mgr.start_fresh()
     return await _run_benchmark_impl(config)
 
 
 async def _run_benchmark_impl(config: LoCoMoConfig) -> BenchmarkReport:
     """Core benchmark implementation."""
+    # 0. Optional Docker CLI container for fast Claude SDK cold-starts
+    docker_container: DockerClaudeContainer | None = None
+    cli_path: str | Path | None = None
+    if config.use_docker_cli:
+        from ragzoom.daemon import get_daemon_state_dir
+        from ragzoom.evaluation.docker_claude import DockerClaudeContainer
+
+        session_base = get_daemon_state_dir() / "sdk-sessions"
+        docker_container = DockerClaudeContainer(session_base)
+        docker_container.ensure_running()
+        cli_path = docker_container.wrapper_path
+
+    try:
+        return await _run_benchmark_core(config, cli_path)
+    finally:
+        if docker_container is not None:
+            docker_container.stop()
+
+
+async def _run_benchmark_core(
+    config: LoCoMoConfig, cli_path: str | Path | None
+) -> BenchmarkReport:
+    """Core benchmark implementation (separated for Docker lifecycle)."""
     # 1. Parse
     conversations = parse_locomo_file(config.data_path)
     logger.info("Parsed %d conversations", len(conversations))
@@ -229,7 +259,7 @@ async def _run_benchmark_impl(config: LoCoMoConfig) -> BenchmarkReport:
 
     judge: BenchmarkingAgent | None = None
     if not config.f1_only:
-        judge = create_backend(config.judge_model, openai_client)
+        judge = create_backend(config.judge_model, openai_client, cli_path=cli_path)
 
     # 4. Collect non-adversarial QA pairs
     qa_items: list[tuple[str, QAPair]] = []
@@ -250,7 +280,9 @@ async def _run_benchmark_impl(config: LoCoMoConfig) -> BenchmarkReport:
         max_token_budget=config.max_budget,
         profiling_enabled=config.profiling,
     )
-    search_backend = create_backend(config.search_model, openai_client)
+    search_backend = create_backend(
+        config.search_model, openai_client, cli_path=cli_path
+    )
     search_agent = SearchAgent(search_config, search_backend)
     query_executor = _GrpcQueryExecutor(rz)
 
