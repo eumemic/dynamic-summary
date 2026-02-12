@@ -7,7 +7,7 @@ import logging
 import time
 import uuid
 from collections.abc import Sequence
-from typing import cast
+from typing import Literal, cast
 
 from openai import AsyncOpenAI
 from openai._types import NOT_GIVEN, NotGiven
@@ -33,6 +33,10 @@ from ragzoom.cost import calculate_completion_cost, calculate_prompt_cost_with_c
 from ragzoom.model_info import ModelInfo
 
 logger = logging.getLogger(__name__)
+
+# Values accepted by the OpenAI reasoning_effort parameter.
+_ReasoningEffort = Literal["minimal", "low", "medium", "high"]
+_VALID_EFFORTS: frozenset[str] = frozenset({"minimal", "low", "medium", "high"})
 
 
 def _compute_cost(
@@ -206,6 +210,16 @@ class OpenAIBackend:
         self._client = client
         self._model_id = model_id
         self._sessions: dict[str, list[ChatCompletionMessageParam]] = {}
+        # For reasoning models, use the lowest API-compatible level to minimise
+        # latency and output tokens.  Tool-calling doesn't need deep thought.
+        info = ModelInfo()
+        levels = info.get_reasoning_levels(model_id)
+        self._reasoning_effort: _ReasoningEffort | None = None
+        if levels:
+            for level in levels:
+                if level in _VALID_EFFORTS:
+                    self._reasoning_effort = cast(_ReasoningEffort, level)
+                    break
 
     # jscpd:ignore-start (BenchmarkingAgent protocol implementation)
     async def generate(
@@ -245,6 +259,9 @@ class OpenAIBackend:
         temp_arg: float | NotGiven | None = (
             float(temperature) if temperature is not None else NOT_GIVEN
         )
+        reasoning_arg: _ReasoningEffort | NotGiven = (
+            self._reasoning_effort if self._reasoning_effort is not None else NOT_GIVEN
+        )
 
         response: ChatCompletion | None = None
         for _ in range(max_turns + 1):  # +1 for final answer turn
@@ -256,6 +273,7 @@ class OpenAIBackend:
                 messages=messages,
                 tools=oa_tools if oa_tools and calls_remaining > 0 else [],
                 temperature=temp_arg,
+                reasoning_effort=reasoning_arg,
             )
 
             if response.usage:
