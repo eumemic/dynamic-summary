@@ -20,7 +20,7 @@ LoCoMo is the de facto standard benchmark for conversational memory systems. Eve
 
 ### Running a Benchmark
 
-**Always use `--isolated-server`**. This spawns a temporary server on port 50053 with a fresh state directory, completely isolated from dev and production servers. No stale leases, no port conflicts, no state bleed.
+**Always use `--isolated-server`**. This runs a persistent benchmark server on port 50053 with state in `/tmp/ragzoom-bench-state`, completely isolated from dev and production servers.
 
 ```bash
 set -a && source .env && set +a
@@ -29,30 +29,50 @@ PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --isolated
 
 Ingestion takes ~5 minutes (summarization tree building). Evaluation takes ~5 minutes at concurrency=10.
 
-**Never use a shared dev server for benchmarks.** The `--skip-ingest` shortcut without `--isolated-server` depends on a running dev server, which creates stale lease, port conflict, and state bleed problems.
+**Never use a shared dev server for benchmarks.** Always use `--isolated-server`.
 
-### Pre-Run Cleanup
+### Re-running After Non-Index Changes
 
-Before each benchmark run, kill any stale server processes from crashed previous runs:
+When you change **only** the search agent (prompts, model, config, scoring) — anything that doesn't affect the ingested index — use `--skip-ingest` to reuse the existing server and data:
 
 ```bash
-# Kill stale benchmark server on port 50053 ONLY
-lsof -ti :50053 | xargs kill -9 2>/dev/null
+PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --isolated-server --skip-ingest --sample 50 --profiling
 ```
 
-**CRITICAL: NEVER use `pkill -f ragzoom` or other broad patterns.** This will kill the production daemon on port 50051, breaking the MCP server, stop hooks, and CLI. Always target the specific benchmark port (50053).
+This skips ingestion entirely and just re-runs evaluation against the existing index. The server stays alive between runs — **do not manually kill port 50053** between `--skip-ingest` runs.
 
-The `--isolated-server` flag uses a temp directory that gets cleaned up automatically when the server exits cleanly. If a run crashes mid-flight, the temp dir lives in `/tmp/ragzoom-bench-*` and gets cleaned by the OS eventually. To force-clean:
+**When to re-ingest** (omit `--skip-ingest`):
+- Changes to ingestion logic, summarization, or tree building
+- Changes to the dataset file
+- First run after clearing state
+
+**When to use `--skip-ingest`**:
+- Search agent prompt changes
+- Model swaps (`--search-model`)
+- Search config changes (iterations, budget)
+- Scoring/judge changes
+
+### Server Lifecycle
+
+The benchmark server is **persistent** — it stays alive after a run so you can do `--skip-ingest` follow-ups. The server manager handles everything automatically:
+
+- **Without `--skip-ingest`**: `start_fresh()` kills any existing server, wipes `/tmp/ragzoom-bench-state`, starts a new server, then ingests.
+- **With `--skip-ingest`**: `verify_running()` checks the server is healthy, then runs evaluation only.
+
+**CRITICAL: NEVER use `pkill -f ragzoom` or other broad patterns.** This will kill the production daemon on port 50051, breaking the MCP server, stop hooks, and CLI.
+
+If a crashed run left a stale server, `start_fresh()` (i.e. running without `--skip-ingest`) will clean it up automatically. Manual cleanup is only needed if `start_fresh` itself fails:
 
 ```bash
-rm -rf /tmp/ragzoom-bench-*
+lsof -ti :50053 | xargs kill -9 2>/dev/null
+rm -rf /tmp/ragzoom-bench-state
 ```
 
 ### Key CLI Parameters
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `--search-model MODEL` | `gpt-4.1-mini` | LLM for agentic search (OpenAI or Anthropic) |
+| `--search-model MODEL` | `gpt-5-mini` | LLM for agentic search (OpenAI or Anthropic) |
 | `--judge-model MODEL` | `gpt-4.1` | LLM-as-Judge (matches Letta leaderboard) |
 | `--sample N` | all | Random subset of N questions (seed=42) |
 | `--max-iterations N` | 5 | Max recall iterations per question |
@@ -61,6 +81,7 @@ rm -rf /tmp/ragzoom-bench-*
 | `--rejudge PATH` | — | Re-judge from previous results.json |
 | `--isolated-server` | off | Spawn isolated server (clean slate) |
 | `--skip-ingest` | off | Skip ingestion (docs already indexed) |
+| `--reasoning-level LEVEL` | auto | Reasoning effort for search model (none/minimal/low/medium/high) |
 | `--profiling` | off | Search profiling (retrospective per question) |
 | `-v` | off | Verbose logging |
 
@@ -165,9 +186,10 @@ CLI entry point: `scripts/run-locomo`
 Production ragzoom is installed non-editable. Use `PYTHONPATH=.` to pick up local code.
 
 ### Stale server process blocking port 50053
-If `--isolated-server` fails with a port binding error, a previous benchmark server didn't exit cleanly:
+Running without `--skip-ingest` automatically kills and restarts the server. If that fails:
 ```bash
 lsof -ti :50053 | xargs kill -9 2>/dev/null
+rm -rf /tmp/ragzoom-bench-state
 ```
 
 ### API key not propagating
