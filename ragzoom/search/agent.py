@@ -16,7 +16,11 @@ from ragzoom.agent.protocol import (
 from ragzoom.client.grpc_client import ExecuteQueryOutput
 from ragzoom.output_formatters import format_tiling_spans
 from ragzoom.search.config import SearchConfig
-from ragzoom.search.prompt import RETROSPECTIVE_FOLLOW_UP, SEARCH_SYSTEM_PROMPT
+from ragzoom.search.prompt import (
+    RETROSPECTIVE_FOLLOW_UP,
+    SEARCH_SYSTEM_PROMPT,
+    remaining_calls_note,
+)
 from ragzoom.search.session import SessionRegistry
 from ragzoom.search.types import (
     SearchCost,
@@ -53,8 +57,10 @@ def _build_recall_tool(
     query_executor: QueryExecutor,
     iterations: list[SearchIteration],
     profiling: bool,
+    max_iterations: int,
 ) -> ToolDefinition:
     """Build the recall ToolDefinition with a handler closure."""
+    calls_made = [0]
 
     async def _handle_recall(args: dict[str, object]) -> ToolResult:
         query_text = str(args.get("query", ""))
@@ -68,6 +74,10 @@ def _build_recall_tool(
         time_start = str(raw_start) if raw_start and raw_start != "" else None
         raw_end = args.get("time_end")
         time_end = str(raw_end) if raw_end and raw_end != "" else None
+
+        calls_made[0] += 1
+        remaining = max_iterations - calls_made[0]
+        note = remaining_calls_note(remaining, config.max_token_budget)
 
         try:
             query_output = await query_executor(
@@ -87,7 +97,7 @@ def _build_recall_tool(
             )
         except Exception as exc:
             logger.warning("recall(%s) failed: %s", query_text[:50], exc)
-            return ToolResult(content=f"Error: {exc}", is_error=True)
+            return ToolResult(content=f"Error: {exc}\n\n{note}", is_error=True)
 
         if profiling:
             iterations.append(
@@ -102,7 +112,7 @@ def _build_recall_tool(
                 )
             )
 
-        return ToolResult(content=formatted, token_count=token_count)
+        return ToolResult(content=f"{formatted}\n\n{note}", token_count=token_count)
 
     return ToolDefinition(
         name="recall",
@@ -114,7 +124,10 @@ def _build_recall_tool(
         parameters={
             "query": {
                 "type": "string",
-                "description": "Semantic search keywords",
+                "description": (
+                    "Search keywords — include specific names, terms, "
+                    "and jargon verbatim (5-15 words)"
+                ),
             },
             "budget_tokens": {
                 "type": "integer",
@@ -182,15 +195,22 @@ class SearchAgent:
         config = self._config
         profiling = config.profiling_enabled
         start_time = time.monotonic()
+        prompt = SEARCH_SYSTEM_PROMPT
 
         iterations: list[SearchIteration] = []
         recall_tool = _build_recall_tool(
-            config, document_id, query_executor, iterations, profiling
+            config,
+            document_id,
+            query_executor,
+            iterations,
+            profiling,
+            max_iterations=config.max_iterations,
         )
 
+        note = remaining_calls_note(config.max_iterations, config.max_token_budget)
         result = await self._backend.generate(
-            SEARCH_SYSTEM_PROMPT,
-            question,
+            prompt,
+            f"{note}\n\n{question}",
             tools=[recall_tool],
             max_turns=config.max_iterations,
         )
@@ -210,7 +230,7 @@ class SearchAgent:
             # Issue a follow-up turn in the same session — the agent has full
             # native context, so the critique is richer than a lossy transcript.
             retro_result = await self._backend.generate(
-                SEARCH_SYSTEM_PROMPT,
+                prompt,
                 RETROSPECTIVE_FOLLOW_UP,
                 max_turns=1,
                 resume_session_id=result.session_id,
@@ -261,6 +281,7 @@ class SearchAgent:
 
         config = self._config
         start_time = time.monotonic()
+        prompt = SEARCH_SYSTEM_PROMPT
 
         iterations: list[SearchIteration] = []
         recall_tool = _build_recall_tool(
@@ -269,11 +290,13 @@ class SearchAgent:
             query_executor,
             iterations,
             config.profiling_enabled,
+            max_iterations=config.max_iterations,
         )
 
+        note = remaining_calls_note(config.max_iterations, config.max_token_budget)
         result = await self._backend.generate(
-            SEARCH_SYSTEM_PROMPT,
-            question,
+            prompt,
+            f"{note}\n\n{question}",
             tools=[recall_tool],
             max_turns=config.max_iterations,
             resume_session_id=session_id,
