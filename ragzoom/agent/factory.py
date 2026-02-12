@@ -20,6 +20,7 @@ def create_backend(
     openai_client: AsyncOpenAI,
     *,
     cli_path: str | Path | None = None,
+    reasoning_level: str | None = None,
 ) -> BenchmarkingAgent:
     """Create a BenchmarkingAgent for the given model ID.
 
@@ -28,9 +29,10 @@ def create_backend(
 
     Args:
         cli_path: Override the Claude CLI binary path (e.g. a Docker wrapper).
+        reasoning_level: Override the reasoning effort level for reasoning models.
     """
     if is_anthropic_model(model_id):
         from ragzoom.agent.backends.anthropic import AnthropicBackend
 
         return AnthropicBackend(model_id, cli_path=cli_path)
-    return OpenAIBackend(openai_client, model_id)
+    return OpenAIBackend(openai_client, model_id, reasoning_level=reasoning_level)

@@ -34,9 +34,10 @@ from ragzoom.model_info import ModelInfo
 
 logger = logging.getLogger(__name__)
 
-# Values accepted by the OpenAI reasoning_effort parameter.
+# Values accepted by the OpenAI Chat Completions reasoning_effort parameter.
+# "none" is valid at the API level but mapped to NOT_GIVEN (omit the param).
 _ReasoningEffort = Literal["minimal", "low", "medium", "high"]
-_VALID_EFFORTS: frozenset[str] = frozenset({"minimal", "low", "medium", "high"})
+_VALID_EFFORTS: frozenset[str] = frozenset({"none", "minimal", "low", "medium", "high"})
 
 
 def _compute_cost(
@@ -206,16 +207,35 @@ def _openai_messages_to_history(
 class OpenAIBackend:
     """OpenAI function-calling backend for both agentic answers and judging."""
 
-    def __init__(self, client: AsyncOpenAI, model_id: str) -> None:
+    def __init__(
+        self,
+        client: AsyncOpenAI,
+        model_id: str,
+        *,
+        reasoning_level: str | None = None,
+    ) -> None:
         self._client = client
         self._model_id = model_id
         self._sessions: dict[str, list[ChatCompletionMessageParam]] = {}
-        # For reasoning models, use the lowest API-compatible level to minimise
-        # latency and output tokens.  Tool-calling doesn't need deep thought.
         info = ModelInfo()
         levels = info.get_reasoning_levels(model_id)
         self._reasoning_effort: _ReasoningEffort | None = None
-        if levels:
+        if reasoning_level is not None:
+            if reasoning_level not in _VALID_EFFORTS:
+                raise ValueError(
+                    f"Reasoning level {reasoning_level!r} not supported by OpenAI API. "
+                    f"Valid: {sorted(_VALID_EFFORTS)}"
+                )
+            if levels and reasoning_level not in levels:
+                raise ValueError(
+                    f"Reasoning level {reasoning_level!r} not supported by {model_id}. "
+                    f"Valid for this model: {levels}"
+                )
+            # "none" means no reasoning — omit the parameter entirely
+            if reasoning_level != "none":
+                self._reasoning_effort = cast(_ReasoningEffort, reasoning_level)
+        elif levels:
+            # Default: lowest API-compatible level to minimise latency.
             for level in levels:
                 if level in _VALID_EFFORTS:
                     self._reasoning_effort = cast(_ReasoningEffort, level)

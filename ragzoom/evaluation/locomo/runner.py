@@ -64,6 +64,7 @@ class LoCoMoConfig:
     max_budget: int = 4000
     profiling: bool = False
     use_docker_cli: bool = False
+    reasoning_level: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Serialize config for embedding in results JSON.
@@ -84,6 +85,7 @@ class LoCoMoConfig:
             "skip_ingest": self.skip_ingest,
             "use_isolated_server": self.use_isolated_server,
             "use_docker_cli": self.use_docker_cli,
+            "reasoning_level": self.reasoning_level,
         }
 
 
@@ -302,7 +304,10 @@ async def _run_benchmark_core(
         profiling_enabled=config.profiling,
     )
     search_backend = create_backend(
-        config.search_model, openai_client, cli_path=cli_path
+        config.search_model,
+        openai_client,
+        cli_path=cli_path,
+        reasoning_level=config.reasoning_level,
     )
     search_agent = SearchAgent(search_config, search_backend)
     query_executor = _GrpcQueryExecutor(rz)
