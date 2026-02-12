@@ -1856,7 +1856,7 @@ def _persist_daemon_config(config_path: Path) -> None:
     "search_agent_model",
     type=str,
     default=None,
-    help="LLM model for the agentic search agent (default: gpt-4.1-mini)",
+    help="LLM model for the agentic search agent (default: gpt-5-mini)",
 )
 @click.option(
     "--search-max-iterations",

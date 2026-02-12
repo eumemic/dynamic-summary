@@ -13,7 +13,7 @@ class SearchConfig:
     Not configurable per-request — the server owns these parameters.
     """
 
-    agent_model: str = "gpt-4.1-mini"
+    agent_model: str = "gpt-5-mini"
     max_iterations: int = 5
     max_token_budget: int = 4000
     profiling_enabled: bool = False
