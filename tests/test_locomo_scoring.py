@@ -183,6 +183,26 @@ class TestLoCoMoConfig:
         config = LoCoMoConfig(data_path=Path("dummy.json"), sample_size=200)
         assert config.sample_size == 200
 
+    def test_to_dict_includes_all_parameters(self) -> None:
+        config = LoCoMoConfig(
+            data_path=Path("test.json"),
+            sample_size=50,
+            max_budget=3000,
+            max_iterations=3,
+            search_model="gpt-5-mini",
+            profiling=True,
+        )
+        d = config.to_dict()
+        assert d["data_path"] == "test.json"
+        assert d["search_model"] == "gpt-5-mini"
+        assert d["max_iterations"] == 3
+        assert d["max_budget"] == 3000
+        assert d["sample_size"] == 50
+        assert d["profiling"] is True
+        # Transient fields should be omitted
+        assert "server_address" not in d
+        assert "output_dir" not in d
+
 
 # ---------------------------------------------------------------------------
 # _aggregate with and without verdicts
@@ -559,7 +579,34 @@ class TestReportCostSerialization:
         data = json.loads(path.read_text())
         assert "cost" in data["per_question"][0]
         assert data["per_question"][0]["cost"]["retrieval_call_count"] == 1
-        assert data["metadata"]["max_iterations"] == 1
+
+    def test_json_includes_config(self) -> None:
+        result = _make_result("A", 1.0)
+        config: dict[str, object] = {
+            "search_model": "gpt-5-mini",
+            "judge_model": "gpt-4.1",
+            "max_iterations": 5,
+            "max_budget": 4000,
+            "sample_size": 50,
+        }
+        report = BenchmarkReport(
+            answer_model="gpt-5-mini",
+            judge_model="gpt-4.1",
+            num_conversations=1,
+            num_questions=1,
+            scores=_EMPTY_SCORES,
+            per_question=[result],
+            config=config,
+        )
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = Path(f.name)
+        save_json(report, path)
+        data = json.loads(path.read_text())
+        saved_config = data["metadata"]["config"]
+        assert saved_config["search_model"] == "gpt-5-mini"
+        assert saved_config["max_iterations"] == 5
+        assert saved_config["max_budget"] == 4000
+        assert saved_config["sample_size"] == 50
 
     def test_json_includes_zero_cost(self) -> None:
         result = _make_result("A", 1.0)

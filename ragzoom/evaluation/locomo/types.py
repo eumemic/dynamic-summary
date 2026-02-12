@@ -121,6 +121,7 @@ class BenchmarkReport:
     scores: AggregateScores
     per_question: list[AnswerResult]
     conversation_metrics: tuple[ConversationMetrics, ...] = ()
+    config: dict[str, object] | None = None
 
 
 # ---------------------------------------------------------------------------

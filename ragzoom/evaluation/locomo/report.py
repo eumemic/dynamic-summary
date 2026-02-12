@@ -85,19 +85,18 @@ def _result_to_dict(r: AnswerResult) -> dict[str, object]:
 
 def save_json(report: BenchmarkReport, path: Path) -> None:
     """Save the full benchmark report as JSON."""
-    # Detect max_iterations from cost data
-    costs = [r.cost for r in report.per_question if r.cost is not None]
-    max_iterations = max((c.retrieval_call_count for c in costs), default=1)
+    metadata: dict[str, object] = {
+        "answer_model": report.answer_model,
+        "judge_model": report.judge_model,
+        "num_conversations": report.num_conversations,
+        "num_questions": report.num_questions,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    if report.config is not None:
+        metadata["config"] = report.config
 
     data: dict[str, object] = {
-        "metadata": {
-            "answer_model": report.answer_model,
-            "judge_model": report.judge_model,
-            "num_conversations": report.num_conversations,
-            "num_questions": report.num_questions,
-            "max_iterations": max_iterations,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        },
+        "metadata": metadata,
         "scores": _scores_to_dict(report.scores),
         "per_question": [_result_to_dict(r) for r in report.per_question],
     }
@@ -149,8 +148,16 @@ def save_markdown(report: BenchmarkReport, path: Path) -> None:
     lines: list[str] = []
     lines.append("# LoCoMo Benchmark Results")
     lines.append("")
-    lines.append(f"- **Answer model**: {report.answer_model}")
+    lines.append(f"- **Search model**: {report.answer_model}")
     lines.append(f"- **Judge model**: {report.judge_model}")
+    if report.config:
+        lines.append(
+            f"- **Max iterations**: {report.config.get('max_iterations', '?')}"
+        )
+        lines.append(f"- **Max budget**: {report.config.get('max_budget', '?')}")
+        sample = report.config.get("sample_size")
+        if sample is not None:
+            lines.append(f"- **Sample size**: {sample}")
     lines.append(f"- **Conversations**: {report.num_conversations}")
     lines.append(f"- **Questions**: {report.num_questions} (excl. adversarial)")
     lines.append(

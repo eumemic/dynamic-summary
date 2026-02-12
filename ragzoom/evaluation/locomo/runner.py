@@ -65,6 +65,27 @@ class LoCoMoConfig:
     profiling: bool = False
     use_docker_cli: bool = False
 
+    def to_dict(self) -> dict[str, object]:
+        """Serialize config for embedding in results JSON.
+
+        Converts Path fields to strings and omits transient fields
+        (server_address, output_dir) that don't affect results.
+        """
+        return {
+            "data_path": str(self.data_path),
+            "search_model": self.search_model,
+            "judge_model": self.judge_model,
+            "max_iterations": self.max_iterations,
+            "max_budget": self.max_budget,
+            "max_concurrent": self.max_concurrent,
+            "sample_size": self.sample_size,
+            "f1_only": self.f1_only,
+            "profiling": self.profiling,
+            "skip_ingest": self.skip_ingest,
+            "use_isolated_server": self.use_isolated_server,
+            "use_docker_cli": self.use_docker_cli,
+        }
+
 
 # ---------------------------------------------------------------------------
 # Single-question evaluation
@@ -336,6 +357,7 @@ async def _run_benchmark_core(
         scores=scores,
         per_question=all_results,
         conversation_metrics=conv_metrics,
+        config=config.to_dict(),
     )
 
 
@@ -414,6 +436,14 @@ async def rejudge(config: LoCoMoConfig) -> BenchmarkReport:
     num_conversations_raw = metadata.get("num_conversations", 0)
     assert isinstance(num_conversations_raw, int)
 
+    # Preserve original config if present, override judge_model for rejudge
+    original_config = metadata.get("config")
+    rejudge_config: dict[str, object] | None = None
+    if isinstance(original_config, dict):
+        rejudge_config = {**original_config, "judge_model": config.judge_model}
+    else:
+        rejudge_config = config.to_dict()
+
     return BenchmarkReport(
         answer_model=str(metadata.get("answer_model", config.search_model)),
         judge_model=config.judge_model,
@@ -421,4 +451,5 @@ async def rejudge(config: LoCoMoConfig) -> BenchmarkReport:
         num_questions=num_questions,
         scores=_aggregate(all_results),
         per_question=all_results,
+        config=rejudge_config,
     )
