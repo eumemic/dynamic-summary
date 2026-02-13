@@ -34,6 +34,7 @@ class ModelsConfigDict(TypedDict, total=False):
 
     embeddings: dict[str, EmbeddingModelConfigDict]
     llms: dict[str, LLMModelConfigDict]
+    aliases: dict[str, str]
     last_updated: str
     note: str
 
@@ -72,6 +73,29 @@ class ModelInfo:
             raise ValueError(f"Invalid JSON in models file {models_path}: {e}")
         except OSError as e:
             raise OSError(f"Error reading models file {models_path}: {e}")
+
+    def resolve_model_id(self, model: str) -> str:
+        """Resolve a model alias to its canonical ID.
+
+        If the model is already a canonical ID (present in llms or embeddings),
+        it is returned as-is. Otherwise, the aliases map is consulted.
+        """
+        aliases = self._data.get("aliases", {})
+        return aliases.get(model, model)
+
+    def _resolve_llm(self, model: str) -> str:
+        """Resolve alias and validate the model exists in llms.
+
+        Raises:
+            ValueError: If the resolved model is not found.
+        """
+        resolved = self.resolve_model_id(model)
+        if resolved not in self._data.get("llms", {}):
+            available = list(self._data.get("llms", {}).keys())
+            raise ValueError(
+                f"LLM model '{resolved}' not found. Available models: {available}"
+            )
+        return resolved
 
     def get_embedding_dimensions(self, model: str) -> int:
         """Get the embedding dimensions for a model.
@@ -121,7 +145,7 @@ class ModelInfo:
         """Get the input and output costs for an LLM.
 
         Args:
-            model: The LLM model name
+            model: The LLM model name or alias
 
         Returns:
             Tuple of (input_cost_per_1k, output_cost_per_1k) in USD
@@ -129,12 +153,7 @@ class ModelInfo:
         Raises:
             ValueError: If the model is not found
         """
-        if model not in self._data.get("llms", {}):
-            available = list(self._data.get("llms", {}).keys())
-            raise ValueError(
-                f"LLM model '{model}' not found. Available models: {available}"
-            )
-
+        model = self._resolve_llm(model)
         llm_info = self._data["llms"][model]
         return float(llm_info["input"]), float(llm_info["output"])
 
@@ -142,7 +161,7 @@ class ModelInfo:
         """Get the cache discount percentage for an LLM.
 
         Args:
-            model: The LLM model name
+            model: The LLM model name or alias
 
         Returns:
             Cache discount percentage (e.g., 0.5 = 50% discount, 0.9 = 90% discount)
@@ -150,12 +169,7 @@ class ModelInfo:
         Raises:
             ValueError: If the model is not found
         """
-        if model not in self._data.get("llms", {}):
-            available = list(self._data.get("llms", {}).keys())
-            raise ValueError(
-                f"LLM model '{model}' not found. Available models: {available}"
-            )
-
+        model = self._resolve_llm(model)
         # cache_discount is optional (NotRequired in TypedDict).
         # Default to 0.0 (no discount) for models without caching support.
         return float(self._data["llms"][model].get("cache_discount", 0.0))
@@ -167,7 +181,7 @@ class ModelInfo:
         OpenAI and other providers cache automatically at no extra cost (1.0x).
 
         Args:
-            model: The LLM model name
+            model: The LLM model name or alias
 
         Returns:
             Multiplier applied to input price for cache write tokens (e.g., 1.25)
@@ -175,28 +189,23 @@ class ModelInfo:
         Raises:
             ValueError: If the model is not found
         """
-        if model not in self._data.get("llms", {}):
-            available = list(self._data.get("llms", {}).keys())
-            raise ValueError(
-                f"LLM model '{model}' not found. Available models: {available}"
-            )
-
+        model = self._resolve_llm(model)
         return float(self._data["llms"][model].get("cache_write_multiplier", 1.0))
 
     def get_reasoning_levels(self, model: str) -> list[str] | None:
         """Get the supported reasoning effort levels for an LLM.
 
         Args:
-            model: The LLM model name
+            model: The LLM model name or alias
 
         Returns:
             List of supported reasoning levels (e.g. ["none", "low", "medium", "high"]),
             or None if the model uses temperature instead of reasoning levels,
             or if the model is not found in the configuration (assumes temperature-based).
         """
+        model = self.resolve_model_id(model)
         if model not in self._data.get("llms", {}):
-            # Unknown models are assumed to use temperature (safe default)
-            return None
+            return None  # Unknown models assumed to use temperature
 
         levels = self._data["llms"][model].get("reasoning_levels")
         if levels is None:
@@ -222,7 +231,7 @@ class ModelInfo:
         """Get the context window size for an LLM.
 
         Args:
-            model: The LLM model name
+            model: The LLM model name or alias
 
         Returns:
             Maximum input tokens for the model
@@ -230,24 +239,19 @@ class ModelInfo:
         Raises:
             ValueError: If the model is not found
         """
-        if model not in self._data.get("llms", {}):
-            available = list(self._data.get("llms", {}).keys())
-            raise ValueError(
-                f"LLM model '{model}' not found. Available models: {available}"
-            )
-
+        model = self._resolve_llm(model)
         return int(self._data["llms"][model]["context_window"])
 
     def is_gpt5_model(self, model: str) -> bool:
         """Check if a model is a GPT-5 variant.
 
         Args:
-            model: The model name
+            model: The model name or alias
 
         Returns:
             True if the model is a GPT-5 variant
         """
-        return model.startswith("gpt-5")
+        return self.resolve_model_id(model).startswith("gpt-5")
 
     def get_all_embedding_models(self) -> list[str]:
         """Get a list of all available embedding models."""

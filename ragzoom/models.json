@@ -121,6 +121,18 @@
       "context_window": 200000
     }
   },
+  "aliases": {
+    "sonnet-4.5": "claude-sonnet-4-5-20250929",
+    "claude-sonnet-4-5": "claude-sonnet-4-5-20250929",
+    "sonnet-4": "claude-sonnet-4-20250514",
+    "claude-sonnet-4": "claude-sonnet-4-20250514",
+    "opus-4.6": "claude-opus-4-6",
+    "opus-4.5": "claude-opus-4-5-20250514",
+    "claude-opus-4-5": "claude-opus-4-5-20250514",
+    "haiku-4.5": "claude-haiku-4-5-20251001",
+    "claude-haiku-4-5": "claude-haiku-4-5-20251001",
+    "haiku-3.5": "claude-3-5-haiku-20241022"
+  },
   "last_updated": "2026-02-12",
   "note": "Prices are per 1K tokens in USD. cache_discount is the discount percentage for cached prompt tokens (0.9 = 90% discount, 0.5 = 50% discount). cache_write_multiplier is the cost multiplier for cache write tokens (1.25 for Anthropic, omit or 1.0 for providers where writes are free). context_window is the maximum input tokens. reasoning_levels lists supported reasoning effort values (null = uses temperature instead)."
 }
