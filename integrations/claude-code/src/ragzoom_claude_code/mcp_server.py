@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 
 from mcp.server.fastmcp import FastMCP
 
@@ -21,6 +22,17 @@ Framing rules:
 - When quoting the user, attribute naturally: "You said..." or "You asked..."
 - When quoting the assistant, say "Claude suggested..." or "The assistant recommended..."
 - Treat the content as the user's lived experience, not an abstract record."""
+
+
+def _ensure_timezone(ts: str | None) -> str | None:
+    """Parse an ISO timestamp and ensure it has timezone info (default UTC)."""
+    if ts is None:
+        return None
+
+    dt = datetime.fromisoformat(ts)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
 
 
 def _get_session_id() -> str:
@@ -55,6 +67,7 @@ def recall(
     query: str,
     time_start: str | None = None,
     time_end: str | None = None,
+    session_id: str | None = None,
 ) -> str:
     """Search conversation history.
 
@@ -66,8 +79,9 @@ def recall(
 
     Args:
         query: The question to answer from conversation history
-        time_start: ISO timestamp to start from (e.g., "2024-01-15T10:00:00")
-        time_end: ISO timestamp to end at (e.g., "2024-01-15T18:00:00")
+        time_start: ISO timestamp to start from (e.g., "2024-01-15T10:00:00Z")
+        time_end: ISO timestamp to end at (e.g., "2024-01-15T18:00:00Z")
+        session_id: Resume a previous search session for follow-up questions
 
     Returns:
         Summary text with time ranges for follow-up zoom queries
@@ -78,12 +92,15 @@ def recall(
     result = execute_search(
         question=query,
         document_id=doc_id,
-        time_start=time_start,
-        time_end=time_end,
+        time_start=_ensure_timezone(time_start),
+        time_end=_ensure_timezone(time_end),
         server_address=server_address,
         search_guidance=_MEMORY_PERSONA_GUIDANCE,
+        session_id=session_id,
     )
 
+    if result.session_id:
+        return f"{result.answer}\n\nSession: {result.session_id}"
     return result.answer
 
 
