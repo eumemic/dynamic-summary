@@ -19,6 +19,20 @@ recall(query="What error did we see in the JWT validation?")
 # Returns: The specific error details from that discussion
 ```
 
+### Session Resumption
+
+Each recall response includes a `Session: <id>` footer. Pass this back as `session_id` on follow-up queries to resume the search agent's session — it remembers what it already found and can refine without starting over.
+
+```python
+# Initial broad query
+recall(query="When did we discuss the authentication bug?")
+# Returns answer + "Session: abc123"
+
+# Follow-up within the same search session
+recall(query="What was the root cause?", session_id="abc123")
+# Agent already has context, can go deeper immediately
+```
+
 ### Time Constraints
 
 Use `time_start`/`time_end` to constrain the search to a specific period. This is useful for zooming into a known time range after a broad initial query reveals the relevant window.

@@ -12,6 +12,7 @@ def execute_search(
     time_end: str | None = None,
     server_address: str = "localhost:50051",
     search_guidance: str | None = None,
+    session_id: str | None = None,
 ) -> SearchResultView:
     """Execute an agentic search against RagZoom.
 
@@ -26,9 +27,10 @@ def execute_search(
         server_address: RagZoom gRPC server address.
         search_guidance: Additional guidance appended to the search agent
             system prompt (e.g. persona instructions).
+        session_id: Resume an existing search session for follow-up queries.
 
     Returns:
-        SearchResultView with the answer.
+        SearchResultView with the answer and session_id for follow-ups.
     """
     with GrpcRagzoomClient(server_address) as client:
         return client.search(
@@ -37,6 +39,7 @@ def execute_search(
             time_start=time_start,
             time_end=time_end,
             search_guidance=search_guidance,
+            session_id=session_id,
         )
 
 

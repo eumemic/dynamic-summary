@@ -1,4 +1,4 @@
-"""Tests for MCP server identity resolution."""
+"""Tests for MCP server identity resolution and timestamp handling."""
 
 from __future__ import annotations
 
@@ -7,7 +7,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from ragzoom_claude_code.mcp_server import _MEMORY_PERSONA_GUIDANCE, _get_session_id
+from ragzoom_claude_code.mcp_server import (
+    _MEMORY_PERSONA_GUIDANCE,
+    _ensure_timezone,
+    _get_session_id,
+)
 
 
 class TestMcpServerEnvVarIdentity:
@@ -120,6 +124,32 @@ class TestMcpServerPidTempFileDiscovery:
             _get_session_id()
 
 
+class TestEnsureTimezone:
+    """Tests for _ensure_timezone timestamp normalization."""
+
+    def test_none_passes_through(self) -> None:
+        assert _ensure_timezone(None) is None
+
+    def test_naive_timestamp_gets_utc(self) -> None:
+        result = _ensure_timezone("2024-01-15T10:00:00")
+        assert result == "2024-01-15T10:00:00+00:00"
+
+    def test_utc_z_suffix_preserved(self) -> None:
+        result = _ensure_timezone("2024-01-15T10:00:00Z")
+        assert result is not None
+        assert result.endswith("+00:00") or result.endswith("Z")
+
+    def test_explicit_offset_preserved(self) -> None:
+        result = _ensure_timezone("2024-01-15T10:00:00+05:30")
+        assert result is not None
+        assert "+05:30" in result
+
+    def test_date_only_gets_utc(self) -> None:
+        result = _ensure_timezone("2024-01-15")
+        assert result is not None
+        assert "+00:00" in result
+
+
 class TestRecallToolSearch:
     """Tests for recall tool using the agentic search endpoint."""
 
@@ -148,11 +178,12 @@ class TestRecallToolSearch:
                 time_end=None,
                 server_address="localhost:50051",
                 search_guidance=_MEMORY_PERSONA_GUIDANCE,
+                session_id=None,
             )
-            assert result == "The auth bug was in the JWT validation."
+            assert "The auth bug was in the JWT validation." in result
 
     def test_recall_tool_forwards_time_constraints(self) -> None:
-        """Recall tool forwards time_start/time_end to execute_search."""
+        """Recall tool normalizes and forwards time_start/time_end."""
         expected_doc_id = "test-session-doc"
 
         mock_result = MagicMock()
@@ -173,12 +204,84 @@ class TestRecallToolSearch:
                 time_end="2024-01-15T12:00:00",
             )
 
+            # Bare timestamps get UTC via _ensure_timezone
             mock_search.assert_called_once_with(
                 question="What happened?",
                 document_id=expected_doc_id,
-                time_start="2024-01-15T10:00:00",
-                time_end="2024-01-15T12:00:00",
+                time_start="2024-01-15T10:00:00+00:00",
+                time_end="2024-01-15T12:00:00+00:00",
                 server_address="localhost:50051",
                 search_guidance=_MEMORY_PERSONA_GUIDANCE,
+                session_id=None,
             )
-            assert result == "Found it in the morning session."
+            assert "Found it in the morning session." in result
+
+    def test_recall_returns_session_id_in_response(self) -> None:
+        """Recall response includes session_id for follow-up queries."""
+        mock_result = MagicMock()
+        mock_result.answer = "You were debugging the auth flow."
+        mock_result.session_id = "search-session-abc123"
+
+        with (
+            patch.dict(os.environ, {"RAGZOOM_DOCUMENT_ID": "test-doc"}),
+            patch(
+                "ragzoom_claude_code.mcp_server.execute_search",
+                return_value=mock_result,
+            ),
+        ):
+            from ragzoom_claude_code.mcp_server import recall
+
+            result = recall(query="What was I debugging?")
+
+        assert "You were debugging the auth flow." in result
+        assert "search-session-abc123" in result
+
+    def test_recall_forwards_session_id_for_continuation(self) -> None:
+        """Passing session_id resumes an existing search agent session."""
+        mock_result = MagicMock()
+        mock_result.answer = "Specifically, the JWT expiry check."
+        mock_result.session_id = "search-session-abc123"
+
+        with (
+            patch.dict(os.environ, {"RAGZOOM_DOCUMENT_ID": "test-doc"}),
+            patch(
+                "ragzoom_claude_code.mcp_server.execute_search",
+                return_value=mock_result,
+            ) as mock_search,
+        ):
+            from ragzoom_claude_code.mcp_server import recall
+
+            recall(
+                query="Which part of auth specifically?",
+                session_id="search-session-abc123",
+            )
+
+            mock_search.assert_called_once_with(
+                question="Which part of auth specifically?",
+                document_id="test-doc",
+                time_start=None,
+                time_end=None,
+                server_address="localhost:50051",
+                search_guidance=_MEMORY_PERSONA_GUIDANCE,
+                session_id="search-session-abc123",
+            )
+
+    def test_recall_no_session_id_when_server_returns_none(self) -> None:
+        """Response omits session metadata when server returns no session_id."""
+        mock_result = MagicMock()
+        mock_result.answer = "No context found."
+        mock_result.session_id = None
+
+        with (
+            patch.dict(os.environ, {"RAGZOOM_DOCUMENT_ID": "test-doc"}),
+            patch(
+                "ragzoom_claude_code.mcp_server.execute_search",
+                return_value=mock_result,
+            ),
+        ):
+            from ragzoom_claude_code.mcp_server import recall
+
+            result = recall(query="Something obscure?")
+
+        assert result == "No context found."
+        assert "Session:" not in result
