@@ -40,7 +40,7 @@ from ragzoom.search import SearchAgent, SearchConfig
 from ragzoom.wrapper import RagZoom
 
 if TYPE_CHECKING:
-    from ragzoom.evaluation.docker_claude import DockerClaudeContainer
+    from ragzoom.evaluation.docker_claude import DockerClaudePool
 
 logger = logging.getLogger(__name__)
 
@@ -123,20 +123,18 @@ class _GrpcQueryExecutor:
 async def _evaluate_one(
     judge: BenchmarkingAgent | None,
     judge_model_id: str,
-    search_agent: SearchAgent,
+    agent_queue: asyncio.Queue[SearchAgent],
     query_executor: _GrpcQueryExecutor,
     doc_id: str,
     qa: QAPair,
-    semaphore: asyncio.Semaphore,
 ) -> AnswerResult:
     """Evaluate a single QA pair using client-side agentic search."""
-    async with semaphore:
+    agent = await agent_queue.get()
+    try:
         cost: CostMetrics = CostMetrics.zero()
         retrospective: str | None = None
         try:
-            search_result = await search_agent.search(
-                qa.question, doc_id, query_executor
-            )
+            search_result = await agent.search(qa.question, doc_id, query_executor)
             generated_answer = search_result.answer
             sc = search_result.cost
             cost = CostMetrics(
@@ -176,6 +174,8 @@ async def _evaluate_one(
             cost=cost,
             retrospective=retrospective,
         )
+    finally:
+        agent_queue.put_nowait(agent)
 
 
 # ---------------------------------------------------------------------------
@@ -241,27 +241,25 @@ async def run_benchmark(config: LoCoMoConfig) -> BenchmarkReport:
 
 async def _run_benchmark_impl(config: LoCoMoConfig) -> BenchmarkReport:
     """Core benchmark implementation."""
-    # 0. Optional Docker CLI container for fast Claude SDK cold-starts
-    docker_container: DockerClaudeContainer | None = None
-    cli_path: str | Path | None = None
+    # 0. Optional Docker container pool for concurrent Claude SDK calls
+    docker_pool: DockerClaudePool | None = None
     if config.use_docker_cli:
         from ragzoom.daemon import get_daemon_state_dir
-        from ragzoom.evaluation.docker_claude import DockerClaudeContainer
+        from ragzoom.evaluation.docker_claude import DockerClaudePool
 
         session_base = get_daemon_state_dir() / "sdk-sessions"
-        docker_container = DockerClaudeContainer(session_base)
-        docker_container.ensure_running()
-        cli_path = docker_container.wrapper_path
+        docker_pool = DockerClaudePool(session_base, config.max_concurrent)
+        docker_pool.ensure_running()
 
     try:
-        return await _run_benchmark_core(config, cli_path)
+        return await _run_benchmark_core(config, docker_pool)
     finally:
-        if docker_container is not None:
-            docker_container.stop()
+        if docker_pool is not None:
+            docker_pool.stop()
 
 
 async def _run_benchmark_core(
-    config: LoCoMoConfig, cli_path: str | Path | None
+    config: LoCoMoConfig, docker_pool: DockerClaudePool | None
 ) -> BenchmarkReport:
     """Core benchmark implementation (separated for Docker lifecycle)."""
     # 1. Parse
@@ -277,12 +275,12 @@ async def _run_benchmark_core(
         conv_metrics = ingest_all(rz, conversations)
         conv_metrics = wait_for_indexing(rz, conversations, conv_metrics)
 
-    # 3. Set up judge
+    # 3. Set up judge (no Docker needed — judge is typically OpenAI)
     openai_client = AsyncOpenAI()
 
     judge: BenchmarkingAgent | None = None
     if not config.f1_only:
-        judge = create_backend(config.judge_model, openai_client, cli_path=cli_path)
+        judge = create_backend(config.judge_model, openai_client)
 
     # 4. Collect non-adversarial QA pairs
     qa_items: list[tuple[str, QAPair]] = []
@@ -296,20 +294,33 @@ async def _run_benchmark_core(
         random.seed(42)
         qa_items = random.sample(qa_items, min(config.sample_size, len(qa_items)))
 
-    # 5. Build client-side SearchAgent with gRPC executor
+    # 5. Build agent queue — one SearchAgent per concurrency slot
     search_config = SearchConfig(
         agent_model=config.search_model,
         max_iterations=config.max_iterations,
         max_token_budget=config.max_budget,
         profiling_enabled=config.profiling,
     )
-    search_backend = create_backend(
-        config.search_model,
-        openai_client,
-        cli_path=cli_path,
-        reasoning_level=config.reasoning_level,
-    )
-    search_agent = SearchAgent(search_config, search_backend)
+    agent_queue: asyncio.Queue[SearchAgent] = asyncio.Queue()
+    if docker_pool is not None:
+        for i in range(docker_pool.size):
+            backend = create_backend(
+                config.search_model,
+                openai_client,
+                cli_path=docker_pool.cli_path(i),
+                reasoning_level=config.reasoning_level,
+            )
+            agent_queue.put_nowait(SearchAgent(search_config, backend))
+    else:
+        backend = create_backend(
+            config.search_model,
+            openai_client,
+            reasoning_level=config.reasoning_level,
+        )
+        agent = SearchAgent(search_config, backend)
+        for _ in range(config.max_concurrent):
+            agent_queue.put_nowait(agent)
+
     query_executor = _GrpcQueryExecutor(rz)
 
     logger.info(
@@ -321,18 +332,14 @@ async def _run_benchmark_core(
     )
 
     # 6. Evaluate all questions via client-side agentic search
-    all_results: list[AnswerResult] = []
-    semaphore = asyncio.Semaphore(config.max_concurrent)
-
     tasks = [
         _evaluate_one(
             judge,
             config.judge_model,
-            search_agent,
+            agent_queue,
             query_executor,
             doc_id,
             qa,
-            semaphore,
         )
         for doc_id, qa in qa_items
     ]
