@@ -1311,10 +1311,14 @@ class SearchServicer(pb2_grpc.SearchServiceServicer):
                     code=grpc.StatusCode.INVALID_ARGUMENT,
                     message="Search requires `document_id`.",
                 )
+            time_start = request.time_start if request.HasField("time_start") else None
+            time_end = request.time_end if request.HasField("time_end") else None
             result = await self._state.search_agent.search(
                 request.question,
                 request.document_id,
                 executor,
+                time_start=time_start,
+                time_end=time_end,
             )
 
         profile_proto = None

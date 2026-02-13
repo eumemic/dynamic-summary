@@ -11,6 +11,7 @@ try:  # pragma: no cover
 except ModuleNotFoundError:  # pragma: no cover
     from . import dynamic_summary_pb2 as dynamic__summary__pb2
 
+
 GRPC_GENERATED_VERSION = "1.75.0"
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
@@ -1179,3 +1180,6 @@ class SearchService(object):
             metadata,
             _registered_method=True,
         )
+
+
+# jscpd:ignore-end

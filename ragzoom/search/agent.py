@@ -51,6 +51,30 @@ class QueryExecutor(Protocol):
     ) -> ExecuteQueryOutput: ...
 
 
+def _clamp_time(
+    requested: str | None,
+    bound: str | None,
+    *,
+    use_max: bool,
+) -> str | None:
+    """Clamp a time value to a bound using lexicographic ISO 8601 comparison.
+
+    Args:
+        requested: The LLM's requested time value (may be None).
+        bound: The hard bound to enforce (may be None).
+        use_max: If True, return the later of (requested, bound) — for start bounds.
+                 If False, return the earlier of (requested, bound) — for end bounds.
+
+    Returns:
+        The clamped time value, or None if both inputs are None.
+    """
+    if bound is None:
+        return requested
+    if requested is None:
+        return bound
+    return max(requested, bound) if use_max else min(requested, bound)
+
+
 def _build_recall_tool(
     config: SearchConfig,
     document_id: str,
@@ -58,8 +82,16 @@ def _build_recall_tool(
     iterations: list[SearchIteration],
     profiling: bool,
     max_iterations: int,
+    *,
+    time_start_bound: str | None = None,
+    time_end_bound: str | None = None,
 ) -> ToolDefinition:
-    """Build the recall ToolDefinition with a handler closure."""
+    """Build the recall ToolDefinition with a handler closure.
+
+    Args:
+        time_start_bound: Hard lower bound — the LLM cannot search earlier than this.
+        time_end_bound: Hard upper bound — the LLM cannot search later than this.
+    """
     calls_made = [0]
 
     async def _handle_recall(args: dict[str, object]) -> ToolResult:
@@ -71,9 +103,13 @@ def _build_recall_tool(
             else config.max_token_budget
         )
         raw_start = args.get("time_start")
-        time_start = str(raw_start) if raw_start and raw_start != "" else None
+        requested_start = str(raw_start) if raw_start and raw_start != "" else None
         raw_end = args.get("time_end")
-        time_end = str(raw_end) if raw_end and raw_end != "" else None
+        requested_end = str(raw_end) if raw_end and raw_end != "" else None
+
+        # Clamp to externally imposed bounds
+        time_start = _clamp_time(requested_start, time_start_bound, use_max=True)
+        time_end = _clamp_time(requested_end, time_end_bound, use_max=False)
 
         calls_made[0] += 1
         remaining = max_iterations - calls_made[0]
@@ -114,13 +150,22 @@ def _build_recall_tool(
 
         return ToolResult(content=f"{formatted}\n\n{note}", token_count=token_count)
 
+    description = (
+        "Retrieve summarized context from the conversation. "
+        "Returns variable-resolution text with Span tags showing "
+        "time ranges and summarization height."
+    )
+    if time_start_bound or time_end_bound:
+        parts: list[str] = []
+        if time_start_bound:
+            parts.append(f"after {time_start_bound}")
+        if time_end_bound:
+            parts.append(f"before {time_end_bound}")
+        description += f" Search is constrained to content {' and '.join(parts)}."
+
     return ToolDefinition(
         name="recall",
-        description=(
-            "Retrieve summarized context from the conversation. "
-            "Returns variable-resolution text with Span tags showing "
-            "time ranges and summarization height."
-        ),
+        description=description,
         parameters={
             "query": {
                 "type": "string",
@@ -181,6 +226,9 @@ class SearchAgent:
         question: str,
         document_id: str,
         query_executor: QueryExecutor,
+        *,
+        time_start: str | None = None,
+        time_end: str | None = None,
     ) -> SearchResult:
         """Run the agentic search loop.
 
@@ -188,6 +236,8 @@ class SearchAgent:
             question: The user's question to answer.
             document_id: Document to search within.
             query_executor: Callable that executes retrieval queries.
+            time_start: ISO 8601 lower bound — constrain all recall calls.
+            time_end: ISO 8601 upper bound — constrain all recall calls.
 
         Returns:
             SearchResult with the answer and optional profiling/session data.
@@ -205,6 +255,8 @@ class SearchAgent:
             iterations,
             profiling,
             max_iterations=config.max_iterations,
+            time_start_bound=time_start,
+            time_end_bound=time_end,
         )
 
         note = remaining_calls_note(config.max_iterations, config.max_token_budget)
