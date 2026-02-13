@@ -403,3 +403,121 @@ class TestSessionContinuation:
 
         with pytest.raises(RuntimeError, match="requires a SessionRegistry"):
             await agent.search_continue("any-id", "question", executor)
+
+
+# ---------------------------------------------------------------------------
+# Prompt-capturing backend for search_guidance tests
+# ---------------------------------------------------------------------------
+
+
+class _PromptCapturingBackend:
+    """Backend that captures the system prompt passed to generate()."""
+
+    def __init__(self, answer: str = "answer") -> None:
+        self._answer = answer
+        self.captured_system_prompts: list[str] = []
+
+    async def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        tools: Sequence[ToolDefinition] = (),
+        max_turns: int = 1,
+        temperature: float | None = None,
+        resume_session_id: str | None = None,
+    ) -> AgentResult:
+        self.captured_system_prompts.append(system_prompt)
+        session_id = resume_session_id or "sess-1"
+        return AgentResult(
+            answer=self._answer,
+            cost=_make_cost(),
+            history=(),
+            session_id=session_id,
+        )
+
+
+class TestSearchGuidance:
+    @pytest.mark.asyncio
+    async def test_guidance_appended_to_system_prompt(self) -> None:
+        """search_guidance is appended under a # Search Guidance heading."""
+        from ragzoom.search.agent import SearchAgent
+        from ragzoom.search.prompt import SEARCH_SYSTEM_PROMPT
+
+        backend = _PromptCapturingBackend()
+        config = SearchConfig(profiling_enabled=False)
+        agent = SearchAgent(config, backend)
+        executor = _MockQueryExecutor()
+
+        await agent.search(
+            "question",
+            "doc-1",
+            executor,
+            search_guidance="Use second-person voice.",
+        )
+
+        assert len(backend.captured_system_prompts) == 1
+        prompt = backend.captured_system_prompts[0]
+        assert prompt.startswith(SEARCH_SYSTEM_PROMPT)
+        assert "# Search Guidance" in prompt
+        assert "Use second-person voice." in prompt
+
+    @pytest.mark.asyncio
+    async def test_no_guidance_preserves_default_prompt(self) -> None:
+        """When search_guidance is None, the default prompt is used unchanged."""
+        from ragzoom.search.agent import SearchAgent
+        from ragzoom.search.prompt import SEARCH_SYSTEM_PROMPT
+
+        backend = _PromptCapturingBackend()
+        config = SearchConfig(profiling_enabled=False)
+        agent = SearchAgent(config, backend)
+        executor = _MockQueryExecutor()
+
+        await agent.search("question", "doc-1", executor)
+
+        assert len(backend.captured_system_prompts) == 1
+        assert backend.captured_system_prompts[0] == SEARCH_SYSTEM_PROMPT
+
+    @pytest.mark.asyncio
+    async def test_empty_guidance_preserves_default_prompt(self) -> None:
+        """Empty or whitespace-only guidance does not modify the prompt."""
+        from ragzoom.search.agent import SearchAgent
+        from ragzoom.search.prompt import SEARCH_SYSTEM_PROMPT
+
+        backend = _PromptCapturingBackend()
+        config = SearchConfig(profiling_enabled=False)
+        agent = SearchAgent(config, backend)
+        executor = _MockQueryExecutor()
+
+        await agent.search("question", "doc-1", executor, search_guidance="   ")
+
+        assert backend.captured_system_prompts[0] == SEARCH_SYSTEM_PROMPT
+
+    @pytest.mark.asyncio
+    async def test_search_continue_applies_guidance(self) -> None:
+        """search_continue also appends search_guidance to the system prompt."""
+        from ragzoom.search.agent import SearchAgent
+
+        backend = _PromptCapturingBackend()
+        config = SearchConfig(profiling_enabled=False)
+        registry = SessionRegistry()
+        agent = SearchAgent(config, backend, session_registry=registry)
+        executor = _MockQueryExecutor()
+
+        # Initial search to create session
+        result = await agent.search("first", "doc-1", executor)
+        assert result.session_id is not None
+
+        # Follow-up with guidance
+        await agent.search_continue(
+            result.session_id,
+            "follow-up",
+            executor,
+            search_guidance="Answer in second person.",
+        )
+
+        # The second call (search_continue) should have the guidance
+        assert len(backend.captured_system_prompts) == 2
+        prompt = backend.captured_system_prompts[1]
+        assert "# Search Guidance" in prompt
+        assert "Answer in second person." in prompt

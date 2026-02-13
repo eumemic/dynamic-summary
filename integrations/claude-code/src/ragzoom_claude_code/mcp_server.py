@@ -11,6 +11,17 @@ from ragzoom_claude_code.transcript_sync import get_session_document_id
 
 mcp = FastMCP(name="RagZoom Memory")
 
+_MEMORY_PERSONA_GUIDANCE = """\
+You are answering questions about the user's own conversation history — \
+this is their memory, not a third-party document.
+
+Framing rules:
+- Use second person: "You were working on..." not "The conversation discussed..."
+- Refer to the user's actions directly: "You decided to..." not "It was decided..."
+- When quoting the user, attribute naturally: "You said..." or "You asked..."
+- When quoting the assistant, say "Claude suggested..." or "The assistant recommended..."
+- Treat the content as the user's lived experience, not an abstract record."""
+
 
 def _get_session_id() -> str:
     """Get the document ID for the current session.
@@ -54,7 +65,7 @@ def recall(
     For follow-up queries, use time_start/time_end to zoom into specific periods.
 
     Args:
-        query: Keywords/phrases to search for (semantic search)
+        query: The question to answer from conversation history
         time_start: ISO timestamp to start from (e.g., "2024-01-15T10:00:00")
         time_end: ISO timestamp to end at (e.g., "2024-01-15T18:00:00")
 
@@ -70,6 +81,7 @@ def recall(
         time_start=time_start,
         time_end=time_end,
         server_address=server_address,
+        search_guidance=_MEMORY_PERSONA_GUIDANCE,
     )
 
     return result.answer

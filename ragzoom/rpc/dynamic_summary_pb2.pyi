@@ -956,17 +956,26 @@ class ResetSessionCursorResponse(_message.Message):
     def __init__(self, success: bool = ..., message: str | None = ...) -> None: ...
 
 class SearchRequest(_message.Message):
-    __slots__ = ("question", "document_id", "session_id", "time_start", "time_end")
+    __slots__ = (
+        "question",
+        "document_id",
+        "session_id",
+        "time_start",
+        "time_end",
+        "search_guidance",
+    )
     QUESTION_FIELD_NUMBER: _ClassVar[int]
     DOCUMENT_ID_FIELD_NUMBER: _ClassVar[int]
     SESSION_ID_FIELD_NUMBER: _ClassVar[int]
     TIME_START_FIELD_NUMBER: _ClassVar[int]
     TIME_END_FIELD_NUMBER: _ClassVar[int]
+    SEARCH_GUIDANCE_FIELD_NUMBER: _ClassVar[int]
     question: str
     document_id: str
     session_id: str
     time_start: str
     time_end: str
+    search_guidance: str
     def __init__(
         self,
         question: str | None = ...,
@@ -974,6 +983,7 @@ class SearchRequest(_message.Message):
         session_id: str | None = ...,
         time_start: str | None = ...,
         time_end: str | None = ...,
+        search_guidance: str | None = ...,
     ) -> None: ...
 
 class SearchIterationProto(_message.Message):

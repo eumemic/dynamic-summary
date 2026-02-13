@@ -208,6 +208,13 @@ def _make_search_cost(result: AgentResult, elapsed: float) -> SearchCost:
     )
 
 
+def _build_system_prompt(search_guidance: str | None) -> str:
+    """Build the search agent system prompt, optionally appending guidance."""
+    if search_guidance and search_guidance.strip():
+        return f"{SEARCH_SYSTEM_PROMPT}\n\n# Search Guidance\n{search_guidance}"
+    return SEARCH_SYSTEM_PROMPT
+
+
 class SearchAgent:
     """LLM-driven iterative zoom agent for answering questions from memory."""
 
@@ -229,6 +236,7 @@ class SearchAgent:
         *,
         time_start: str | None = None,
         time_end: str | None = None,
+        search_guidance: str | None = None,
     ) -> SearchResult:
         """Run the agentic search loop.
 
@@ -238,6 +246,8 @@ class SearchAgent:
             query_executor: Callable that executes retrieval queries.
             time_start: ISO 8601 lower bound — constrain all recall calls.
             time_end: ISO 8601 upper bound — constrain all recall calls.
+            search_guidance: Additional guidance appended to the search agent
+                system prompt (e.g. persona instructions).
 
         Returns:
             SearchResult with the answer and optional profiling/session data.
@@ -245,7 +255,7 @@ class SearchAgent:
         config = self._config
         profiling = config.profiling_enabled
         start_time = time.monotonic()
-        prompt = SEARCH_SYSTEM_PROMPT
+        prompt = _build_system_prompt(search_guidance)
 
         iterations: list[SearchIteration] = []
         recall_tool = _build_recall_tool(
@@ -310,6 +320,8 @@ class SearchAgent:
         session_id: str,
         question: str,
         query_executor: QueryExecutor,
+        *,
+        search_guidance: str | None = None,
     ) -> SearchResult:
         """Continue a search conversation within an existing session.
 
@@ -317,6 +329,8 @@ class SearchAgent:
             session_id: Session ID from a previous search result.
             question: The follow-up question.
             query_executor: Callable that executes retrieval queries.
+            search_guidance: Additional guidance appended to the search agent
+                system prompt (e.g. persona instructions).
 
         Returns:
             SearchResult with the answer and the same session_id.
@@ -333,7 +347,7 @@ class SearchAgent:
 
         config = self._config
         start_time = time.monotonic()
-        prompt = SEARCH_SYSTEM_PROMPT
+        prompt = _build_system_prompt(search_guidance)
 
         iterations: list[SearchIteration] = []
         recall_tool = _build_recall_tool(

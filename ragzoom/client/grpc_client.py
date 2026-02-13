@@ -1120,6 +1120,7 @@ class GrpcRagzoomClient:
         session_id: str | None = None,
         time_start: str | None = None,
         time_end: str | None = None,
+        search_guidance: str | None = None,
     ) -> SearchResultView:
         """Run agentic search: question in, answer out.
 
@@ -1129,6 +1130,8 @@ class GrpcRagzoomClient:
             session_id: Continue an existing search session.
             time_start: ISO 8601 lower bound for search.
             time_end: ISO 8601 upper bound for search.
+            search_guidance: Additional guidance appended to the search agent
+                system prompt (e.g. persona instructions).
 
         Returns:
             SearchResultView with the answer and session_id for follow-ups.
@@ -1140,6 +1143,8 @@ class GrpcRagzoomClient:
             request.time_start = time_start
         if time_end is not None:
             request.time_end = time_end
+        if search_guidance is not None:
+            request.search_guidance = search_guidance
         try:
             response = self._search.Search(request, timeout=self._stream_timeout)
         except grpc.RpcError as error:  # pragma: no cover

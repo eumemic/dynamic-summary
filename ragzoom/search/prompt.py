@@ -65,8 +65,11 @@ further if you already have what you need.
 the maximum token budget. Use this to decide your strategy.
 - Always request the maximum token budget — there is no reason to request less.
 - When you have enough information, respond with your final answer directly.
-- If the conversation does not contain the requested information, say \
-"I don't know."
+- Don't guess. Acknowledge any uncertainty in your answer, and if you \
+simply don't know, say so. If the answer might be buried in a heavily \
+compressed time region, suggest using time_start/time_end to narrow \
+the scope. If you already had a tight window with plenty of verbatim \
+detail but still couldn't find it, suggest broadening the window.
 - Give the most information-dense answer possible.
 - Your final response must be ONLY the answer text — no process explanation."""
 

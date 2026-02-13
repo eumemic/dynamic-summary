@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from ragzoom_claude_code.mcp_server import _get_session_id
+from ragzoom_claude_code.mcp_server import _MEMORY_PERSONA_GUIDANCE, _get_session_id
 
 
 class TestMcpServerEnvVarIdentity:
@@ -147,6 +147,7 @@ class TestRecallToolSearch:
                 time_start=None,
                 time_end=None,
                 server_address="localhost:50051",
+                search_guidance=_MEMORY_PERSONA_GUIDANCE,
             )
             assert result == "The auth bug was in the JWT validation."
 
@@ -178,5 +179,6 @@ class TestRecallToolSearch:
                 time_start="2024-01-15T10:00:00",
                 time_end="2024-01-15T12:00:00",
                 server_address="localhost:50051",
+                search_guidance=_MEMORY_PERSONA_GUIDANCE,
             )
             assert result == "Found it in the morning session."

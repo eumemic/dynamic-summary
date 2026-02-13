@@ -9,11 +9,14 @@ Guidance for effective use of the `recall` memory tool to recall information fro
 
 ## How the Tool Works
 
-The `recall` tool uses server-side agentic search: you ask a question, and the server automatically searches through the conversation at multiple levels of detail to find the best answer. No manual zooming or budget tuning needed.
+The `recall` tool uses server-side agentic search: you ask a natural language question, and the server searches through the conversation at multiple levels of detail to find the best answer. No manual zooming, keyword construction, or budget tuning needed — just ask what you want to know.
 
 ```python
-recall(query="What was the authentication bug we discussed?")
+recall(query="What was I working on before the refactor?")
 # Returns: A concise answer synthesized from conversation history
+
+recall(query="What error did we see in the JWT validation?")
+# Returns: The specific error details from that discussion
 ```
 
 ### Time Constraints
@@ -21,31 +24,31 @@ recall(query="What was the authentication bug we discussed?")
 Use `time_start`/`time_end` to constrain the search to a specific period. This is useful for zooming into a known time range after a broad initial query reveals the relevant window.
 
 ```python
-# Broad search first
-recall(query="authentication bug")
+# Broad question first
+recall(query="When did we discuss the authentication bug?")
 # Answer mentions it happened around 2024-01-15T14:00:00
 
 # Zoom into that time window for more detail
-recall(query="authentication bug", time_start="2024-01-15T14:00:00", time_end="2024-01-15T16:00:00")
+recall(query="What was the root cause of the auth bug?", time_start="2024-01-15T14:00:00", time_end="2024-01-15T16:00:00")
 ```
 
 The server enforces these bounds — all internal recall calls are clamped to the specified window.
 
 ## When to Use Memory Proactively
 
-- **After compaction**: Query "What was I working on? What were the specific details?"
-- **When resuming a session**: Refresh on recent decisions, open questions, implementation details
-- **Before making changes to code discussed earlier**: "What did we decide about X?"
+- **After compaction**: "What was I working on? What were the specific details?"
+- **When resuming a session**: "What decisions did I make recently? What's still open?"
+- **Before making changes to code discussed earlier**: "What did we decide about the API design?"
 - **When user references something from earlier**: Don't guess, look it up
 - **When details feel fuzzy**: If uncertain about specifics, query rather than assume
 
 ## Tips for Effective Queries
 
-1. **Be specific**: "What error message did we see in the JWT validation?" is better than "authentication"
+1. **Ask natural questions**: "What error did we see in the auth flow?" works better than keyword lists like "authentication error JWT"
 
-2. **Use natural language**: The tool understands semantic queries, so phrase questions naturally
+2. **Be specific about what you want to know**: "What was the root cause of the login bug?" is better than "login bug"
 
-3. **Multiple focused queries beat one broad query**: Ask targeted questions rather than one vague catch-all
+3. **Multiple focused questions beat one broad question**: Ask targeted questions rather than one vague catch-all
 
 4. **Recent content is often verbatim**: Content near the compaction point hasn't been summarized yet, so recall is highly accurate
 
