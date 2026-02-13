@@ -71,11 +71,9 @@ def recall(
 ) -> str:
     """Search conversation history.
 
-    Use keyword/phrase queries that match content semantically.
-    The server automatically searches through the conversation at multiple
-    levels of detail to find the best answer.
-
-    For follow-up queries, use time_start/time_end to zoom into specific periods.
+    Use this tool like a conversation with your memory. Ask natural questions
+    about your past — what you worked on, what you decided, what happened —
+    and follow up with more questions to dig deeper.
 
     Args:
         query: The question to answer from conversation history
