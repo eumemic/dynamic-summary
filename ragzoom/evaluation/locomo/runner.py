@@ -58,7 +58,7 @@ class LoCoMoConfig:
     sample_size: int | None = None
     f1_only: bool = False
     rejudge_path: Path | None = None
-    use_isolated_server: bool = False
+    use_isolated_server: bool = True
     search_model: str = "gpt-5-mini"
     max_iterations: int = 5
     max_budget: int = 4000

@@ -86,9 +86,9 @@ def main() -> None:
         help="Enable search profiling (retrospective analysis per question)",
     )
     parser.add_argument(
-        "--isolated-server",
+        "--no-isolated-server",
         action="store_true",
-        help="Spawn an isolated RagZoom server for the benchmark (port 50053, temp state dir)",
+        help="Disable the default isolated server and use --server address instead",
     )
     parser.add_argument(
         "--reasoning-level",
@@ -98,7 +98,7 @@ def main() -> None:
     parser.add_argument(
         "--docker-cli",
         action="store_true",
-        help="Run Claude CLI in a Docker container for fast cold-starts (~5s vs ~55s)",
+        help="Run native Claude CLI in a Docker container (no plugins/MCP overhead)",
     )
     parser.add_argument(
         "-v",
@@ -135,7 +135,7 @@ def main() -> None:
         sample_size=args.sample,
         f1_only=args.f1_only,
         rejudge_path=args.rejudge,
-        use_isolated_server=args.isolated_server,
+        use_isolated_server=not args.no_isolated_server,
         search_model=args.search_model,
         max_iterations=args.max_iterations,
         max_budget=args.max_budget,

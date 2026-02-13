@@ -20,23 +20,23 @@ LoCoMo is the de facto standard benchmark for conversational memory systems. Eve
 
 ### Running a Benchmark
 
-**Always use `--isolated-server`**. This runs a persistent benchmark server on port 50053 with state in `/tmp/ragzoom-bench-state`, completely isolated from dev and production servers.
+Benchmarks use an **isolated server** by default (port 50053, state in `/tmp/ragzoom-bench-state`), completely separated from dev and production servers.
 
 ```bash
 set -a && source .env && set +a
-PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --isolated-server
+PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json
 ```
 
 Ingestion takes ~5 minutes (summarization tree building). Evaluation takes ~5 minutes at concurrency=10.
 
-**Never use a shared dev server for benchmarks.** Always use `--isolated-server`.
+To opt out of the isolated server (e.g. to target a custom `--server` address), pass `--no-isolated-server`.
 
 ### Re-running After Non-Index Changes
 
 When you change **only** the search agent (prompts, model, config, scoring) — anything that doesn't affect the ingested index — use `--skip-ingest` to reuse the existing server and data:
 
 ```bash
-PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --isolated-server --skip-ingest --sample 50 --profiling
+PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --skip-ingest --sample 50 --profiling
 ```
 
 This skips ingestion entirely and just re-runs evaluation against the existing index. The server stays alive between runs — **do not manually kill port 50053** between `--skip-ingest` runs.
@@ -79,7 +79,7 @@ rm -rf /tmp/ragzoom-bench-state
 | `--max-budget N` | 4000 | Max token budget per recall call |
 | `--f1-only` | off | Skip LLM judge, token F1 only |
 | `--rejudge PATH` | — | Re-judge from previous results.json |
-| `--isolated-server` | off | Spawn isolated server (clean slate) |
+| `--no-isolated-server` | off | Disable isolated server, use --server address |
 | `--skip-ingest` | off | Skip ingestion (docs already indexed) |
 | `--reasoning-level LEVEL` | auto | Reasoning effort for search model (none/minimal/low/medium/high) |
 | `--profiling` | off | Search profiling (retrospective per question) |
@@ -91,12 +91,12 @@ Three modes to reduce benchmark cost from ~$22 to <$1 or $0:
 
 **Sample mode** (`--sample N`): Evaluate a random subset of N questions (seed=42 for reproducibility).
 ```bash
-PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --sample 20 --isolated-server
+PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --sample 20
 ```
 
 **F1-only mode** (`--f1-only`): Skip the LLM judge entirely, compute token F1 only. No judge API costs.
 ```bash
-PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --f1-only --isolated-server
+PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --f1-only
 ```
 
 **Rejudge mode** (`--rejudge PATH`): Re-run the LLM judge on previously cached answers. No RagZoom server needed.
@@ -104,7 +104,7 @@ PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --f1-only 
 PYTHONPATH=. python scripts/run-locomo --data test_data/locomo10.json --rejudge locomo_results/results.json
 ```
 
-Modes combine: `--sample 5 --f1-only --isolated-server` is the cheapest way to smoke-test evaluation.
+Modes combine: `--sample 5 --f1-only` is the cheapest way to smoke-test evaluation.
 
 ## Apples-to-Apples Comparison with Letta Leaderboard
 
@@ -160,7 +160,7 @@ ragzoom/agent/                    # Model-agnostic agent layer (shared by search
 ├── factory.py                    # create_backend() — routes to OpenAI or Anthropic
 └── backends/
     ├── openai.py                 # OpenAI function-calling agent loop
-    └── anthropic.py              # Claude Agent SDK backend
+    └── claude_agent_sdk.py       # Claude Agent SDK backend
 
 ragzoom/search/                   # Production search agent
 ├── agent.py                      # SearchAgent — uses BenchmarkingAgent backend
