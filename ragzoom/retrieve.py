@@ -511,15 +511,21 @@ class Retriever:
                     # Fuse rankings using RRF
                     fused = reciprocal_rank_fusion(vector_ranking, bm25_ranking)
 
-                    # Reorder vec_candidates based on fused ranking
+                    # Reorder vec_candidates based on fused ranking,
+                    # fetching vectors for BM25-only hits so they participate in MMR
                     vec_by_id = {v.id: v for v in vec_candidates}
-                    reordered: list[Vector] = []
-                    for node_id, _ in fused:
-                        if node_id in vec_by_id:
-                            reordered.append(vec_by_id[node_id])
+                    bm25_only_ids = [
+                        node_id for node_id, _ in fused if node_id not in vec_by_id
+                    ]
+                    if bm25_only_ids:
+                        for v in self.vector_index.get_vectors(bm25_only_ids):
+                            vec_by_id[v.id] = v
 
-                    # Add any BM25-only results that weren't in vector candidates
-                    # These need vectors, so we can only include items already in vec_candidates
+                    reordered = [
+                        vec_by_id[node_id]
+                        for node_id, _ in fused
+                        if node_id in vec_by_id
+                    ]
                     vec_candidates = reordered if reordered else vec_candidates
 
                     if telemetry_collector:

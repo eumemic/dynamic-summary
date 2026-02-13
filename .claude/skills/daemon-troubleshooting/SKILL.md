@@ -49,14 +49,18 @@ Look for:
 
 ### Clear Stale Indexer Lease
 
-If daemon won't start with "Failed to acquire indexer lease after 90s":
+If daemon won't start with "Failed to acquire indexer lease after 90s", a previous server left a non-expired lease in the database. The database location depends on mode:
+
+- **Dev mode** (`python -m ragzoom.cli`): `data/sqlite.db` in the worktree/project directory
+- **Production mode** (`ragzoom`): Configured database (check `OperationalConfig.database_url`)
 
 ```bash
-# Clear leases without full nuclear reset
+# Clear leases — use the correct DB path for your mode
 sqlite3 data/sqlite.db "DELETE FROM indexer_leases;"
 
 # Then start normally
-ragzoom server start --daemon --config ~/.local/state/ragzoom/daemon.config.json
+python -m ragzoom.cli server start  # dev
+ragzoom server start --daemon --config ~/.local/state/ragzoom/daemon.config.json  # prod
 ```
 
 This is faster than a nuclear reset when only the lease is stale (no process/state file issues).

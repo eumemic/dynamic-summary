@@ -335,6 +335,14 @@ class DocumentStatusView:
     time_end: str | None = None
 
 
+@dataclass
+class SearchResultView:
+    """Result from the agentic search endpoint."""
+
+    answer: str
+    session_id: str | None = None
+
+
 class GrpcRagzoomClient:
     """Synchronous convenience wrapper for the RagZoom gRPC services."""
 
@@ -369,6 +377,9 @@ class GrpcRagzoomClient:
         )
         self._session: pb2_grpc.SessionIngestionServiceStub = (
             pb2_grpc.SessionIngestionServiceStub(self._channel)
+        )
+        self._search: pb2_grpc.SearchServiceStub = pb2_grpc.SearchServiceStub(
+            self._channel
         )
 
     def __enter__(self) -> GrpcRagzoomClient:
@@ -1100,3 +1111,41 @@ class GrpcRagzoomClient:
                 )
             )
         return stats_list
+
+    def search(
+        self,
+        *,
+        question: str,
+        document_id: str = "",
+        session_id: str | None = None,
+        time_start: str | None = None,
+        time_end: str | None = None,
+    ) -> SearchResultView:
+        """Run agentic search: question in, answer out.
+
+        Args:
+            question: The question to answer.
+            document_id: Document to search within (not needed for continuations).
+            session_id: Continue an existing search session.
+            time_start: ISO 8601 lower bound for search.
+            time_end: ISO 8601 upper bound for search.
+
+        Returns:
+            SearchResultView with the answer and session_id for follow-ups.
+        """
+        request = pb2.SearchRequest(question=question, document_id=document_id)
+        if session_id is not None:
+            request.session_id = session_id
+        if time_start is not None:
+            request.time_start = time_start
+        if time_end is not None:
+            request.time_end = time_end
+        try:
+            response = self._search.Search(request, timeout=self._stream_timeout)
+        except grpc.RpcError as error:  # pragma: no cover
+            raise _map_rpc_error(error) from error
+
+        return SearchResultView(
+            answer=response.answer,
+            session_id=response.session_id if response.HasField("session_id") else None,
+        )

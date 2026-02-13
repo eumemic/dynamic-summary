@@ -7,6 +7,7 @@ similarity search. BM25 excels at finding exact term matches like names,
 IDs, error codes, and technical jargon that embeddings may miss.
 """
 
+import re
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
@@ -44,8 +45,9 @@ def _get_bm25_scores(bm25: object, tokens: list[str]) -> list[float]:
 class BM25Index:
     """In-memory BM25 index for a document's nodes.
 
-    Builds a BM25Okapi index from node text using simple whitespace tokenization.
-    Supports search queries returning ranked (node_id, score) pairs.
+    Builds a BM25Okapi index from node text using word-boundary tokenization
+    (punctuation stripped). Supports search queries returning ranked
+    (node_id, score) pairs.
 
     Example:
         >>> nodes = {"n1": node1, "n2": node2}
@@ -99,15 +101,18 @@ class BM25Index:
         return ranked[:top_k]
 
     def _tokenize(self, text: str) -> list[str]:
-        """Tokenize text using simple whitespace + lowercase.
+        """Tokenize text into lowercase word tokens, stripping punctuation.
+
+        Uses \\w+ regex to extract word characters, so punctuation-attached
+        words like ``"Prius."`` and ``"Prius"`` produce the same token.
 
         Args:
             text: Text to tokenize.
 
         Returns:
-            List of lowercase tokens split on whitespace.
+            List of lowercase word tokens.
         """
-        return text.lower().split()
+        return re.findall(r"\w+", text.lower())
 
 
 class BM25IndexCache:

@@ -12,17 +12,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Protocol, TypeVar, cast
 
 import grpc
-from openai import OpenAI
 
 from ragzoom.assemble import Assembler
 from ragzoom.document_store import DocumentStore
 from ragzoom.progress_display import DocumentProgressTotals, WorkerProgressDisplay
-from ragzoom.retrieval.budget_planner import BudgetPlanner
-from ragzoom.retrieval.embedding_service import EmbeddingService
-from ragzoom.retrieve import Retriever
 from ragzoom.rpc import dynamic_summary_pb2 as pb2
 from ragzoom.rpc import dynamic_summary_pb2_grpc as pb2_grpc
 from ragzoom.server.indexing_engine import IndexingEngine, IndexingStatus
+from ragzoom.server.query_executor import build_retriever, build_server_query_executor
 from ragzoom.server.state import ServerState
 from ragzoom.services.indexing_service import IndexingResult
 from ragzoom.telemetry_embeddings import annotate_telemetry_fidelity
@@ -32,7 +29,6 @@ from ragzoom.telemetry_export import (
 )
 from ragzoom.tree_viz import build_ascii_tree
 from ragzoom.validate import validate_tiling
-from ragzoom.vector_factory import create_vector_index
 
 if TYPE_CHECKING:
     from typing import Protocol
@@ -255,45 +251,6 @@ def _retrieval_to_proto(retrieval_result: Retrievable) -> pb2.RetrieveResponse:
         coverage_map=dict(retrieval_result.coverage_map or {}),
         nodes=nodes,
     )
-
-
-def _build_retriever(
-    state: ServerState,
-    *,
-    document_id: str,
-    embedding_model: str | None = None,
-) -> tuple[Retriever, DocumentStore]:
-    resolved_embedding = embedding_model or state.query_config.embedding_model
-    document_store = state.store.for_document(document_id)
-    client = OpenAI(
-        api_key=state.operational_config.openai_api_key.get_secret_value(),
-        timeout=state.operational_config.openai_timeout,
-    )
-    embedding_service = EmbeddingService(client, document_store, resolved_embedding)
-    # For retrieval operations, use target_embedding_tokens as fallback
-    # when target_chunk_tokens is None (client-managed chunking mode)
-    chunk_tokens = (
-        state.index_config.target_chunk_tokens
-        if state.index_config.target_chunk_tokens is not None
-        else state.index_config.target_embedding_tokens
-    )
-    budget_planner = BudgetPlanner(document_store, chunk_tokens)
-    vector_index = create_vector_index(
-        state.operational_config.vector_backend,
-        state.operational_config.database_url,
-        resolved_embedding,
-    )
-    query_config = state.query_config
-    if resolved_embedding != state.query_config.embedding_model:
-        query_config = query_config.replace(embedding_model=resolved_embedding)
-    retriever = Retriever(
-        query_config,
-        document_store,
-        embedding_service,
-        budget_planner,
-        vector_index,
-    )
-    return retriever, document_store
 
 
 class Retrievable:
@@ -599,7 +556,7 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
         doc_id = request.document_id
         budget = request.budget_tokens or self._state.query_config.budget_tokens
 
-        retriever, document_store = _build_retriever(self._state, document_id=doc_id)
+        retriever, document_store = build_retriever(self._state, document_id=doc_id)
 
         retrieval_result = await retriever.retrieve_async(
             request.query,
@@ -636,7 +593,7 @@ class RetrievalServicer(pb2_grpc.RetrievalServiceServicer):
             request.embedding_model or self._state.query_config.embedding_model
         )
 
-        retriever, document_store = _build_retriever(
+        retriever, document_store = build_retriever(
             self._state,
             document_id=request.document_id,
             embedding_model=embedding_model,
@@ -831,7 +788,7 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         request: pb2.RunWorkersRequest,
         context: ServicerContextProto,
     ) -> AsyncIterator[pb2.RunWorkersResponse]:
-        mode = request.mode
+        mode: int = request.mode
         if mode == _UNSPECIFIED_WORKER_MODE:
             mode = _UNTIL_IDLE_WORKER_MODE
         if mode not in {_UNTIL_IDLE_WORKER_MODE, _CONTINUOUS_WORKER_MODE}:
@@ -1315,6 +1272,91 @@ class WorkerServicer(pb2_grpc.WorkerServiceServicer):
         return pb2.GetCostStatsResponse(documents=cost_stats_list)
 
 
+class SearchServicer(pb2_grpc.SearchServiceServicer):
+    def __init__(self, state: ServerState) -> None:
+        self._state = state
+
+    async def Search(  # noqa: N802
+        self,
+        request: pb2.SearchRequest,
+        context: ServicerContextProto,
+    ) -> pb2.SearchResponse:
+        if not request.question:
+            await _abort(
+                context,
+                code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="Search requires `question`.",
+            )
+
+        executor = build_server_query_executor(self._state)
+
+        # Route: session continuation vs new search
+        if request.HasField("session_id"):
+            try:
+                result = await self._state.search_agent.search_continue(
+                    request.session_id,
+                    request.question,
+                    executor,
+                )
+            except KeyError:
+                await _abort(
+                    context,
+                    code=grpc.StatusCode.NOT_FOUND,
+                    message=f"Session '{request.session_id}' not found or expired.",
+                )
+        else:
+            if not request.document_id:
+                await _abort(
+                    context,
+                    code=grpc.StatusCode.INVALID_ARGUMENT,
+                    message="Search requires `document_id`.",
+                )
+            time_start = request.time_start if request.HasField("time_start") else None
+            time_end = request.time_end if request.HasField("time_end") else None
+            result = await self._state.search_agent.search(
+                request.question,
+                request.document_id,
+                executor,
+                time_start=time_start,
+                time_end=time_end,
+            )
+
+        profile_proto = None
+        if result.profile is not None:
+            iterations = [
+                pb2.SearchIterationProto(
+                    query=it.query,
+                    budget_tokens=it.budget_tokens,
+                    result_text=it.result_text,
+                    result_token_count=it.result_token_count,
+                    agent_reasoning=it.agent_reasoning,
+                    **({"time_start": it.time_start} if it.time_start else {}),
+                    **({"time_end": it.time_end} if it.time_end else {}),
+                )
+                for it in result.profile.iterations
+            ]
+            profile_proto = pb2.SearchProfileProto(
+                iterations=iterations,
+                total_input_tokens=result.profile.total_input_tokens,
+                total_output_tokens=result.profile.total_output_tokens,
+                duration_seconds=result.profile.duration_seconds,
+                retrospective=result.profile.retrospective,
+                transcript=result.profile.transcript,
+            )
+            if result.profile.total_cost_usd is not None:
+                profile_proto.total_cost_usd = result.profile.total_cost_usd
+
+        response = pb2.SearchResponse(answer=result.answer)
+        if profile_proto is not None:
+            response = pb2.SearchResponse(
+                answer=result.answer,
+                profile=profile_proto,
+            )
+        if result.session_id is not None:
+            response.session_id = result.session_id
+        return response
+
+
 async def shutdown_gracefully(server: GrpcServerProto) -> None:
     await server.stop(grace=None)
     await server.wait_for_termination()
@@ -1341,6 +1383,7 @@ async def serve(
     pb2_grpc.add_IndexerServiceServicer_to_server(IndexerServicer(state), server)
     pb2_grpc.add_RetrievalServiceServicer_to_server(RetrievalServicer(state), server)
     pb2_grpc.add_WorkerServiceServicer_to_server(WorkerServicer(state), server)
+    pb2_grpc.add_SearchServiceServicer_to_server(SearchServicer(state), server)
 
     listen_addr = f"{host}:{port}"
     server.add_insecure_port(listen_addr)

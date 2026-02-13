@@ -253,6 +253,38 @@ class TestBM25Index:
         # node1 matches both "hello" and "goodbye", should rank highest
         assert results[0][0] == "node1"
 
+    def test_tokenization_strips_punctuation(self) -> None:
+        """Test that tokenization strips punctuation so terms match regardless.
+
+        In conversation transcripts, words like "Prius.", "Prius,", and "Prius"
+        must all match the same token. Without punctuation stripping, BM25 treats
+        these as different tokens, silently degrading keyword recall.
+        """
+        # Corpus has punctuation-attached words (common in transcripts)
+        nodes = {
+            "node1": MockNode(id="node1", text="I drove my Prius. It was great!"),
+            "node2": MockNode(id="node2", text="The bus was late, as usual"),
+            "node3": MockNode(id="node3", text="Trains are reliable and fast"),
+            "node4": MockNode(id="node4", text="Cycling is good exercise too"),
+        }
+
+        index = BM25Index(nodes)
+
+        # Query without punctuation should still match "Prius." in node1
+        results = index.search("Prius", top_k=4)
+        assert results[0][0] == "node1"
+        assert results[0][1] > 0
+
+        # Query with punctuation should also match
+        results_punct = index.search("Prius.", top_k=4)
+        assert results_punct[0][0] == "node1"
+        assert results_punct[0][1] > 0
+
+        # "great" should match "great!" in node1
+        results_excl = index.search("great", top_k=4)
+        assert results_excl[0][0] == "node1"
+        assert results_excl[0][1] > 0
+
     def test_term_frequency_affects_score(self) -> None:
         """Test that term frequency affects BM25 score.
 

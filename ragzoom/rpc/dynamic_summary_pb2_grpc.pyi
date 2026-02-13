@@ -36,6 +36,8 @@ from .dynamic_summary_pb2 import (
     RetrieveResponse,
     RunWorkersRequest,
     RunWorkersResponse,
+    SearchRequest,
+    SearchResponse,
     TruncateDocumentRequest,
     TruncateDocumentResponse,
     TruncateFromTimeRequest,
@@ -183,6 +185,17 @@ class SessionIngestionServiceServicer:
         self, request: ResetSessionCursorRequest, context: ServicerContext
     ) -> Awaitable[ResetSessionCursorResponse]: ...
 
+class SearchServiceStub:
+    def __init__(self, channel: Channel) -> None: ...
+    def Search(
+        self, request: SearchRequest, timeout: float | None = ...
+    ) -> SearchResponse: ...
+
+class SearchServiceServicer:
+    def Search(
+        self, request: SearchRequest, context: ServicerContext
+    ) -> Awaitable[SearchResponse]: ...
+
 add_IndexerServiceServicer_to_server: Callable[[IndexerServiceServicer, Server], None]
 add_RetrievalServiceServicer_to_server: Callable[
     [RetrievalServiceServicer, Server], None
@@ -191,3 +204,4 @@ add_WorkerServiceServicer_to_server: Callable[[WorkerServiceServicer, Server], N
 add_SessionIngestionServiceServicer_to_server: Callable[
     [SessionIngestionServiceServicer, Server], None
 ]
+add_SearchServiceServicer_to_server: Callable[[SearchServiceServicer, Server], None]

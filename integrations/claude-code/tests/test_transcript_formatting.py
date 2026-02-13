@@ -616,9 +616,9 @@ class TestToolUsageBatching:
         _, units = client.batch_append_calls[0]
         text = " ".join(u.text for u in units)
 
-        # Should show tool with argument summary (JSON format for complex args)
-        assert 'Bash({"command":' in text or "Bash(python -m ragzoom" in text
-        assert 'Read({"file_path":' in text or "Read(ragzoom/db_utils.py)" in text
+        # Should show tool with argument summary (key=value format)
+        assert 'Bash(\n    command="python -m ragzoom.cli query --debug"' in text
+        assert 'Read(\n    file_path="ragzoom/db_utils.py"' in text
 
     def test_single_tool_use_not_batched(self, tmp_path: Path) -> None:
         """Each message is its own step."""

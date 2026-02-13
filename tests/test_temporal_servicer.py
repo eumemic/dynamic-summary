@@ -331,7 +331,7 @@ class TestServicerQueryExtractsTimeWindow:
         ) -> tuple[MagicMock, Mock]:
             return mock_retriever, Mock()
 
-        monkeypatch.setattr(servicers, "_build_retriever", patched_build_retriever)
+        monkeypatch.setattr(servicers, "build_retriever", patched_build_retriever)
         return servicers.RetrievalServicer(mock_state)
 
     @pytest.mark.asyncio

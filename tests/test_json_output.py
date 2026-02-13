@@ -23,6 +23,7 @@ from ragzoom.output_formatters import (
     build_json_error,
     build_json_error_from_exception,
     build_json_output,
+    format_tiling_spans,
 )
 from ragzoom.services.query_service import QueryResult
 
@@ -367,3 +368,239 @@ class TestBuildJsonError:
 
         assert result["code"] == "INTERNAL_ERROR"
         assert "unexpected error" in result["error"]
+
+
+class TestFormatTilingSpans:
+    """Tests for format_tiling_spans function."""
+
+    def test_empty_tiling_returns_fallback(self) -> None:
+        """Empty tiling produces a human-readable fallback message."""
+        response = _make_response(tiling_ids=[], nodes={})
+        result = format_tiling_spans(response)
+        assert result == "No results found for this query."
+
+    def test_verbatim_node_no_span_wrapper(self) -> None:
+        """Height=0 nodes appear as plain text without Span tags."""
+        node = _make_node(
+            "leaf",
+            text="Hello, world!",
+            height=0,
+            time_start="2024-01-01T10:00:00Z",
+            time_end="2024-01-01T10:00:00Z",
+        )
+        response = _make_response(
+            tiling_ids=["leaf"],
+            nodes={"leaf": node},
+        )
+        result = format_tiling_spans(response)
+        assert "Hello, world!" in result
+        assert "<Span" not in result
+
+    def test_summary_node_wrapped_in_span(self) -> None:
+        """Height>0 nodes are wrapped in Span tags with time attributes."""
+        node = _make_node(
+            "summary",
+            text="Discussion about authentication.",
+            height=2,
+            time_start="2024-01-01T09:00:00Z",
+            time_end="2024-01-01T12:00:00Z",
+        )
+        response = _make_response(
+            tiling_ids=["summary"],
+            nodes={"summary": node},
+        )
+        result = format_tiling_spans(response)
+        assert '<Span time_start="2024-01-01T09:00:00Z"' in result
+        assert 'time_end="2024-01-01T12:00:00Z"' in result
+        assert "height=2" in result
+        assert "Discussion about authentication." in result
+        assert "</Span>" in result
+
+    def test_explanation_header_present(self) -> None:
+        """Output includes an Explanation header describing the format."""
+        node = _make_node(
+            "n1",
+            text="Content",
+            height=0,
+            time_start="2024-01-01T10:00:00Z",
+            time_end="2024-01-01T10:05:00Z",
+        )
+        response = _make_response(
+            tiling_ids=["n1"],
+            nodes={"n1": node},
+        )
+        result = format_tiling_spans(response)
+        assert "<Explanation>" in result
+        assert "</Explanation>" in result
+        assert "variable-resolution summary" in result
+
+    def test_zoom_hint_when_summaries_present(self) -> None:
+        """Explanation includes zoom hint when max_height > 0."""
+        node = _make_node(
+            "s1",
+            text="Summary",
+            height=1,
+            time_start="2024-01-01T09:00:00Z",
+            time_end="2024-01-01T12:00:00Z",
+        )
+        response = _make_response(
+            tiling_ids=["s1"],
+            nodes={"s1": node},
+        )
+        result = format_tiling_spans(response)
+        assert "zoom in" in result.lower() or "time_start/time_end" in result
+
+    def test_no_zoom_hint_when_all_verbatim(self) -> None:
+        """Explanation omits zoom hint when all nodes are height=0."""
+        node = _make_node(
+            "leaf",
+            text="Verbatim",
+            height=0,
+            time_start="2024-01-01T10:00:00Z",
+            time_end="2024-01-01T10:00:00Z",
+        )
+        response = _make_response(
+            tiling_ids=["leaf"],
+            nodes={"leaf": node},
+        )
+        result = format_tiling_spans(response)
+        assert "To zoom in" not in result
+
+    def test_mixed_heights_ordered(self) -> None:
+        """Mixed verbatim + summary nodes preserve tiling order."""
+        summary = _make_node(
+            "s1",
+            text="Summary of morning.",
+            height=2,
+            time_start="2024-01-01T09:00:00Z",
+            time_end="2024-01-01T12:00:00Z",
+        )
+        leaf = _make_node(
+            "leaf1",
+            text="Exact message.",
+            height=0,
+            time_start="2024-01-01T12:00:00Z",
+            time_end="2024-01-01T12:00:00Z",
+        )
+        response = _make_response(
+            tiling_ids=["s1", "leaf1"],
+            nodes={"s1": summary, "leaf1": leaf},
+        )
+        result = format_tiling_spans(response)
+        # Summary comes before leaf in output
+        assert result.index("Summary of morning.") < result.index("Exact message.")
+
+    def test_skips_empty_text_nodes(self) -> None:
+        """Nodes with empty text are skipped."""
+        empty = _make_node("empty", text="", height=0)
+        good = _make_node(
+            "good",
+            text="Real content",
+            height=0,
+            time_start="2024-01-01T10:00:00Z",
+            time_end="2024-01-01T10:00:00Z",
+        )
+        response = _make_response(
+            tiling_ids=["empty", "good"],
+            nodes={"empty": empty, "good": good},
+        )
+        result = format_tiling_spans(response)
+        assert "Real content" in result
+
+    def test_non_temporal_summary_has_span_offsets(self) -> None:
+        """Non-temporal summary nodes use span_start/span_end instead of time."""
+        node = _make_node(
+            "s1", text="Chapter overview.", height=2, span_start=0, span_end=5000
+        )
+        response = _make_response(
+            tiling_ids=["s1"],
+            nodes={"s1": node},
+        )
+        result = format_tiling_spans(response)
+        assert "span_start=0" in result
+        assert "span_end=5000" in result
+        assert "height=2" in result
+        assert "time_start" not in result
+        assert "time_end" not in result
+
+    def test_non_temporal_explanation_shows_character_range(self) -> None:
+        """Non-temporal explanation shows character range, not time range."""
+        node = _make_node(
+            "s1", text="Summary text.", height=1, span_start=0, span_end=12000
+        )
+        response = _make_response(
+            tiling_ids=["s1"],
+            nodes={"s1": node},
+        )
+        result = format_tiling_spans(response)
+        assert "characters" in result
+        assert "time_start/time_end" not in result
+        assert "token_budget" in result
+
+    def test_non_temporal_verbatim_no_wrapper(self) -> None:
+        """Non-temporal height=0 nodes appear as plain text."""
+        node = _make_node("leaf", text="Raw paragraph.", height=0)
+        response = _make_response(
+            tiling_ids=["leaf"],
+            nodes={"leaf": node},
+        )
+        result = format_tiling_spans(response)
+        assert "Raw paragraph." in result
+        assert "<Span" not in result
+
+    def test_temporal_span_includes_token_estimates(self) -> None:
+        """Temporal height>0 Span tags include tokens and verbatim_tokens."""
+        node = _make_node(
+            "s1",
+            text="Morning discussion.",
+            height=3,
+            token_count=200,
+            time_start="2024-01-01T09:00:00Z",
+            time_end="2024-01-01T12:00:00Z",
+        )
+        response = _make_response(
+            tiling_ids=["s1"],
+            nodes={"s1": node},
+        )
+        result = format_tiling_spans(response)
+        assert "tokens=200" in result
+        # 200 * 2^3 = 1600
+        assert "verbatim_tokens=1600" in result
+
+    def test_non_temporal_span_includes_token_estimates(self) -> None:
+        """Non-temporal height>0 Span tags include tokens and verbatim_tokens."""
+        node = _make_node(
+            "s1",
+            text="Chapter overview.",
+            height=2,
+            token_count=100,
+            span_start=0,
+            span_end=5000,
+        )
+        response = _make_response(
+            tiling_ids=["s1"],
+            nodes={"s1": node},
+        )
+        result = format_tiling_spans(response)
+        assert "tokens=100" in result
+        # 100 * 2^2 = 400
+        assert "verbatim_tokens=400" in result
+
+    def test_height_1_verbatim_tokens_is_double(self) -> None:
+        """Height=1 node has verbatim_tokens = tokens * 2."""
+        node = _make_node(
+            "s1",
+            text="Brief summary.",
+            height=1,
+            token_count=50,
+            time_start="2024-01-01T10:00:00Z",
+            time_end="2024-01-01T11:00:00Z",
+        )
+        response = _make_response(
+            tiling_ids=["s1"],
+            nodes={"s1": node},
+        )
+        result = format_tiling_spans(response)
+        assert "tokens=50" in result
+        # 50 * 2^1 = 100
+        assert "verbatim_tokens=100" in result

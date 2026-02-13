@@ -397,3 +397,45 @@ service SessionIngestionService {
   rpc GetCompactionBoundary(GetCompactionBoundaryRequest) returns (GetCompactionBoundaryResponse);
   rpc ResetSessionCursor(ResetSessionCursorRequest) returns (ResetSessionCursorResponse);
 }
+
+// Agentic search: question in, answer out.
+// The server runs an internal LLM agent that iteratively zooms into
+// the conversation memory to find the answer.
+
+message SearchRequest {
+  string question = 1;
+  string document_id = 2;
+  optional string session_id = 3;  // Continue an existing search session
+  optional string time_start = 4;  // ISO 8601 lower bound for search
+  optional string time_end = 5;    // ISO 8601 upper bound for search
+}
+
+message SearchIterationProto {
+  string query = 1;
+  int32 budget_tokens = 2;
+  optional string time_start = 3;
+  optional string time_end = 4;
+  string result_text = 5;
+  int32 result_token_count = 6;
+  string agent_reasoning = 7;
+}
+
+message SearchProfileProto {
+  repeated SearchIterationProto iterations = 1;
+  int32 total_input_tokens = 2;
+  int32 total_output_tokens = 3;
+  optional double total_cost_usd = 4;
+  double duration_seconds = 5;
+  string retrospective = 6;
+  string transcript = 7;
+}
+
+message SearchResponse {
+  string answer = 1;
+  optional SearchProfileProto profile = 2;
+  optional string session_id = 3;  // Session ID for follow-up questions
+}
+
+service SearchService {
+  rpc Search(SearchRequest) returns (SearchResponse);
+}

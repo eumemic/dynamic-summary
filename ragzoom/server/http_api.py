@@ -197,6 +197,39 @@ async def _execute_recall(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class SearchHttpRequest(BaseModel, frozen=True):  # type: ignore[explicit-any]
+    """Request body for search endpoint."""
+
+    question: str
+    document_id: str
+
+
+class SearchHttpResponse(BaseModel, frozen=True):  # type: ignore[explicit-any]
+    """Response from search endpoint."""
+
+    answer: str
+
+
+@app.post("/search", response_model=SearchHttpResponse)
+async def search_post(request: SearchHttpRequest) -> SearchHttpResponse:
+    """Execute an agentic search: question in, answer out."""
+    global _state
+    if _state is None:
+        raise HTTPException(status_code=500, detail="Server state not initialized")
+
+    try:
+        from ragzoom.server.query_executor import build_server_query_executor
+
+        executor = build_server_query_executor(_state)
+        result = await _state.search_agent.search(
+            request.question, request.document_id, executor
+        )
+        return SearchHttpResponse(answer=result.answer)
+    except Exception as e:
+        logger.exception("Search failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 class UvicornServer:
     """Wrapper to run uvicorn in the background."""
 
