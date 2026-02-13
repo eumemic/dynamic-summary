@@ -11,6 +11,7 @@ def execute_search(
     time_start: str | None = None,
     time_end: str | None = None,
     server_address: str = "localhost:50051",
+    search_guidance: str | None = None,
 ) -> SearchResultView:
     """Execute an agentic search against RagZoom.
 
@@ -23,6 +24,8 @@ def execute_search(
         time_start: ISO 8601 lower bound for search (optional).
         time_end: ISO 8601 upper bound for search (optional).
         server_address: RagZoom gRPC server address.
+        search_guidance: Additional guidance appended to the search agent
+            system prompt (e.g. persona instructions).
 
     Returns:
         SearchResultView with the answer.
@@ -33,6 +36,7 @@ def execute_search(
             document_id=document_id,
             time_start=time_start,
             time_end=time_end,
+            search_guidance=search_guidance,
         )
 
 

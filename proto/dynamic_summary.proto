@@ -408,6 +408,7 @@ message SearchRequest {
   optional string session_id = 3;  // Continue an existing search session
   optional string time_start = 4;  // ISO 8601 lower bound for search
   optional string time_end = 5;    // ISO 8601 upper bound for search
+  optional string search_guidance = 6;  // Additional guidance appended to search agent system prompt
 }
 
 message SearchIterationProto {

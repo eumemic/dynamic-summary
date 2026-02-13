@@ -1289,6 +1289,9 @@ class SearchServicer(pb2_grpc.SearchServiceServicer):
             )
 
         executor = build_server_query_executor(self._state)
+        search_guidance = (
+            request.search_guidance if request.HasField("search_guidance") else None
+        )
 
         # Route: session continuation vs new search
         if request.HasField("session_id"):
@@ -1297,6 +1300,7 @@ class SearchServicer(pb2_grpc.SearchServiceServicer):
                     request.session_id,
                     request.question,
                     executor,
+                    search_guidance=search_guidance,
                 )
             except KeyError:
                 await _abort(
@@ -1319,6 +1323,7 @@ class SearchServicer(pb2_grpc.SearchServiceServicer):
                 executor,
                 time_start=time_start,
                 time_end=time_end,
+                search_guidance=search_guidance,
             )
 
         profile_proto = None
