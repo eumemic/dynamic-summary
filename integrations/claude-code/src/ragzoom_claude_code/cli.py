@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import click
 
-from ragzoom_claude_code.recall import (
-    execute_recall,
-    format_for_cli,
-)
+from ragzoom_claude_code.recall import execute_search
 from ragzoom_claude_code.transcript_sync import execute_sync
 
 
@@ -162,34 +158,14 @@ def mcp_server_cmd() -> None:
     mcp.run(transport="stdio")
 
 
-@cli.command("recall")
-@click.argument("query", default="")
+@cli.command("search")
+@click.argument("question")
 @click.option(
     "--document-id",
     "-d",
     envvar="RAGZOOM_DOCUMENT_ID",
     required=True,
-    help="Document ID to query (required)",
-)
-@click.option(
-    "--token-budget",
-    "-t",
-    type=int,
-    default=2000,
-    show_default=True,
-    help="Max tokens for returned context",
-)
-@click.option(
-    "--time-start",
-    type=str,
-    default=None,
-    help="ISO timestamp to start from (e.g., '2024-01-15T10:00:00')",
-)
-@click.option(
-    "--time-end",
-    type=str,
-    default=None,
-    help="ISO timestamp to end at (e.g., '2024-01-15T18:00:00')",
+    help="Document ID to search (required)",
 )
 @click.option(
     "--server-address",
@@ -200,61 +176,41 @@ def mcp_server_cmd() -> None:
     help="RagZoom gRPC server address",
 )
 @click.option(
-    "--json",
-    "json_output",
-    is_flag=True,
-    help="Output as JSON instead of human-readable format",
+    "--time-start",
+    default=None,
+    help="ISO 8601 lower bound (e.g. 2024-01-15T10:00:00)",
 )
-def recall_cmd(
-    query: str,
+@click.option(
+    "--time-end",
+    default=None,
+    help="ISO 8601 upper bound (e.g. 2024-01-15T18:00:00)",
+)
+def search_cmd(
+    question: str,
     document_id: str,
-    token_budget: int,
+    server_address: str,
     time_start: str | None,
     time_end: str | None,
-    server_address: str,
-    json_output: bool,
 ) -> None:
-    """Search conversation history.
+    """Agentic search: question in, answer out.
 
-    Query RagZoom's hierarchical summarization to recall context from
-    earlier in a conversation. Uses semantic search with token-budget
-    controlled detail level.
-
-    Document ID priority:
-      1. --document-id CLI flag
-      2. RAGZOOM_DOCUMENT_ID environment variable
+    The server-side search agent iteratively zooms into the document
+    to find the best answer. Use --time-start/--time-end to constrain
+    the search to a specific time window.
 
     Example:
-      ragzoom-claude-code recall "authentication bug" -d session-id
-      ragzoom-claude-code recall "OAuth" -d my-session --token-budget 5000
-      ragzoom-claude-code recall "" -d session --time-start 2024-01-15T10:00:00
+      ragzoom-claude-code search "What was the auth bug?" -d session-id
+      ragzoom-claude-code search "details" -d sid --time-start 2024-01-15T10:00:00
     """
     try:
-        result = execute_recall(
-            query=query,
+        result = execute_search(
+            question=question,
             document_id=document_id,
-            token_budget=token_budget,
             time_start=time_start,
             time_end=time_end,
             server_address=server_address,
         )
-
-        if json_output:
-            output = {
-                "nodes": [
-                    {
-                        "text": node.text,
-                        "time_start": node.time_start,
-                        "time_end": node.time_end,
-                        "height": node.height,
-                    }
-                    for node in result.nodes
-                ]
-            }
-            click.echo(json.dumps(output, indent=2))
-        else:
-            click.echo(format_for_cli(result))
-
+        click.echo(result.answer)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1) from e

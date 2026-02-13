@@ -890,15 +890,21 @@ async def grpc_test_environment(
         completions = _AsyncStubCompletions()
 
     class _AsyncStubClient:
-        embeddings = _AsyncStubEmbeddings()
-        chat = _AsyncStubChat()
+        def __init__(self, **_: object) -> None:
+            self.embeddings = _AsyncStubEmbeddings()
+            self.chat = _AsyncStubChat()
 
     def _stub_build_test_openai_client(_model_id: str) -> object:
         return _AsyncStubClient()
 
     monkeypatch.setattr("openai.OpenAI", _StubOpenAI, raising=False)
-    monkeypatch.setattr("ragzoom.server.servicers.OpenAI", _StubOpenAI, raising=False)
+    monkeypatch.setattr(
+        "ragzoom.server.query_executor.OpenAI", _StubOpenAI, raising=False
+    )
     monkeypatch.setattr("ragzoom.server.state.OpenAI", _StubOpenAI, raising=False)
+    monkeypatch.setattr(
+        "ragzoom.server.state.AsyncOpenAI", _AsyncStubClient, raising=False
+    )
     monkeypatch.setattr(
         "ragzoom.retrieval.embedding_service.OpenAI", _StubOpenAI, raising=False
     )

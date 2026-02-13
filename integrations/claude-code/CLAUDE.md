@@ -8,14 +8,15 @@ This package provides Claude Code with access to pre-compaction conversation his
 |--------|---------|
 | `jsonl_reader.py` | Streaming JSONL parser with forward/reverse iteration |
 | `transcript_sync.py` | Stateless revert-aware sync using RagZoom document status |
+| `recall.py` | Shared agentic search logic for CLI and MCP server |
 | `mcp_server.py` | MCP `recall` tool for querying historical context |
-| `cli.py` | Command-line interface for sync operations |
+| `cli.py` | Command-line interface for sync and search operations |
 
 ## Key Concepts
 
 ### Step-Level Granularity
 
-A "step" is any user or assistant message (excluding meta records, compaction summaries, and queue operations). Each step becomes its own leaf node with `time_start = time_end = record.timestamp`. This enables precise temporal queries - the `recall` tool can zoom to specific messages rather than being limited to coarser conversation chunks.
+A "step" is any user or assistant message (excluding meta records, compaction summaries, and queue operations). Each step becomes its own leaf node with `time_start = time_end = record.timestamp`. This enables precise temporal retrieval - the agentic search can locate specific messages rather than being limited to coarser conversation chunks.
 
 ### Revert Detection
 
@@ -29,10 +30,10 @@ With step-level tracking, every record is a valid truncation point - no special 
 
 ### MCP Server
 
-The MCP server exposes a `recall` tool that Claude Code can use to query pre-compaction history:
+The MCP server exposes a `recall` tool that Claude Code can use to query pre-compaction history. It uses server-side agentic search — question in, answer out:
 
 ```python
-recall(query="authentication bug", token_budget=2000)
+recall(query="authentication bug")
 ```
 
 The server finds its session by reading a PID temp file written by the SessionStart hook.

@@ -19,6 +19,7 @@ from ragzoom.config import (
 from ragzoom.constants import DEFAULT_GRPC_HOST, DEFAULT_GRPC_PORT
 from ragzoom.contracts.storage_backend import StorageBackend
 from ragzoom.daemon import write_port_file
+from ragzoom.search.config import SearchConfig
 from ragzoom.server.lease import LeaseConfig
 from ragzoom.server.servicers import serve
 from ragzoom.server.state import ServerState
@@ -47,6 +48,11 @@ class ServerOptions:
     preceding_context_inner_verbatim_tokens: int | None = None
     preceding_context_inner_min_forest_completeness: float | None = None
     preceding_context_inner_token_cap: int | None = None
+    # Agentic search configuration
+    search_agent_model: str | None = None
+    search_max_iterations: int | None = None
+    search_max_budget: int | None = None
+    search_profiling: bool = False
 
 
 def _apply_config_overrides(
@@ -138,6 +144,13 @@ def build_state(
         if env_parallelism is not None:
             max_parallelism = int(env_parallelism)
 
+    search_config = SearchConfig(
+        agent_model=options.search_agent_model or SearchConfig.agent_model,
+        max_iterations=options.search_max_iterations or SearchConfig.max_iterations,
+        max_token_budget=options.search_max_budget or SearchConfig.max_token_budget,
+        profiling_enabled=options.search_profiling,
+    )
+
     return ServerState.create(
         index_config=index_cfg,
         query_config=query_cfg,
@@ -148,6 +161,7 @@ def build_state(
         ),
         max_parallelism=max_parallelism,
         store=store,
+        search_config=search_config,
     )
 
 

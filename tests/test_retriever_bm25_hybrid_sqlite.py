@@ -369,6 +369,87 @@ class TestHybridRetrieval:
         # No seeds should be selected
         assert result.seed_count == 0
 
+    def _upsert_all_node_vectors(self, retriever: "Retriever") -> None:
+        """Upsert vectors for all test nodes into the vector index.
+
+        In production, all nodes have embeddings in the vector index from
+        ingestion. This mirrors that state so get_vectors() works for any
+        node, not just those returned by search_similar().
+        """
+        span_starts = {"L1": 0, "L2": 50, "L3": 100, "L4": 150, "L5": 200}
+        span_ends = {"L1": 50, "L2": 100, "L3": 150, "L4": 200, "L5": 250}
+        items: list[
+            tuple[str, list[float] | NDArray[np.float64], dict[str, object]]
+        ] = []
+        for node_id in ["L1", "L2", "L3", "L4", "L5"]:
+            vec: list[float] | NDArray[np.float64] = [0.1] * 1536
+            meta: dict[str, object] = {
+                "document_id": "test-doc",
+                "span_start": span_starts[node_id],
+                "span_end": span_ends[node_id],
+                "parent_id": "root",
+                "is_leaf": 1,
+            }
+            items.append((node_id, vec, meta))
+        retriever.vector_index.upsert(items)
+
+    def test_bm25_only_hits_included_in_candidates(
+        self,
+        setup_hybrid_tree: tuple[IndexConfig, DocumentStore, "Retriever"],
+        sqlite_backend: SQLiteStorageBackend,
+    ) -> None:
+        """Test that BM25-only hits are fetched and enter the MMR candidate pool.
+
+        This is the key value proposition of hybrid search: BM25 finds exact
+        keyword matches that vector search misses. The retriever fetches
+        vectors for BM25-only hits via ``get_vectors`` so they participate
+        in MMR selection alongside vector search results.
+
+        We set up vector search to return only L2,L3,L4 (excluding L1),
+        then query for "E1234" which BM25 matches to L1. We verify L1's
+        vector is fetched via ``get_vectors`` to enter the candidate pool.
+        """
+        _, doc_store, retriever = setup_hybrid_tree
+        self._mock_embedding(retriever)
+
+        # Ensure all nodes have vectors stored (mirrors production ingestion)
+        self._upsert_all_node_vectors(retriever)
+
+        # Vector search deliberately excludes L1 — it only returns L2, L3, L4
+        self._mock_vector_search(retriever, ["L2", "L3", "L4"])
+
+        # Spy on get_vectors to verify BM25-only hits are fetched
+        get_vectors_calls: list[list[str]] = []
+        original_get_vectors = retriever.vector_index.get_vectors
+
+        def tracking_get_vectors(ids: list[str]) -> list[Vector]:
+            get_vectors_calls.append(ids)
+            return original_get_vectors(ids)
+
+        retriever.vector_index.get_vectors = tracking_get_vectors  # type: ignore[method-assign]
+
+        # L1 has "Error code E1234" — BM25 will rank it high for this query,
+        # but vector search didn't return it at all
+        asyncio.run(
+            retriever.retrieve_async(
+                query="E1234",
+                num_seeds=3,
+                budget_tokens=1000,
+                document_id="test-doc",
+                use_bm25=True,
+            )
+        )
+
+        # BM25-only hits must be fetched via get_vectors
+        assert len(get_vectors_calls) == 1, (
+            f"get_vectors should be called once for BM25-only hits, "
+            f"got {len(get_vectors_calls)} calls"
+        )
+        assert "L1" in get_vectors_calls[0], (
+            f"get_vectors should fetch L1 (BM25-only hit), "
+            f"got {get_vectors_calls[0]}"
+        )
+
     def test_hybrid_retrieval_rrf_combines_rankings(
         self,
         setup_hybrid_tree: tuple[IndexConfig, DocumentStore, "Retriever"],

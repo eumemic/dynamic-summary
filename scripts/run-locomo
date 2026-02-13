@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""Run the LoCoMo benchmark against the RagZoom dev server."""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+from pathlib import Path
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="LoCoMo benchmark evaluation for RagZoom"
+    )
+    parser.add_argument(
+        "--data",
+        type=Path,
+        default=None,
+        help="Path to locomo10.json (required unless --rejudge is used)",
+    )
+    # Import here so --help doesn't pay for slow imports, but we need
+    # SearchConfig defaults before parsing.
+    from ragzoom.search.config import SearchConfig
+
+    parser.add_argument(
+        "--search-model",
+        default=SearchConfig.agent_model,
+        help=f"Model for agentic search (default: {SearchConfig.agent_model})",
+    )
+    parser.add_argument(
+        "--judge-model",
+        default="gpt-4.1",
+        help="Model for LLM-as-Judge (default: gpt-4.1, matching Letta Leaderboard)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("locomo_results"),
+        help="Output directory for results (default: locomo_results/)",
+    )
+    parser.add_argument(
+        "--server",
+        default="127.0.0.1:50052",
+        help="RagZoom server address (default: 127.0.0.1:50052, dev server)",
+    )
+    parser.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=10,
+        help="Max concurrent LLM calls (default: 10)",
+    )
+    parser.add_argument(
+        "--skip-ingest",
+        action="store_true",
+        help="Skip ingestion (use if documents are already indexed)",
+    )
+    parser.add_argument(
+        "--sample",
+        type=int,
+        default=None,
+        help="Evaluate a random sample of N questions (reproducible, seed=42)",
+    )
+    parser.add_argument(
+        "--f1-only",
+        action="store_true",
+        help="Skip LLM judge, compute token F1 only (saves judge API costs)",
+    )
+    parser.add_argument(
+        "--rejudge",
+        type=Path,
+        default=None,
+        help="Re-judge answers from a previous results.json (no server needed)",
+    )
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=SearchConfig.max_iterations,
+        help=f"Max recall iterations per question (default: {SearchConfig.max_iterations})",
+    )
+    parser.add_argument(
+        "--max-budget",
+        type=int,
+        default=SearchConfig.max_token_budget,
+        help=f"Max token budget per recall call (default: {SearchConfig.max_token_budget})",
+    )
+    parser.add_argument(
+        "--profiling",
+        action="store_true",
+        help="Enable search profiling (retrospective analysis per question)",
+    )
+    parser.add_argument(
+        "--no-isolated-server",
+        action="store_true",
+        help="Disable the default isolated server and use --server address instead",
+    )
+    parser.add_argument(
+        "--reasoning-level",
+        default=None,
+        help="Reasoning effort level for the search model (e.g. minimal, low, medium, high)",
+    )
+    parser.add_argument(
+        "--docker-cli",
+        action="store_true",
+        help="Run native Claude CLI in a Docker container (no plugins/MCP overhead)",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable verbose logging",
+    )
+    args = parser.parse_args()
+
+    if args.rejudge is None and args.data is None:
+        parser.error("--data is required unless --rejudge is used")
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)-5s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    # Import here to avoid slow imports when just showing --help
+    from ragzoom.evaluation.locomo.report import save_json, save_markdown
+    from ragzoom.evaluation.locomo.runner import (
+        LoCoMoConfig,
+        rejudge,
+        run_benchmark,
+    )
+
+    config = LoCoMoConfig(
+        data_path=args.data or Path("/unused"),
+        server_address=args.server,
+        judge_model=args.judge_model,
+        max_concurrent=args.max_concurrent,
+        output_dir=args.output_dir,
+        skip_ingest=args.skip_ingest,
+        sample_size=args.sample,
+        f1_only=args.f1_only,
+        rejudge_path=args.rejudge,
+        use_isolated_server=not args.no_isolated_server,
+        search_model=args.search_model,
+        max_iterations=args.max_iterations,
+        max_budget=args.max_budget,
+        profiling=args.profiling,
+        use_docker_cli=args.docker_cli,
+        reasoning_level=args.reasoning_level,
+    )
+
+    if config.rejudge_path is not None:
+        report = asyncio.run(rejudge(config))
+    else:
+        report = asyncio.run(run_benchmark(config))
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = args.output_dir / "results.json"
+    md_path = args.output_dir / "report.md"
+
+    save_json(report, json_path)
+    save_markdown(report, md_path)
+
+    print(f"\nResults saved to {json_path} and {md_path}")
+
+    # Print summary to stdout
+    scores = report.scores
+    if scores.overall_accuracy is not None:
+        print(f"\nAccuracy: {scores.overall_accuracy * 100:.1f}%  F1: {scores.overall_f1:.3f}")
+    else:
+        print(f"\nF1: {scores.overall_f1:.3f}")
+
+
+if __name__ == "__main__":
+    main()

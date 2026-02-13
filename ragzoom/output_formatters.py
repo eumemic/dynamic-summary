@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from ragzoom.client.grpc_client import ExecuteQueryOutput
+from ragzoom.client.grpc_client import ExecuteQueryOutput, RetrievalView
 from ragzoom.exceptions import (
     ConfigurationError,
     DatabaseError,
@@ -111,6 +111,107 @@ def build_json_output(
         query=query_text,
         document_id=document_id,
     )
+
+
+def format_tiling_spans(response: ExecuteQueryOutput) -> str:
+    """Format query response as text with temporal Span markers.
+
+    Produces a variable-resolution summary where each tiling node is annotated
+    with its time range and summarization height. Height=0 nodes are verbatim
+    transcript (returned as-is); higher nodes are wrapped in <Span> tags with
+    time_start/time_end attributes so consumers can zoom into specific periods.
+
+    This is the canonical text format for RagZoom query results — used by the
+    MCP recall tool, the benchmarking harness, and the CLI.
+
+    Args:
+        response: The query execution output from gRPC client.
+
+    Returns:
+        Formatted text with Span markers, or a fallback message if the
+        tiling is empty.
+    """
+    return _format_retrieval_spans(response.retrieval)
+
+
+def _format_retrieval_spans(retrieval: RetrievalView) -> str:
+    """Format a RetrievalView's tiling as text with resolution markers."""
+    nodes = []
+    for node_id in retrieval.tiling_ids:
+        node = retrieval.nodes.get(node_id)
+        if node and node.text:
+            nodes.append(node)
+
+    if not nodes:
+        return "No results found for this query."
+
+    is_temporal = any(n.time_start is not None for n in nodes)
+    max_height = max(n.height for n in nodes)
+
+    lines: list[str] = []
+    lines.append("<Explanation>")
+
+    if is_temporal:
+        first_start = nodes[0].time_start or "?"
+        last_end = nodes[-1].time_end or "?"
+        lines.append(
+            "This is a variable-resolution summary covering "
+            f"{first_start} to {last_end}."
+        )
+    else:
+        first_span = nodes[0].span_start
+        last_span = nodes[-1].span_end
+        lines.append(
+            "This is a variable-resolution summary covering "
+            f"characters {first_span:,}–{last_span:,}."
+        )
+
+    lines.append(
+        "Each span's height indicates summarization level: "
+        "height=0 is verbatim text, higher values are "
+        "increasingly compressed."
+    )
+    if max_height > 0:
+        if is_temporal:
+            lines.append(
+                "To zoom in, invoke recall() with time_start/time_end "
+                "to constrain the time range."
+            )
+        else:
+            lines.append(
+                "To get more detail, invoke recall() with a larger " "token_budget."
+            )
+    lines.append("</Explanation>")
+    lines.append("")
+
+    for node in nodes:
+        if node.height == 0:
+            lines.append(node.text)
+            lines.append("")
+        elif is_temporal:
+            start = node.time_start or "?"
+            end = node.time_end or "?"
+            verbatim = node.token_count * (2**node.height)
+            lines.append(
+                f'<Span time_start="{start}" time_end="{end}" '
+                f"height={node.height} "
+                f"tokens={node.token_count} verbatim_tokens={verbatim}>"
+            )
+            lines.append(node.text)
+            lines.append("</Span>")
+            lines.append("")
+        else:
+            verbatim = node.token_count * (2**node.height)
+            lines.append(
+                f"<Span span_start={node.span_start} "
+                f"span_end={node.span_end} height={node.height} "
+                f"tokens={node.token_count} verbatim_tokens={verbatim}>"
+            )
+            lines.append(node.text)
+            lines.append("</Span>")
+            lines.append("")
+
+    return "\n".join(lines).rstrip()
 
 
 class ErrorJsonOutput(TypedDict):

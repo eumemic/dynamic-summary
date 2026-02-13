@@ -16,6 +16,8 @@ dependencies = [
     "uvicorn[standard]==0.35.0",
     "pydantic==2.11.7",
     "pydantic-settings==2.10.1",
+    "anthropic>=0.40.0",
+    "claude-agent-sdk>=0.1.29",
     "openai==1.102.0",
     "langchain==0.3.27",
     "langchain-community==0.3.29",
@@ -111,6 +113,11 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "tomllib"
 ignore_missing_imports = true
+
+# Generated protobuf stubs have unparameterized Mapping types
+[[tool.mypy.overrides]]
+module = "ragzoom.rpc.*"
+ignore_errors = true
 
 # grpc does not ship type information yet
 [[tool.mypy.overrides]]
