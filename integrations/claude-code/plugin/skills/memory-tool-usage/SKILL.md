@@ -16,6 +16,21 @@ recall(query="What was the authentication bug we discussed?")
 # Returns: A concise answer synthesized from conversation history
 ```
 
+### Time Constraints
+
+Use `time_start`/`time_end` to constrain the search to a specific period. This is useful for zooming into a known time range after a broad initial query reveals the relevant window.
+
+```python
+# Broad search first
+recall(query="authentication bug")
+# Answer mentions it happened around 2024-01-15T14:00:00
+
+# Zoom into that time window for more detail
+recall(query="authentication bug", time_start="2024-01-15T14:00:00", time_end="2024-01-15T16:00:00")
+```
+
+The server enforces these bounds — all internal recall calls are clamped to the specified window.
+
 ## When to Use Memory Proactively
 
 - **After compaction**: Query "What was I working on? What were the specific details?"

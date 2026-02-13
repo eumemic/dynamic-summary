@@ -175,23 +175,39 @@ def mcp_server_cmd() -> None:
     show_default=True,
     help="RagZoom gRPC server address",
 )
+@click.option(
+    "--time-start",
+    default=None,
+    help="ISO 8601 lower bound (e.g. 2024-01-15T10:00:00)",
+)
+@click.option(
+    "--time-end",
+    default=None,
+    help="ISO 8601 upper bound (e.g. 2024-01-15T18:00:00)",
+)
 def search_cmd(
     question: str,
     document_id: str,
     server_address: str,
+    time_start: str | None,
+    time_end: str | None,
 ) -> None:
     """Agentic search: question in, answer out.
 
     The server-side search agent iteratively zooms into the document
-    to find the best answer.
+    to find the best answer. Use --time-start/--time-end to constrain
+    the search to a specific time window.
 
     Example:
       ragzoom-claude-code search "What was the auth bug?" -d session-id
+      ragzoom-claude-code search "details" -d sid --time-start 2024-01-15T10:00:00
     """
     try:
         result = execute_search(
             question=question,
             document_id=document_id,
+            time_start=time_start,
+            time_end=time_end,
             server_address=server_address,
         )
         click.echo(result.answer)

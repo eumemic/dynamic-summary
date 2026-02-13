@@ -144,6 +144,39 @@ class TestRecallToolSearch:
             mock_search.assert_called_once_with(
                 question="What was the auth bug?",
                 document_id=expected_doc_id,
+                time_start=None,
+                time_end=None,
                 server_address="localhost:50051",
             )
             assert result == "The auth bug was in the JWT validation."
+
+    def test_recall_tool_forwards_time_constraints(self) -> None:
+        """Recall tool forwards time_start/time_end to execute_search."""
+        expected_doc_id = "test-session-doc"
+
+        mock_result = MagicMock()
+        mock_result.answer = "Found it in the morning session."
+
+        with (
+            patch.dict(os.environ, {"RAGZOOM_DOCUMENT_ID": expected_doc_id}),
+            patch(
+                "ragzoom_claude_code.mcp_server.execute_search",
+                return_value=mock_result,
+            ) as mock_search,
+        ):
+            from ragzoom_claude_code.mcp_server import recall
+
+            result = recall(
+                query="What happened?",
+                time_start="2024-01-15T10:00:00",
+                time_end="2024-01-15T12:00:00",
+            )
+
+            mock_search.assert_called_once_with(
+                question="What happened?",
+                document_id=expected_doc_id,
+                time_start="2024-01-15T10:00:00",
+                time_end="2024-01-15T12:00:00",
+                server_address="localhost:50051",
+            )
+            assert result == "Found it in the morning session."

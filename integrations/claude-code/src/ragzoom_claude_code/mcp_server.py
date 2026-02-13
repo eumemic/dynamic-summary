@@ -40,18 +40,26 @@ def _get_session_id() -> str:
 
 
 @mcp.tool()
-def recall(query: str) -> str:
+def recall(
+    query: str,
+    time_start: str | None = None,
+    time_end: str | None = None,
+) -> str:
     """Search conversation history.
 
     Use keyword/phrase queries that match content semantically.
     The server automatically searches through the conversation at multiple
     levels of detail to find the best answer.
 
+    For follow-up queries, use time_start/time_end to zoom into specific periods.
+
     Args:
         query: Keywords/phrases to search for (semantic search)
+        time_start: ISO timestamp to start from (e.g., "2024-01-15T10:00:00")
+        time_end: ISO timestamp to end at (e.g., "2024-01-15T18:00:00")
 
     Returns:
-        A concise answer synthesized from conversation history
+        Summary text with time ranges for follow-up zoom queries
     """
     doc_id = _get_session_id()
     server_address = os.environ.get("RAGZOOM_SERVER_ADDRESS", "localhost:50051")
@@ -59,6 +67,8 @@ def recall(query: str) -> str:
     result = execute_search(
         question=query,
         document_id=doc_id,
+        time_start=time_start,
+        time_end=time_end,
         server_address=server_address,
     )
 
