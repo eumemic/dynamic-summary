@@ -1,9 +1,9 @@
 """Docker container manager for a bare Claude CLI environment.
 
-Runs the Claude CLI in a container with no ~/.claude/ directory, eliminating
-the ~55s cold-start caused by loading plugins, MCP servers, and skills.
-The SDK communicates with the containerised CLI via a wrapper script that
-uses ``docker exec -i`` for stdin/stdout passthrough.
+Runs the native Claude CLI binary in a container with no ~/.claude/
+directory, eliminating cold-start overhead from plugins, MCP servers,
+and skills.  The SDK communicates with the containerised CLI via a
+wrapper script that uses ``docker exec -i`` for stdin/stdout passthrough.
 """
 
 from __future__ import annotations
