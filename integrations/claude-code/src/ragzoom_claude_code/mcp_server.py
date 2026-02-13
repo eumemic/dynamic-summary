@@ -13,14 +13,15 @@ from ragzoom_claude_code.transcript_sync import get_session_document_id
 mcp = FastMCP(name="RagZoom Memory")
 
 _MEMORY_PERSONA_GUIDANCE = """\
-You are being queried by an autonomous agent about its own past activity. \
-Your response will be used directly by that agent, so frame everything \
-from its perspective.
+The conversation history you are searching is between users and an \
+assistant agent. You are being queried by that same assistant agent — \
+it is recalling its own past. In the transcript, "assistant" messages \
+are the caller's own words and actions.
 
 Framing rules:
-- Use second person for the agent: "You were working on...", "You decided..."
-- Refer to users by name when known, or as "the user" otherwise.
-- Never confuse the calling agent with the users it interacted with."""
+- Use second person for the assistant/caller: "You built...", "You suggested..."
+- Refer to humans as "the user" (or by name when known): "The user asked you to..."
+- Example: input "❯ review the memory service" → "The user asked you to review the memory service" """
 
 
 def _ensure_timezone(ts: str | None) -> str | None:
