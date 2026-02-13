@@ -14,7 +14,10 @@ concise answer.
 
 Each call returns a "tiling" — a variable-resolution view of the conversation:
 - **height=0** nodes contain verbatim transcript text (original content).
-- **height>0** nodes contain progressively more compressed summaries.
+- **height>0** nodes contain progressively more compressed summaries, annotated with:
+  - `tokens`: how many tokens this summary contains.
+  - `verbatim_tokens`: estimated tokens at full verbatim resolution (≈ tokens × 2^height). \
+High verbatim_tokens relative to tokens means zooming in will reveal much more detail.
 - Each node has time_start/time_end timestamps showing what period it covers.
 
 You control four parameters per call:
@@ -46,8 +49,8 @@ strong lexical signal.
 1. **SURVEY**: Start broad — use the full token budget with no time constraints \
 to get a comprehensive overview.
 2. **IDENTIFY**: Examine the returned summaries. Look for time ranges or topics \
-relevant to the question. High-height summaries indicate compressed content — \
-you can zoom into those time ranges for more detail.
+relevant to the question. Spans with high `verbatim_tokens` relative to `tokens` \
+contain the most compressed content — zoom into those time ranges for more detail.
 3. **ZOOM**: Call recall again with a tighter time_start/time_end window \
 to get more verbatim content within that range. Your time range doesn't need \
 to match or nest within any particular Span — it can span across multiple \

@@ -191,16 +191,21 @@ def _format_retrieval_spans(retrieval: RetrievalView) -> str:
         elif is_temporal:
             start = node.time_start or "?"
             end = node.time_end or "?"
+            verbatim = node.token_count * (2**node.height)
             lines.append(
-                f'<Span time_start="{start}" time_end="{end}" ' f"height={node.height}>"
+                f'<Span time_start="{start}" time_end="{end}" '
+                f"height={node.height} "
+                f"tokens={node.token_count} verbatim_tokens={verbatim}>"
             )
             lines.append(node.text)
             lines.append("</Span>")
             lines.append("")
         else:
+            verbatim = node.token_count * (2**node.height)
             lines.append(
                 f"<Span span_start={node.span_start} "
-                f"span_end={node.span_end} height={node.height}>"
+                f"span_end={node.span_end} height={node.height} "
+                f"tokens={node.token_count} verbatim_tokens={verbatim}>"
             )
             lines.append(node.text)
             lines.append("</Span>")

@@ -412,7 +412,7 @@ class TestFormatTilingSpans:
         result = format_tiling_spans(response)
         assert '<Span time_start="2024-01-01T09:00:00Z"' in result
         assert 'time_end="2024-01-01T12:00:00Z"' in result
-        assert "height=2>" in result
+        assert "height=2" in result
         assert "Discussion about authentication." in result
         assert "</Span>" in result
 
@@ -519,7 +519,7 @@ class TestFormatTilingSpans:
         result = format_tiling_spans(response)
         assert "span_start=0" in result
         assert "span_end=5000" in result
-        assert "height=2>" in result
+        assert "height=2" in result
         assert "time_start" not in result
         assert "time_end" not in result
 
@@ -547,3 +547,60 @@ class TestFormatTilingSpans:
         result = format_tiling_spans(response)
         assert "Raw paragraph." in result
         assert "<Span" not in result
+
+    def test_temporal_span_includes_token_estimates(self) -> None:
+        """Temporal height>0 Span tags include tokens and verbatim_tokens."""
+        node = _make_node(
+            "s1",
+            text="Morning discussion.",
+            height=3,
+            token_count=200,
+            time_start="2024-01-01T09:00:00Z",
+            time_end="2024-01-01T12:00:00Z",
+        )
+        response = _make_response(
+            tiling_ids=["s1"],
+            nodes={"s1": node},
+        )
+        result = format_tiling_spans(response)
+        assert "tokens=200" in result
+        # 200 * 2^3 = 1600
+        assert "verbatim_tokens=1600" in result
+
+    def test_non_temporal_span_includes_token_estimates(self) -> None:
+        """Non-temporal height>0 Span tags include tokens and verbatim_tokens."""
+        node = _make_node(
+            "s1",
+            text="Chapter overview.",
+            height=2,
+            token_count=100,
+            span_start=0,
+            span_end=5000,
+        )
+        response = _make_response(
+            tiling_ids=["s1"],
+            nodes={"s1": node},
+        )
+        result = format_tiling_spans(response)
+        assert "tokens=100" in result
+        # 100 * 2^2 = 400
+        assert "verbatim_tokens=400" in result
+
+    def test_height_1_verbatim_tokens_is_double(self) -> None:
+        """Height=1 node has verbatim_tokens = tokens * 2."""
+        node = _make_node(
+            "s1",
+            text="Brief summary.",
+            height=1,
+            token_count=50,
+            time_start="2024-01-01T10:00:00Z",
+            time_end="2024-01-01T11:00:00Z",
+        )
+        response = _make_response(
+            tiling_ids=["s1"],
+            nodes={"s1": node},
+        )
+        result = format_tiling_spans(response)
+        assert "tokens=50" in result
+        # 50 * 2^1 = 100
+        assert "verbatim_tokens=100" in result
