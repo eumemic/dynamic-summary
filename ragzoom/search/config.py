@@ -15,5 +15,5 @@ class SearchConfig:
 
     agent_model: str = "gpt-5-mini"
     max_iterations: int = 5
-    max_token_budget: int = 4000
+    max_token_budget: int = 20000
     profiling_enabled: bool = False
