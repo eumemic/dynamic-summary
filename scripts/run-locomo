@@ -19,10 +19,14 @@ def main() -> None:
         default=None,
         help="Path to locomo10.json (required unless --rejudge is used)",
     )
+    # Import here so --help doesn't pay for slow imports, but we need
+    # SearchConfig defaults before parsing.
+    from ragzoom.search.config import SearchConfig
+
     parser.add_argument(
         "--search-model",
-        default="gpt-5-mini",
-        help="Model for agentic search (default: gpt-5-mini)",
+        default=SearchConfig.agent_model,
+        help=f"Model for agentic search (default: {SearchConfig.agent_model})",
     )
     parser.add_argument(
         "--judge-model",
@@ -71,14 +75,14 @@ def main() -> None:
     parser.add_argument(
         "--max-iterations",
         type=int,
-        default=5,
-        help="Max recall iterations per question (default: 5)",
+        default=SearchConfig.max_iterations,
+        help=f"Max recall iterations per question (default: {SearchConfig.max_iterations})",
     )
     parser.add_argument(
         "--max-budget",
         type=int,
-        default=4000,
-        help="Max token budget per recall call (default: 4000)",
+        default=SearchConfig.max_token_budget,
+        help=f"Max token budget per recall call (default: {SearchConfig.max_token_budget})",
     )
     parser.add_argument(
         "--profiling",

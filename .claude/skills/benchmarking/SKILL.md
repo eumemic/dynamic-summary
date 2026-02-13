@@ -76,7 +76,7 @@ rm -rf /tmp/ragzoom-bench-state
 | `--judge-model MODEL` | `gpt-4.1` | LLM-as-Judge (matches Letta leaderboard) |
 | `--sample N` | all | Random subset of N questions (seed=42) |
 | `--max-iterations N` | 5 | Max recall iterations per question |
-| `--max-budget N` | 4000 | Max token budget per recall call |
+| `--max-budget N` | 20000 | Max token budget per recall call |
 | `--f1-only` | off | Skip LLM judge, token F1 only |
 | `--rejudge PATH` | — | Re-judge from previous results.json |
 | `--no-isolated-server` | off | Disable isolated server, use --server address |

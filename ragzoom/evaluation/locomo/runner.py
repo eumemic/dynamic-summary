@@ -59,9 +59,9 @@ class LoCoMoConfig:
     f1_only: bool = False
     rejudge_path: Path | None = None
     use_isolated_server: bool = True
-    search_model: str = "gpt-5-mini"
-    max_iterations: int = 5
-    max_budget: int = 4000
+    search_model: str = SearchConfig.agent_model
+    max_iterations: int = SearchConfig.max_iterations
+    max_budget: int = SearchConfig.max_token_budget
     profiling: bool = False
     use_docker_cli: bool = False
     reasoning_level: str | None = None
