@@ -469,11 +469,11 @@ class TestCostMetrics:
         assert cost.total_cost_usd == pytest.approx(0.0042)
 
 
-class TestAnthropicUsageBreakdown:
-    """Verify the Anthropic _UsageBreakdown and _compute_cost helpers."""
+class TestClaudeAgentSDKUsageBreakdown:
+    """Verify the _UsageBreakdown and _compute_cost helpers."""
 
     def test_total_input_sums_all_three_fields(self) -> None:
-        from ragzoom.agent.backends.anthropic import _UsageBreakdown
+        from ragzoom.agent.backends.claude_agent_sdk import _UsageBreakdown
 
         usage = _UsageBreakdown(
             input_tokens=3,
@@ -484,7 +484,7 @@ class TestAnthropicUsageBreakdown:
         assert usage.total_input == 3 + 2019 + 13882
 
     def test_compute_cost_sonnet(self) -> None:
-        from ragzoom.agent.backends.anthropic import (
+        from ragzoom.agent.backends.claude_agent_sdk import (
             _compute_cost,
             _UsageBreakdown,
         )
@@ -507,7 +507,7 @@ class TestAnthropicUsageBreakdown:
         assert cost == pytest.approx(expected)
 
     def test_compute_cost_unknown_model(self) -> None:
-        from ragzoom.agent.backends.anthropic import (
+        from ragzoom.agent.backends.claude_agent_sdk import (
             _compute_cost,
             _UsageBreakdown,
         )

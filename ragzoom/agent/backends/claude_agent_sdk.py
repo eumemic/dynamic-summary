@@ -47,6 +47,9 @@ logger = logging.getLogger(__name__)
 # uses max(value/1000, 60).
 os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "300000")
 
+# Skip the redundant `claude -v` subprocess the SDK spawns before each call.
+os.environ.setdefault("CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK", "1")
+
 _SDK_MAX_RETRIES = 2
 _SDK_RETRY_BACKOFF_BASE = 5.0  # seconds; retries at 5s, 10s
 
@@ -219,7 +222,7 @@ def _build_history_from_stream(
     return tuple(items)
 
 
-class AnthropicBackend:
+class ClaudeAgentSDKBackend:
     """Claude backend for both agentic answers and single-shot judging.
 
     Uses ``query()`` for tool-free single-shot calls (judge path) and
@@ -252,7 +255,7 @@ class AnthropicBackend:
         """Generate a response, optionally using tools over multiple turns."""
         if temperature is not None:
             logger.warning(
-                "AnthropicBackend: temperature=%.2f ignored (SDK does not support it)",
+                "ClaudeAgentSDKBackend: temperature=%.2f ignored (SDK does not support it)",
                 temperature,
             )
 
@@ -281,14 +284,23 @@ class AnthropicBackend:
 
             answer = ""
             usage = _UsageBreakdown(0, 0, 0, 0)
+            first_token_time: float | None = None
 
             async for message in query(prompt=user_prompt, options=options):
                 if isinstance(message, AssistantMessage):
+                    if first_token_time is None:
+                        first_token_time = time.monotonic()
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             answer = block.text
                 elif isinstance(message, ResultMessage):
                     usage = _extract_usage(message)
+
+        elapsed = time.monotonic() - start_time
+        ttft = (
+            first_token_time - start_time if first_token_time is not None else elapsed
+        )
+        logger.info("SDK single-shot: TTFT=%.1fs | total=%.1fs", ttft, elapsed)
 
         if not answer.strip():
             answer = "I don't know."
@@ -299,7 +311,7 @@ class AnthropicBackend:
             total_output=usage.output_tokens,
             retrieved_tokens=[],
             reasoning_turns=1,
-            elapsed=time.monotonic() - start_time,
+            elapsed=elapsed,
             total_cost_usd=_compute_cost(self._model_id, usage),
         )
 
@@ -375,8 +387,19 @@ class AnthropicBackend:
             )
 
             try:
+                init_start = time.monotonic()
                 async with ClaudeSDKClient(options=options) as client:
+                    init_elapsed = time.monotonic() - init_start
+                    conv_start = time.monotonic()
                     conv_result = await self._run_sdk_conversation(client, user_prompt)
+                    conv_elapsed = time.monotonic() - conv_start
+                total_elapsed = time.monotonic() - start_time
+                logger.info(
+                    "SDK agentic: init=%.1fs | conversation=%.1fs | total=%.1fs",
+                    init_elapsed,
+                    conv_elapsed,
+                    total_elapsed,
+                )
                 break
             except Exception as exc:
                 last_err = exc
