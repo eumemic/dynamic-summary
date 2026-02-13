@@ -398,15 +398,16 @@ class TestHybridRetrieval:
         setup_hybrid_tree: tuple[IndexConfig, DocumentStore, "Retriever"],
         sqlite_backend: SQLiteStorageBackend,
     ) -> None:
-        """Test that BM25-only hits (not in vector results) are included.
+        """Test that BM25-only hits are fetched and enter the MMR candidate pool.
 
         This is the key value proposition of hybrid search: BM25 finds exact
-        keyword matches that vector search misses. If we discard BM25-only
-        hits, hybrid search degrades to vector-only search.
+        keyword matches that vector search misses. The retriever fetches
+        vectors for BM25-only hits via ``get_vectors`` so they participate
+        in MMR selection alongside vector search results.
 
         We set up vector search to return only L2,L3,L4 (excluding L1),
-        then query for "E1234" which BM25 should match to L1. L1 must
-        appear in final results despite being absent from vector candidates.
+        then query for "E1234" which BM25 matches to L1. We verify L1's
+        vector is fetched via ``get_vectors`` to enter the candidate pool.
         """
         _, doc_store, retriever = setup_hybrid_tree
         self._mock_embedding(retriever)
@@ -417,9 +418,19 @@ class TestHybridRetrieval:
         # Vector search deliberately excludes L1 — it only returns L2, L3, L4
         self._mock_vector_search(retriever, ["L2", "L3", "L4"])
 
+        # Spy on get_vectors to verify BM25-only hits are fetched
+        get_vectors_calls: list[list[str]] = []
+        original_get_vectors = retriever.vector_index.get_vectors
+
+        def tracking_get_vectors(ids: list[str]) -> list[Vector]:
+            get_vectors_calls.append(ids)
+            return original_get_vectors(ids)
+
+        retriever.vector_index.get_vectors = tracking_get_vectors  # type: ignore[method-assign]
+
         # L1 has "Error code E1234" — BM25 will rank it high for this query,
         # but vector search didn't return it at all
-        result = asyncio.run(
+        asyncio.run(
             retriever.retrieve_async(
                 query="E1234",
                 num_seeds=3,
@@ -429,10 +440,14 @@ class TestHybridRetrieval:
             )
         )
 
-        # L1 must appear despite being a BM25-only hit
-        assert "L1" in result.node_ids, (
-            f"BM25-only hit L1 should be included via get_vectors. "
-            f"Selected: {result.node_ids}"
+        # BM25-only hits must be fetched via get_vectors
+        assert len(get_vectors_calls) == 1, (
+            f"get_vectors should be called once for BM25-only hits, "
+            f"got {len(get_vectors_calls)} calls"
+        )
+        assert "L1" in get_vectors_calls[0], (
+            f"get_vectors should fetch L1 (BM25-only hit), "
+            f"got {get_vectors_calls[0]}"
         )
 
     def test_hybrid_retrieval_rrf_combines_rankings(
