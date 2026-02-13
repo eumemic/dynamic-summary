@@ -469,13 +469,13 @@ class TestCostMetrics:
         assert cost.total_cost_usd == pytest.approx(0.0042)
 
 
-class TestClaudeAgentSDKUsageBreakdown:
-    """Verify the _UsageBreakdown and _compute_cost helpers."""
+class TestUsageBreakdownAndCost:
+    """Verify the UsageBreakdown and compute_cost helpers."""
 
     def test_total_input_sums_all_three_fields(self) -> None:
-        from ragzoom.agent.backends.claude_agent_sdk import _UsageBreakdown
+        from ragzoom.agent.cost import UsageBreakdown
 
-        usage = _UsageBreakdown(
+        usage = UsageBreakdown(
             input_tokens=3,
             cache_creation_tokens=2019,
             cache_read_tokens=13882,
@@ -484,18 +484,15 @@ class TestClaudeAgentSDKUsageBreakdown:
         assert usage.total_input == 3 + 2019 + 13882
 
     def test_compute_cost_sonnet(self) -> None:
-        from ragzoom.agent.backends.claude_agent_sdk import (
-            _compute_cost,
-            _UsageBreakdown,
-        )
+        from ragzoom.agent.cost import UsageBreakdown, compute_cost
 
-        usage = _UsageBreakdown(
+        usage = UsageBreakdown(
             input_tokens=3,
             cache_creation_tokens=2019,
             cache_read_tokens=13882,
             output_tokens=472,
         )
-        cost = _compute_cost("claude-sonnet-4-5-20250929", usage)
+        cost = compute_cost("claude-sonnet-4-5-20250929", usage)
         assert cost is not None
         # Sonnet 4.5: input=$0.003/1K, cache_write=1.25x, cache_read=0.1x, output=$0.015/1K
         expected = (
@@ -507,13 +504,10 @@ class TestClaudeAgentSDKUsageBreakdown:
         assert cost == pytest.approx(expected)
 
     def test_compute_cost_unknown_model(self) -> None:
-        from ragzoom.agent.backends.claude_agent_sdk import (
-            _compute_cost,
-            _UsageBreakdown,
-        )
+        from ragzoom.agent.cost import UsageBreakdown, compute_cost
 
-        usage = _UsageBreakdown(100, 0, 0, 50)
-        assert _compute_cost("unknown-model-xyz", usage) is None
+        usage = UsageBreakdown(100, 0, 0, 50)
+        assert compute_cost("unknown-model-xyz", usage) is None
 
 
 _EMPTY_SCORES = AggregateScores(overall_accuracy=None, overall_f1=0.0, by_category={})

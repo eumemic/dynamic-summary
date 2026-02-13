@@ -12,7 +12,6 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -27,6 +26,7 @@ from claude_agent_sdk import (
     query,
 )
 
+from ragzoom.agent.cost import UsageBreakdown, compute_cost
 from ragzoom.agent.protocol import (
     AgentResult,
     AssistantTurn,
@@ -38,9 +38,12 @@ from ragzoom.agent.protocol import (
     make_agent_result,
 )
 from ragzoom.daemon import get_daemon_state_dir
-from ragzoom.model_info import ModelInfo
 
 logger = logging.getLogger(__name__)
+
+# Re-export under private names for internal use within this module
+_UsageBreakdown = UsageBreakdown
+_compute_cost = compute_cost
 
 # Bump the SDK's initialize timeout from the default 60s to 300s.  Claude Max
 # can be slow to respond under load.  The env var is in milliseconds; the SDK
@@ -93,26 +96,6 @@ def _build_sdk_tool(
     )
 
 
-class _UsageBreakdown(NamedTuple):
-    """Detailed token usage from Anthropic's ResultMessage.
-
-    Anthropic reports three categories of input tokens, each priced differently:
-    - input_tokens: tokens after the last cache breakpoint (full input price)
-    - cache_creation_tokens: newly written to cache (1.25x input price)
-    - cache_read_tokens: served from cache (0.1x input price, 90% discount)
-    """
-
-    input_tokens: int
-    cache_creation_tokens: int
-    cache_read_tokens: int
-    output_tokens: int
-
-    @property
-    def total_input(self) -> int:
-        """Total input tokens across all three categories."""
-        return self.input_tokens + self.cache_creation_tokens + self.cache_read_tokens
-
-
 def _extract_usage(message: ResultMessage) -> _UsageBreakdown:
     """Extract detailed token usage from a ResultMessage."""
     if message.usage is None:
@@ -123,28 +106,6 @@ def _extract_usage(message: ResultMessage) -> _UsageBreakdown:
         cache_read_tokens=int(message.usage.get("cache_read_input_tokens", 0)),
         output_tokens=int(message.usage.get("output_tokens", 0)),
     )
-
-
-def _compute_cost(model_id: str, usage: _UsageBreakdown) -> float | None:
-    """Compute total cost in USD from usage breakdown and model pricing.
-
-    Returns None if the model is not found in models.json.
-    """
-    try:
-        info = ModelInfo()
-        input_price, output_price = info.get_llm_costs(model_id)
-        cache_discount = info.get_cache_discount(model_id)
-        write_mult = info.get_cache_write_multiplier(model_id)
-    except ValueError:
-        logger.warning("Model %r not in models.json; cost not computed", model_id)
-        return None
-
-    input_cost = (usage.input_tokens / 1000) * input_price
-    write_cost = (usage.cache_creation_tokens / 1000) * input_price * write_mult
-    read_cost = (usage.cache_read_tokens / 1000) * input_price * (1 - cache_discount)
-    output_cost = (usage.output_tokens / 1000) * output_price
-
-    return input_cost + write_cost + read_cost + output_cost
 
 
 # ---------------------------------------------------------------------------
