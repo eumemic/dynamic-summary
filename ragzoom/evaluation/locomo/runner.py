@@ -63,7 +63,7 @@ class LoCoMoConfig:
     max_iterations: int = SearchConfig.max_iterations
     max_budget: int = SearchConfig.max_token_budget
     profiling: bool = False
-    use_docker_cli: bool = False
+    use_docker_cli: bool | None = None  # None = auto (Docker for Claude models)
     reasoning_level: str | None = None
 
     def to_dict(self) -> dict[str, object]:
@@ -131,26 +131,21 @@ async def _evaluate_one(
     """Evaluate a single QA pair using client-side agentic search."""
     agent = await agent_queue.get()
     try:
-        cost: CostMetrics = CostMetrics.zero()
+        search_result = await agent.search(qa.question, doc_id, query_executor)
+        generated_answer = search_result.answer
+        sc = search_result.cost
+        cost = CostMetrics(
+            total_input_tokens=sc.total_input_tokens,
+            total_output_tokens=sc.total_output_tokens,
+            retrieval_call_count=sc.retrieval_call_count,
+            reasoning_turn_count=sc.reasoning_turn_count,
+            retrieved_tokens_per_call=sc.retrieved_tokens_per_call,
+            query_duration_seconds=sc.duration_seconds,
+            total_cost_usd=sc.total_cost_usd,
+        )
         retrospective: str | None = None
-        try:
-            search_result = await agent.search(qa.question, doc_id, query_executor)
-            generated_answer = search_result.answer
-            sc = search_result.cost
-            cost = CostMetrics(
-                total_input_tokens=sc.total_input_tokens,
-                total_output_tokens=sc.total_output_tokens,
-                retrieval_call_count=sc.retrieval_call_count,
-                reasoning_turn_count=sc.reasoning_turn_count,
-                retrieved_tokens_per_call=sc.retrieved_tokens_per_call,
-                query_duration_seconds=sc.duration_seconds,
-                total_cost_usd=sc.total_cost_usd,
-            )
-            if search_result.profile is not None:
-                retrospective = search_result.profile.retrospective
-        except Exception:
-            logger.exception("Search failed for %s", qa.sample_id)
-            generated_answer = "I don't know."
+        if search_result.profile is not None:
+            retrospective = search_result.profile.retrospective
 
         verdict: JudgeVerdict | None = None
         if judge is not None:
@@ -241,9 +236,20 @@ async def run_benchmark(config: LoCoMoConfig) -> BenchmarkReport:
 
 async def _run_benchmark_impl(config: LoCoMoConfig) -> BenchmarkReport:
     """Core benchmark implementation."""
-    # 0. Optional Docker container pool for concurrent Claude SDK calls
+    # 0. Docker container pool for Claude SDK calls.
+    #    Auto-enabled for Claude models: the host CLI loads plugins and makes
+    #    slow network calls (~37s), while Docker containers start in ~1s.
     docker_pool: DockerClaudePool | None = None
-    if config.use_docker_cli:
+    use_docker = config.use_docker_cli
+    if use_docker is None:
+        from ragzoom.agent.factory import is_claude_model
+
+        use_docker = is_claude_model(config.search_model)
+        if use_docker:
+            logger.info(
+                "Auto-enabling Docker CLI for Claude model %s", config.search_model
+            )
+    if use_docker:
         from ragzoom.daemon import get_daemon_state_dir
         from ragzoom.evaluation.docker_claude import DockerClaudePool
 
@@ -331,19 +337,31 @@ async def _run_benchmark_core(
         config.max_budget,
     )
 
-    # 6. Evaluate all questions via client-side agentic search
-    tasks = [
-        _evaluate_one(
-            judge,
-            config.judge_model,
-            agent_queue,
-            query_executor,
-            doc_id,
-            qa,
+    # 6. Evaluate all questions via client-side agentic search.
+    #    Cancel remaining tasks on first failure — don't burn money on a
+    #    broken run, and never silently substitute fake answers.
+    async_tasks = [
+        asyncio.create_task(
+            _evaluate_one(
+                judge,
+                config.judge_model,
+                agent_queue,
+                query_executor,
+                doc_id,
+                qa,
+            ),
+            name=f"eval-{qa.sample_id}",
         )
         for doc_id, qa in qa_items
     ]
-    all_results = list(await asyncio.gather(*tasks))
+    try:
+        all_results = list(await asyncio.gather(*async_tasks))
+    except BaseException:
+        for t in async_tasks:
+            t.cancel()
+        # Wait for cancellations to propagate before re-raising
+        await asyncio.gather(*async_tasks, return_exceptions=True)
+        raise
 
     # Log results
     if judge is not None:

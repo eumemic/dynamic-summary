@@ -82,6 +82,8 @@ rm -rf /tmp/ragzoom-bench-state
 | `--no-isolated-server` | off | Disable isolated server, use --server address |
 | `--skip-ingest` | off | Skip ingestion (docs already indexed) |
 | `--reasoning-level LEVEL` | auto | Reasoning effort for search model (none/minimal/low/medium/high) |
+| `--docker-cli` | auto | Force Docker CLI (auto-enabled for Claude models) |
+| `--no-docker-cli` | off | Disable Docker CLI even for Claude models |
 | `--profiling` | off | Search profiling (retrospective per question) |
 | `-v` | off | Verbose logging |
 
