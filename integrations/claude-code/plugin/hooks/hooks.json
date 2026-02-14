@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/sync-transcript.sh",
+            "command": "RAGZOOM_APPEND_ONLY=1 bash ${CLAUDE_PLUGIN_ROOT}/scripts/sync-transcript.sh",
             "timeout": 60
           }
         ]
