@@ -99,10 +99,17 @@ def main() -> None:
         default=None,
         help="Reasoning effort level for the search model (e.g. minimal, low, medium, high)",
     )
-    parser.add_argument(
+    docker_group = parser.add_mutually_exclusive_group()
+    docker_group.add_argument(
         "--docker-cli",
         action="store_true",
-        help="Run native Claude CLI in a Docker container (no plugins/MCP overhead)",
+        default=None,
+        help="Force Docker CLI (default: auto-enabled for Claude models)",
+    )
+    docker_group.add_argument(
+        "--no-docker-cli",
+        action="store_true",
+        help="Disable Docker CLI even for Claude models",
     )
     parser.add_argument(
         "-v",
@@ -144,7 +151,7 @@ def main() -> None:
         max_iterations=args.max_iterations,
         max_budget=args.max_budget,
         profiling=args.profiling,
-        use_docker_cli=args.docker_cli,
+        use_docker_cli=True if args.docker_cli else (False if args.no_docker_cli else None),
         reasoning_level=args.reasoning_level,
     )
 
