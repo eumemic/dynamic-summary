@@ -979,6 +979,9 @@ def _collect_recent_records(
     Optimized for the append_only hot path where only the last few records
     are needed. Reads ~64KB chunks from EOF instead of scanning the full file.
 
+    Skips saved_hook_context records and re-parents their children, matching
+    the behavior of _build_metadata_and_parent_map.
+
     Stops when a record with timestamp <= cutoff_time is reached (complete=True),
     or when a non-compaction record with parentUuid=None is encountered before
     reaching the cutoff (complete=False, meaning a compaction boundary was hit
@@ -991,17 +994,38 @@ def _collect_recent_records(
     Returns:
         (records, parent_map, complete) where:
         - records: UUID -> record mapping for collected records
-        - parent_map: UUID -> parentUuid mapping (no compaction bridging)
+        - parent_map: UUID -> parentUuid mapping with hook re-parenting
         - complete: True if we reached the cutoff normally, False if we hit
           a compaction boundary and the caller should fall back to full scan
     """
     records: dict[str, dict[str, object]] = {}
     parent_map: dict[str, str | None] = {}
+    complete = True
+
+    # Hook handling: in backward scan we see children before their hook
+    # parents, so we collect pending hooks and assign predecessors when
+    # the next non-hook record is encountered, then fixup after the loop.
+    hook_uuids: set[str] = set()
+    pending_hooks: list[str] = []
+    hook_predecessor: dict[str, str | None] = {}
 
     for record in iter_jsonl_reversed(transcript_path):
         uuid = record.get("uuid")
         if not isinstance(uuid, str):
             continue
+
+        # Skip hook context records — they form parentUuid cycles
+        if record.get("type") == "saved_hook_context":
+            hook_uuids.add(uuid)
+            pending_hooks.append(uuid)
+            continue
+
+        # This non-hook record is the file-order predecessor for any
+        # hooks we've seen since the last non-hook (in backward scan).
+        if pending_hooks:
+            for h in pending_hooks:
+                hook_predecessor[h] = uuid
+            pending_hooks.clear()
 
         # Check timestamp to see if we've reached the cutoff
         timestamp_str = record.get("timestamp")
@@ -1009,8 +1033,7 @@ def _collect_recent_records(
             try:
                 record_time = _parse_timestamp(timestamp_str)
                 if record_time <= cutoff_time:
-                    # Reached indexed content — we have everything we need
-                    return records, parent_map, True
+                    break
             except ValueError:
                 pass
 
@@ -1023,13 +1046,18 @@ def _collect_recent_records(
 
         if parent_uuid is None and not is_compact:
             # Hit a compaction boundary before reaching cutoff.
-            # We can't build a reliable parent chain, fall back.
-            return records, parent_map, False
+            complete = False
+            break
 
         parent_map[uuid] = parent_uuid
 
-    # Exhausted entire file without finding cutoff — complete
-    return records, parent_map, True
+    # Re-parent records whose parent was an excluded hook
+    if hook_uuids:
+        for uuid in parent_map:
+            if parent_map[uuid] in hook_uuids:
+                parent_map[uuid] = hook_predecessor.get(parent_map[uuid])
+
+    return records, parent_map, complete
 
 
 def _extract_metadata(record: dict[str, object]) -> RecordMeta | None:
@@ -1219,6 +1247,45 @@ def _build_records_and_parent_map(
     return records, parent_map
 
 
+def _batch_append_steps(
+    steps: list[Step],
+    records: dict[str, dict[str, object]],
+    client: TranscriptSyncClient,
+    document_id: str,
+    truncate_cutoff_time: str | None,
+) -> SyncResult:
+    """Convert steps to AppendUnits, batch-append, and return SyncResult.
+
+    Handles empty steps/records gracefully (returns steps_appended=0).
+    Chunks large batches to avoid gRPC timeout.
+    """
+    non_empty = steps_to_append_units(steps, records)
+
+    if not non_empty:
+        return SyncResult(
+            document_id=document_id,
+            truncated=truncate_cutoff_time is not None,
+            truncate_cutoff_time=truncate_cutoff_time,
+            steps_appended=0,
+        )
+
+    chunk_size = 200
+    for i in range(0, len(non_empty), chunk_size):
+        chunk = non_empty[i : i + chunk_size]
+        client.batch_append(
+            document_id,
+            chunk,
+            summarization_guidance=CONVERSATION_SUMMARIZATION_GUIDANCE,
+        )
+
+    return SyncResult(
+        document_id=document_id,
+        truncated=truncate_cutoff_time is not None,
+        truncate_cutoff_time=truncate_cutoff_time,
+        steps_appended=len(non_empty),
+    )
+
+
 def execute_sync(
     transcript_path: Path,
     document_id: str,
@@ -1234,9 +1301,9 @@ def execute_sync(
 
     This makes sync idempotent and crash-safe, eliminating external state files.
 
-    Memory-efficient: Uses metadata-only loading for navigation, then lazy-loads
-    only the records needed for transcription. This reduces memory from O(file_size)
-    to O(metadata_size + records_to_append).
+    When append_only=True and the document already has indexed content, uses
+    a fast path that reads backward from EOF (~64KB chunks) instead of scanning
+    the entire file. Falls back to full scan if a compaction boundary is hit.
 
     Args:
         transcript_path: Path to the JSONL transcript
@@ -1270,16 +1337,30 @@ def execute_sync(
     if doc_status.exists and doc_status.time_end is not None:
         indexed_time_end = _parse_timestamp(doc_status.time_end)
 
-    # Fork logic based on append_only mode
-    truncate_cutoff_time: str | None = None
+    # Fast path: append-only with existing indexed content.
+    # Reads backward from EOF (~64KB chunks) instead of scanning the entire file.
+    # Records are already loaded by the reverse scan, so no second pass needed.
+    if append_only and indexed_time_end is not None:
+        records, parent_map, complete = _collect_recent_records(
+            transcript_path, indexed_time_end
+        )
+        if complete:
+            uuids_to_append = find_entries_after_time(
+                current_head, records, parent_map, indexed_time_end
+            )
+            steps = filter_to_steps(uuids_to_append, records)
+            return _batch_append_steps(steps, records, client, document_id, None)
 
-    # Build metadata-only map for memory-efficient navigation
+    # Slow path: first sync, revert-aware, or incomplete reverse scan.
+    # Full forward scan to build metadata and parent map.
     metadata, parent_map = _build_metadata_and_parent_map(transcript_path)
 
+    truncate_cutoff_time: str | None = None
+
     if append_only:
-        # Append-only mode: skip revert detection, just find entries after time_end
+        # First sync (indexed_time_end is None) or fallback from
+        # incomplete reverse scan (compaction boundary hit).
         if indexed_time_end is None:
-            # First sync — append everything from head
             uuids_to_append = build_ancestry_chain_from_meta(
                 current_head, None, metadata, parent_map
             )
@@ -1308,7 +1389,6 @@ def execute_sync(
         )
 
     if not uuids_to_append:
-        # Nothing to append
         return SyncResult(
             document_id=document_id,
             truncated=truncate_cutoff_time is not None,
@@ -1318,43 +1398,11 @@ def execute_sync(
 
     # Filter UUIDs to conversation steps using metadata (no full records yet)
     steps = filter_to_steps_from_meta(uuids_to_append, metadata)
-    if not steps:
-        return SyncResult(
-            document_id=document_id,
-            truncated=truncate_cutoff_time is not None,
-            truncate_cutoff_time=truncate_cutoff_time,
-            steps_appended=0,
-        )
 
-    # NOW load only the full records we need for transcription (lazy loading)
+    # Load only the full records needed for transcription
     step_uuids = {step.uuid for step in steps}
     records = load_records_for_uuids(transcript_path, step_uuids)
 
-    # Convert steps to AppendUnits (steps_to_append_units already filters empty)
-    non_empty = steps_to_append_units(steps, records)
-
-    if not non_empty:
-        return SyncResult(
-            document_id=document_id,
-            truncated=truncate_cutoff_time is not None,
-            truncate_cutoff_time=truncate_cutoff_time,
-            steps_appended=0,
-        )
-
-    # Batch append in chunks to avoid gRPC timeout on large syncs.
-    # Each chunk completes within the default 30s timeout.
-    chunk_size = 200
-    for i in range(0, len(non_empty), chunk_size):
-        chunk = non_empty[i : i + chunk_size]
-        client.batch_append(
-            document_id,
-            chunk,
-            summarization_guidance=CONVERSATION_SUMMARIZATION_GUIDANCE,
-        )
-
-    return SyncResult(
-        document_id=document_id,
-        truncated=truncate_cutoff_time is not None,
-        truncate_cutoff_time=truncate_cutoff_time,
-        steps_appended=len(non_empty),
+    return _batch_append_steps(
+        steps, records, client, document_id, truncate_cutoff_time
     )
