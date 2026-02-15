@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -234,6 +235,15 @@ async def _run_with_lease(
     # This ensures clients only connect once the daemon is truly ready to serve.
     # (Fixes Issue #6: race condition where port file existed before lease)
     write_port_file(options.port)
+
+    # Register SIGTERM handler to cancel the serving task, triggering a clean
+    # shutdown through the finally block. Without this, Docker's SIGTERM kills
+    # the process without running finally blocks, leaving a stale lease that
+    # blocks the next container for up to TTL seconds (60s by default).
+    loop = asyncio.get_running_loop()
+    serving_task = asyncio.current_task()
+    assert serving_task is not None
+    loop.add_signal_handler(signal.SIGTERM, serving_task.cancel)
 
     try:
         state = build_state(options, store=store, operational_cfg=operational_cfg)

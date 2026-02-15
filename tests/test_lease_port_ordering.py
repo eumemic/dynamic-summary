@@ -220,6 +220,81 @@ class TestPortFileOrdering:
         await blocking_lease.release()
 
 
+class TestSigtermLeaseRelease:
+    """Tests verifying SIGTERM triggers lease release for fast container restarts."""
+
+    @pytest.mark.asyncio
+    async def test_sigterm_handler_releases_lease(
+        self, lease_engine: Engine, fast_config: LeaseConfig, temp_state_dir: Path
+    ) -> None:
+        """SIGTERM should cancel the serving task, triggering lease release.
+
+        Without this, Docker's SIGTERM kills the process without running the
+        finally block in _run_with_lease, leaving a stale lease that blocks
+        the next container for up to TTL seconds.
+        """
+        import signal
+
+        mock_store = MagicMock()
+        mock_lease = IndexerLease(lease_engine, fast_config)
+        mock_store.create_lease.return_value = mock_lease
+
+        # Capture the SIGTERM handler that _run_with_lease installs
+        captured_handler: object = None
+        original_add = asyncio.get_event_loop().add_signal_handler
+
+        def capture_add_signal_handler(
+            sig: int, callback: object, *args: object
+        ) -> None:
+            nonlocal captured_handler
+            if sig == signal.SIGTERM:
+                captured_handler = callback
+            # Don't actually install the handler (would interfere with pytest)
+
+        with (
+            patch("ragzoom.server.app.build_state", return_value=MagicMock()),
+            patch(
+                "ragzoom.server.app._serve_async", new_callable=AsyncMock
+            ) as mock_serve,
+            patch("ragzoom.server.app.write_port_file"),
+        ):
+            # Make _serve_async block until cancelled
+            async def block_forever(*a: object, **kw: object) -> None:
+                await asyncio.Event().wait()
+
+            mock_serve.side_effect = block_forever
+
+            loop = asyncio.get_running_loop()
+            loop.add_signal_handler = capture_add_signal_handler  # type: ignore[method-assign]
+            try:
+                task = asyncio.create_task(
+                    _run_with_lease(ServerOptions(port=50099), mock_store, MagicMock())
+                )
+                await asyncio.sleep(0.01)  # Let it start and register handler
+
+                # Verify handler was registered
+                assert (
+                    captured_handler is not None
+                ), "SIGTERM handler was not registered by _run_with_lease"
+
+                # Simulate SIGTERM by invoking the captured handler
+                captured_handler()  # type: ignore[operator]
+
+                # Task should complete via CancelledError → finally → release
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            finally:
+                loop.add_signal_handler = original_add  # type: ignore[method-assign]
+
+        # Verify lease was released (row deleted from DB)
+        assert not mock_lease.is_acquired
+        with lease_engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT COUNT(*) FROM indexer_leases WHERE id = 1")
+            )
+            assert result.scalar() == 0, "Lease row should be deleted after release"
+
+
 class TestSOReuseportDisabled:
     """Tests verifying SO_REUSEPORT is disabled to prevent multiple bindings."""
 
