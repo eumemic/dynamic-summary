@@ -8,9 +8,14 @@ fail to download its encoding data. This module provides a fallback
 approximation tokenizer that estimates ~4 characters per token.
 """
 
+from __future__ import annotations
+
 import logging
 import threading
-from typing import Optional, Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    import tiktoken
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +30,24 @@ class TokenEncoder(Protocol):
     def decode(self, tokens: list[int]) -> str:
         """Decode token IDs to text."""
         ...
+
+
+class SafeTiktokenEncoder:
+    """Wrapper around tiktoken that allows special tokens in regular text.
+
+    By default, tiktoken raises on special tokens like <|endoftext|> in input.
+    Since we tokenize arbitrary conversation text (which may discuss LLM internals),
+    we need to allow these tokens to be encoded as regular text.
+    """
+
+    def __init__(self, encoding: tiktoken.Encoding) -> None:
+        self._encoding = encoding
+
+    def encode(self, text: str) -> list[int]:
+        return self._encoding.encode(text, disallowed_special=())
+
+    def decode(self, tokens: list[int]) -> str:
+        return self._encoding.decode(tokens)
 
 
 class ApproximateEncoder:
@@ -60,7 +83,7 @@ try:
     import tiktoken
 
     # Pre-initialize encoder at import time to avoid per-test slow starts
-    _DEFAULT_ENCODER = tiktoken.get_encoding("cl100k_base")
+    _DEFAULT_ENCODER = SafeTiktokenEncoder(tiktoken.get_encoding("cl100k_base"))
 except Exception as _tok_err:
     # Network unavailable or other tiktoken error - use fallback
     _DEFAULT_ENCODER = ApproximateEncoder()
@@ -88,11 +111,11 @@ class TokenizerUtil:
     initialization and caching to eliminate duplicate encoder creation.
     """
 
-    _instance: Optional["TokenizerUtil"] = None
+    _instance: TokenizerUtil | None = None
     _lock = threading.Lock()
     _encoder: TokenEncoder | None = _DEFAULT_ENCODER
 
-    def __new__(cls) -> "TokenizerUtil":
+    def __new__(cls) -> TokenizerUtil:
         """Ensure singleton pattern with thread safety."""
         if cls._instance is None:
             with cls._lock:

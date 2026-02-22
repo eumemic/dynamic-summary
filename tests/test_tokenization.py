@@ -249,6 +249,32 @@ class TestConvenienceFunctions:
         assert decoded1 == decoded2 == test_text, "Decoding methods should agree"
 
 
+class TestSpecialTokens:
+    """Test handling of tiktoken special tokens in regular text."""
+
+    @requires_tiktoken
+    def test_encode_text_with_special_tokens(self) -> None:
+        """Test that special tokens like <|endoftext|> don't crash encoding."""
+        t = TokenizerUtil()
+
+        # These are tiktoken special tokens that appear in LLM discussion text
+        text_with_special = "The model uses <|endoftext|> as a stop token."
+        tokens = t.encode(text_with_special)
+        assert len(tokens) > 0
+
+        # Verify roundtrip works
+        decoded = t.decode(tokens)
+        assert "<|endoftext|>" in decoded
+
+    @requires_tiktoken
+    def test_count_tokens_with_special_tokens(self) -> None:
+        """Test that count_tokens works with special token text."""
+        count = count_tokens(
+            "Tokens like <|endoftext|> and <|fim_prefix|> are special."
+        )
+        assert count > 0
+
+
 class TestPerformance:
     """Test performance characteristics."""
 
