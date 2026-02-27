@@ -6,7 +6,9 @@ DEV_GRPC_PORT = 50052
 DEFAULT_GRPC_ADDRESS = f"{DEFAULT_GRPC_HOST}:{DEFAULT_GRPC_PORT}"
 
 # gRPC client timeouts (seconds)
-DEFAULT_GRPC_TIMEOUT = 30.0
+# None = no timeout for unary RPCs (batch_append, clear, etc.)
+# These are local calls to a colocated service; let them complete.
+DEFAULT_GRPC_TIMEOUT: float | None = None
 DEFAULT_GRPC_STREAM_TIMEOUT: float | None = 120.0
 # Session ingestion may trigger full re-index requiring tree building + embeddings
 DEFAULT_SESSION_INGEST_TIMEOUT = 300.0
