@@ -527,6 +527,121 @@ class TestSummaryJobIntegration:
         await engine.shutdown()
 
     @pytest.mark.asyncio
+    async def test_scan_skips_blocked_pair_finds_lower_height_pairs(
+        self,
+        sqlite_backend: SQLiteStorageBackend,
+    ) -> None:
+        """Scanner must skip blocked tall pairs and continue to find lower pairs.
+
+        Production scenario: an orphaned h=1 root blocks an h=3 pair
+        (parent_height=4, diff=4-1=3 > max_diff=2), but h=0 pairs further
+        right in the scan should still be found (parent_height=1, diff=1-1=0).
+
+        Previously the scanner used `break` which terminated the entire scan
+        at the first blocked pair, starving all subsequent lower-height pairs.
+        The fix changes this to skip-and-continue.
+        """
+        from unittest.mock import MagicMock
+
+        from ragzoom.config import IndexConfig
+        from ragzoom.server.indexing_engine import IndexingEngine
+
+        doc_id = "test-doc"
+        store_for_doc = sqlite_backend.for_document(doc_id)
+
+        # Orphaned h=1 root (sets min_preceding_height=1)
+        store_for_doc.nodes.add_node(
+            node_id="orphan-h1",
+            text="Orphaned h=1 summary",
+            embedding=[0.1] * 8,
+            height=1,
+            level_index=0,
+            span_start=0,
+            span_end=2000,
+            parent_id=None,
+            token_count=50,
+        )
+
+        # Eligible h=3 pair — blocked by height differential (4-1=3 > 2)
+        store_for_doc.nodes.add_node(
+            node_id="h3-left",
+            text="H3 left",
+            embedding=[0.1] * 8,
+            height=3,
+            level_index=0,
+            span_start=10000,
+            span_end=18000,
+            parent_id=None,
+            token_count=100,
+        )
+        store_for_doc.nodes.add_node(
+            node_id="h3-right",
+            text="H3 right",
+            embedding=[0.1] * 8,
+            height=3,
+            level_index=1,
+            span_start=18000,
+            span_end=26000,
+            parent_id=None,
+            token_count=100,
+        )
+
+        # Eligible h=0 pair AFTER the h=3 pair — should NOT be blocked
+        # (parent_height=1, min_preceding=1 from orphan, diff=0 ≤ 2)
+        store_for_doc.nodes.add_node(
+            node_id="h0-left",
+            text="H0 left leaf",
+            embedding=[0.1] * 8,
+            height=0,
+            level_index=100,  # even = left child position
+            span_start=30000,
+            span_end=31000,
+            parent_id=None,
+            token_count=50,
+        )
+        store_for_doc.nodes.add_node(
+            node_id="h0-right",
+            text="H0 right leaf",
+            embedding=[0.1] * 8,
+            height=0,
+            level_index=101,  # = left + 1
+            span_start=31000,
+            span_end=32000,
+            parent_id=None,
+            token_count=50,
+        )
+
+        config = IndexConfig.load(target_chunk_tokens=50)
+        engine = IndexingEngine(
+            store=sqlite_backend,
+            llm_service=MagicMock(),
+            index_config=config,
+            openai_client=MagicMock(),
+            vector_index_factory=lambda _: MagicMock(),
+            max_parallelism=1,
+        )
+
+        jobs = engine._find_next_n_summary_jobs(
+            store=store_for_doc,
+            document_id=doc_id,
+            active_jobs=set(),
+            ctx=None,
+            frontier=None,
+            max_height_diff=2,
+            max_jobs=10,
+        )
+
+        # The h=3 pair should be skipped, but the h=0 pair should be found
+        assert len(jobs) == 1, (
+            f"Expected 1 job (h=0 pair), got {len(jobs)}. "
+            "Scanner should skip blocked tall pairs and continue to lower-height pairs."
+        )
+        assert jobs[0][1].left_id == "h0-left"
+        assert jobs[0][1].right_id == "h0-right"
+
+        await engine.shutdown()
+
+    @pytest.mark.asyncio
     async def test_summarize_pair_rollback_on_failure(
         self,
         sqlite_backend: SQLiteStorageBackend,

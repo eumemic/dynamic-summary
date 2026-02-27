@@ -717,17 +717,15 @@ class IndexingEngine:
                     self._notify_state_change()
                     return
 
-                available_slots = self._max_parallelism - len(self._active_jobs)
-                if available_slots <= 0:
+                allowance = self._doc_slot_allowance_locked(document_id)
+                if allowance <= 0:
                     return
 
                 # Copy active jobs to check against outside lock
                 current_active = set(self._active_jobs)
 
             # Find multiple jobs at once outside lock (does I/O)
-            jobs = self._find_next_n_jobs(
-                document_id, current_active, ctx, available_slots
-            )
+            jobs = self._find_next_n_jobs(document_id, current_active, ctx, allowance)
 
             finalize_runs = False
             # Acquire lock to add jobs and fire them all at once
@@ -763,11 +761,11 @@ class IndexingEngine:
                     if not new_jobs:
                         continue
 
-                    # Re-check parallelism limit and trim if needed
-                    available_now = self._max_parallelism - len(self._active_jobs)
-                    if available_now <= 0:
+                    # Re-check fair share limit and trim if needed
+                    allowance_now = self._doc_slot_allowance_locked(document_id)
+                    if allowance_now <= 0:
                         return
-                    new_jobs = new_jobs[:available_now]
+                    new_jobs = new_jobs[:allowance_now]
 
                     # Add all jobs to active set
                     for job in new_jobs:
@@ -801,6 +799,31 @@ class IndexingEngine:
         """Wake up waiters after state changes. Must hold lock."""
         # Always set the event to wake up waiters so they can re-check conditions
         self._idle_event.set()
+
+    def _doc_slot_allowance_locked(self, document_id: str) -> int:
+        """Max new jobs this document may claim. Caller must hold _lock.
+
+        Computes a fair share of max_parallelism divided equally among active
+        documents, then subtracts jobs already inflight for this document.
+        This prevents a single large document from hogging all slots.
+        """
+        available = self._max_parallelism - len(self._active_jobs)
+        if available <= 0:
+            return 0
+        num_active = len(self._active_documents) or 1
+        fair_share = -(-self._max_parallelism // num_active)  # ceil division
+        doc_inflight = sum(1 for j in self._active_jobs if j.document_id == document_id)
+        allowance = min(available, max(0, fair_share - doc_inflight))
+        logger.debug(
+            "fair_share doc=%s active_docs=%d fair=%d inflight=%d allowance=%d avail=%d",
+            document_id[:8],
+            num_active,
+            fair_share,
+            doc_inflight,
+            allowance,
+            available,
+        )
+        return allowance
 
     def _job_node_id(self, job: IndexingJob) -> str:
         if isinstance(job, EmbeddingJob):
@@ -1117,7 +1140,16 @@ class IndexingEngine:
                             left_height = int(getattr(prev_root, "height", 0))
                             parent_height = left_height + 1
                             if parent_height - min_preceding_height > max_height_diff:
-                                break
+                                # Skip this pair but continue scanning —
+                                # lower-height pairs further right may
+                                # still satisfy the constraint.
+                                prev_root = root
+                                if (
+                                    min_preceding_height is None
+                                    or root_height < min_preceding_height
+                                ):
+                                    min_preceding_height = root_height
+                                continue
 
                         if run_id is not None:
                             assigned_run = (
