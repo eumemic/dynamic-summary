@@ -105,13 +105,23 @@ class SqliteDatabaseManager:
         # Share the same in-memory database across threads and sessions
         if self.url.strip().lower() in {"sqlite:///:memory:", "sqlite://"}:
             engine_kwargs["poolclass"] = StaticPool
+        is_memory_db = self.url.strip().lower() in {
+            "sqlite:///:memory:",
+            "sqlite://",
+        }
         self.engine = create_engine(self.url, **engine_kwargs)
-        # Apply lightweight performance PRAGMAs suitable for tests/dev
         try:
             with self.engine.connect() as conn:
-                # Reduce fsyncs and use in-memory journaling for faster writes
-                conn.exec_driver_sql("PRAGMA synchronous=OFF")
-                conn.exec_driver_sql("PRAGMA journal_mode=MEMORY")
+                if is_memory_db:
+                    # In-memory databases don't persist — aggressive settings are safe
+                    conn.exec_driver_sql("PRAGMA synchronous=OFF")
+                    conn.exec_driver_sql("PRAGMA journal_mode=MEMORY")
+                else:
+                    # File-backed databases need crash safety. WAL mode provides
+                    # concurrent reads + crash recovery with better write throughput
+                    # than the default rollback journal.
+                    conn.exec_driver_sql("PRAGMA synchronous=NORMAL")
+                    conn.exec_driver_sql("PRAGMA journal_mode=WAL")
                 # Keep temporary tables in memory and enlarge page cache
                 conn.exec_driver_sql("PRAGMA temp_store=MEMORY")
                 conn.exec_driver_sql("PRAGMA cache_size=-65536")
