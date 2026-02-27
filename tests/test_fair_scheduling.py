@@ -1,7 +1,8 @@
 """Tests for fair job distribution across documents in IndexingEngine.
 
-Verifies that the per-document fair share cap prevents a single large document
-from hogging all available parallelism slots.
+Verifies that documents get fair access to the parallelism pool without
+hard caps that waste slots. Documents that can't use their share (due to
+tree dependencies) should have their unused capacity redistributed.
 """
 
 from __future__ import annotations
@@ -362,3 +363,82 @@ class TestFairScheduling:
             for t in [task_a, task_b, task_b2]:
                 t.cancel()
             await asyncio.gather(task_a, task_b, task_b2, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_scheduler_redistributes_unused_capacity(self) -> None:
+        """Scheduler redistributes slots when some docs can't use their share.
+
+        With max_parallelism=10, 2 active docs, doc A can only find 2 jobs
+        (tree deps) but doc B has 20. The scheduler should redistribute
+        A's unused slots to B, filling all 10 slots.
+        """
+        engine = _make_engine(max_parallelism=10)
+
+        job_events: dict[str, asyncio.Event] = {}
+
+        async def mock_run_job(job: EmbeddingJob) -> None:
+            event = asyncio.Event()
+            key = f"{job.document_id}:{job.leaf_id}"
+            job_events[key] = event
+            await event.wait()
+
+        # Doc A: only 2 jobs (simulating tree dependency bottleneck)
+        # Doc B: many jobs
+        remaining_a = [
+            EmbeddingJob(document_id="doc-a", leaf_id=f"leaf-{i}") for i in range(2)
+        ]
+        remaining_b = [
+            EmbeddingJob(document_id="doc-b", leaf_id=f"leaf-{i}") for i in range(20)
+        ]
+
+        def mock_find_next_n_jobs(
+            document_id: str,
+            active_jobs: set[IndexingJob],
+            ctx: object,
+            max_jobs: int,
+        ) -> list[EmbeddingJob]:
+            remaining = remaining_a if document_id == "doc-a" else remaining_b
+            found: list[EmbeddingJob] = []
+            for job in list(remaining):
+                if job not in active_jobs and len(found) < max_jobs:
+                    found.append(job)
+                    remaining.remove(job)
+            return found
+
+        engine._active_documents = {"doc-a", "doc-b"}
+        engine._document_contexts = {
+            "doc-a": MagicMock(cancelled=False, leaves_at_last_idle=0),
+            "doc-b": MagicMock(cancelled=False, leaves_at_last_idle=0),
+        }
+
+        # Mark both documents as dirty (as _run_job would do)
+        engine._dirty_documents = {"doc-a", "doc-b"}
+
+        with (
+            patch.object(
+                engine, "_find_next_n_jobs", side_effect=mock_find_next_n_jobs
+            ),
+            patch.object(engine, "_run_job", side_effect=mock_run_job),
+            patch.object(engine, "_maybe_complete_runs", return_value=None),
+            patch.object(engine, "_safe_on_document_idle", return_value=None),
+        ):
+            # Run the scheduler — it should distribute fairly then redistribute
+            await engine._run_scheduler()
+
+            inflight_a = sum(1 for j in engine._active_jobs if j.document_id == "doc-a")
+            inflight_b = sum(1 for j in engine._active_jobs if j.document_id == "doc-b")
+            total = len(engine._active_jobs)
+
+            assert inflight_a == 2, f"doc-a has 2 jobs total, got {inflight_a} inflight"
+            assert total == 10, (
+                f"All 10 slots should be filled (a={inflight_a}, b={inflight_b}, "
+                f"total={total})"
+            )
+            assert (
+                inflight_b == 8
+            ), f"doc-b should absorb doc-a's unused slots, got {inflight_b}"
+
+            # Clean up
+            for event in job_events.values():
+                event.set()
+            await asyncio.sleep(0.05)
