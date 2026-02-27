@@ -89,6 +89,7 @@ class SummaryWorkflowConfig:
     max_retries: int
     retry_threshold: float
     summarization_guidance: str | None = None
+    max_input_tokens: int | None = None
 
 
 def tokens_to_words(target_tokens: int) -> int:
@@ -482,6 +483,25 @@ async def run_summary_workflow(
         SummaryResult containing the summary text, retry count, token count,
         and accumulated usage across all LLM attempts for cost calculation.
     """
+    # Guard: truncate text that would overflow the model's context window.
+    # This is a safety valve — callers should ideally chunk before reaching
+    # this point, but for existing large leaves we truncate rather than crash.
+    if config.max_input_tokens is not None:
+        actual_tokens = (
+            text_tokens if text_tokens is not None else tokenizer.count_tokens(text)
+        )
+        if actual_tokens > config.max_input_tokens:
+            logger.warning(
+                "Truncating summary input from %d to %d tokens (node %s)",
+                actual_tokens,
+                config.max_input_tokens,
+                parent_id or "?",
+            )
+            text = tokenizer.truncate_to_token_limit(
+                text, config.max_input_tokens, from_end=False
+            )
+            text_tokens = config.max_input_tokens
+
     preparation = prepare_summary_inputs(
         text=text,
         target_tokens=target_tokens,
@@ -619,6 +639,7 @@ async def run_summary_from_config(
             if summarization_guidance is not None
             else index_config.summarization_guidance
         ),
+        max_input_tokens=100_000,
     )
 
     return await run_summary_workflow(

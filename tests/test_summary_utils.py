@@ -770,6 +770,157 @@ class TestRunEmbeddingTextWorkflow:
         assert "authentication" in user_message["content"]
 
 
+class TestSummaryWorkflowInputTruncation:
+    """Tests for max_input_tokens safety valve in run_summary_workflow.
+
+    When text exceeds max_input_tokens, it must be truncated before being
+    sent to the LLM. This prevents context overflow errors from the model API.
+    """
+
+    @pytest.mark.asyncio
+    async def test_truncates_text_exceeding_max_input_tokens(self) -> None:
+        """Text exceeding max_input_tokens is truncated before LLM call."""
+        from ragzoom.services.summary_utils import run_summary_workflow
+        from ragzoom.utils.tokenization import tokenizer
+
+        received_messages: list[dict[str, str]] = []
+
+        async def mock_llm(
+            messages: MutableSequence[dict[str, str]],
+            target_tokens: int,
+            node_id: str,
+            reporter: TelemetryCollector | None,
+        ) -> tuple[str, UsageInfo]:
+            received_messages.extend(messages)
+            return "compressed", {"prompt_tokens": 100, "completion_tokens": 5}
+
+        config = SummaryWorkflowConfig(
+            summary_model="gpt-4o-mini",
+            use_anti_verbatim_vaccine=False,
+            max_retries=0,
+            retry_threshold=0.2,
+            max_input_tokens=50,  # Very small limit
+        )
+
+        # Text much larger than the limit
+        large_text = "word " * 200  # ~200 tokens
+        assert tokenizer.count_tokens(large_text) > 50
+
+        await run_summary_workflow(
+            text=large_text,
+            target_tokens=10,
+            config=config,
+            call_summary=mock_llm,
+        )
+
+        # LLM should have been called with truncated text
+        assert received_messages, "LLM should have been called"
+        user_msg = next(m for m in received_messages if m["role"] == "user")
+        # The user prompt should NOT contain the full 200-token text
+        user_tokens = tokenizer.count_tokens(user_msg["content"])
+        # Prompt overhead (wrapper text) adds tokens, but the text portion
+        # should be truncated so total is much less than the original
+        assert user_tokens < tokenizer.count_tokens(large_text)
+
+    @pytest.mark.asyncio
+    @pytest.mark.asyncio
+    async def test_no_truncation_when_text_fits(self) -> None:
+        """Text within max_input_tokens is not truncated."""
+        from ragzoom.services.summary_utils import run_summary_workflow
+
+        received_messages: list[dict[str, str]] = []
+
+        async def mock_llm(
+            messages: MutableSequence[dict[str, str]],
+            target_tokens: int,
+            node_id: str,
+            reporter: TelemetryCollector | None,
+        ) -> tuple[str, UsageInfo]:
+            received_messages.extend(messages)
+            return "compressed", {"prompt_tokens": 10, "completion_tokens": 5}
+
+        config = SummaryWorkflowConfig(
+            summary_model="gpt-4o-mini",
+            use_anti_verbatim_vaccine=False,
+            max_retries=0,
+            retry_threshold=0.2,
+            max_input_tokens=10000,  # Large limit
+        )
+
+        small_text = "A short text to summarize."
+
+        await run_summary_workflow(
+            text=small_text,
+            target_tokens=5,
+            config=config,
+            call_summary=mock_llm,
+        )
+
+        assert received_messages
+        user_msg = next(m for m in received_messages if m["role"] == "user")
+        # Full text should be present
+        assert small_text.strip() in user_msg["content"]
+
+    @pytest.mark.asyncio
+    async def test_no_truncation_when_max_input_tokens_is_none(self) -> None:
+        """When max_input_tokens is None, no truncation is applied."""
+        from ragzoom.services.summary_utils import run_summary_workflow
+
+        received_messages: list[dict[str, str]] = []
+
+        async def mock_llm(
+            messages: MutableSequence[dict[str, str]],
+            target_tokens: int,
+            node_id: str,
+            reporter: TelemetryCollector | None,
+        ) -> tuple[str, UsageInfo]:
+            received_messages.extend(messages)
+            return "compressed", {"prompt_tokens": 10, "completion_tokens": 5}
+
+        config = SummaryWorkflowConfig(
+            summary_model="gpt-4o-mini",
+            use_anti_verbatim_vaccine=False,
+            max_retries=0,
+            retry_threshold=0.2,
+            # max_input_tokens defaults to None
+        )
+
+        large_text = "word " * 500
+
+        await run_summary_workflow(
+            text=large_text,
+            target_tokens=10,
+            config=config,
+            call_summary=mock_llm,
+        )
+
+        assert received_messages
+        user_msg = next(m for m in received_messages if m["role"] == "user")
+        # Full text should be present (no truncation)
+        assert "word" in user_msg["content"]
+
+    def test_workflow_config_has_max_input_tokens_field(self) -> None:
+        """SummaryWorkflowConfig has max_input_tokens field defaulting to None."""
+        config = SummaryWorkflowConfig(
+            summary_model="gpt-4o-mini",
+            use_anti_verbatim_vaccine=False,
+            max_retries=0,
+            retry_threshold=0.2,
+        )
+        assert config.max_input_tokens is None
+
+    def test_workflow_config_accepts_max_input_tokens(self) -> None:
+        """SummaryWorkflowConfig accepts max_input_tokens."""
+        config = SummaryWorkflowConfig(
+            summary_model="gpt-4o-mini",
+            use_anti_verbatim_vaccine=False,
+            max_retries=0,
+            retry_threshold=0.2,
+            max_input_tokens=100_000,
+        )
+        assert config.max_input_tokens == 100_000
+
+
 class TestRunEmbeddingTextFromConfig:
     """Tests for run_embedding_text_from_config convenience wrapper."""
 
