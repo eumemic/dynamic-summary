@@ -1117,7 +1117,16 @@ class IndexingEngine:
                             left_height = int(getattr(prev_root, "height", 0))
                             parent_height = left_height + 1
                             if parent_height - min_preceding_height > max_height_diff:
-                                break
+                                # Skip this pair but continue scanning —
+                                # lower-height pairs further right may
+                                # still satisfy the constraint.
+                                prev_root = root
+                                if (
+                                    min_preceding_height is None
+                                    or root_height < min_preceding_height
+                                ):
+                                    min_preceding_height = root_height
+                                continue
 
                         if run_id is not None:
                             assigned_run = (
