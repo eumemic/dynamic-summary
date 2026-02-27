@@ -680,26 +680,56 @@ class IndexingEngine:
             self._scheduler_task = asyncio.create_task(self._run_scheduler())
 
     async def _run_scheduler(self) -> None:
-        """Process all dirty documents, finding and starting jobs for each.
+        """Process all dirty documents, distributing available slots fairly.
 
-        Yields once at start to let more completions accumulate, then processes
-        all dirty documents in a loop until none remain.
+        Each document gets a fair share of available slots per round. After
+        processing all dirty documents, if slots remain (because some documents
+        couldn't use their share due to tree dependencies), active documents
+        get another round to claim the excess. Stops when no new jobs start.
         """
         # Yield to let more job completions accumulate their scheduling requests
         await asyncio.sleep(0)
 
         while self._dirty_documents:
-            # Pop one document at a time (set iteration isn't safe during modification)
-            document_id = self._dirty_documents.pop()
-            await self._find_and_start_jobs(document_id)
+            # Snapshot and clear dirty set for this round
+            round_docs = list(self._dirty_documents)
+            self._dirty_documents.clear()
+
+            async with self._lock:
+                jobs_before = len(self._active_jobs)
+
+            for document_id in round_docs:
+                await self._find_and_start_jobs(document_id)
+
+            # Redistribute unused capacity: if slots remain and we made
+            # progress this round, give all active documents another chance.
+            async with self._lock:
+                available = self._max_parallelism - len(self._active_jobs)
+                made_progress = len(self._active_jobs) > jobs_before
+                if available > 0 and made_progress and self._active_documents:
+                    for doc_id in self._active_documents:
+                        self._dirty_documents.add(doc_id)
 
     async def _find_and_start_jobs(self, document_id: str) -> None:
-        """Find and start eligible jobs up to max parallelism.
+        """Find and start eligible jobs for a document.
 
         Uses batch discovery to find multiple jobs at once, then fires them
-        all simultaneously. This reduces job discovery overhead and ensures
-        concurrent API requests hit the server together.
+        all simultaneously. Claims up to a fair share of available slots per
+        call; the scheduler's redistribution loop handles excess capacity.
         """
+        # Compute per-call budget: fair share of the total slot pool.
+        # This prevents one document from consuming all slots in a single
+        # scheduling pass while still allowing it to accumulate more over
+        # subsequent rounds when other documents can't use their share.
+        # We divide max_parallelism (not available) so a document that
+        # returns early with unused budget doesn't shrink other documents'
+        # shares. The min(available, remaining) check inside the loop
+        # prevents overcommitting the actual available slots.
+        async with self._lock:
+            num_active = len(self._active_documents) or 1
+            budget = -(-self._max_parallelism // num_active)
+
+        started = 0
         loop_count = 0
         while True:
             loop_count += 1
@@ -717,7 +747,9 @@ class IndexingEngine:
                     self._notify_state_change()
                     return
 
-                allowance = self._doc_slot_allowance_locked(document_id)
+                remaining = budget - started
+                available = self._max_parallelism - len(self._active_jobs)
+                allowance = min(available, remaining)
                 if allowance <= 0:
                     return
 
@@ -761,11 +793,13 @@ class IndexingEngine:
                     if not new_jobs:
                         continue
 
-                    # Re-check fair share limit and trim if needed
-                    allowance_now = self._doc_slot_allowance_locked(document_id)
-                    if allowance_now <= 0:
+                    # Re-check limits and trim
+                    remaining = budget - started
+                    available_now = self._max_parallelism - len(self._active_jobs)
+                    trim = min(available_now, remaining)
+                    if trim <= 0:
                         return
-                    new_jobs = new_jobs[:allowance_now]
+                    new_jobs = new_jobs[:trim]
 
                     # Add all jobs to active set
                     for job in new_jobs:
@@ -781,6 +815,8 @@ class IndexingEngine:
                                     ctx.inflight_by_run.get(run_id, 0) + 1
                                 )
                                 ctx.job_run_ids[job] = run_id
+
+                    started += len(new_jobs)
 
                     # Fire all jobs simultaneously
                     for job in new_jobs:
@@ -799,31 +835,6 @@ class IndexingEngine:
         """Wake up waiters after state changes. Must hold lock."""
         # Always set the event to wake up waiters so they can re-check conditions
         self._idle_event.set()
-
-    def _doc_slot_allowance_locked(self, document_id: str) -> int:
-        """Max new jobs this document may claim. Caller must hold _lock.
-
-        Computes a fair share of max_parallelism divided equally among active
-        documents, then subtracts jobs already inflight for this document.
-        This prevents a single large document from hogging all slots.
-        """
-        available = self._max_parallelism - len(self._active_jobs)
-        if available <= 0:
-            return 0
-        num_active = len(self._active_documents) or 1
-        fair_share = -(-self._max_parallelism // num_active)  # ceil division
-        doc_inflight = sum(1 for j in self._active_jobs if j.document_id == document_id)
-        allowance = min(available, max(0, fair_share - doc_inflight))
-        logger.debug(
-            "fair_share doc=%s active_docs=%d fair=%d inflight=%d allowance=%d avail=%d",
-            document_id[:8],
-            num_active,
-            fair_share,
-            doc_inflight,
-            allowance,
-            available,
-        )
-        return allowance
 
     def _job_node_id(self, job: IndexingJob) -> str:
         if isinstance(job, EmbeddingJob):
