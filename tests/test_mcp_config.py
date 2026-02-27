@@ -28,7 +28,8 @@ class McpConfig(TypedDict):
 def mcp_config() -> McpConfig:
     """Load and return the MCP configuration."""
     mcp_config_path = REPO_ROOT / ".mcp.json"
-    assert mcp_config_path.exists(), f".mcp.json not found at {mcp_config_path}"
+    if not mcp_config_path.exists():
+        pytest.skip(".mcp.json is a local dev config and not present in CI")
 
     with open(mcp_config_path) as f:
         config: McpConfig = json.load(f)
