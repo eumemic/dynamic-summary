@@ -1,8 +1,9 @@
-"""Tests for fair job distribution across documents in IndexingEngine.
+"""Tests for greedy job scheduling across documents in IndexingEngine.
 
-Verifies that documents get fair access to the parallelism pool without
-hard caps that waste slots. Documents that can't use their share (due to
-tree dependencies) should have their unused capacity redistributed.
+Verifies that documents greedily claim all available parallelism slots
+without per-document caps. The min(available, remaining) check prevents
+overcommitting, while the coalescing scheduler gives every document a
+chance each round.
 """
 
 from __future__ import annotations
@@ -30,42 +31,28 @@ def _make_engine(max_parallelism: int = 10) -> IndexingEngine:
     )
 
 
-class TestFairScheduling:
-    """Test fair distribution of parallelism slots across documents."""
+class TestGreedyScheduling:
+    """Test greedy distribution of parallelism slots across documents."""
 
     @pytest.mark.asyncio
-    async def test_two_docs_get_fair_share(self) -> None:
-        """With max_parallelism=10 and 2 active docs, neither should hold >5 inflight."""
+    async def test_two_docs_greedy_scheduling(self) -> None:
+        """With greedy scheduling, the pool should be fully saturated (10/10 slots)."""
         engine = _make_engine(max_parallelism=10)
 
-        # Track peak inflight per document
-        peak_inflight: dict[str, int] = {"doc-a": 0, "doc-b": 0}
-        jobs_started: dict[str, int] = {"doc-a": 0, "doc-b": 0}
         job_complete_events: list[asyncio.Event] = []
 
         async def mock_run_job(job: EmbeddingJob) -> None:
-            """Mock job that waits until signaled to complete."""
-            doc_id = job.document_id
-            jobs_started[doc_id] = jobs_started.get(doc_id, 0) + 1
-
-            # Record peak inflight
-            inflight = sum(1 for j in engine._active_jobs if j.document_id == doc_id)
-            peak_inflight[doc_id] = max(peak_inflight[doc_id], inflight)
-
-            # Wait for completion signal
             event = asyncio.Event()
             job_complete_events.append(event)
             await event.wait()
 
         # Each doc has 20 embedding jobs (far more than max_parallelism)
-        doc_a_jobs = [
+        remaining_a = [
             EmbeddingJob(document_id="doc-a", leaf_id=f"leaf-{i}") for i in range(20)
         ]
-        doc_b_jobs = [
+        remaining_b = [
             EmbeddingJob(document_id="doc-b", leaf_id=f"leaf-{i}") for i in range(20)
         ]
-        remaining_a = list(doc_a_jobs)
-        remaining_b = list(doc_b_jobs)
 
         def mock_find_next_n_jobs(
             document_id: str,
@@ -81,7 +68,6 @@ class TestFairScheduling:
                     remaining.remove(job)
             return found
 
-        # Both documents are active
         engine._active_documents = {"doc-a", "doc-b"}
         engine._document_contexts = {
             "doc-a": MagicMock(cancelled=False),
@@ -97,19 +83,15 @@ class TestFairScheduling:
             # Trigger scheduling for both documents
             task_a = asyncio.create_task(engine._find_and_start_jobs("doc-a"))
             task_b = asyncio.create_task(engine._find_and_start_jobs("doc-b"))
-
-            # Let scheduling run
             await asyncio.sleep(0.05)
 
-            # Check: neither document should exceed fair share (5 slots each)
+            # Greedy: pool should be fully saturated regardless of per-doc distribution
+            total_inflight = len(engine._active_jobs)
             assert (
-                peak_inflight["doc-a"] <= 5
-            ), f"doc-a peaked at {peak_inflight['doc-a']} inflight, expected <= 5"
-            assert (
-                peak_inflight["doc-b"] <= 5
-            ), f"doc-b peaked at {peak_inflight['doc-b']} inflight, expected <= 5"
+                total_inflight == 10
+            ), f"Pool should be saturated at 10, got {total_inflight}"
 
-            # Clean up: signal all jobs to complete
+            # Clean up
             for event in job_complete_events:
                 event.set()
             await asyncio.sleep(0.05)
@@ -173,13 +155,11 @@ class TestFairScheduling:
             await asyncio.gather(task, return_exceptions=True)
 
     @pytest.mark.asyncio
-    async def test_unused_slots_redistribute(self) -> None:
-        """If doc A has only 2 jobs, doc B eventually holds up to 10 after A goes idle.
+    async def test_unused_slots_filled_immediately(self) -> None:
+        """Doc B fills remaining slots immediately — no redistribution pass needed.
 
-        The flow mirrors the real scheduler:
-        1. Both docs get fair share (5 each), doc A only uses 2
-        2. Doc A's jobs complete → goes idle → removed from _active_documents
-        3. Doc B re-schedules → fair_share becomes 10 → claims remaining slots
+        Doc A has only 2 jobs. With greedy scheduling, doc B claims all
+        remaining 8 slots in the same scheduling round.
         """
         engine = _make_engine(max_parallelism=10)
 
@@ -191,7 +171,6 @@ class TestFairScheduling:
             job_events[key] = event
             await event.wait()
 
-        # Doc A: only 2 jobs. Doc B: many jobs.
         remaining_a = [
             EmbeddingJob(document_id="doc-a", leaf_id=f"leaf-{i}") for i in range(2)
         ]
@@ -227,52 +206,34 @@ class TestFairScheduling:
             patch.object(engine, "_maybe_complete_runs", return_value=None),
             patch.object(engine, "_safe_on_document_idle", return_value=None),
         ):
-            # Phase 1: initial scheduling — each doc gets fair share (5)
+            # Schedule doc A first (2 jobs), then doc B fills the rest
             task_a = asyncio.create_task(engine._find_and_start_jobs("doc-a"))
+            await asyncio.sleep(0.01)
             task_b = asyncio.create_task(engine._find_and_start_jobs("doc-b"))
             await asyncio.sleep(0.05)
 
             inflight_a = sum(1 for j in engine._active_jobs if j.document_id == "doc-a")
             inflight_b = sum(1 for j in engine._active_jobs if j.document_id == "doc-b")
+            total = len(engine._active_jobs)
+
             assert inflight_a == 2, f"doc-a should have 2 inflight, got {inflight_a}"
-            assert inflight_b == 5, f"doc-b should have 5 inflight, got {inflight_b}"
-
-            # Phase 2: simulate doc A jobs completing (remove from active_jobs)
-            # and doc A going idle (remove from _active_documents)
-            doc_a_jobs = {j for j in engine._active_jobs if j.document_id == "doc-a"}
-            engine._active_jobs -= doc_a_jobs
-            engine._active_documents.discard("doc-a")
-            for key, event in list(job_events.items()):
-                if key.startswith("doc-a:"):
-                    event.set()
-            await asyncio.sleep(0.05)
-
-            # Phase 3: re-trigger doc B scheduling — fair share now 10 (sole active doc)
-            task_b2 = asyncio.create_task(engine._find_and_start_jobs("doc-b"))
-            await asyncio.sleep(0.05)
-
-            inflight_b_after = sum(
-                1 for j in engine._active_jobs if j.document_id == "doc-b"
-            )
-            assert (
-                inflight_b_after == 10
-            ), f"After doc-a idle, doc-b should have 10 inflight, got {inflight_b_after}"
+            assert inflight_b == 8, f"doc-b should fill remaining 8, got {inflight_b}"
+            assert total == 10, f"Pool should be saturated at 10, got {total}"
 
             # Clean up
             for event in job_events.values():
                 event.set()
             await asyncio.sleep(0.05)
-            for t in [task_a, task_b, task_b2]:
+            for t in [task_a, task_b]:
                 t.cancel()
-            await asyncio.gather(task_a, task_b, task_b2, return_exceptions=True)
+            await asyncio.gather(task_a, task_b, return_exceptions=True)
 
     @pytest.mark.asyncio
-    async def test_idle_doc_frees_share(self) -> None:
-        """When doc A finishes all work, doc B's fair share grows to full parallelism.
+    async def test_idle_doc_frees_slots(self) -> None:
+        """After doc A goes idle, doc B claims the freed slots.
 
-        Unlike test_unused_slots_redistribute which verifies the end-state,
-        this test verifies the transition: doc B's inflight count increases
-        from its initial fair share after doc A goes idle.
+        Doc A takes 3 slots, doc B fills remaining 7. When doc A's jobs
+        complete and it goes idle, doc B re-schedules and fills to 10.
         """
         engine = _make_engine(max_parallelism=10)
 
@@ -284,7 +245,6 @@ class TestFairScheduling:
             job_events[key] = event
             await event.wait()
 
-        # Doc A: 3 jobs, Doc B: 20 jobs
         remaining_a = [
             EmbeddingJob(document_id="doc-a", leaf_id=f"leaf-{i}") for i in range(3)
         ]
@@ -320,21 +280,16 @@ class TestFairScheduling:
             patch.object(engine, "_maybe_complete_runs", return_value=None),
             patch.object(engine, "_safe_on_document_idle", return_value=None),
         ):
-            # Phase 1: both docs scheduling — fair share = ceil(10/2) = 5
+            # Phase 1: doc A takes 3, doc B fills remaining 7
             task_a = asyncio.create_task(engine._find_and_start_jobs("doc-a"))
+            await asyncio.sleep(0.01)
             task_b = asyncio.create_task(engine._find_and_start_jobs("doc-b"))
             await asyncio.sleep(0.05)
 
-            inflight_a = sum(1 for j in engine._active_jobs if j.document_id == "doc-a")
-            inflight_b_initial = sum(
-                1 for j in engine._active_jobs if j.document_id == "doc-b"
-            )
-            assert inflight_a == 3, f"doc-a should use all 3 jobs, got {inflight_a}"
-            assert (
-                inflight_b_initial == 5
-            ), f"doc-b fair share should be 5, got {inflight_b_initial}"
+            total = len(engine._active_jobs)
+            assert total == 10, f"Pool should be saturated at 10, got {total}"
 
-            # Phase 2: simulate doc A completing and going idle
+            # Phase 2: doc A completes and goes idle
             doc_a_jobs = {j for j in engine._active_jobs if j.document_id == "doc-a"}
             engine._active_jobs -= doc_a_jobs
             engine._active_documents.discard("doc-a")
@@ -343,18 +298,14 @@ class TestFairScheduling:
                     event.set()
             await asyncio.sleep(0.05)
 
-            # Phase 3: re-trigger doc B — now sole active doc, gets full 10
+            # Phase 3: re-trigger doc B — claims freed slots
             task_b2 = asyncio.create_task(engine._find_and_start_jobs("doc-b"))
             await asyncio.sleep(0.05)
 
-            inflight_b_after = sum(
-                1 for j in engine._active_jobs if j.document_id == "doc-b"
-            )
+            inflight_b = sum(1 for j in engine._active_jobs if j.document_id == "doc-b")
             assert (
-                inflight_b_after == 10
-            ), f"After doc-a idle, doc-b should have 10 inflight, got {inflight_b_after}"
-            # Confirm growth from initial fair share
-            assert inflight_b_after > inflight_b_initial
+                inflight_b == 10
+            ), f"After doc-a idle, doc-b should have 10 inflight, got {inflight_b}"
 
             # Clean up
             for event in job_events.values():
@@ -365,12 +316,13 @@ class TestFairScheduling:
             await asyncio.gather(task_a, task_b, task_b2, return_exceptions=True)
 
     @pytest.mark.asyncio
-    async def test_scheduler_redistributes_unused_capacity(self) -> None:
-        """Scheduler redistributes slots when some docs can't use their share.
+    async def test_scheduler_fills_pool_in_first_round(self) -> None:
+        """Scheduler fills all slots in the first round with greedy scheduling.
 
-        With max_parallelism=10, 2 active docs, doc A can only find 2 jobs
-        (tree deps) but doc B has 20. The scheduler should redistribute
-        A's unused slots to B, filling all 10 slots.
+        With max_parallelism=10 and 2 dirty docs, the scheduler iterates
+        them sequentially. With greedy budgets, the pool is fully saturated
+        after one round. Per-doc distribution depends on iteration order
+        (set ordering), so we only assert pool saturation.
         """
         engine = _make_engine(max_parallelism=10)
 
@@ -382,8 +334,6 @@ class TestFairScheduling:
             job_events[key] = event
             await event.wait()
 
-        # Doc A: only 2 jobs (simulating tree dependency bottleneck)
-        # Doc B: many jobs
         remaining_a = [
             EmbeddingJob(document_id="doc-a", leaf_id=f"leaf-{i}") for i in range(2)
         ]
@@ -411,7 +361,6 @@ class TestFairScheduling:
             "doc-b": MagicMock(cancelled=False, leaves_at_last_idle=0),
         }
 
-        # Mark both documents as dirty (as _run_job would do)
         engine._dirty_documents = {"doc-a", "doc-b"}
 
         with (
@@ -422,21 +371,10 @@ class TestFairScheduling:
             patch.object(engine, "_maybe_complete_runs", return_value=None),
             patch.object(engine, "_safe_on_document_idle", return_value=None),
         ):
-            # Run the scheduler — it should distribute fairly then redistribute
             await engine._run_scheduler()
 
-            inflight_a = sum(1 for j in engine._active_jobs if j.document_id == "doc-a")
-            inflight_b = sum(1 for j in engine._active_jobs if j.document_id == "doc-b")
             total = len(engine._active_jobs)
-
-            assert inflight_a == 2, f"doc-a has 2 jobs total, got {inflight_a} inflight"
-            assert total == 10, (
-                f"All 10 slots should be filled (a={inflight_a}, b={inflight_b}, "
-                f"total={total})"
-            )
-            assert (
-                inflight_b == 8
-            ), f"doc-b should absorb doc-a's unused slots, got {inflight_b}"
+            assert total == 10, f"All 10 slots should be filled, got {total}"
 
             # Clean up
             for event in job_events.values():
