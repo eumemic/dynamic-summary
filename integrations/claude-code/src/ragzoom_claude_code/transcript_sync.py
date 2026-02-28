@@ -832,7 +832,10 @@ def transcribe_uuids_from_map(
     if not uuids:
         return ""
 
-    transcriber = Transcriber()
+    transcriber = Transcriber(
+        include_thinking=False,
+        tool_arg_limits={"Send": None},
+    )
     chunks: list[str] = []
 
     for uuid in uuids:
