@@ -87,4 +87,4 @@ Untested levers (noted, not claimed): the Oolong runs used the weakest reader (`
 
 ## Reproducibility
 
-The LiteLLM-based multi-model benchmark harness (baseline arms, the capability matrix, and the concentrate A/B) lives on the `litellm-summary-model` branch. Raw per-question results are available on request.
+Raw per-question results for every arm are available on request. The LiteLLM-based multi-model harness used for these runs (baseline arms, the capability matrix, and the concentrate A/B) is being upstreamed to this repository.
