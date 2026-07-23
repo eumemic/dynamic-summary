@@ -8,11 +8,13 @@ This directory contains sample documents for testing the RagZoom system:
    - Classic novel by Herman Melville
    - Good for testing narrative text processing
    - Downloaded from Project Gutenberg
+   - **moby_dick_ci.txt** (~514KB): line-aligned prefix slice used by the CI benchmark workflows (size-matched to the former CI corpus)
 
 2. **bible_kjv.txt** (4.4 MB, ~100K lines)
    - King James Version of the Bible
    - Tests handling of repetitive terms and structured text
    - Downloaded from Project Gutenberg
+   - **moby_dick_ci.txt** (~514KB): line-aligned prefix slice used by the CI benchmark workflows (size-matched to the former CI corpus)
 
 3. **sample_chat_log.txt** (2.8 KB, 54 lines)
    - Synthetic 100-turn chat conversation

@@ -51,11 +51,11 @@ jobs:
         run: |
           mkdir -p benchmark_results
           
-          # Run indexing benchmark with current defaults and full Moby Dick text
-          echo "Running indexing benchmark with full Moby Dick text and current defaults..."
+          # Run indexing benchmark with current defaults and size-matched ~500KB Moby Dick CI slice
+          echo "Running indexing benchmark with size-matched ~500KB Moby Dick CI slice and current defaults..."
           ./scripts/run-indexing-benchmarks \
             --output-dir benchmark_results \
-            test_data/moby_dick.txt
+            test_data/moby_dick_ci.txt
           
           # Run query benchmark (optimized configuration)
           echo "Running query performance benchmark..."

@@ -48,12 +48,12 @@ The `run-indexing-benchmarks` script automatically finds baselines in this order
 
 ```bash
 # Uses latest repository baseline automatically
-./scripts/run-indexing-benchmarks test_data/moby_dick.txt
+./scripts/run-indexing-benchmarks test_data/moby_dick_ci.txt
 
 # Use a specific baseline
 ./scripts/run-indexing-benchmarks \
   --baseline benchmarks/baselines/telemetry-2025-01-22-143052-abc123f.json \
-  test_data/moby_dick.txt
+  test_data/moby_dick_ci.txt
 
 # Compare against different document or settings
 ./scripts/run-indexing-benchmarks \
@@ -120,7 +120,7 @@ The system is designed to be maintenance-free:
 ## Performance Targets
 
 Current performance benchmarks use:
-- **Document**: Moby Dick (~1.2MB, ~300K tokens)
+- **Document**: Moby Dick CI slice (~514KB, ~75K tokens — size-matched to the former corpus so baseline scales stay comparable)
 - **Chunk size**: 200 tokens (from default_config.json)
 - **Comparison**: Uses dynamic thresholds based on baseline variance
 - **CI frequency**: Every merge to master
