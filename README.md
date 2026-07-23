@@ -4,6 +4,10 @@
 
 Incremental, hierarchical RAG (Retrieval-Augmented Generation) memory system that creates dynamic summaries with intelligent resolution control.
 
+## Honest benchmarks
+
+RagZoom has been benchmarked head-to-head against naive baselines (full-context stuffing, flat top-k RAG, truncation) on LongMemEval-S and Oolong — **including the results where it loses**. Headline: with its default coverage retrieval it loses needle QA to flat top-k RAG (43% vs 80%); a controlled A/B of a `concentrate` retrieval mode recovers +16.7pp and pins the mechanism to a retrieval-objective choice rather than summarization loss; and an apparent N=20 aggregation win was retracted when N=60 reversed it. Full methodology, tables, and retractions: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+
 ## Features
 
 - **Hierarchical Tree Structure**: Binary tree organization with automatic summarization

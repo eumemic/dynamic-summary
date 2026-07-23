@@ -542,7 +542,7 @@ Check if the summary:
 3. Is a reasonable summary of the source content
 
 IMPORTANT CLARIFICATIONS:
-- Paraphrasing is ALLOWED and expected (e.g., "The mother of our particular hobbit" → "The mother of this hobbit")
+- Paraphrasing is ALLOWED and expected (e.g., "The whale surfaced near the ship" → "A whale came up close to the vessel")
 - If something is referenced/mentioned in the source, saying it was "mentioned" is VALID
 - Focus on factual additions, not stylistic differences
 - Minor interpretations that stay true to the source meaning are VALID

@@ -23,7 +23,7 @@ experiments/
 │   ├── base_strategy.py # Abstract base class
 │   └── *.py             # Individual strategies
 ├── results/             # Experiment outputs
-│   ├── corpus.json      # Test corpus from the_hobbit.txt
+│   ├── corpus.json      # Test corpus from moby_dick.txt
 │   ├── raw_results.json # Raw experiment data
 │   └── *.png            # Visualization plots
 ├── generate_test_corpus.py  # Generate test chunks
@@ -40,7 +40,7 @@ experiments/
 python experiments/generate_test_corpus.py
 ```
 
-This splits `test_data/the_hobbit.txt` into chunks of 200, 500, and 1000 tokens.
+This splits `test_data/moby_dick.txt` into chunks of 200, 500, and 1000 tokens.
 
 ### 2. Run Experiments
 

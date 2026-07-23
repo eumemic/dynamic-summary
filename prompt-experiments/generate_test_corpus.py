@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate test corpus by splitting the_hobbit.txt at different chunk sizes.
+Generate test corpus by splitting moby_dick.txt at different chunk sizes.
 This creates a diverse set of text chunks for testing summarization strategies.
 """
 
@@ -18,10 +18,10 @@ from ragzoom.splitter import TextSplitter
 
 
 def generate_corpus():
-    """Generate test corpus from the_hobbit.txt at multiple chunk sizes."""
+    """Generate test corpus from moby_dick.txt at multiple chunk sizes."""
 
     # Load the source text
-    source_file = Path("test_data/the_hobbit.txt")
+    source_file = Path("test_data/moby_dick.txt")
     if not source_file.exists():
         print(f"Error: {source_file} not found")
         return
@@ -75,7 +75,7 @@ def generate_corpus():
             # Store chunk data
             chunk_data = {
                 "id": f"chunk_{chunk_id:04d}",
-                "source": "the_hobbit.txt",
+                "source": "moby_dick.txt",
                 "target_chunk_size": chunk_size,
                 "chunk_index": i,
                 "text": chunk_text,

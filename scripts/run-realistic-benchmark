@@ -1,0 +1,581 @@
+#!/bin/bash
+# Run a production-realistic benchmark using ragzoom-claude-code sync
+#
+# This benchmarks indexing throughput with real Claude Code session data
+# (client-controlled chunking, variable-size chunks) to compare against
+# the Hobbit baseline (fixed 200-token chunks).
+#
+# Usage: ./scripts/run-realistic-benchmark <jsonl_path> [options]
+#
+# The script:
+#   1. Starts a local ragzoom gRPC server with production config
+#   2. Runs ragzoom-claude-code sync to index the JSONL
+#   3. Polls document-status for throughput monitoring during indexing
+#   4. Exports server-side telemetry after completion
+#   5. Generates comparison report vs Hobbit baseline
+
+set -e
+set -o pipefail
+
+TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
+
+# ── Globals for cleanup ──────────────────────────────────────────────
+OWN_SERVER_PID=""
+STARTED_SERVER=false
+POLL_PID=""
+
+DEFAULT_SERVER_HOST=$(python - <<'PY'
+from ragzoom.constants import DEFAULT_GRPC_HOST
+print(DEFAULT_GRPC_HOST)
+PY
+)
+DEFAULT_SERVER_PORT=$(python - <<'PY'
+from ragzoom.constants import DEFAULT_GRPC_PORT
+print(DEFAULT_GRPC_PORT)
+PY
+)
+
+# ── Cleanup ──────────────────────────────────────────────────────────
+stop_poll() {
+    if [ -n "$POLL_PID" ]; then
+        kill "$POLL_PID" >/dev/null 2>&1 || true
+        wait "$POLL_PID" >/dev/null 2>&1 || true
+        POLL_PID=""
+    fi
+}
+
+stop_grpc_server() {
+    if [ "$STARTED_SERVER" = true ] && [ -n "$OWN_SERVER_PID" ]; then
+        echo "🛑 Stopping RagZoom gRPC server (pid: $OWN_SERVER_PID)"
+        kill "$OWN_SERVER_PID" >/dev/null 2>&1 || true
+        wait "$OWN_SERVER_PID" >/dev/null 2>&1 || true
+        OWN_SERVER_PID=""
+        STARTED_SERVER=false
+    fi
+}
+
+cleanup_all() {
+    stop_poll
+    stop_grpc_server
+}
+
+trap cleanup_all EXIT INT TERM
+
+# ── Server management ────────────────────────────────────────────────
+ensure_server_running() {
+    python - "$1" "$2" <<'PY'
+import socket, sys
+host, port = sys.argv[1], int(sys.argv[2])
+try:
+    with socket.create_connection((host, port), timeout=0.5):
+        sys.exit(0)
+except OSError:
+    sys.exit(1)
+PY
+}
+
+wait_for_server() {
+    local host="$1" port="$2" timeout="${3:-60}" elapsed=0
+    while [ "$elapsed" -lt "$timeout" ]; do
+        if ensure_server_running "$host" "$port"; then
+            return 0
+        fi
+        sleep 0.5
+        elapsed=$((elapsed + 1))
+    done
+    return 1
+}
+
+start_grpc_server() {
+    local host="$1" port="$2" log_file="$3" config_file="$4"
+
+    if ensure_server_running "$host" "$port"; then
+        echo "🔌 Reusing existing RagZoom gRPC server at $host:$port"
+        STARTED_SERVER=false
+        return 0
+    fi
+
+    echo "🚀 Starting RagZoom gRPC server on $host:$port (log: $log_file)"
+    env "${SERVER_ENV[@]}" python -m ragzoom.cli server start \
+        --host "$host" --port "$port" \
+        --config "$config_file" \
+        --collect-telemetry \
+        --debug \
+        >"$log_file" 2>&1 &
+    OWN_SERVER_PID=$!
+    STARTED_SERVER=true
+
+    if ! wait_for_server "$host" "$port" 60; then
+        echo "❌ Failed to start RagZoom gRPC server (see $log_file for details)"
+        stop_grpc_server
+        return 1
+    fi
+
+    echo "✅ RagZoom gRPC server is ready"
+    return 0
+}
+
+# ── Progress polling (runs in background) ────────────────────────────
+poll_progress() {
+    local doc_id="$1" server_addr="$2" log_file="$3" interval="${4:-5}"
+    local prev_nodes=0 prev_time=""
+
+    echo "timestamp,node_count,leaf_count,complete_forest_size,completion_pct,nodes_delta,throughput_nodes_per_min" > "$log_file"
+
+    while true; do
+        sleep "$interval"
+
+        local status_json
+        status_json=$(python -m ragzoom.cli document-status "$doc_id" \
+            --server-address "$server_addr" --json 2>/dev/null) || continue
+
+        local now node_count leaf_count forest_size completion_pct
+        now=$(date '+%Y-%m-%dT%H:%M:%S')
+        node_count=$(echo "$status_json" | jq -r '.node_count')
+        leaf_count=$(echo "$status_json" | jq -r '.leaf_count')
+        forest_size=$(echo "$status_json" | jq -r '.complete_forest_size')
+        completion_pct=$(echo "$status_json" | jq -r '.completion_pct')
+
+        local delta=0 throughput="0"
+        if [ "$node_count" != "null" ] && [ "$prev_nodes" -gt 0 ]; then
+            delta=$((node_count - prev_nodes))
+            # throughput = delta / interval * 60
+            throughput=$(echo "scale=1; $delta / $interval * 60" | bc 2>/dev/null || echo "0")
+        fi
+
+        echo "$now,$node_count,$leaf_count,$forest_size,$completion_pct,$delta,$throughput" >> "$log_file"
+
+        # Human-readable progress line
+        if [ "$node_count" != "null" ] && [ "$node_count" != "0" ]; then
+            printf "  📊 %s  nodes: %s/%s (%s%%)  +%s  ~%s nodes/min\n" \
+                "$now" "$node_count" "$forest_size" "$completion_pct" "$delta" "$throughput"
+        fi
+
+        prev_nodes="${node_count:-0}"
+        prev_time="$now"
+    done
+}
+
+# ── Dependency checks ────────────────────────────────────────────────
+check_dependencies() {
+    local missing=()
+
+    command -v jq &>/dev/null || missing+=("jq")
+    command -v python &>/dev/null || missing+=("python")
+    python -c "import ragzoom" 2>/dev/null || missing+=("ragzoom (Python module)")
+    command -v ragzoom-claude-code &>/dev/null || missing+=("ragzoom-claude-code (pip install ragzoom-claude-code)")
+    command -v bc &>/dev/null || missing+=("bc")
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo "Error: Missing required dependencies:"
+        printf '  - %s\n' "${missing[@]}"
+        exit 1
+    fi
+}
+
+check_dependencies
+
+# ── Help ─────────────────────────────────────────────────────────────
+show_help() {
+    cat <<EOF
+Usage: $0 <jsonl_path> [options]
+
+Run a production-realistic indexing benchmark using ragzoom-claude-code sync.
+
+Arguments:
+    jsonl_path             Claude Code session JSONL file to index
+
+Options:
+    --baseline <file>      Baseline telemetry JSON for comparison
+                           Default: benchmarks/latest/telemetry.json
+    --output-dir <dir>     Output directory (default: benchmarks/realistic-<timestamp>)
+    --document-id <id>     Override document ID (default: JSONL filename stem)
+    --poll-interval <sec>  Progress polling interval in seconds (default: 5)
+    --config <file>        Server config JSON file
+                           Default: auto-generated production config
+    --help                 Show this help
+
+Output:
+    benchmarks/realistic-<timestamp>/
+    ├── config.json            # Server config used
+    ├── server.log             # gRPC server logs
+    ├── progress.csv           # Throughput samples over time
+    ├── sync.log               # ragzoom-claude-code sync output
+    ├── telemetry.json         # Exported telemetry
+    ├── comparison.md          # Comparison vs baseline
+    ├── visualization.png      # Visual comparison (if deps available)
+    └── benchmark_sqlite.db    # SQLite database
+
+Examples:
+    # Basic usage with downloaded production data
+    $0 /tmp/tom_dm_sample.jsonl
+
+    # Custom document ID and baseline
+    $0 /tmp/session.jsonl --document-id my-session --baseline other_telemetry.json
+EOF
+    exit 0
+}
+
+# ── Parse arguments ──────────────────────────────────────────────────
+JSONL_PATH=""
+BASELINE=""
+OUTPUT_DIR=""
+DOCUMENT_ID=""
+POLL_INTERVAL=5
+CONFIG_FILE=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help|-h) show_help ;;
+        --baseline) BASELINE="$2"; shift 2 ;;
+        --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
+        --document-id) DOCUMENT_ID="$2"; shift 2 ;;
+        --poll-interval) POLL_INTERVAL="$2"; shift 2 ;;
+        --config) CONFIG_FILE="$2"; shift 2 ;;
+        -*)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+        *)
+            if [ -z "$JSONL_PATH" ]; then
+                JSONL_PATH="$1"
+            else
+                echo "Unexpected argument: $1"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Validate required arg
+if [ -z "$JSONL_PATH" ]; then
+    echo "Error: JSONL path is required"
+    echo "Usage: $0 <jsonl_path> [options]"
+    exit 1
+fi
+
+if [ ! -f "$JSONL_PATH" ]; then
+    echo "Error: JSONL file not found: $JSONL_PATH"
+    exit 1
+fi
+
+# ── Defaults ─────────────────────────────────────────────────────────
+if [ -z "$OUTPUT_DIR" ]; then
+    OUTPUT_DIR="benchmarks/realistic-${TIMESTAMP}"
+fi
+
+if [ -z "$DOCUMENT_ID" ]; then
+    DOCUMENT_ID=$(basename "$JSONL_PATH" .jsonl)
+fi
+
+if [ -z "$BASELINE" ]; then
+    if [ -f "benchmarks/latest/telemetry.json" ]; then
+        BASELINE="benchmarks/latest/telemetry.json"
+        echo "Using Hobbit baseline: $BASELINE"
+    elif [ -f "benchmarks/baselines/latest.json" ]; then
+        BASELINE="benchmarks/baselines/latest.json"
+        echo "Using repository baseline: $BASELINE"
+    else
+        echo "⚠️  No baseline found — will generate baseline-only report"
+    fi
+fi
+
+mkdir -p "$OUTPUT_DIR"
+
+# ── Production config ────────────────────────────────────────────────
+# Generate a production-realistic config if none provided.
+# Key difference from default: target_chunk_tokens = null (client-controlled)
+if [ -z "$CONFIG_FILE" ]; then
+    CONFIG_FILE="$OUTPUT_DIR/config.json"
+    cat > "$CONFIG_FILE" <<'CONFIGEOF'
+{
+  "target_chunk_tokens": null,
+  "target_embedding_tokens": 500,
+  "max_parallelism": 30,
+  "summary_model": "gpt-5-nano",
+  "summary_reasoning_level": "minimal",
+  "summarization_guidance": null,
+  "embedding_model": "text-embedding-3-small",
+  "retry_threshold": 0.2,
+  "max_retries": 3,
+  "embedding_batch_size": 100,
+  "use_anti_verbatim_vaccine": true,
+  "preceding_context": {
+    "leaf": {
+      "num_seeds": 0,
+      "verbatim_tokens": 0,
+      "token_cap": 0,
+      "min_forest_completeness": 0.0,
+      "max_forest_height_differential": null
+    },
+    "inner": {
+      "num_seeds": 0,
+      "verbatim_tokens": 0,
+      "token_cap": 100,
+      "min_forest_completeness": 0.0,
+      "max_forest_height_differential": 2
+    }
+  }
+}
+CONFIGEOF
+    echo "Generated production config: $CONFIG_FILE"
+else
+    cp "$CONFIG_FILE" "$OUTPUT_DIR/config.json"
+    echo "Using provided config: $CONFIG_FILE"
+fi
+
+# ── Database setup ───────────────────────────────────────────────────
+DB_FILE="$OUTPUT_DIR/benchmark_sqlite.db"
+mkdir -p "$(dirname "$DB_FILE")"
+DATABASE_URL="sqlite:///$PWD/$DB_FILE"
+
+# Use python vector backend (no chromadb dependency needed)
+VECTOR_BACKEND="python"
+if python -c "import chromadb" 2>/dev/null; then
+    VECTOR_BACKEND="chroma"
+fi
+
+SERVER_ENV=(
+    RAGZOOM_DATABASE_URL="$DATABASE_URL"
+    RAGZOOM_BACKEND="sqlite"
+    RAGZOOM_VECTOR_BACKEND="$VECTOR_BACKEND"
+)
+if [ "$VECTOR_BACKEND" = "chroma" ]; then
+    SERVER_ENV+=(RAGZOOM_VECTOR_PERSIST_DIR="$OUTPUT_DIR/chroma")
+fi
+
+# ── Server startup ───────────────────────────────────────────────────
+SERVER_HOST="${RAGZOOM_SERVER_HOST:-$DEFAULT_SERVER_HOST}"
+SERVER_PORT="${RAGZOOM_SERVER_PORT:-$DEFAULT_SERVER_PORT}"
+
+# Find a free port if default is occupied
+if ensure_server_running "$SERVER_HOST" "$SERVER_PORT"; then
+    ORIGINAL_PORT="$SERVER_PORT"
+    SERVER_PORT=$(python - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(('', 0))
+    print(sock.getsockname()[1])
+PY
+)
+    echo "ℹ️  Port $ORIGINAL_PORT in use; using $SERVER_HOST:$SERVER_PORT"
+fi
+
+SERVER_LOG="$OUTPUT_DIR/server.log"
+
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+echo "  Production-Realistic RagZoom Benchmark"
+echo "═══════════════════════════════════════════════════════════════"
+echo "  JSONL:        $JSONL_PATH"
+echo "  Document ID:  $DOCUMENT_ID"
+echo "  Config:       $CONFIG_FILE"
+echo "  Baseline:     ${BASELINE:-none}"
+echo "  Output:       $OUTPUT_DIR"
+echo "  Database:     $DATABASE_URL"
+echo "  Server:       $SERVER_HOST:$SERVER_PORT"
+echo "  Poll interval: ${POLL_INTERVAL}s"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+
+if ! start_grpc_server "$SERVER_HOST" "$SERVER_PORT" "$SERVER_LOG" "$CONFIG_FILE"; then
+    exit 1
+fi
+
+SERVER_ADDR="$SERVER_HOST:$SERVER_PORT"
+
+# ── JSONL stats ──────────────────────────────────────────────────────
+echo ""
+JSONL_LINES=$(wc -l < "$JSONL_PATH" | tr -d ' ')
+JSONL_SIZE=$(du -h "$JSONL_PATH" | cut -f1 | tr -d ' ')
+echo "📄 JSONL: $JSONL_LINES lines, $JSONL_SIZE"
+
+# ── Run sync with progress polling ───────────────────────────────────
+PROGRESS_LOG="$OUTPUT_DIR/progress.csv"
+SYNC_LOG="$OUTPUT_DIR/sync.log"
+
+echo ""
+echo "📝 Starting ragzoom-claude-code sync..."
+echo "   Polling document-status every ${POLL_INTERVAL}s for throughput tracking"
+echo ""
+
+# Start progress polling in background
+poll_progress "$DOCUMENT_ID" "$SERVER_ADDR" "$PROGRESS_LOG" "$POLL_INTERVAL" &
+POLL_PID=$!
+
+# Record start time
+SYNC_START=$(date +%s)
+
+# Run sync
+set +e
+RAGZOOM_SERVER_ADDRESS="$SERVER_ADDR" ragzoom-claude-code sync "$JSONL_PATH" \
+    --document-id "$DOCUMENT_ID" \
+    --append-only \
+    2>&1 | tee "$SYNC_LOG"
+SYNC_EXIT=${PIPESTATUS[0]}
+set -e
+
+SYNC_END=$(date +%s)
+SYNC_DURATION=$((SYNC_END - SYNC_START))
+
+# Stop polling
+stop_poll
+
+echo ""
+if [ $SYNC_EXIT -ne 0 ]; then
+    echo "❌ Sync failed (exit code: $SYNC_EXIT). Check $SYNC_LOG"
+    exit 1
+fi
+echo "✅ Sync completed in ${SYNC_DURATION}s"
+
+# ── Final document status ────────────────────────────────────────────
+echo ""
+echo "📊 Final document status:"
+FINAL_STATUS=$(python -m ragzoom.cli document-status "$DOCUMENT_ID" \
+    --server-address "$SERVER_ADDR" --json 2>/dev/null) || true
+
+if [ -n "$FINAL_STATUS" ]; then
+    echo "$FINAL_STATUS" | jq '.'
+    echo "$FINAL_STATUS" > "$OUTPUT_DIR/final_status.json"
+
+    LEAF_COUNT=$(echo "$FINAL_STATUS" | jq -r '.leaf_count')
+    NODE_COUNT=$(echo "$FINAL_STATUS" | jq -r '.node_count')
+    COMPLETION=$(echo "$FINAL_STATUS" | jq -r '.completion_pct')
+
+    if [ "$LEAF_COUNT" != "null" ] && [ "$LEAF_COUNT" -gt 0 ]; then
+        OVERALL_THROUGHPUT=$(echo "scale=1; $NODE_COUNT / $SYNC_DURATION * 60" | bc 2>/dev/null || echo "?")
+        echo ""
+        echo "  Summary: $NODE_COUNT nodes indexed in ${SYNC_DURATION}s"
+        echo "  Overall throughput: ~${OVERALL_THROUGHPUT} nodes/min"
+        echo "  Completion: ${COMPLETION}%"
+    fi
+else
+    echo "  ⚠️  Could not retrieve final status"
+fi
+
+# ── Wait for forest completion ───────────────────────────────────────
+# After sync, background workers may still be building inner nodes.
+# Poll until completion reaches 100% or timeout.
+echo ""
+echo "⏳ Waiting for forest completion..."
+WAIT_START=$(date +%s)
+WAIT_TIMEOUT=300  # 5 minutes max
+
+while true; do
+    ELAPSED=$(( $(date +%s) - WAIT_START ))
+    if [ "$ELAPSED" -ge "$WAIT_TIMEOUT" ]; then
+        echo "  ⚠️  Timed out after ${WAIT_TIMEOUT}s waiting for forest completion"
+        break
+    fi
+
+    STATUS_JSON=$(python -m ragzoom.cli document-status "$DOCUMENT_ID" \
+        --server-address "$SERVER_ADDR" --json 2>/dev/null) || { sleep 2; continue; }
+
+    COMP=$(echo "$STATUS_JSON" | jq -r '.completion_pct')
+    NODES=$(echo "$STATUS_JSON" | jq -r '.node_count')
+    FOREST=$(echo "$STATUS_JSON" | jq -r '.complete_forest_size')
+
+    if [ "$COMP" = "100.0" ] || [ "$COMP" = "100" ]; then
+        echo "  ✅ Forest complete: $NODES/$FOREST nodes"
+        break
+    fi
+
+    printf "  ... %s/%s nodes (%s%%)\r" "$NODES" "$FOREST" "$COMP"
+    sleep 2
+done
+
+# ── Export telemetry ─────────────────────────────────────────────────
+TELEMETRY_FILE="$OUTPUT_DIR/telemetry.json"
+echo ""
+echo "📤 Exporting telemetry..."
+
+set +e
+python -m ragzoom.cli telemetry-export \
+    --document-id "$DOCUMENT_ID" \
+    --server-address "$SERVER_ADDR" \
+    --output "$TELEMETRY_FILE" 2>&1
+TELEMETRY_EXIT=$?
+set -e
+
+if [ $TELEMETRY_EXIT -ne 0 ] || [ ! -f "$TELEMETRY_FILE" ]; then
+    echo "❌ Telemetry export failed"
+    echo "   Falling back to server log analysis only"
+    TELEMETRY_FILE=""
+fi
+
+# ── Comparison report ────────────────────────────────────────────────
+COMPARE_EXIT_CODE=0
+
+if [ -n "$TELEMETRY_FILE" ] && [ -n "$BASELINE" ] && [ -f "$BASELINE" ]; then
+    echo ""
+    echo "📊 Generating comparison report..."
+
+    set +e
+    python -m ragzoom.telemetry_cli compare \
+        "$BASELINE" \
+        "$TELEMETRY_FILE" \
+        > "$OUTPUT_DIR/comparison.md" 2>&1
+    COMPARE_EXIT_CODE=$?
+    set -e
+
+    if [ $COMPARE_EXIT_CODE -eq 0 ]; then
+        echo "  ✅ Comparison report: $OUTPUT_DIR/comparison.md"
+    elif [ $COMPARE_EXIT_CODE -eq 1 ]; then
+        echo "  ⚠️  Comparison report: $OUTPUT_DIR/comparison.md (regression detected)"
+    else
+        echo "  ❌ Comparison failed (exit code: $COMPARE_EXIT_CODE)"
+    fi
+
+    # Visualization
+    if python -c "import matplotlib, seaborn, pandas" 2>/dev/null; then
+        echo "  Generating visualization..."
+        python -m ragzoom.telemetry_cli visualize \
+            "$BASELINE" \
+            "$TELEMETRY_FILE" \
+            --output "$OUTPUT_DIR/visualization.png" \
+            > "$OUTPUT_DIR/visualization.log" 2>&1 || true
+        if [ -f "$OUTPUT_DIR/visualization.png" ]; then
+            echo "  ✅ Visualization: $OUTPUT_DIR/visualization.png"
+        fi
+    else
+        echo "  ⚠️  Skipping visualization (missing matplotlib/seaborn/pandas)"
+    fi
+elif [ -n "$TELEMETRY_FILE" ]; then
+    cat > "$OUTPUT_DIR/comparison.md" <<EOF
+# Baseline Establishment Report
+
+This run establishes a new performance baseline (no compatible baseline available).
+
+## Configuration
+- **Document ID:** $DOCUMENT_ID
+- **Config:** target_chunk_tokens=null (client-controlled chunking)
+- **Sync duration:** ${SYNC_DURATION}s
+
+This telemetry can be used as baseline for future comparisons:
+\`\`\`bash
+$0 <jsonl_path> --baseline "$TELEMETRY_FILE"
+\`\`\`
+EOF
+    echo "  ✅ Baseline establishment report: $OUTPUT_DIR/comparison.md"
+fi
+
+# ── Summary ──────────────────────────────────────────────────────────
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+echo "  Benchmark Complete"
+echo "═══════════════════════════════════════════════════════════════"
+echo "  Duration:     ${SYNC_DURATION}s"
+echo "  Output:       $OUTPUT_DIR/"
+echo "  Config:       $OUTPUT_DIR/config.json"
+echo "  Server log:   $OUTPUT_DIR/server.log"
+echo "  Progress CSV: $OUTPUT_DIR/progress.csv"
+echo "  Sync log:     $OUTPUT_DIR/sync.log"
+[ -n "$TELEMETRY_FILE" ] && echo "  Telemetry:    $TELEMETRY_FILE"
+[ -f "$OUTPUT_DIR/comparison.md" ] && echo "  Comparison:   $OUTPUT_DIR/comparison.md"
+[ -f "$OUTPUT_DIR/visualization.png" ] && echo "  Visualization: $OUTPUT_DIR/visualization.png"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+echo "💡 Progress data for analysis: $PROGRESS_LOG"
+[ -n "$TELEMETRY_FILE" ] && [ -f "$BASELINE" ] && echo "💡 View comparison: cat $OUTPUT_DIR/comparison.md"
+[ -f "$OUTPUT_DIR/visualization.png" ] && echo "💡 View visualization: open $OUTPUT_DIR/visualization.png"

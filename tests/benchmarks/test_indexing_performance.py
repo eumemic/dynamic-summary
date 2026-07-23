@@ -45,13 +45,13 @@ def get_test_document(document_path: str) -> tuple[str, str]:
 def test_indexing_performance(
     storage_backend: StorageBackend,
     leaf_tokens: int,
-    document_path: str = "test_data/the_hobbit_chapter_1.txt",
+    document_path: str = "test_data/moby_dick_sample_small.txt",
 ) -> None:
     """Benchmark indexing performance with configurable document and chunk size.
 
     Args:
         leaf_tokens: Target tokens per leaf node
-        document_path: Path to document to index (default: Hobbit Chapter 1)
+        document_path: Path to document to index (default: Moby Dick sample)
     """
     # Create config for this specific test
     api_key = os.getenv("OPENAI_API_KEY", "test-key")

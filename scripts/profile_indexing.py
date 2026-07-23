@@ -15,7 +15,7 @@ from ragzoom.cli import index  # noqa: F401 (import for side-effects)
 
 
 def profile_indexing() -> None:
-    """Profile the indexing command with The Hobbit at 50 tokens."""
+    """Profile the indexing command with Moby Dick at 50 tokens."""
     # Import the CLI properly
     from click.testing import CliRunner
     from ragzoom.cli import cli
@@ -27,7 +27,7 @@ def profile_indexing() -> None:
         cli,
         [
             "index",
-            "test_data/the_hobbit.txt",
+            "test_data/moby_dick.txt",
             "--target-chunk-tokens",
             "50",
             "--debug",
@@ -46,7 +46,7 @@ if __name__ == "__main__":
     profiler = cProfile.Profile()
 
     print("Starting profiling of indexing process...")
-    print("This will index The Hobbit with 50-token chunks...")
+    print("This will index Moby Dick with 50-token chunks...")
     print("-" * 60)
 
     profiler.enable()

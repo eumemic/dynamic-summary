@@ -28,7 +28,7 @@ telemetry-YYYY-MM-DD-HHMMSS-<short-commit>.json
 ## How Baselines Are Generated
 
 1. **On every merge to master**: The `baseline-benchmarks.yml` workflow runs
-2. **Indexing benchmark**: Runs `run-indexing-benchmarks` with the full Hobbit text
+2. **Indexing benchmark**: Runs `run-indexing-benchmarks` with the full Moby Dick text
 3. **Storage**: Saves the telemetry as a new baseline file
 4. **Cleanup**: Automatically keeps only the 100 most recent baselines
 5. **Commit**: Pushes the new baseline directly to master
@@ -48,12 +48,12 @@ The `run-indexing-benchmarks` script automatically finds baselines in this order
 
 ```bash
 # Uses latest repository baseline automatically
-./scripts/run-indexing-benchmarks test_data/the_hobbit.txt
+./scripts/run-indexing-benchmarks test_data/moby_dick.txt
 
 # Use a specific baseline
 ./scripts/run-indexing-benchmarks \
   --baseline benchmarks/baselines/telemetry-2025-01-22-143052-abc123f.json \
-  test_data/the_hobbit.txt
+  test_data/moby_dick.txt
 
 # Compare against different document or settings
 ./scripts/run-indexing-benchmarks \
@@ -120,7 +120,7 @@ The system is designed to be maintenance-free:
 ## Performance Targets
 
 Current performance benchmarks use:
-- **Document**: The Hobbit (~502KB, ~75K tokens)
+- **Document**: Moby Dick (~1.2MB, ~300K tokens)
 - **Chunk size**: 200 tokens (from default_config.json)
 - **Comparison**: Uses dynamic thresholds based on baseline variance
 - **CI frequency**: Every merge to master

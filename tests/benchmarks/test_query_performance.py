@@ -28,7 +28,7 @@ def get_test_document(document_type: str = "narrative") -> tuple[str, str]:
 
     Args:
         document_type: Type of document to load
-            - "narrative": The Hobbit Chapter 1 (~7K tokens)
+            - "narrative": Moby Dick sample (~10K tokens)
             - "technical": Technical documentation sample
             - "classic": Moby Dick sample
 
@@ -36,7 +36,7 @@ def get_test_document(document_type: str = "narrative") -> tuple[str, str]:
         Tuple of (document_text, document_name)
     """
     documents = {
-        "narrative": ("test_data/the_hobbit_chapter_1.txt", "The Hobbit Ch1"),
+        "narrative": ("test_data/moby_dick_sample_small.txt", "Moby Dick sample"),
         "technical": ("test_data/smoke_test_larger.txt", "Technical Doc"),
         "classic": ("test_data/moby_dick_sample.txt", "Moby Dick Sample"),
     }
