@@ -9,8 +9,7 @@ import uuid
 from collections.abc import Sequence
 from typing import Literal, cast
 
-from openai import AsyncOpenAI
-from openai._types import NOT_GIVEN, NotGiven
+from openai import AsyncOpenAI, Omit, omit
 from openai.types.chat import (
     ChatCompletion,
     ChatCompletionMessageParam,
@@ -35,7 +34,7 @@ from ragzoom.model_info import ModelInfo
 logger = logging.getLogger(__name__)
 
 # Values accepted by the OpenAI Chat Completions reasoning_effort parameter.
-# "none" is valid at the API level but mapped to NOT_GIVEN (omit the param).
+# "none" is valid at the API level but mapped to omit (the param is not sent).
 _ReasoningEffort = Literal["minimal", "low", "medium", "high"]
 _VALID_EFFORTS: frozenset[str] = frozenset({"none", "minimal", "low", "medium", "high"})
 
@@ -276,11 +275,11 @@ class OpenAIBackend:
         answer = ""
         start_time = time.monotonic()
 
-        temp_arg: float | NotGiven | None = (
-            float(temperature) if temperature is not None else NOT_GIVEN
+        temp_arg: float | Omit | None = (
+            float(temperature) if temperature is not None else omit
         )
-        reasoning_arg: _ReasoningEffort | NotGiven = (
-            self._reasoning_effort if self._reasoning_effort is not None else NOT_GIVEN
+        reasoning_arg: _ReasoningEffort | Omit = (
+            self._reasoning_effort if self._reasoning_effort is not None else omit
         )
 
         response: ChatCompletion | None = None

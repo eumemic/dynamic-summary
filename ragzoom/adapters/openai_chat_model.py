@@ -5,8 +5,7 @@ from __future__ import annotations
 from typing import Literal, cast
 from typing import cast as _cast
 
-from openai import AsyncOpenAI
-from openai._types import NOT_GIVEN, NotGiven
+from openai import AsyncOpenAI, Omit, omit
 from openai.types.chat import ChatCompletionMessageParam
 from openai.types.shared_params import ResponseFormatJSONObject
 
@@ -37,13 +36,13 @@ class OpenAIChatModel(ChatModel):
         # Convert provider-neutral Message to OpenAI's param shape
         oa_messages = cast(list[ChatCompletionMessageParam], messages)
 
-        max_tokens_arg: int | NotGiven | None = (
-            int(max_tokens) if max_tokens is not None else NOT_GIVEN
+        max_tokens_arg: int | Omit | None = (
+            int(max_tokens) if max_tokens is not None else omit
         )
 
         # Build response_format arg - use proper OpenAI type
-        response_format_arg: ResponseFormatJSONObject | NotGiven = (
-            ResponseFormatJSONObject(type="json_object") if json_mode else NOT_GIVEN
+        response_format_arg: ResponseFormatJSONObject | Omit = (
+            ResponseFormatJSONObject(type="json_object") if json_mode else omit
         )
 
         # Check if model uses reasoning_effort instead of temperature
@@ -76,8 +75,8 @@ class OpenAIChatModel(ChatModel):
                 response_format=response_format_arg,
             )
         else:
-            temp_arg: float | NotGiven | None = (
-                float(temperature) if temperature is not None else NOT_GIVEN
+            temp_arg: float | Omit | None = (
+                float(temperature) if temperature is not None else omit
             )
             response = await self._client.chat.completions.create(
                 model=self._model_id,

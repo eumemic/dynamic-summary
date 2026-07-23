@@ -79,9 +79,11 @@ class TestNodeTemporalFields:
         assert time_start_field.type == FieldDescriptor.TYPE_STRING
         assert time_end_field.type == FieldDescriptor.TYPE_STRING
 
-        # Both should be optional (proto3 with explicit optional keyword)
-        assert time_start_field.label == FieldDescriptor.LABEL_OPTIONAL
-        assert time_end_field.label == FieldDescriptor.LABEL_OPTIONAL
+        # Both should be optional (proto3 with explicit optional keyword).
+        # FieldDescriptor.label was removed from the protobuf runtime; the
+        # modern equivalent of LABEL_OPTIONAL is "singular with presence".
+        assert not time_start_field.is_repeated and time_start_field.has_presence
+        assert not time_end_field.is_repeated and time_end_field.has_presence
 
     def test_node_temporal_field_numbers(self) -> None:
         """Temporal fields should have correct field numbers (10 and 11)."""

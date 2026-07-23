@@ -6,6 +6,7 @@ black==25.1.0
 ruff==0.12.11
 mypy==1.17.1
 types-requests==2.32.4.20250809
+types-protobuf==6.32.1.20251210
 types-tqdm==4.67.0.20250809
 types-psutil==7.0.0.20250822
 types-seaborn==0.13.2.20250809

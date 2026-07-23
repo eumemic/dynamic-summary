@@ -172,9 +172,13 @@ class TestHybridRetrieval:
         ) -> list[Vector]:
             """Return vectors in the order specified by ranking."""
             results = []
-            for i, node_id in enumerate(ranking[:k]):
-                # Higher-ranked nodes get vectors closer to query
-                vec = np.ones(1536, dtype=np.float32) * (1.0 - i * 0.1)
+            for node_id in ranking[:k]:
+                # Identical vectors for all nodes: scaling cannot encode rank
+                # (Vector normalizes it away, leaving platform-dependent float
+                # noise to break ties). With bitwise-identical vectors, MMR
+                # ties break deterministically in candidate order, so the
+                # ranking is conveyed purely by result order on every platform.
+                vec = np.ones(1536, dtype=np.float32)
                 span_starts = {"L1": 0, "L2": 50, "L3": 100, "L4": 150, "L5": 200}
                 span_ends = {"L1": 50, "L2": 100, "L3": 150, "L4": 200, "L5": 250}
                 results.append(

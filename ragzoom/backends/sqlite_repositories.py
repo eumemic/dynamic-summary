@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy import (
+    CursorResult,
     case,
     delete,
     func,
@@ -1804,6 +1805,8 @@ class SqliteDocumentRepository:
             del_nodes = session.execute(
                 delete(SQLiteTreeNode).where(SQLiteTreeNode.document_id == document_id)
             )
+            # DML statements always yield a CursorResult (which has .rowcount)
+            assert isinstance(del_nodes, CursorResult)
             session.execute(
                 delete(SqliteDocument).where(SqliteDocument.id == document_id)
             )
@@ -1827,6 +1830,8 @@ class SqliteDocumentRepository:
             del_nodes = session.execute(
                 delete(SQLiteTreeNode).where(SQLiteTreeNode.document_id == document_id)
             )
+            # DML statements always yield a CursorResult (which has .rowcount)
+            assert isinstance(del_nodes, CursorResult)
             if own_session:
                 session.commit()
             return int(del_nodes.rowcount or 0)
@@ -1888,6 +1893,8 @@ class SqliteDocumentRepository:
                 .where(SqliteDocument.id == document_id)
                 .values(is_temporal=1 if is_temporal else 0)
             )
+            # DML statements always yield a CursorResult (which has .rowcount)
+            assert isinstance(result, CursorResult)
             if result.rowcount == 0:
                 raise ValueError(f"Document not found: {document_id}")
             session.commit()
