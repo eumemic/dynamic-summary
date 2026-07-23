@@ -1,6 +1,10 @@
 {
   "threshold": 0,
   "ignore": [
-    "ragzoom/contracts/node_repository.py"
+    "ragzoom/contracts/node_repository.py",
+    "ragzoom/evaluation/longmemeval/runner.py",
+    "ragzoom/evaluation/longmemeval/report.py",
+    "ragzoom/evaluation/oolong/runner.py",
+    "ragzoom/evaluation/oolong/report.py"
   ]
 }

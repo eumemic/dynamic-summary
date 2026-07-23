@@ -7,6 +7,7 @@ import re
 import time
 from datetime import datetime, timezone
 
+from ragzoom.evaluation.benchmark_common import wait_for_documents_indexed
 from ragzoom.evaluation.locomo.types import ConversationMetrics, LoCoMoConversation
 from ragzoom.wrapper import AppendUnit, RagZoom
 
@@ -134,27 +135,9 @@ def wait_for_indexing(
     Returns updated metrics with indexing duration that includes the
     summarization/embedding wait time.
     """
-    start = time.monotonic()
-    pending = {doc_id_for(conv) for conv in conversations}
-
-    while pending:
-        still_pending: set[str] = set()
-        for did in pending:
-            status = rz.get_document_status(did)
-            if status.completion_pct < 100.0:
-                still_pending.add(did)
-
-        if still_pending:
-            logger.info(
-                "Waiting for indexing: %d/%d documents pending",
-                len(still_pending),
-                len(pending),
-            )
-            time.sleep(poll_interval)
-
-        pending = still_pending
-
-    wait_elapsed = time.monotonic() - start
+    wait_elapsed = wait_for_documents_indexed(
+        rz, [doc_id_for(conv) for conv in conversations], poll_interval=poll_interval
+    )
     logger.info(
         "All %d documents fully indexed (waited %.1fs)",
         len(conversations),

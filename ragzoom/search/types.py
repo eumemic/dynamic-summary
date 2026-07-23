@@ -44,12 +44,19 @@ class SearchResult:
     ``cost`` is always populated.  ``profile`` is None unless profiling is
     enabled via ``SearchConfig.profiling_enabled``.  ``session_id`` is set
     when a ``SessionRegistry`` is configured, enabling follow-up questions.
+
+    ``served_tilings`` is the formatted tiling text returned by each
+    ``recall`` call the answerer made, in call order. Unlike ``profile``,
+    it is always captured (independent of profiling) because it is the
+    minimal artifact required for post-hoc failure attribution — the text
+    the answerer actually saw.
     """
 
     answer: str
     cost: SearchCost
     profile: SearchProfile | None
     session_id: str | None = None
+    served_tilings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

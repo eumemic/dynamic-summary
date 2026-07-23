@@ -3,6 +3,8 @@
   "target_embedding_tokens": 500,
   "max_parallelism": 30,
   "summary_model": "gpt-5-nano",
+  "summary_api_base": null,
+  "summary_api_key": null,
   "summary_reasoning_level": "minimal",
   "summarization_guidance": null,
   "embedding_model": "text-embedding-3-small",

@@ -1,5 +1,9 @@
 """Tests for QueryConfig BM25 hybrid search configuration."""
 
+import os
+
+import pytest
+
 from ragzoom.config import QueryConfig
 
 
@@ -115,3 +119,73 @@ def test_query_config_replace_bm25_weight() -> None:
     assert new_config.bm25_weight == 2.0
     # Original config unchanged
     assert config.bm25_weight == 1.0
+
+
+def test_query_config_retrieval_mode_defaults_to_coverage() -> None:
+    """retrieval_mode defaults to "coverage" for backwards compatibility."""
+    config = QueryConfig()
+    assert config.retrieval_mode == "coverage"
+
+
+def test_query_config_retrieval_mode_accepts_concentrate() -> None:
+    """retrieval_mode can be explicitly set to "concentrate"."""
+    config = QueryConfig(retrieval_mode="concentrate")
+    assert config.retrieval_mode == "concentrate"
+
+
+def test_query_config_retrieval_mode_invalid_fails_hard() -> None:
+    """An unknown retrieval_mode raises ValueError (no silent fallback)."""
+    with pytest.raises(ValueError, match="retrieval_mode must be one of"):
+        QueryConfig(retrieval_mode="topk")
+
+
+def test_query_config_replace_retrieval_mode() -> None:
+    """QueryConfig.replace can update retrieval_mode without mutating the original."""
+    config = QueryConfig(retrieval_mode="coverage")
+    new_config = config.replace(retrieval_mode="concentrate")
+
+    assert new_config.retrieval_mode == "concentrate"
+    # Original config unchanged
+    assert config.retrieval_mode == "coverage"
+
+
+def test_query_config_retrieval_mode_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RAGZOOM_RETRIEVAL_MODE env var flows into a default-constructed config.
+
+    The benchmark server constructs QueryConfig() with no args, so the env
+    var must be honoured at construction time for the experiment switch to
+    reach the retriever's tiling decision.
+    """
+    monkeypatch.setenv("RAGZOOM_RETRIEVAL_MODE", "concentrate")
+    config = QueryConfig()
+    assert config.retrieval_mode == "concentrate"
+
+
+def test_query_config_explicit_arg_overrides_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit retrieval_mode argument wins over the env var."""
+    monkeypatch.setenv("RAGZOOM_RETRIEVAL_MODE", "concentrate")
+    config = QueryConfig(retrieval_mode="coverage")
+    assert config.retrieval_mode == "coverage"
+
+
+def test_query_config_retrieval_mode_invalid_env_fails_hard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An invalid RAGZOOM_RETRIEVAL_MODE env value fails hard at construction."""
+    monkeypatch.setenv("RAGZOOM_RETRIEVAL_MODE", "bogus")
+    with pytest.raises(ValueError, match="retrieval_mode must be one of"):
+        QueryConfig()
+
+
+def test_query_config_no_env_keeps_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Absent the env var, retrieval_mode stays at the "coverage" default."""
+    monkeypatch.delenv("RAGZOOM_RETRIEVAL_MODE", raising=False)
+    assert os.environ.get("RAGZOOM_RETRIEVAL_MODE") is None
+    config = QueryConfig()
+    assert config.retrieval_mode == "coverage"

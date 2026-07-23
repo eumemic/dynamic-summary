@@ -34,6 +34,15 @@ def main() -> None:
         help="Model for LLM-as-Judge (default: gpt-4.1, matching Letta Leaderboard)",
     )
     parser.add_argument(
+        "--summary-model",
+        default=None,
+        help=(
+            "Summary model used to build the trees during ingest. Sets "
+            "RAGZOOM_SUMMARY_MODEL for the isolated server and records the "
+            "summarizer in results.json (default: RAGZOOM_SUMMARY_MODEL env)"
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("locomo_results"),
@@ -122,6 +131,15 @@ def main() -> None:
     if args.rejudge is None and args.data is None:
         parser.error("--data is required unless --rejudge is used")
 
+    # Export the summary model so the isolated benchmark server (spawned with a
+    # copy of this env) builds the trees with it during ingest. Falls back to an
+    # already-set RAGZOOM_SUMMARY_MODEL when --summary-model is omitted.
+    import os
+
+    if args.summary_model is not None:
+        os.environ["RAGZOOM_SUMMARY_MODEL"] = args.summary_model
+    summary_model = os.environ.get("RAGZOOM_SUMMARY_MODEL")
+
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)-5s %(name)s: %(message)s",
@@ -153,6 +171,7 @@ def main() -> None:
         profiling=args.profiling,
         use_docker_cli=True if args.docker_cli else (False if args.no_docker_cli else None),
         reasoning_level=args.reasoning_level,
+        summary_model=summary_model,
     )
 
     if config.rejudge_path is not None:

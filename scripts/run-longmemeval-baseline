@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""Run a naive LongMemEval baseline that answers WITHOUT RagZoom.
+
+This is the external yardstick for RagZoom. It scores the dumb alternatives —
+"stuff the whole history in" (full), "keep the most-recent B tokens" (truncate),
+and "flat top-k retrieval to B tokens" (topk) — on the SAME seed-42 question
+sample, with the SAME judge, as ``run-longmemeval --sample N``. The answerer is
+held constant (default the same ``gpt-5-mini`` the RagZoom runs used), so the
+only thing that varies is the memory strategy.
+
+It never touches the RagZoom server: there is no ingest, no gRPC, no port.
+
+Examples (validate wiring cheaply on a tiny sample — costs only the answer +
+judge calls for those questions):
+
+    # "Stuff it all in" upper bound (no budget):
+    scripts/run-longmemeval-baseline --variant s --download --strategy full \\
+        --sample 30 --output-dir baseline_results/full
+
+    # Matched-budget honest comparison at B=8192:
+    scripts/run-longmemeval-baseline --variant s --download --strategy truncate \\
+        --sample 30 --budget 8192 --output-dir baseline_results/truncate
+
+    # Flat-RAG comparison at B=8192:
+    scripts/run-longmemeval-baseline --variant s --download --strategy topk \\
+        --sample 30 --budget 8192 --output-dir baseline_results/topk
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+from pathlib import Path
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    from ragzoom.evaluation.longmemeval.baseline import (
+        DEFAULT_ANSWER_MODEL,
+        DEFAULT_EMBEDDING_MODEL,
+        DEFAULT_JUDGE_MODEL,
+    )
+
+    parser = argparse.ArgumentParser(
+        description="Naive (no-RagZoom) LongMemEval baseline evaluation"
+    )
+    parser.add_argument(
+        "--data",
+        type=Path,
+        default=None,
+        help="Path to a LongMemEval JSON file (oracle/S/M). Alternative to "
+        "--variant + --download.",
+    )
+    parser.add_argument(
+        "--variant",
+        choices=["oracle", "s", "m"],
+        default=None,
+        help="Logical dataset variant. With --download, fetches it from HuggingFace.",
+    )
+    parser.add_argument(
+        "--download",
+        action="store_true",
+        help="Download --variant from HuggingFace if --data is not given.",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="Directory to download the dataset into (default: HF cache).",
+    )
+    parser.add_argument(
+        "--strategy",
+        choices=["full", "truncate", "topk"],
+        required=True,
+        help=(
+            "full = stuff the whole history in (no budget); "
+            "truncate = keep the most-recent --budget tokens; "
+            "topk = flat top-k retrieval to --budget tokens."
+        ),
+    )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=None,
+        help=(
+            "Token budget B for truncate/topk — the matched budget RagZoom is "
+            "held to (sweep 4096/8192/16384/32768). Ignored by full."
+        ),
+    )
+    parser.add_argument(
+        "--answer-model",
+        default=DEFAULT_ANSWER_MODEL,
+        help=(
+            "Model that answers each question (default: "
+            f"{DEFAULT_ANSWER_MODEL}, the same answerer the RagZoom runs used). "
+            "For full variant-S/M you may need a larger-context model."
+        ),
+    )
+    parser.add_argument(
+        "--judge-model",
+        default=DEFAULT_JUDGE_MODEL,
+        help=f"Model for type-specific LLM-as-Judge (default: {DEFAULT_JUDGE_MODEL})",
+    )
+    parser.add_argument(
+        "--embedding-model",
+        default=DEFAULT_EMBEDDING_MODEL,
+        help=(
+            "Embedding model for the topk strategy (default: "
+            f"{DEFAULT_EMBEDDING_MODEL}, the same encoder the harness indexes with)."
+        ),
+    )
+    parser.add_argument(
+        "--sample",
+        type=int,
+        default=None,
+        help="Evaluate the same seed-42 sample of N questions as run-longmemeval.",
+    )
+    parser.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=5,
+        help="Max concurrent questions in flight (default: 5)",
+    )
+    parser.add_argument(
+        "--no-judge",
+        action="store_true",
+        help="Skip the LLM judge, only generate answers (saves judge API cost)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("baseline_results"),
+        help="Output directory for results (default: baseline_results/)",
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose logging"
+    )
+    return parser
+
+
+def _resolve_data_path(args: argparse.Namespace) -> Path:
+    """Resolve --data, downloading the variant when asked.
+
+    Mirrors the run-longmemeval guard: --variant without --data requires
+    --download to fetch the file, so we never silently evaluate the wrong tier.
+    """
+    if args.data is not None:
+        return args.data
+    if args.variant is None:
+        raise SystemExit("Provide --data, or --variant (optionally with --download).")
+    if not args.download:
+        raise SystemExit(
+            "--variant without --data requires --download to fetch the file."
+        )
+    from ragzoom.evaluation.longmemeval.loader import download_variant
+
+    return download_variant(args.variant, cache_dir=args.cache_dir)
+
+
+def main() -> None:
+    parser = _build_parser()
+    args = parser.parse_args()
+
+    if args.data is None and args.variant is None:
+        parser.error("--data or --variant is required")
+
+    strategy_needs_budget = args.strategy in ("truncate", "topk")
+    if strategy_needs_budget and args.budget is None:
+        parser.error(f"--strategy {args.strategy} requires --budget B")
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)-5s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    from openai import AsyncOpenAI
+
+    from ragzoom.adapters.openai_embedding_model import OpenAIEmbeddingModel
+    from ragzoom.agent.factory import create_backend
+    from ragzoom.evaluation.longmemeval.baseline import (
+        BaselineConfig,
+        BaselineStrategy,
+        run_baseline,
+    )
+    from ragzoom.evaluation.longmemeval.report import save_json, save_markdown
+
+    data_path = _resolve_data_path(args)
+    strategy = BaselineStrategy(args.strategy)
+
+    config = BaselineConfig(
+        data_path=data_path,
+        strategy=strategy,
+        budget=args.budget,
+        answer_model=args.answer_model,
+        judge_model=args.judge_model,
+        embedding_model=args.embedding_model,
+        sample_size=args.sample,
+        max_concurrent=args.max_concurrent,
+        no_judge=args.no_judge,
+        output_dir=args.output_dir,
+    )
+
+    openai_client = AsyncOpenAI()
+    answer_backend = create_backend(config.answer_model, openai_client)
+    judge = (
+        None if config.no_judge else create_backend(config.judge_model, openai_client)
+    )
+    embedder = (
+        OpenAIEmbeddingModel(openai_client, config.embedding_model)
+        if strategy is BaselineStrategy.TOPK
+        else None
+    )
+
+    report = asyncio.run(
+        run_baseline(
+            config,
+            answer_backend=answer_backend,
+            judge=judge,
+            embedder=embedder,
+        )
+    )
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = args.output_dir / "results.json"
+    md_path = args.output_dir / "report.md"
+    save_json(report, json_path)
+    save_markdown(report, md_path)
+
+    print(f"\nResults saved to {json_path} and {md_path}")
+
+    scores = report.scores
+    if scores.overall_accuracy is not None:
+        print(
+            f"\nOverall: {scores.overall_accuracy * 100:.1f}%  "
+            f"Task-avg: {(scores.task_averaged_accuracy or 0) * 100:.1f}%"
+        )
+        if scores.abstention_accuracy is not None:
+            print(f"Abstention: {scores.abstention_accuracy * 100:.1f}%")
+    else:
+        print("\n(--no-judge mode: answers generated, not scored)")
+
+
+if __name__ == "__main__":
+    main()

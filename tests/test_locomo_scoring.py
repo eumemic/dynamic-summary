@@ -203,6 +203,36 @@ class TestLoCoMoConfig:
         assert "server_address" not in d
         assert "output_dir" not in d
 
+    def test_to_dict_records_summary_model(self) -> None:
+        """The summarizer that built the trees must be attributable in results."""
+        config = LoCoMoConfig(
+            data_path=Path("test.json"),
+            summary_model="anthropic/claude-opus-4-8",
+        )
+        d = config.to_dict()
+        assert d["summary_model"] == "anthropic/claude-opus-4-8"
+
+    def test_summary_model_defaults_from_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When unset, summary_model is read from RAGZOOM_SUMMARY_MODEL.
+
+        The isolated benchmark server inherits the same env, so this records the
+        summarizer that actually built the trees during ingest.
+        """
+        monkeypatch.setenv("RAGZOOM_SUMMARY_MODEL", "gpt-5.5")
+        config = LoCoMoConfig(data_path=Path("test.json"))
+        assert config.summary_model == "gpt-5.5"
+        assert config.to_dict()["summary_model"] == "gpt-5.5"
+
+    def test_summary_model_none_when_env_unset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("RAGZOOM_SUMMARY_MODEL", raising=False)
+        config = LoCoMoConfig(data_path=Path("test.json"))
+        assert config.summary_model is None
+        assert config.to_dict()["summary_model"] is None
+
 
 # ---------------------------------------------------------------------------
 # _aggregate with and without verdicts
@@ -690,3 +720,239 @@ class TestReportCostSerialization:
         assert data["per_question"][0]["cost"]["total_cost_usd"] == pytest.approx(
             0.004567, abs=1e-6
         )
+
+
+# ---------------------------------------------------------------------------
+# Served-tiling capture and persistence (failure-attribution instrumentation)
+# ---------------------------------------------------------------------------
+
+
+class TestServedTilingsPersistence:
+    """The text the answerer actually saw must be persisted per question.
+
+    Without it, post-hoc failure attribution (synthesis vs summary-loss vs
+    retrieval) is impossible — the only artifact is the final answer.
+    """
+
+    def test_json_includes_served_tilings(self) -> None:
+        served = [
+            "<Explanation>...</Explanation>\n\n[time: 2022-11-09T14:00:00Z]\nleaf one",
+            "<Explanation>...</Explanation>\n\nleaf two",
+        ]
+        result = AnswerResult(
+            sample_id="test",
+            question="q?",
+            gold_answer="a",
+            category=QACategory.SINGLE_HOP,
+            generated_answer="a",
+            judge_verdict="A",
+            token_f1=1.0,
+            cost=CostMetrics.zero(),
+            served_tilings=tuple(served),
+        )
+        report = BenchmarkReport(
+            answer_model="test-model",
+            judge_model="test-judge",
+            num_conversations=1,
+            num_questions=1,
+            scores=_EMPTY_SCORES,
+            per_question=[result],
+        )
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = Path(f.name)
+        save_json(report, path)
+        data = json.loads(path.read_text())
+        record = data["per_question"][0]
+        assert record["served_tilings"] == served
+
+    def test_served_tilings_omitted_when_empty(self) -> None:
+        """A question with no recall calls records an empty served_tilings list."""
+        result = _make_result("A", 1.0)
+        assert result.served_tilings == ()
+        report = BenchmarkReport(
+            answer_model="test-model",
+            judge_model="test-judge",
+            num_conversations=1,
+            num_questions=1,
+            scores=_EMPTY_SCORES,
+            per_question=[result],
+        )
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = Path(f.name)
+        save_json(report, path)
+        data = json.loads(path.read_text())
+        assert data["per_question"][0]["served_tilings"] == []
+
+
+class TestSearchResultCapturesServedTilings:
+    """The SearchAgent must always capture each recall call's served text.
+
+    Capture is independent of profiling: the served tiling text is the
+    minimal artifact required for failure attribution and must not depend
+    on the expensive profiling/retrospective path being enabled.
+    """
+
+    @pytest.mark.asyncio
+    async def test_served_tilings_populated_without_profiling(self) -> None:
+        from collections.abc import Sequence
+
+        from ragzoom.agent.protocol import AgentResult, ToolDefinition
+        from ragzoom.client.grpc_client import (
+            ExecuteQueryOutput,
+            NodeSummary,
+            RetrievalView,
+        )
+        from ragzoom.search.agent import SearchAgent
+        from ragzoom.search.config import SearchConfig
+        from ragzoom.services.query_service import QueryResult
+
+        leaf = NodeSummary(
+            node_id="leaf",
+            text="[ALICE]: heading to Nate's tomorrow",
+            token_count=12,
+            span_start=0,
+            span_end=40,
+            parent_id="",
+            left_child_id="",
+            right_child_id="",
+            height=0,
+            time_start="2022-11-09T14:00:00Z",
+            time_end="2022-11-09T14:00:00Z",
+        )
+        query_output = ExecuteQueryOutput(
+            query_result=QueryResult(
+                summary="spans",
+                token_count=12,
+                nodes_retrieved=1,
+                tiling_size=1,
+                query_id="",
+                seed_count=1,
+                verbatim_count=1,
+                actual_start=0,
+                actual_end=40,
+            ),
+            retrieval=RetrievalView(
+                selected_ids=["leaf"],
+                tiling_ids=["leaf"],
+                scores={"leaf": 1.0},
+                coverage_map={"leaf": True},
+                nodes={"leaf": leaf},
+            ),
+            visualization="",
+            validation_warning="",
+        )
+
+        class _Executor:
+            async def __call__(
+                self,
+                *,
+                document_id: str,
+                query: str,
+                budget_tokens: int,
+                time_start: str | None = None,
+                time_end: str | None = None,
+            ) -> ExecuteQueryOutput:
+                return query_output
+
+        class _ToolCallingBackend:
+            async def generate(
+                self,
+                system_prompt: str,
+                user_prompt: str,
+                *,
+                tools: Sequence[ToolDefinition] = (),
+                max_turns: int = 1,
+                temperature: float | None = None,
+                resume_session_id: str | None = None,
+            ) -> AgentResult:
+                if tools:
+                    await tools[0].handler({"query": "Nate", "budget_tokens": 2000})
+                return AgentResult(
+                    answer="tomorrow",
+                    cost=CostMetrics(
+                        total_input_tokens=10,
+                        total_output_tokens=5,
+                        retrieval_call_count=1,
+                        reasoning_turn_count=1,
+                        retrieved_tokens_per_call=(12,),
+                    ),
+                    history=(),
+                )
+
+        # Profiling OFF — capture must still happen.
+        config = SearchConfig(profiling_enabled=False)
+        agent = SearchAgent(config, _ToolCallingBackend())
+
+        result = await agent.search(
+            "When did Alice go to Nate's?", "doc-1", _Executor()
+        )
+
+        assert result.profile is None
+        assert len(result.served_tilings) == 1
+        served = result.served_tilings[0]
+        # The served text the answerer saw must include the verbatim leaf and
+        # its absolute timestamp (FIX 1 + FIX 2 together).
+        assert "[ALICE]: heading to Nate's tomorrow" in served
+        assert "2022-11-09T14:00:00Z" in served
+
+
+class TestRejudgePreservesServedTilings:
+    """Re-judging cached answers must not strip the served tiling text.
+
+    Rejudge re-runs the judge and re-writes results.json; if it dropped
+    served_tilings, the instrumentation would silently vanish on every
+    re-judge. No real API calls — the judge backend is mocked.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rejudge_carries_served_tilings(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import ragzoom.evaluation.locomo.runner as runner_mod
+
+        served = [
+            "<Explanation>...</Explanation>\n\n[time: 2022-11-09T14:00:00Z]\nleaf",
+        ]
+        cached = {
+            "metadata": {"answer_model": "m", "num_conversations": 1},
+            "per_question": [
+                {
+                    "sample_id": "s1",
+                    "question": "When?",
+                    "gold_answer": "10 Nov 2022",
+                    "category": "multi_hop",
+                    "generated_answer": "tomorrow",
+                    "verdict": "B",
+                    "f1": 0.0,
+                    "served_tilings": served,
+                }
+            ],
+        }
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(cached, f)
+            cached_path = Path(f.name)
+
+        class _FakeJudge:
+            async def generate(self, *args: object, **kwargs: object) -> object:
+                from ragzoom.agent.protocol import AgentResult
+
+                return AgentResult(
+                    answer="B",
+                    cost=CostMetrics(
+                        total_input_tokens=1,
+                        total_output_tokens=1,
+                        retrieval_call_count=0,
+                        reasoning_turn_count=1,
+                        retrieved_tokens_per_call=(),
+                    ),
+                    history=(),
+                )
+
+        monkeypatch.setattr(runner_mod, "AsyncOpenAI", lambda: object())
+        monkeypatch.setattr(runner_mod, "create_backend", lambda *a, **k: _FakeJudge())
+
+        config = LoCoMoConfig(data_path=Path("dummy.json"), rejudge_path=cached_path)
+        report = await runner_mod.rejudge(config)
+
+        assert len(report.per_question) == 1
+        assert report.per_question[0].served_tilings == tuple(served)

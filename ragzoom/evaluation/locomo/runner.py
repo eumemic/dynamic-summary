@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import random
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -16,8 +17,14 @@ from openai import AsyncOpenAI
 
 from ragzoom.agent.factory import create_backend
 from ragzoom.agent.protocol import BenchmarkingAgent
-from ragzoom.client.grpc_client import ExecuteQueryOutput
 from ragzoom.constants import DEV_GRPC_PORT
+from ragzoom.evaluation.benchmark_common import (
+    GrpcQueryExecutor,
+    build_search_agents,
+    cost_from_dict,
+    cost_from_search_cost,
+    run_benchmark_pipeline,
+)
 from ragzoom.evaluation.locomo.ingest import (
     doc_id_for,
     ingest_all,
@@ -30,7 +37,6 @@ from ragzoom.evaluation.locomo.types import (
     BenchmarkReport,
     CategoryScore,
     ConversationMetrics,
-    CostMetrics,
     JudgeVerdict,
     QACategory,
     QAPair,
@@ -65,6 +71,13 @@ class LoCoMoConfig:
     profiling: bool = False
     use_docker_cli: bool | None = None  # None = auto (Docker for Claude models)
     reasoning_level: str | None = None
+    # The summarizer that built the trees during ingest. Defaults from the same
+    # RAGZOOM_SUMMARY_MODEL env the isolated benchmark server inherits, so each
+    # run records which summary model is under test (required for A/B
+    # attribution; prior runs logged null and were unattributable).
+    summary_model: str | None = field(
+        default_factory=lambda: os.environ.get("RAGZOOM_SUMMARY_MODEL")
+    )
 
     def to_dict(self) -> dict[str, object]:
         """Serialize config for embedding in results JSON.
@@ -76,6 +89,7 @@ class LoCoMoConfig:
             "data_path": str(self.data_path),
             "search_model": self.search_model,
             "judge_model": self.judge_model,
+            "summary_model": self.summary_model,
             "max_iterations": self.max_iterations,
             "max_budget": self.max_budget,
             "max_concurrent": self.max_concurrent,
@@ -94,37 +108,11 @@ class LoCoMoConfig:
 # ---------------------------------------------------------------------------
 
 
-class _GrpcQueryExecutor:
-    """QueryExecutor backed by gRPC ``ExecuteQuery`` via ``RagZoom.query()``."""
-
-    def __init__(self, rz: RagZoom) -> None:
-        self._rz = rz
-
-    async def __call__(
-        self,
-        *,
-        document_id: str,
-        query: str,
-        budget_tokens: int,
-        time_start: str | None = None,
-        time_end: str | None = None,
-    ) -> ExecuteQueryOutput:
-        response = await asyncio.to_thread(
-            self._rz.query,
-            document_id,
-            query,
-            budget_tokens=budget_tokens,
-            time_start=time_start,
-            time_end=time_end,
-        )
-        return response.raw
-
-
 async def _evaluate_one(
     judge: BenchmarkingAgent | None,
     judge_model_id: str,
     agent_queue: asyncio.Queue[SearchAgent],
-    query_executor: _GrpcQueryExecutor,
+    query_executor: GrpcQueryExecutor,
     doc_id: str,
     qa: QAPair,
 ) -> AnswerResult:
@@ -133,16 +121,7 @@ async def _evaluate_one(
     try:
         search_result = await agent.search(qa.question, doc_id, query_executor)
         generated_answer = search_result.answer
-        sc = search_result.cost
-        cost = CostMetrics(
-            total_input_tokens=sc.total_input_tokens,
-            total_output_tokens=sc.total_output_tokens,
-            retrieval_call_count=sc.retrieval_call_count,
-            reasoning_turn_count=sc.reasoning_turn_count,
-            retrieved_tokens_per_call=sc.retrieved_tokens_per_call,
-            query_duration_seconds=sc.duration_seconds,
-            total_cost_usd=sc.total_cost_usd,
-        )
+        cost = cost_from_search_cost(search_result.cost)
         retrospective: str | None = None
         if search_result.profile is not None:
             retrospective = search_result.profile.retrospective
@@ -168,6 +147,7 @@ async def _evaluate_one(
             token_f1=f1,
             cost=cost,
             retrospective=retrospective,
+            served_tilings=search_result.served_tilings,
         )
     finally:
         agent_queue.put_nowait(agent)
@@ -223,45 +203,7 @@ async def run_benchmark(config: LoCoMoConfig) -> BenchmarkReport:
     5. Evaluate all non-adversarial QA pairs via server-side search
     6. Aggregate and return results
     """
-    if config.use_isolated_server:
-        from ragzoom.evaluation.locomo.server_manager import BenchmarkServerManager
-
-        mgr = BenchmarkServerManager()
-        if config.skip_ingest:
-            config.server_address = mgr.verify_running()
-        else:
-            config.server_address = mgr.start_fresh()
-    return await _run_benchmark_impl(config)
-
-
-async def _run_benchmark_impl(config: LoCoMoConfig) -> BenchmarkReport:
-    """Core benchmark implementation."""
-    # 0. Docker container pool for Claude SDK calls.
-    #    Auto-enabled for Claude models: the host CLI loads plugins and makes
-    #    slow network calls (~37s), while Docker containers start in ~1s.
-    docker_pool: DockerClaudePool | None = None
-    use_docker = config.use_docker_cli
-    if use_docker is None:
-        from ragzoom.agent.factory import is_claude_model
-
-        use_docker = is_claude_model(config.search_model)
-        if use_docker:
-            logger.info(
-                "Auto-enabling Docker CLI for Claude model %s", config.search_model
-            )
-    if use_docker:
-        from ragzoom.daemon import get_daemon_state_dir
-        from ragzoom.evaluation.docker_claude import DockerClaudePool
-
-        session_base = get_daemon_state_dir() / "sdk-sessions"
-        docker_pool = DockerClaudePool(session_base, config.max_concurrent)
-        docker_pool.ensure_running()
-
-    try:
-        return await _run_benchmark_core(config, docker_pool)
-    finally:
-        if docker_pool is not None:
-            docker_pool.stop()
+    return await run_benchmark_pipeline(config, _run_benchmark_core)
 
 
 async def _run_benchmark_core(
@@ -308,26 +250,17 @@ async def _run_benchmark_core(
         profiling_enabled=config.profiling,
     )
     agent_queue: asyncio.Queue[SearchAgent] = asyncio.Queue()
-    if docker_pool is not None:
-        for i in range(docker_pool.size):
-            backend = create_backend(
-                config.search_model,
-                openai_client,
-                cli_path=docker_pool.cli_path(i),
-                reasoning_level=config.reasoning_level,
-            )
-            agent_queue.put_nowait(SearchAgent(search_config, backend))
-    else:
-        backend = create_backend(
-            config.search_model,
-            openai_client,
-            reasoning_level=config.reasoning_level,
-        )
-        agent = SearchAgent(search_config, backend)
-        for _ in range(config.max_concurrent):
-            agent_queue.put_nowait(agent)
+    for agent in build_search_agents(
+        search_config,
+        config.search_model,
+        openai_client,
+        max_concurrent=config.max_concurrent,
+        docker_pool=docker_pool,
+        reasoning_level=config.reasoning_level,
+    ):
+        agent_queue.put_nowait(agent)
 
-    query_executor = _GrpcQueryExecutor(rz)
+    query_executor = GrpcQueryExecutor(rz)
 
     logger.info(
         "Evaluating %d questions (model=%s, max_iter=%d, budget=%d)",
@@ -429,21 +362,11 @@ async def rejudge(config: LoCoMoConfig) -> BenchmarkReport:
             )
         f1 = compute_token_f1(generated_answer, gold_answer)
         category_str = str(entry["category"])
-        cost_raw = entry.get("cost")
-        if isinstance(cost_raw, dict):
-            cost = CostMetrics(
-                total_input_tokens=int(cost_raw.get("total_input_tokens", 0)),
-                total_output_tokens=int(cost_raw.get("total_output_tokens", 0)),
-                retrieval_call_count=int(cost_raw.get("retrieval_call_count", 0)),
-                reasoning_turn_count=int(cost_raw.get("reasoning_turn_count", 0)),
-                retrieved_tokens_per_call=tuple(
-                    int(t) for t in cost_raw.get("retrieved_tokens_per_call", ())
-                ),
-                query_duration_seconds=cost_raw.get("query_duration_seconds"),
-                total_cost_usd=cost_raw.get("total_cost_usd"),
-            )
-        else:
-            cost = CostMetrics.zero()
+        cost = cost_from_dict(entry.get("cost"))
+
+        served_raw = entry.get("served_tilings", ())
+        assert isinstance(served_raw, list | tuple)
+        served_tilings = tuple(str(t) for t in served_raw)
 
         return AnswerResult(
             sample_id=str(entry["sample_id"]),
@@ -454,6 +377,7 @@ async def rejudge(config: LoCoMoConfig) -> BenchmarkReport:
             judge_verdict=verdict,
             token_f1=f1,
             cost=cost,
+            served_tilings=served_tilings,
         )
 
     all_results = list(

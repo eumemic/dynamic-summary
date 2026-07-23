@@ -7,6 +7,7 @@ from contextlib import ExitStack, contextmanager
 from typing import cast
 from unittest.mock import MagicMock, patch
 
+import litellm
 import pytest
 from typing_extensions import TypedDict
 
@@ -39,7 +40,12 @@ def create_test_reporter(config: IndexConfig) -> TelemetryCollector:
 
 
 class MockOpenAIResponseWithCache:
-    """Mock OpenAI response with usage and cached token metadata."""
+    """Mock litellm response with usage and cached token metadata.
+
+    Mirrors the litellm.acompletion response shape consumed by
+    LiteLLMChatModel: choices[0].message.content and a usage object whose
+    prompt_tokens_details carries cached_tokens.
+    """
 
     def __init__(
         self,
@@ -92,6 +98,7 @@ def patched_tokenizers(
 async def test_cached_tokens_recorded_in_telemetry(
     storage_backend: StorageBackend,
     indexer_runtime_harness: IndexerRuntimeHarness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     index_config = IndexConfig.load(
         retry_threshold=0.1,
@@ -128,8 +135,7 @@ async def test_cached_tokens_recorded_in_telemetry(
             cached_tokens=1200,
         )
 
-    indexer_runtime_harness.llm_service.client = MagicMock()
-    indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
+    monkeypatch.setattr(litellm, "acompletion", mock_create)
 
     def encode(text: str) -> list[int]:
         if "Test content" in text and "More content" in text:
@@ -163,6 +169,7 @@ async def test_cached_tokens_recorded_in_telemetry(
 async def test_backward_compatibility_without_cached_tokens(
     storage_backend: StorageBackend,
     indexer_runtime_harness: IndexerRuntimeHarness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     index_config = IndexConfig.load(target_chunk_tokens=100)
     vector_index = RecordingVectorIndex()
@@ -187,8 +194,7 @@ async def test_backward_compatibility_without_cached_tokens(
     async def mock_create(**_kwargs: OpenAIMockParams) -> MagicMock:
         return response
 
-    indexer_runtime_harness.llm_service.client = MagicMock()
-    indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
+    monkeypatch.setattr(litellm, "acompletion", mock_create)
 
     def encode(text: str) -> list[int]:
         if "Test content" in text and "More content" in text:
@@ -225,6 +231,7 @@ async def test_backward_compatibility_without_cached_tokens(
 async def test_cached_tokens_across_multiple_retries(
     storage_backend: StorageBackend,
     indexer_runtime_harness: IndexerRuntimeHarness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     index_config = IndexConfig.load(
         retry_threshold=0.05,
@@ -255,8 +262,7 @@ async def test_cached_tokens_across_multiple_retries(
             return MockOpenAIResponseWithCache("C" * 102, 1650, 102, 1400)
         return MockOpenAIResponseWithCache("", 0, 0)
 
-    indexer_runtime_harness.llm_service.client = MagicMock()
-    indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
+    monkeypatch.setattr(litellm, "acompletion", mock_create)
 
     with patched_tokenizers(lambda text: [0] * len(text)):
         await indexer_runtime_harness.llm_service._summarize_text(
@@ -293,6 +299,7 @@ async def test_cached_tokens_across_multiple_retries(
 async def test_passthrough_summary_has_no_cached_tokens(
     storage_backend: StorageBackend,
     indexer_runtime_harness: IndexerRuntimeHarness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     index_config = IndexConfig.load(target_chunk_tokens=100)
     vector_index = RecordingVectorIndex()
@@ -310,8 +317,7 @@ async def test_passthrough_summary_has_no_cached_tokens(
     async def mock_create(**_kwargs: OpenAIMockParams) -> MockOpenAIResponseWithCache:
         pytest.fail("Should not call API for passthrough")
 
-    indexer_runtime_harness.llm_service.client = MagicMock()
-    indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
+    monkeypatch.setattr(litellm, "acompletion", mock_create)
 
     with patched_tokenizers(lambda _text: [0] * 50, lambda _text: 50):
         await indexer_runtime_harness.llm_service._summarize_text(
@@ -338,6 +344,7 @@ async def test_passthrough_summary_has_no_cached_tokens(
 async def test_cached_tokens_with_high_cache_rate(
     storage_backend: StorageBackend,
     indexer_runtime_harness: IndexerRuntimeHarness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     index_config = IndexConfig.load(
         retry_threshold=0.1,
@@ -362,8 +369,7 @@ async def test_cached_tokens_with_high_cache_rate(
             return MockOpenAIResponseWithCache("A" * 120, 2000, 120, 0)
         return MockOpenAIResponseWithCache("B" * 100, 2200, 100, 2090)
 
-    indexer_runtime_harness.llm_service.client = MagicMock()
-    indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
+    monkeypatch.setattr(litellm, "acompletion", mock_create)
 
     with patched_tokenizers(lambda text: [0] * len(text)):
         await indexer_runtime_harness.llm_service._summarize_text(

@@ -1852,6 +1852,26 @@ def _persist_daemon_config(config_path: Path) -> None:
     help="Enable HTTP REST API on this port (for sandboxed clients using curl)",
 )
 @click.option(
+    "--summary-model",
+    "summary_model",
+    type=str,
+    default=None,
+    help=(
+        "LLM model for hierarchical summarization "
+        "(overrides RAGZOOM_SUMMARY_MODEL and config file)"
+    ),
+)
+@click.option(
+    "--summary-api-base",
+    "summary_api_base",
+    type=str,
+    default=None,
+    help=(
+        "Endpoint override for the summary model, e.g. a proxy URL "
+        "(overrides RAGZOOM_SUMMARY_API_BASE and config file)"
+    ),
+)
+@click.option(
     "--search-agent-model",
     "search_agent_model",
     type=str,
@@ -1896,6 +1916,8 @@ def start_server(
     preceding_context_inner_token_cap: int | None,
     daemon: bool,
     http_port: int | None,
+    summary_model: str | None,
+    summary_api_base: str | None,
     search_agent_model: str | None,
     search_max_iterations: int | None,
     search_max_budget: int | None,
@@ -1948,6 +1970,8 @@ def start_server(
         preceding_context_inner_verbatim_tokens=preceding_context_inner_verbatim_tokens,
         preceding_context_inner_min_forest_completeness=preceding_context_inner_min_forest_completeness,
         preceding_context_inner_token_cap=preceding_context_inner_token_cap,
+        summary_model=summary_model,
+        summary_api_base=summary_api_base,
         search_agent_model=search_agent_model,
         search_max_iterations=search_max_iterations,
         search_max_budget=search_max_budget,
@@ -2412,10 +2436,9 @@ def measure(
         click.echo(f"\nEvaluating {len(node_data)} of {total_inner} inner nodes...")
         click.echo(f"Model: {eval_model}")
 
-        from openai import AsyncOpenAI
         from tqdm import tqdm
 
-        from ragzoom.adapters.openai_chat_model import OpenAIChatModel
+        from ragzoom.adapters.chat_model_factory import build_chat_model
         from ragzoom.evaluation import evaluate_nodes
         from ragzoom.evaluation.types import NodeEvaluation
 
@@ -2425,8 +2448,7 @@ def measure(
             sys.exit(1)
 
         async def run_evaluation() -> list[NodeEvaluation]:
-            client = AsyncOpenAI(api_key=api_key)
-            chat_model = OpenAIChatModel(client, eval_model)
+            chat_model = build_chat_model(eval_model, api_key=api_key)
 
             def update_progress() -> None:
                 pbar.update(1)
@@ -2516,10 +2538,9 @@ def report(
         )
 
         # Generate issue summary
-        from openai import AsyncOpenAI
         from tqdm import tqdm
 
-        from ragzoom.adapters.openai_chat_model import OpenAIChatModel
+        from ragzoom.adapters.chat_model_factory import build_chat_model
         from ragzoom.evaluation.issue_summary import RecurringIssue
 
         api_key = os.getenv("OPENAI_API_KEY")
@@ -2531,8 +2552,7 @@ def report(
         num_parallel = 10
 
         async def run_synthesis() -> list[RecurringIssue]:
-            client = AsyncOpenAI(api_key=api_key)
-            chat_model = OpenAIChatModel(client, model)
+            chat_model = build_chat_model(model, api_key=api_key)
 
             def update_progress() -> None:
                 pbar.update(1)

@@ -80,6 +80,11 @@ class AnswerResult:
     token_f1: float
     cost: CostMetrics
     retrospective: str | None = None  # Populated when --profiling is enabled
+    # The formatted tiling text returned by each recall call the answerer
+    # made, in call order — i.e. exactly what the answerer saw. Persisted so
+    # failure attribution (synthesis vs summary-loss vs retrieval) is possible
+    # from results.json alone.
+    served_tilings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -225,6 +225,61 @@ def ensure_api_key() -> Generator[None, None, None]:
     # Don't clean up - let other tests use it
 
 
+@pytest.fixture(autouse=True)
+def stub_litellm_acompletion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[None, None, None]:
+    """Stub litellm.acompletion so the summary path never hits the network.
+
+    The summary chat path runs through LiteLLMChatModel (litellm.acompletion).
+    This deterministic stub returns a truncated echo of the last user message
+    plus token usage, mirroring the old in-process summary stub. Tests that need
+    specific litellm behavior monkeypatch litellm.acompletion themselves, which
+    overrides this stub within that test.
+    """
+    import litellm
+
+    from ragzoom.utils.tokenization import tokenizer
+
+    class _StubMessage:
+        def __init__(self, content: str) -> None:
+            self.content = content
+
+    class _StubChoice:
+        def __init__(self, content: str) -> None:
+            self.message = _StubMessage(content)
+
+    class _StubUsage:
+        def __init__(self, prompt_tokens: int, completion_tokens: int) -> None:
+            self.prompt_tokens = prompt_tokens
+            self.completion_tokens = completion_tokens
+            self.total_tokens = prompt_tokens + completion_tokens
+
+    class _StubResponse:
+        def __init__(self, content: str, usage: _StubUsage) -> None:
+            self.choices = [_StubChoice(content)]
+            self.usage = usage
+
+    async def _stub_acompletion(**kwargs: object) -> _StubResponse:
+        raw_messages = kwargs.get("messages")
+        source = ""
+        if isinstance(raw_messages, list):
+            for message in reversed(raw_messages):
+                if isinstance(message, dict) and message.get("role") == "user":
+                    content = message.get("content")
+                    if isinstance(content, str):
+                        source = content
+                    break
+        words = source.split()
+        summary = " ".join(words[:40]) if words else "summary"
+        prompt_tokens = tokenizer.count_tokens(source)
+        completion_tokens = tokenizer.count_tokens(summary)
+        return _StubResponse(summary, _StubUsage(prompt_tokens, completion_tokens))
+
+    monkeypatch.setattr(litellm, "acompletion", _stub_acompletion)
+    yield
+
+
 @pytest.fixture(scope="session", autouse=True)
 def enable_strict_errors() -> Generator[None, None, None]:
     """Enable strict error mode for all tests.

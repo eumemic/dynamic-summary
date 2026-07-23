@@ -396,6 +396,84 @@ class TestFormatTilingSpans:
         assert "Hello, world!" in result
         assert "<Span" not in result
 
+    def test_temporal_verbatim_leaf_carries_timestamp(self) -> None:
+        """Temporal height=0 leaves render their time_start beside the leaf body.
+
+        Regression test for the timestamp-render bug: a verbatim leaf must
+        carry its absolute timestamp so temporal ("When did X happen?")
+        questions are answerable from verbatim detail, not just from
+        summarized spans. The timestamp must appear in the leaf body itself,
+        not only in the Explanation header that echoes the span's bounds.
+        """
+        node = _make_node(
+            "leaf",
+            text="[ALICE]: I'm going to Nate's tomorrow!",
+            height=0,
+            time_start="2022-11-09T14:00:00Z",
+            time_end="2022-11-09T14:00:00Z",
+        )
+        response = _make_response(
+            tiling_ids=["leaf"],
+            nodes={"leaf": node},
+        )
+        result = format_tiling_spans(response)
+        # Inspect the leaf body only — the portion after the Explanation header.
+        body = result.split("</Explanation>", 1)[1]
+        assert "[ALICE]: I'm going to Nate's tomorrow!" in body
+        # The absolute timestamp must appear on the verbatim leaf, not only
+        # on summarized spans or in the Explanation header.
+        assert "2022-11-09T14:00:00Z" in body
+        # No Span wrapper is introduced for verbatim leaves.
+        assert "<Span" not in result
+
+    def test_temporal_verbatim_leaf_renders_time_end_when_different(self) -> None:
+        """A leaf spanning a time range renders both time_start and time_end."""
+        node = _make_node(
+            "leaf",
+            text="A multi-message exchange.",
+            height=0,
+            time_start="2023-06-15T09:00:00Z",
+            time_end="2023-06-15T17:30:00Z",
+        )
+        response = _make_response(
+            tiling_ids=["leaf"],
+            nodes={"leaf": node},
+        )
+        result = format_tiling_spans(response)
+        body = result.split("</Explanation>", 1)[1]
+        assert "2023-06-15T09:00:00Z" in body
+        assert "2023-06-15T17:30:00Z" in body
+
+    def test_temporal_verbatim_leaf_omits_redundant_time_end(self) -> None:
+        """When time_end equals time_start, only one timestamp is rendered."""
+        node = _make_node(
+            "leaf",
+            text="A single instant.",
+            height=0,
+            time_start="2022-11-09T14:00:00Z",
+            time_end="2022-11-09T14:00:00Z",
+        )
+        response = _make_response(
+            tiling_ids=["leaf"],
+            nodes={"leaf": node},
+        )
+        result = format_tiling_spans(response)
+        body = result.split("</Explanation>", 1)[1]
+        # The identical timestamp appears exactly once in the leaf body.
+        assert body.count("2022-11-09T14:00:00Z") == 1
+
+    def test_non_temporal_verbatim_leaf_has_no_timestamp(self) -> None:
+        """Non-temporal height=0 leaves render text alone, with no time markers."""
+        node = _make_node("leaf", text="Just plain prose.", height=0)
+        response = _make_response(
+            tiling_ids=["leaf"],
+            nodes={"leaf": node},
+        )
+        result = format_tiling_spans(response)
+        assert "Just plain prose." in result
+        assert "time_start" not in result
+        assert "time_end" not in result
+
     def test_summary_node_wrapped_in_span(self) -> None:
         """Height>0 nodes are wrapped in Span tags with time attributes."""
         node = _make_node(

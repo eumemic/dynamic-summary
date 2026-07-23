@@ -48,17 +48,29 @@ class GreedyTilingGenerator:
         budget_tokens: int | None,
         scores: Mapping[str, float],
         nodes: Mapping[str, TreeNode],
+        mode: str = "coverage",
     ) -> TilingResult:
-        """Generate a tiling by pruning the frontier until within budget.
+        """Generate a tiling, either spreading coverage or concentrating budget.
 
         Args:
             root_ids: Root node IDs to start traversal from
             budget_tokens: Token budget for the tiling, or None for no pruning
             scores: Relevance scores for each node
             nodes: All nodes in the coverage tree
+            mode: "coverage" (default) rolls up the frontier to span the whole
+                range within budget; "concentrate" admits the highest-relevance
+                verbatim leaves until budget, with no roll-up.
         """
+        if mode not in ("coverage", "concentrate"):
+            raise ValueError(f"mode must be 'coverage' or 'concentrate', got '{mode}'")
+
         if not nodes:
             return TilingResult(Tiling.empty(), [], 0.0, {})
+
+        if mode == "concentrate":
+            frontier = _build_frontier(nodes, root_ids)
+            leaf_ids = [nid for nid in frontier if nodes[nid].height == 0]
+            return _find_concentrate_tiling(leaf_ids, scores, nodes, budget_tokens)
 
         frontier = _build_frontier(nodes, root_ids)
 
@@ -117,6 +129,68 @@ class GreedyTilingGenerator:
             key=lambda nid: (int(getattr(nodes[nid], "span_start", 0)), nid),
         )
         return _build_result(ordered_frontier, scores, nodes)
+
+
+def _find_concentrate_tiling(
+    leaf_ids: Sequence[str],
+    scores: Mapping[str, float],
+    nodes: Mapping[str, TreeNode],
+    budget_tokens: int | None,
+) -> TilingResult:
+    """Top-k over verbatim leaves: admit highest-relevance leaves within budget.
+
+    Ranks the candidate leaves by query relevance (descending), greedily admits
+    each that still fits the remaining budget, performs NO roll-up into summary
+    nodes, then emits the selected leaves in document order (span_start). This
+    intentionally does not guarantee whole-range coverage.
+
+    Args:
+        leaf_ids: Candidate verbatim leaf ids (height == 0) from the frontier
+        scores: Relevance scores for each node
+        nodes: All nodes in the coverage tree
+        budget_tokens: Token budget, or None to admit every candidate leaf
+    """
+    # Rank leaves by relevance (descending); break ties by document order so the
+    # selection is deterministic.
+    ranked = sorted(
+        leaf_ids,
+        key=lambda nid: (-scores.get(nid, 0.0), nodes[nid].span_start, nid),
+    )
+
+    selected: list[str] = []
+    remaining = budget_tokens
+    for node_id in ranked:
+        cost = nodes[node_id].token_count
+        if remaining is not None:
+            if cost > remaining:
+                continue
+            remaining -= cost
+        selected.append(node_id)
+
+    selected.sort(key=lambda nid: (nodes[nid].span_start, nid))
+
+    tiling_score = sum(
+        scores.get(node_id, 0.0) * nodes[node_id].token_count for node_id in selected
+    )
+    tiling = Tiling(node_ids=list(selected), relevance_tokens=tiling_score)
+
+    node_infos = [
+        NodeInfo(
+            node_id=node_id,
+            token_cost=nodes[node_id].token_count,
+            span_start=nodes[node_id].span_start,
+            span_end=nodes[node_id].span_end,
+        )
+        for node_id in selected
+    ]
+
+    coverage_map = {node_id: True for node_id in selected}
+    return TilingResult(
+        tiling=tiling,
+        node_infos=node_infos,
+        total_quality=tiling.relevance_tokens,
+        coverage_map=coverage_map,
+    )
 
 
 def _build_frontier(

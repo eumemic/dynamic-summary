@@ -631,9 +631,17 @@ class Retriever:
         else:
             final_budget = None
 
-        # Generate tiling
+        # Generate tiling. The retrieval mode (coverage vs concentrate) comes
+        # from the query config; the server flips it via RAGZOOM_RETRIEVAL_MODE.
+        retrieval_mode = self.query_config.retrieval_mode
+        if retrieval_mode is None:
+            raise ValueError(
+                "QueryConfig.retrieval_mode must be resolved to a concrete mode "
+                "before retrieval; got None (QueryConfig.__post_init__ should "
+                "have set it)."
+            )
         tiling_result = self.tiling_generator.find_optimal_tiling_over_roots(
-            root_ids, final_budget, scores, nodes
+            root_ids, final_budget, scores, nodes, mode=retrieval_mode
         )
         if telemetry_collector:
             telemetry_collector.end_phase("tiling")

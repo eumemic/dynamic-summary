@@ -80,6 +80,7 @@ def _build_recall_tool(
     document_id: str,
     query_executor: QueryExecutor,
     iterations: list[SearchIteration],
+    served_tilings: list[str],
     profiling: bool,
     max_iterations: int,
     *,
@@ -89,6 +90,9 @@ def _build_recall_tool(
     """Build the recall ToolDefinition with a handler closure.
 
     Args:
+        served_tilings: Accumulator for each recall call's formatted tiling
+            text, in call order. Always populated (independent of profiling)
+            so callers can persist the text the answerer actually saw.
         time_start_bound: Hard lower bound — the LLM cannot search earlier than this.
         time_end_bound: Hard upper bound — the LLM cannot search later than this.
     """
@@ -134,6 +138,10 @@ def _build_recall_tool(
         except Exception as exc:
             logger.warning("recall(%s) failed: %s", query_text[:50], exc)
             return ToolResult(content=f"Error: {exc}\n\n{note}", is_error=True)
+
+        # Always record the served text — the minimal artifact for failure
+        # attribution — regardless of whether profiling is enabled.
+        served_tilings.append(formatted)
 
         if profiling:
             iterations.append(
@@ -258,11 +266,13 @@ class SearchAgent:
         prompt = _build_system_prompt(search_guidance)
 
         iterations: list[SearchIteration] = []
+        served_tilings: list[str] = []
         recall_tool = _build_recall_tool(
             config,
             document_id,
             query_executor,
             iterations,
+            served_tilings,
             profiling,
             max_iterations=config.max_iterations,
             time_start_bound=time_start,
@@ -313,6 +323,7 @@ class SearchAgent:
             cost=_make_search_cost(result, elapsed),
             profile=profile,
             session_id=session_id,
+            served_tilings=tuple(served_tilings),
         )
 
     async def search_continue(
@@ -350,11 +361,13 @@ class SearchAgent:
         prompt = _build_system_prompt(search_guidance)
 
         iterations: list[SearchIteration] = []
+        served_tilings: list[str] = []
         recall_tool = _build_recall_tool(
             config,
             session.document_id,
             query_executor,
             iterations,
+            served_tilings,
             config.profiling_enabled,
             max_iterations=config.max_iterations,
         )
@@ -377,6 +390,7 @@ class SearchAgent:
             cost=_make_search_cost(result, elapsed),
             profile=None,
             session_id=session_id,
+            served_tilings=tuple(served_tilings),
         )
 
 

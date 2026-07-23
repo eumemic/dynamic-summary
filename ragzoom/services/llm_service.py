@@ -39,6 +39,10 @@ def _build_test_openai_client(model_id: str) -> "OpenAIAsyncType":
     The stub avoids network calls while preserving realistic vector shapes so
     downstream components (e.g., Chroma adapters) see non-zero embeddings that
     match the configured model dimensionality.
+
+    Only the embedding surface is stubbed: the summary chat path runs through
+    LiteLLM (litellm.acompletion), which the test suite stubs separately via the
+    ``stub_litellm_acompletion`` conftest fixture.
     """
 
     dim = _get_embedding_dimension(model_id)
@@ -73,38 +77,9 @@ def _build_test_openai_client(model_id: str) -> "OpenAIAsyncType":
             total_tokens = sum(len(t) // 4 + 1 for t in texts)
             return _Resp([_Item(list(self._vector)) for _ in texts], total_tokens)
 
-    class _StubCompletions:
-        async def create(self, **kwargs: object) -> object:
-            class _Msg:
-                def __init__(self) -> None:
-                    self.content = "summary"
-
-            class _Choice:
-                def __init__(self) -> None:
-                    self.message = _Msg()
-
-            class _Usage:
-                def __init__(self) -> None:
-                    self.prompt_tokens = 0
-                    self.completion_tokens = 0
-                    self.total_tokens = 0
-                    self.prompt_tokens_details = {"cached_tokens": 0}
-
-            class _Resp:
-                def __init__(self) -> None:
-                    self.choices = [_Choice()]
-                    self.usage = _Usage()
-
-            return _Resp()
-
-    class _StubChat:
-        def __init__(self) -> None:
-            self.completions = _StubCompletions()
-
     class _StubClient:
         def __init__(self) -> None:
             self.embeddings = _StubEmbeddings()
-            self.chat = _StubChat()
 
     return cast("OpenAIAsyncType", _StubClient())
 
@@ -157,8 +132,12 @@ class LLMService:
         """Lazy-initialize the summarizer with current client and config.
 
         Re-creates if client or config has changed (enables test mocking).
+
+        The summary chat path runs through LiteLLM so the summary model can be
+        any provider (OpenAI gpt-* or Anthropic claude-* via api_base). The
+        embedding path keeps its own raw AsyncOpenAI client unchanged.
         """
-        from ragzoom.adapters.openai_chat_model import OpenAIChatModel
+        from ragzoom.adapters.chat_model_factory import build_chat_model
         from ragzoom.services.summarizer import Summarizer
 
         # Check if we need to rebuild (client or config changed, or first access)
@@ -168,7 +147,13 @@ class LLMService:
             or self._summarizer_config is not self.config
         )
         if needs_rebuild:
-            chat_model = OpenAIChatModel(self.client, self.config.summary_model)
+            api_key = self.config.summary_api_key
+            chat_model = build_chat_model(
+                self.config.summary_model,
+                api_base=self.config.summary_api_base,
+                api_key=api_key.get_secret_value() if api_key is not None else None,
+                timeout=self._timeout,
+            )
             self._cached_summarizer = Summarizer(chat_model, self.config)
             self._summarizer_client = self.client
             self._summarizer_config = self.config

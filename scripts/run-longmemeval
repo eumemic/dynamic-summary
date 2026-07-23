@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""Run the LongMemEval benchmark against the RagZoom dev/isolated server.
+
+The decisive summarizer experiment sweeps three axes through this CLI:
+  --summary-model   the summarizer that builds the trees (gpt-4o / gpt-5.5 / opus)
+  --budget          the fixed reader budget B (the H/B knob: 4096/8192/16384/32768)
+  --data / --variant  the haystack tier H (oracle / S ~115K / M ~1.5M)
+
+Example (validate wiring cheaply, no real spend beyond a tiny sample):
+    scripts/run-longmemeval --variant oracle --download --sample 10 \\
+        --summary-model gpt-5-nano --budget 8192
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+import os
+from pathlib import Path
+
+
+def _build_parser(
+    default_search_model: str, default_iters: int, default_budget: int
+) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="LongMemEval benchmark evaluation for RagZoom"
+    )
+    parser.add_argument(
+        "--data",
+        type=Path,
+        default=None,
+        help="Path to a LongMemEval JSON file (oracle/S/M). Mutually informative "
+        "with --variant + --download.",
+    )
+    parser.add_argument(
+        "--variant",
+        choices=["oracle", "s", "m"],
+        default=None,
+        help="Logical dataset variant. With --download, fetches it from HuggingFace.",
+    )
+    parser.add_argument(
+        "--download",
+        action="store_true",
+        help="Download --variant from HuggingFace if --data is not given.",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="Directory to download the dataset into (default: HF cache).",
+    )
+    parser.add_argument(
+        "--search-model",
+        default=default_search_model,
+        help=f"Model for the agentic answerer (default: {default_search_model})",
+    )
+    parser.add_argument(
+        "--judge-model",
+        default="gpt-4.1",
+        help="Model for type-specific LLM-as-Judge (default: gpt-4.1)",
+    )
+    parser.add_argument(
+        "--summary-model",
+        default=None,
+        help=(
+            "Summary model used to build the trees during ingest. Sets "
+            "RAGZOOM_SUMMARY_MODEL for the isolated server and records the "
+            "summarizer in results.json (default: RAGZOOM_SUMMARY_MODEL env). "
+            "This is the A/B attribution axis of the experiment."
+        ),
+    )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=default_budget,
+        help=(
+            f"Fixed reader token budget B per recall call — the core experiment "
+            f"knob (default: {default_budget}). Sweep 4096/8192/16384/32768."
+        ),
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("longmemeval_results"),
+        help="Output directory for results (default: longmemeval_results/)",
+    )
+    parser.add_argument(
+        "--server",
+        default="127.0.0.1:50052",
+        help="RagZoom server address (default: 127.0.0.1:50052, dev server)",
+    )
+    parser.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=5,
+        help="Max concurrent questions in flight (default: 5)",
+    )
+    parser.add_argument(
+        "--skip-ingest",
+        action="store_true",
+        help="Skip ingestion (use if haystacks are already indexed)",
+    )
+    parser.add_argument(
+        "--sample",
+        type=int,
+        default=None,
+        help="Evaluate a random sample of N questions (reproducible, seed=42)",
+    )
+    parser.add_argument(
+        "--no-judge",
+        action="store_true",
+        help="Skip the LLM judge, only generate answers (saves judge API cost)",
+    )
+    parser.add_argument(
+        "--rejudge",
+        type=Path,
+        default=None,
+        help="Re-judge answers from a previous results.json (no server needed)",
+    )
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=default_iters,
+        help=f"Max recall iterations per question (default: {default_iters})",
+    )
+    parser.add_argument(
+        "--profiling",
+        action="store_true",
+        help="Enable search profiling (per-question retrospective analysis)",
+    )
+    parser.add_argument(
+        "--no-isolated-server",
+        action="store_true",
+        help="Disable the default isolated server and use --server instead",
+    )
+    parser.add_argument(
+        "--reasoning-level",
+        default=None,
+        help="Reasoning effort for the search model (minimal/low/medium/high)",
+    )
+    docker_group = parser.add_mutually_exclusive_group()
+    docker_group.add_argument(
+        "--docker-cli",
+        action="store_true",
+        default=None,
+        help="Force Docker CLI (default: auto-enabled for Claude models)",
+    )
+    docker_group.add_argument(
+        "--no-docker-cli",
+        action="store_true",
+        help="Disable Docker CLI even for Claude models",
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose logging"
+    )
+    return parser
+
+
+def _resolve_data_path(args: argparse.Namespace) -> Path:
+    """Resolve --data, downloading the variant when asked."""
+    if args.data is not None:
+        return args.data
+    if args.variant is None:
+        raise SystemExit("Provide --data, or --variant (optionally with --download).")
+    if not args.download:
+        raise SystemExit(
+            "--variant without --data requires --download to fetch the file."
+        )
+    from ragzoom.evaluation.longmemeval.loader import download_variant
+
+    return download_variant(args.variant, cache_dir=args.cache_dir)
+
+
+def main() -> None:
+    from ragzoom.search.config import SearchConfig
+
+    parser = _build_parser(
+        SearchConfig.agent_model,
+        SearchConfig.max_iterations,
+        SearchConfig.max_token_budget,
+    )
+    args = parser.parse_args()
+
+    if args.rejudge is None and args.data is None and args.variant is None:
+        parser.error("--data or --variant is required unless --rejudge is used")
+
+    # Export the summary model so the isolated benchmark server (spawned with a
+    # copy of this env) builds the trees with it during ingest.
+    if args.summary_model is not None:
+        os.environ["RAGZOOM_SUMMARY_MODEL"] = args.summary_model
+    summary_model = os.environ.get("RAGZOOM_SUMMARY_MODEL")
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)-5s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    from ragzoom.evaluation.longmemeval.report import save_json, save_markdown
+    from ragzoom.evaluation.longmemeval.runner import (
+        LongMemEvalConfig,
+        rejudge,
+        run_benchmark,
+    )
+
+    if args.rejudge is not None:
+        data_path = Path("/unused")
+    else:
+        data_path = _resolve_data_path(args)
+
+    config = LongMemEvalConfig(
+        data_path=data_path,
+        server_address=args.server,
+        judge_model=args.judge_model,
+        max_concurrent=args.max_concurrent,
+        output_dir=args.output_dir,
+        skip_ingest=args.skip_ingest,
+        sample_size=args.sample,
+        no_judge=args.no_judge,
+        rejudge_path=args.rejudge,
+        use_isolated_server=not args.no_isolated_server,
+        search_model=args.search_model,
+        max_iterations=args.max_iterations,
+        budget=args.budget,
+        profiling=args.profiling,
+        use_docker_cli=(
+            True if args.docker_cli else (False if args.no_docker_cli else None)
+        ),
+        reasoning_level=args.reasoning_level,
+        summary_model=summary_model,
+    )
+
+    if config.rejudge_path is not None:
+        report = asyncio.run(rejudge(config))
+    else:
+        report = asyncio.run(run_benchmark(config))
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = args.output_dir / "results.json"
+    md_path = args.output_dir / "report.md"
+    save_json(report, json_path)
+    save_markdown(report, md_path)
+
+    print(f"\nResults saved to {json_path} and {md_path}")
+
+    scores = report.scores
+    if scores.overall_accuracy is not None:
+        print(
+            f"\nOverall: {scores.overall_accuracy * 100:.1f}%  "
+            f"Task-avg: {(scores.task_averaged_accuracy or 0) * 100:.1f}%"
+        )
+        if scores.abstention_accuracy is not None:
+            print(f"Abstention: {scores.abstention_accuracy * 100:.1f}%")
+    else:
+        print("\n(--no-judge mode: answers generated, not scored)")
+
+
+if __name__ == "__main__":
+    main()

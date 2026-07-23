@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from unittest.mock import MagicMock, patch
 
+import litellm
 import pytest
 
 from ragzoom.config import IndexConfig
@@ -126,7 +127,7 @@ async def test_mark_accepted_attempt_is_called() -> None:
     # Pre-track the test node
     reporter.track_node_created("test_node", height=1)
 
-    with patch.object(llm_service.client.chat.completions, "create", new=mock_create):
+    with patch.object(litellm, "acompletion", new=mock_create):
         with patched_tokenizers():
             result = await llm_service._summarize_text(
                 "Test left text " * 10 + " " + "Test right text " * 10,
@@ -242,7 +243,7 @@ async def test_retry_selection_uses_proper_logic() -> None:
             completion_tokens=len(content),
         )
 
-    with patch.object(llm_service.client.chat.completions, "create", new=mock_create):
+    with patch.object(litellm, "acompletion", new=mock_create):
         with patched_tokenizers():
             result = await llm_service._summarize_text(
                 "Test " * 50 + " " + "Text " * 50,

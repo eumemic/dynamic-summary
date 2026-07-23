@@ -33,6 +33,7 @@ dependencies = [
     "mcp>=1.0.0",
     "claude-transcriber>=0.3.1",
     "rank_bm25>=0.2.2",
+    "litellm>=1.80.0",
 ]
 license = "MIT"
 classifiers = [
@@ -106,6 +107,12 @@ disallow_any_unimported = true
 module = "pgvector.*"
 ignore_missing_imports = true
 
+# pyarrow is only needed to read the Oolong-real Parquet during an actual run;
+# it is lazily imported in the loader and not a hard/CI dependency.
+[[tool.mypy.overrides]]
+module = "pyarrow.*"
+ignore_missing_imports = true
+
 [[tool.mypy.overrides]]
 module = "tomli"
 ignore_missing_imports = true
@@ -150,6 +157,12 @@ ignore_missing_imports = true
 # rank_bm25 doesn't have type stubs
 [[tool.mypy.overrides]]
 module = "rank_bm25"
+ignore_missing_imports = true
+
+# litellm ships incomplete type information; confine all contact to the
+# ragzoom.adapters.litellm_chat_model adapter and treat the package as untyped.
+[[tool.mypy.overrides]]
+module = "litellm.*"
 ignore_missing_imports = true
 
 

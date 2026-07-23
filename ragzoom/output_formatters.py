@@ -134,6 +134,20 @@ def format_tiling_spans(response: ExecuteQueryOutput) -> str:
     return _format_retrieval_spans(response.retrieval)
 
 
+def _leaf_time_marker(time_start: str, time_end: str | None) -> str:
+    """Build a compact timestamp marker for a verbatim (height-0) leaf.
+
+    Verbatim leaves carry only relative phrasing ("tomorrow", "yesterday")
+    in their text; the absolute date lives in per-leaf time metadata. This
+    marker surfaces that metadata so temporal questions are answerable
+    directly from verbatim detail. ``time_end`` is shown only when it
+    differs from ``time_start`` to avoid redundant noise on instant leaves.
+    """
+    if time_end is not None and time_end != time_start:
+        return f"[time: {time_start} – {time_end}]"
+    return f"[time: {time_start}]"
+
+
 def _format_retrieval_spans(retrieval: RetrievalView) -> str:
     """Format a RetrievalView's tiling as text with resolution markers."""
     nodes = []
@@ -186,6 +200,8 @@ def _format_retrieval_spans(retrieval: RetrievalView) -> str:
 
     for node in nodes:
         if node.height == 0:
+            if is_temporal and node.time_start is not None:
+                lines.append(_leaf_time_marker(node.time_start, node.time_end))
             lines.append(node.text)
             lines.append("")
         elif is_temporal:

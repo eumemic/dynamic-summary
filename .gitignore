@@ -112,3 +112,7 @@ locomo_results/
 
 # Local data (DB and vector index)
 data/
+
+# Benchmark run outputs (raw per-question results; available on request)
+baseline_results/
+oolong_results/

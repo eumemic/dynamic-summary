@@ -33,6 +33,8 @@ class IndexConfigDict(TypedDict, total=False):
     target_embedding_tokens: int
     max_parallelism: int
     summary_model: str
+    summary_api_base: str | None
+    summary_api_key: str | None
     embedding_model: str
     retry_threshold: float
     max_retries: int
@@ -59,6 +61,15 @@ _NOT_PROVIDED = _NotProvided()
 ConfigValue = str | int | float | bool
 # Type that includes None for CLI parameters
 ConfigValueOrNone = str | int | float | bool | None | _NotProvided
+
+# Environment variables that override saved IndexConfig fields. Read in
+# _load_index_config with precedence env > config file > default; CLI options
+# still win over env. RAGZOOM_SUMMARY_MODEL was previously dead documentation.
+_SUMMARY_ENV_OVERRIDES: dict[str, str] = {
+    "RAGZOOM_SUMMARY_MODEL": "summary_model",
+    "RAGZOOM_SUMMARY_API_BASE": "summary_api_base",
+    "RAGZOOM_SUMMARY_API_KEY": "summary_api_key",
+}
 
 
 class SecretStr(str):
@@ -300,6 +311,18 @@ class IndexConfig:
         default_factory=PrecedingContextSettings
     )
     summary_reasoning_level: str | None = None
+    summary_api_base: str | None = None
+    """Optional endpoint override for the summary model (e.g. a proxy URL).
+
+    When set, it is forwarded to the LiteLLM summary adapter as ``api_base``.
+    Recorded per-index so the summarizer endpoint is reproducible.
+    """
+    summary_api_key: SecretStr | None = None
+    """Optional API key for the summary model endpoint.
+
+    Stored as SecretStr so it redacts in logs. Forwarded to the LiteLLM summary
+    adapter as ``api_key``. ``None`` lets LiteLLM resolve credentials itself.
+    """
     summarization_guidance: str | None = None
     """Additional guidance for summary generation.
 
@@ -408,6 +431,18 @@ class IndexConfig:
             str(raw_reasoning) if raw_reasoning is not None else None
         )
 
+        # Get optional summary endpoint overrides (may be str or None)
+        raw_summary_api_base = config_dict.get("summary_api_base")
+        summary_api_base: str | None = (
+            str(raw_summary_api_base) if raw_summary_api_base is not None else None
+        )
+        raw_summary_api_key = config_dict.get("summary_api_key")
+        summary_api_key: SecretStr | None = (
+            SecretStr(str(raw_summary_api_key))
+            if raw_summary_api_key is not None
+            else None
+        )
+
         # Get optional summarization_guidance (may be str or None)
         # Support both new name and deprecated old name (summary_system_prompt)
         import warnings
@@ -451,6 +486,8 @@ class IndexConfig:
             ),
             preceding_context=preceding_context,
             summary_reasoning_level=summary_reasoning_level,
+            summary_api_base=summary_api_base,
+            summary_api_key=summary_api_key,
             summarization_guidance=summarization_guidance,
             target_embedding_tokens=int(
                 config_dict.get("target_embedding_tokens", 500)
@@ -490,6 +527,8 @@ class IndexConfig:
         processing_strategy: str | None = None,
         preceding_context: PrecedingContextSettings | None = None,
         summary_reasoning_level: str | None = None,
+        summary_api_base: str | None = None,
+        summary_api_key: SecretStr | None = None,
         summarization_guidance: str | None = None,
         target_embedding_tokens: int | None = None,
     ) -> "IndexConfig":
@@ -540,6 +579,14 @@ class IndexConfig:
                 summary_reasoning_level
                 if summary_reasoning_level is not None
                 else self.summary_reasoning_level
+            ),
+            summary_api_base=(
+                summary_api_base
+                if summary_api_base is not None
+                else self.summary_api_base
+            ),
+            summary_api_key=(
+                summary_api_key if summary_api_key is not None else self.summary_api_key
             ),
             summarization_guidance=(
                 summarization_guidance
@@ -603,9 +650,40 @@ class QueryConfig:
     """Enable BM25 hybrid search. Default True."""
     bm25_weight: float = 1.0
     """Weight for BM25 in RRF. 1.0 = equal weight with vector."""
+    retrieval_mode: str | None = None
+    """Final-tiling strategy: "coverage" (default) or "concentrate".
+
+    "coverage" spreads the token budget across the whole timeline by rolling up
+    the least-relevant sibling pairs into their summaries. "concentrate" is
+    top-k over the tree's verbatim leaves: it admits the highest query-relevance
+    leaves until the budget is hit, with no roll-up and no whole-range coverage
+    guarantee.
+
+    The constructor argument defaults to ``None``, meaning "unspecified": in
+    that case the RAGZOOM_RETRIEVAL_MODE env var is consulted, falling back to
+    "coverage". An explicit argument always wins over the env var. After
+    ``__post_init__`` the field always holds a concrete mode string, never None.
+    The server constructs ``QueryConfig()`` with no argument, so the env var
+    reaches the retriever's tiling decision through the environment.
+    """
 
     def __post_init__(self) -> None:
         """Validate configuration values."""
+        # Resolve retrieval_mode: explicit argument wins; otherwise consult the
+        # env var (the server's env-driven switch); otherwise default coverage.
+        if self.retrieval_mode is None:
+            env_mode = os.environ.get("RAGZOOM_RETRIEVAL_MODE")
+            self.retrieval_mode = (
+                env_mode.strip().lower() if env_mode is not None else "coverage"
+            )
+
+        valid_modes = {"coverage", "concentrate"}
+        if self.retrieval_mode not in valid_modes:
+            raise ValueError(
+                f"retrieval_mode must be one of {sorted(valid_modes)}, "
+                f"got '{self.retrieval_mode}'"
+            )
+
         if not 0.0 <= self.mmr_lambda <= 1.0:
             raise ValueError(
                 f"mmr_lambda must be between 0.0 and 1.0, got {self.mmr_lambda}"
@@ -629,6 +707,7 @@ class QueryConfig:
         embedding_model: str | None = None,
         use_bm25: bool | None = None,
         bm25_weight: float | None = None,
+        retrieval_mode: str | None = None,
     ) -> "QueryConfig":
         """Create a new QueryConfig with some fields changed."""
         from dataclasses import replace
@@ -649,6 +728,9 @@ class QueryConfig:
             ),
             use_bm25=use_bm25 if use_bm25 is not None else self.use_bm25,
             bm25_weight=bm25_weight if bm25_weight is not None else self.bm25_weight,
+            retrieval_mode=(
+                retrieval_mode if retrieval_mode is not None else self.retrieval_mode
+            ),
         )
 
 
@@ -806,7 +888,14 @@ def _load_index_config(
             user_config = json.load(f)
             config.update(user_config)
 
-    # Override with CLI options
+    # Override with environment variables (precedence: env > file > default).
+    # These knobs select the summary model and route it at an optional endpoint.
+    for env_name, config_key in _SUMMARY_ENV_OVERRIDES.items():
+        env_value = os.environ.get(env_name)
+        if env_value is not None:
+            config[config_key] = env_value
+
+    # Override with CLI options (highest precedence)
     # Note: We filter out _NOT_PROVIDED sentinel but allow None (which is valid for target_chunk_tokens)
     for key, value in cli_options.items():
         if not isinstance(value, _NotProvided) and key in config:

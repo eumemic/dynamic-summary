@@ -277,9 +277,12 @@ class TestRetrieverBugSQLite:
             budget_tokens: int | None,
             scores: Mapping[str, float],
             nodes: Mapping[str, TreeNode],
+            mode: str = "coverage",
         ) -> TilingResult:
             captured_nodes.update(nodes)
-            return original_find_optimal(root_ids, budget_tokens, scores, nodes)
+            return original_find_optimal(
+                root_ids, budget_tokens, scores, nodes, mode=mode
+            )
 
         retriever.tiling_generator.find_optimal_tiling_over_roots = (  # type: ignore[method-assign]
             capture_and_pass_through

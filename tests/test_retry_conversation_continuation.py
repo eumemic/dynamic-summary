@@ -6,8 +6,9 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 from typing import cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
+import litellm
 import pytest
 from typing_extensions import TypedDict
 
@@ -77,6 +78,7 @@ def patched_tokenizers(
 @pytest.mark.asyncio
 async def test_retry_maintains_conversation_history(
     indexer_runtime_harness: IndexerRuntimeHarness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = IndexConfig.load(
         retry_threshold=0.2,
@@ -102,8 +104,7 @@ async def test_retry_maintains_conversation_history(
             return _response("B" * 95, 1500, 95, 1200)
         return _response("", 0, 0, 0)
 
-    indexer_runtime_harness.llm_service.client = AsyncMock()
-    indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
+    monkeypatch.setattr(litellm, "acompletion", mock_create)
 
     reporter = create_test_reporter(config)
 
@@ -126,6 +127,7 @@ async def test_retry_maintains_conversation_history(
 @pytest.mark.asyncio
 async def test_retry_preserves_original_context(
     indexer_runtime_harness: IndexerRuntimeHarness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = IndexConfig.load(
         retry_threshold=0.1,
@@ -155,8 +157,7 @@ async def test_retry_preserves_original_context(
             return _response("B" * 100, 100, 20, 800)
         return _response("", 0, 0, 0)
 
-    indexer_runtime_harness.llm_service.client = AsyncMock()
-    indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
+    monkeypatch.setattr(litellm, "acompletion", mock_create)
 
     with patched_tokenizers(lambda text: [0] * len(text)):
         result = await indexer_runtime_harness.llm_service._summarize_text(
@@ -172,6 +173,7 @@ async def test_retry_preserves_original_context(
 @pytest.mark.asyncio
 async def test_multiple_retries_build_conversation(
     indexer_runtime_harness: IndexerRuntimeHarness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = IndexConfig.load(
         retry_threshold=0.1,
@@ -198,8 +200,7 @@ async def test_multiple_retries_build_conversation(
             return _response("C" * 105, 1400, 105, 1200)
         return _response("", 0, 0, 0)
 
-    indexer_runtime_harness.llm_service.client = AsyncMock()
-    indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
+    monkeypatch.setattr(litellm, "acompletion", mock_create)
 
     with patched_tokenizers(lambda text: [0] * len(text)):
         result = await indexer_runtime_harness.llm_service._summarize_text(
@@ -219,6 +220,7 @@ async def test_multiple_retries_build_conversation(
 @pytest.mark.asyncio
 async def test_no_retry_when_within_threshold(
     indexer_runtime_harness: IndexerRuntimeHarness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = IndexConfig.load(
         retry_threshold=0.2,
@@ -233,8 +235,7 @@ async def test_no_retry_when_within_threshold(
         api_calls.append(cast(OpenAIMockParams, deepcopy(kwargs)))
         return _response("A" * 105, 1000, 105, 0)
 
-    indexer_runtime_harness.llm_service.client = AsyncMock()
-    indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
+    monkeypatch.setattr(litellm, "acompletion", mock_create)
 
     with patched_tokenizers(lambda text: [0] * len(text)):
         result = await indexer_runtime_harness.llm_service._summarize_text(
@@ -252,6 +253,7 @@ async def test_no_retry_when_within_threshold(
 @pytest.mark.asyncio
 async def test_accept_retry_within_threshold_immediately(
     indexer_runtime_harness: IndexerRuntimeHarness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = IndexConfig.load(
         retry_threshold=0.2,
@@ -271,8 +273,7 @@ async def test_accept_retry_within_threshold_immediately(
             return _response("B" * 115, 1200, 115, 1000)
         pytest.fail("Should stop after second attempt")
 
-    indexer_runtime_harness.llm_service.client = AsyncMock()
-    indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
+    monkeypatch.setattr(litellm, "acompletion", mock_create)
 
     with patched_tokenizers(lambda text: [0] * len(text)):
         result = await indexer_runtime_harness.llm_service._summarize_text(
@@ -290,6 +291,7 @@ async def test_accept_retry_within_threshold_immediately(
 @pytest.mark.asyncio
 async def test_passthrough_for_text_under_target(
     indexer_runtime_harness: IndexerRuntimeHarness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = IndexConfig.load(target_chunk_tokens=100)
     vector_index = RecordingVectorIndex()
@@ -301,8 +303,7 @@ async def test_passthrough_for_text_under_target(
         api_calls.append(cast(OpenAIMockParams, deepcopy(kwargs)))
         pytest.fail("Should not call LLM for passthrough")
 
-    indexer_runtime_harness.llm_service.client = AsyncMock()
-    indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
+    monkeypatch.setattr(litellm, "acompletion", mock_create)
 
     reporter = create_test_reporter(config)
 
@@ -334,6 +335,7 @@ async def test_passthrough_for_text_under_target(
 @pytest.mark.asyncio
 async def test_empty_response_triggers_retry(
     indexer_runtime_harness: IndexerRuntimeHarness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Empty LLM response should trigger retry, not raise exception.
 
@@ -361,8 +363,7 @@ async def test_empty_response_triggers_retry(
             return _response("Valid summary", 100, 20, 0)
         return _response("", 0, 0, 0)
 
-    indexer_runtime_harness.llm_service.client = AsyncMock()
-    indexer_runtime_harness.llm_service.client.chat.completions.create = mock_create
+    monkeypatch.setattr(litellm, "acompletion", mock_create)
 
     with patched_tokenizers(lambda text: [0] * len(text)):
         result = await indexer_runtime_harness.llm_service._summarize_text(

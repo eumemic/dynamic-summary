@@ -7,15 +7,12 @@ https://github.com/letta-ai/letta-leaderboard/blob/main/leaderboard/utils.py
 
 from __future__ import annotations
 
-import logging
 import re
 from collections import Counter
 
 from ragzoom.agent.protocol import BenchmarkingAgent
+from ragzoom.evaluation.benchmark_common import judge_with_retry
 from ragzoom.evaluation.locomo.types import JudgeVerdict
-from ragzoom.exceptions import LLMError
-
-logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Token-level F1
@@ -186,6 +183,19 @@ Just return the letters "A", "B", or "C", with no text around it."""
 _VERDICT_RE = re.compile(r"[ABC]")
 
 
+def _parse_abc(text: str) -> JudgeVerdict:
+    """Extract an A/B/C verdict from the judge's raw answer, or raise."""
+    match = _VERDICT_RE.search(text)
+    if match is None:
+        raise ValueError(f"No A/B/C verdict found in: {text!r}")
+    verdict = match.group(0)
+    if verdict == "A":
+        return "A"
+    if verdict == "B":
+        return "B"
+    return "C"
+
+
 async def judge_answer(
     backend: BenchmarkingAgent,
     question: str,
@@ -207,43 +217,12 @@ async def judge_answer(
         target=gold_answer,
         predicted_answer=generated_answer,
     )
-
-    last_error: LLMError | None = None
-    for attempt in range(max_retries + 1):
-        try:
-            result = await backend.generate(
-                "You are a helpful assistant.", prompt, temperature=0.0
-            )
-            match = _VERDICT_RE.search(result.answer)
-            if match is None:
-                raise ValueError(f"No A/B/C verdict found in: {result.answer!r}")
-            verdict = match.group(0)
-            assert verdict in ("A", "B", "C")
-            return verdict  # type: ignore[return-value]
-
-        except ValueError as e:
-            last_error = LLMError(
-                operation="locomo_judge",
-                model=model_id,
-                message=f"Judge response parse error: {e}",
-            )
-            if attempt < max_retries:
-                logger.debug(
-                    "Retrying judge (attempt %d/%d): %s",
-                    attempt + 1,
-                    max_retries + 1,
-                    e,
-                )
-                continue
-
-        except Exception as e:
-            if isinstance(e, LLMError):
-                raise
-            raise LLMError(
-                operation="locomo_judge",
-                model=model_id,
-                message=f"Judge failed: {e}",
-            ) from e
-
-    assert last_error is not None
-    raise last_error
+    return await judge_with_retry(
+        backend,
+        "You are a helpful assistant.",
+        prompt,
+        _parse_abc,
+        operation="locomo_judge",
+        model_id=model_id,
+        max_retries=max_retries,
+    )

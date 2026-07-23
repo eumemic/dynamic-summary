@@ -1,0 +1,233 @@
+#!/usr/bin/env python3
+"""Run a naive Oolong baseline that answers WITHOUT RagZoom.
+
+This is the decisive head-to-head for RagZoom's thesis. On needle QA, flat top-k
+RAG already beats RagZoom; RagZoom's only predicted niche is *aggregation*, where
+flat top-k structurally cannot represent a whole-history distribution. This
+harness scores the dumb alternatives — "stuff the whole transcript in" (full),
+"keep the most-recent B tokens" (truncate), and "flat top-k retrieval to B
+tokens" (topk) — on the SAME seed-42 question sample, with the SAME deterministic
+Oolong metric, as ``run-oolong --sample N``. The answerer is held constant
+(default the same ``gpt-5-mini`` the RagZoom runs use), so the only thing that
+varies is the memory strategy.
+
+It never touches the RagZoom server: there is no ingest, no gRPC, no port, no
+summarizer — and no judge model (Oolong scoring is a pure function).
+
+Examples (validate wiring cheaply on the toy config, tiny sample — costs only the
+answer calls for those questions):
+
+    # "Stuff it all in" upper bound (no budget):
+    scripts/run-oolong-baseline --config toy_dnd --split test --download \\
+        --strategy full --sample 10 --output-dir oolong_baseline_results/full
+
+    # Matched-budget honest comparison at B=8192:
+    scripts/run-oolong-baseline --config toy_dnd --split test --download \\
+        --strategy truncate --sample 10 --budget 8192 \\
+        --output-dir oolong_baseline_results/truncate
+
+    # Flat-RAG-vs-RagZoom aggregation comparison at B=8192:
+    scripts/run-oolong-baseline --config toy_dnd --split test --download \\
+        --strategy topk --sample 10 --budget 8192 \\
+        --output-dir oolong_baseline_results/topk
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+from pathlib import Path
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    from ragzoom.evaluation.baseline_common import DEFAULT_EMBEDDING_MODEL
+    from ragzoom.evaluation.oolong.baseline import DEFAULT_ANSWER_MODEL
+
+    parser = argparse.ArgumentParser(
+        description="Naive (no-RagZoom) Oolong aggregation baseline evaluation"
+    )
+    parser.add_argument(
+        "--data",
+        type=Path,
+        default=None,
+        help="Path to an Oolong-real Parquet shard. Alternative to "
+        "--config/--split + --download.",
+    )
+    parser.add_argument(
+        "--config",
+        choices=["dnd", "toy_dnd"],
+        default="dnd",
+        help="Oolong-real config: 'dnd' (full) or 'toy_dnd' (smoke test).",
+    )
+    parser.add_argument(
+        "--split",
+        choices=["validation", "test"],
+        default="test",
+        help="Dataset split (default: test).",
+    )
+    parser.add_argument(
+        "--download",
+        action="store_true",
+        help="Download the --config/--split Parquet from HuggingFace if --data "
+        "is not given.",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="Directory to download the dataset into (default: HF cache).",
+    )
+    parser.add_argument(
+        "--strategy",
+        choices=["full", "truncate", "topk"],
+        required=True,
+        help=(
+            "full = stuff the whole transcript in (no budget); "
+            "truncate = keep the most-recent --budget tokens; "
+            "topk = flat top-k retrieval to --budget tokens."
+        ),
+    )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=None,
+        help=(
+            "Token budget B for truncate/topk — the matched budget RagZoom is "
+            "held to (sweep 4096/8192/16384/32768). Ignored by full."
+        ),
+    )
+    parser.add_argument(
+        "--answer-model",
+        default=DEFAULT_ANSWER_MODEL,
+        help=(
+            "Model that answers each question (default: "
+            f"{DEFAULT_ANSWER_MODEL}, the same answerer the RagZoom runs use). "
+            "For full on the dnd config you may need a larger-context model."
+        ),
+    )
+    parser.add_argument(
+        "--embedding-model",
+        default=DEFAULT_EMBEDDING_MODEL,
+        help=(
+            "Embedding model for the topk strategy (default: "
+            f"{DEFAULT_EMBEDDING_MODEL}, the same encoder the harness indexes with)."
+        ),
+    )
+    parser.add_argument(
+        "--sample",
+        type=int,
+        default=None,
+        help="Evaluate the same seed-42 sample of N questions as run-oolong.",
+    )
+    parser.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=5,
+        help="Max concurrent questions in flight (default: 5)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("oolong_baseline_results"),
+        help="Output directory for results (default: oolong_baseline_results/)",
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose logging"
+    )
+    return parser
+
+
+def _resolve_data_path(args: argparse.Namespace) -> Path:
+    """Resolve --data, downloading the config/split Parquet when asked.
+
+    Mirrors the run-oolong guard: without --data, fetching requires --download so
+    we never silently evaluate the wrong config/split.
+    """
+    if args.data is not None:
+        return args.data
+    if not args.download:
+        raise SystemExit(
+            "Provide --data, or --download with --config/--split to fetch it."
+        )
+    from ragzoom.evaluation.oolong.loader import download_oolong_real
+
+    return download_oolong_real(
+        config=args.config, split=args.split, cache_dir=args.cache_dir
+    )
+
+
+def main() -> None:
+    parser = _build_parser()
+    args = parser.parse_args()
+
+    strategy_needs_budget = args.strategy in ("truncate", "topk")
+    if strategy_needs_budget and args.budget is None:
+        parser.error(f"--strategy {args.strategy} requires --budget B")
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)-5s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    from openai import AsyncOpenAI
+
+    from ragzoom.adapters.openai_embedding_model import OpenAIEmbeddingModel
+    from ragzoom.agent.factory import create_backend
+    from ragzoom.evaluation.baseline_common import BaselineStrategy
+    from ragzoom.evaluation.oolong.baseline import OolongBaselineConfig, run_baseline
+    from ragzoom.evaluation.oolong.report import save_json, save_markdown
+
+    data_path = _resolve_data_path(args)
+    strategy = BaselineStrategy(args.strategy)
+
+    config = OolongBaselineConfig(
+        data_path=data_path,
+        strategy=strategy,
+        budget=args.budget,
+        config_name=args.config,
+        split=args.split,
+        answer_model=args.answer_model,
+        embedding_model=args.embedding_model,
+        sample_size=args.sample,
+        max_concurrent=args.max_concurrent,
+        output_dir=args.output_dir,
+    )
+
+    openai_client = AsyncOpenAI()
+    answer_backend = create_backend(config.answer_model, openai_client)
+    embedder = (
+        OpenAIEmbeddingModel(openai_client, config.embedding_model)
+        if strategy is BaselineStrategy.TOPK
+        else None
+    )
+
+    report = asyncio.run(
+        run_baseline(
+            config,
+            answer_backend=answer_backend,
+            embedder=embedder,
+        )
+    )
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = args.output_dir / "results.json"
+    md_path = args.output_dir / "report.md"
+    save_json(report, json_path)
+    save_markdown(report, md_path)
+
+    print(f"\nResults saved to {json_path} and {md_path}")
+
+    scores = report.scores
+    if scores.overall_score is not None:
+        print(
+            f"\nOverall: {scores.overall_score * 100:.1f}%  "
+            f"Task-avg: {(scores.task_averaged_score or 0) * 100:.1f}%"
+        )
+    else:
+        print("\n(no questions scored)")
+
+
+if __name__ == "__main__":
+    main()

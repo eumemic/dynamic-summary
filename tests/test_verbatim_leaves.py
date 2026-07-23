@@ -336,6 +336,7 @@ class TestVerbatimTilingInvariant:
             budget_tokens: int,
             scores: Mapping[str, float],
             nodes: object,
+            mode: str = "coverage",
         ) -> TilingResult:
             # With score boosting fix, verbatim_leaf gets score=1.0 which prevents
             # it from being rolled up in favor of parent. Check if verbatim_leaf
@@ -492,6 +493,7 @@ class TestVerbatimBudgetIntegration:
             budget_tokens: int,
             scores: object,
             nodes: object,
+            mode: str = "coverage",
         ) -> TilingResult:
             captured_budgets.append(budget_tokens)
             return TilingResult(Tiling.empty(), [], 0.0, {})

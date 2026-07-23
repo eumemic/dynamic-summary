@@ -8,12 +8,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from statistics import mean
 
+from ragzoom.evaluation.benchmark_common import assemble_report_json, result_tail
 from ragzoom.evaluation.locomo.types import (
     AggregateScores,
     AnswerResult,
     BenchmarkReport,
     ConversationMetrics,
-    CostMetrics,
     QACategory,
 )
 
@@ -40,22 +40,6 @@ def _scores_to_dict(scores: AggregateScores) -> dict[str, object]:
     return result
 
 
-def _cost_to_dict(cost: CostMetrics) -> dict[str, object]:
-    """Serialize CostMetrics for JSON output."""
-    d: dict[str, object] = {
-        "total_input_tokens": cost.total_input_tokens,
-        "total_output_tokens": cost.total_output_tokens,
-        "retrieval_call_count": cost.retrieval_call_count,
-        "reasoning_turn_count": cost.reasoning_turn_count,
-        "retrieved_tokens_per_call": list(cost.retrieved_tokens_per_call),
-    }
-    if cost.query_duration_seconds is not None:
-        d["query_duration_seconds"] = round(cost.query_duration_seconds, 3)
-    if cost.total_cost_usd is not None:
-        d["total_cost_usd"] = round(cost.total_cost_usd, 6)
-    return d
-
-
 def _conv_metrics_to_dict(m: ConversationMetrics) -> dict[str, object]:
     """Serialize ConversationMetrics for JSON output."""
     return {
@@ -68,7 +52,7 @@ def _conv_metrics_to_dict(m: ConversationMetrics) -> dict[str, object]:
 
 def _result_to_dict(r: AnswerResult) -> dict[str, object]:
     """Serialize a single AnswerResult for JSON output."""
-    d: dict[str, object] = {
+    return {
         "sample_id": r.sample_id,
         "question": r.question,
         "gold_answer": r.gold_answer,
@@ -76,11 +60,8 @@ def _result_to_dict(r: AnswerResult) -> dict[str, object]:
         "generated_answer": r.generated_answer,
         "verdict": r.judge_verdict,  # A/B/C
         "f1": round(r.token_f1, 4),
+        **result_tail(r.served_tilings, r.cost, r.retrospective),
     }
-    d["cost"] = _cost_to_dict(r.cost)
-    if r.retrospective is not None:
-        d["retrospective"] = r.retrospective
-    return d
 
 
 def save_json(report: BenchmarkReport, path: Path) -> None:
@@ -92,14 +73,12 @@ def save_json(report: BenchmarkReport, path: Path) -> None:
         "num_questions": report.num_questions,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    if report.config is not None:
-        metadata["config"] = report.config
-
-    data: dict[str, object] = {
-        "metadata": metadata,
-        "scores": _scores_to_dict(report.scores),
-        "per_question": [_result_to_dict(r) for r in report.per_question],
-    }
+    data = assemble_report_json(
+        metadata,
+        report.config,
+        _scores_to_dict(report.scores),
+        [_result_to_dict(r) for r in report.per_question],
+    )
     if report.conversation_metrics:
         data["conversation_metrics"] = [
             _conv_metrics_to_dict(m) for m in report.conversation_metrics

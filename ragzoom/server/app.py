@@ -40,6 +40,9 @@ class ServerOptions:
     collect_telemetry: bool = False
     telemetry_dir: str | None = None
     max_parallelism: int | None = None
+    # Summary model selection (None = use config file / env / default)
+    summary_model: str | None = None
+    summary_api_base: str | None = None
     # Per-node-type config overrides
     preceding_context_leaf_num_seeds: int | None = None
     preceding_context_leaf_verbatim_tokens: int | None = None
@@ -93,7 +96,14 @@ def build_state(
         operational_cfg: Pre-created operational config. If None, one will be created.
     """
     config_path = Path(options.config_path) if options.config_path else None
-    index_cfg = IndexConfig.load(config_path=config_path)
+    # Summary-model overrides flow as CLI options (highest precedence) so that
+    # `--summary-model` / `--summary-api-base` win over env and config file.
+    summary_overrides: dict[str, str] = {}
+    if options.summary_model is not None:
+        summary_overrides["summary_model"] = options.summary_model
+    if options.summary_api_base is not None:
+        summary_overrides["summary_api_base"] = options.summary_api_base
+    index_cfg = IndexConfig.load(config_path=config_path, **summary_overrides)
 
     # Apply per-node-type CLI overrides
     has_leaf_overrides = any(
