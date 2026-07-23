@@ -87,4 +87,4 @@ Untested levers (noted, not claimed): the Oolong runs used the weakest reader (`
 
 ## Reproducibility
 
-Raw per-question results for every arm are available on request. The LiteLLM-based multi-model harness used for these runs (baseline arms, the capability matrix, and the concentrate A/B) is being upstreamed to this repository.
+The LiteLLM-based multi-model harness used for these runs — the baseline arms, the capability matrix, and the concentrate A/B — lives on the [`litellm-summary-model`](https://github.com/eumemic/dynamic-summary/tree/litellm-summary-model) branch (`scripts/run-longmemeval[-baseline]`, `scripts/run-oolong[-baseline]`). Raw per-question results for every arm are available on request.
