@@ -147,11 +147,11 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
-          echo "Running indexing benchmark with full Hobbit text and current defaults..."
+          echo "Running indexing benchmark with full Moby Dick text and current defaults..."
           ./scripts/run-indexing-benchmarks \
             --baseline baseline_results/telemetry.json \
             --output-dir benchmark_results \
-            test_data/the_hobbit.txt
+            test_data/moby_dick.txt
           echo "✅ Indexing benchmark completed"
           # Check for regression using CI summary
           if [ -f benchmark_results/ci-summary.json ]; then

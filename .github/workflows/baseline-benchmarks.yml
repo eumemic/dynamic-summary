@@ -51,11 +51,11 @@ jobs:
         run: |
           mkdir -p benchmark_results
           
-          # Run indexing benchmark with current defaults and full Hobbit text
-          echo "Running indexing benchmark with full Hobbit text and current defaults..."
+          # Run indexing benchmark with current defaults and full Moby Dick text
+          echo "Running indexing benchmark with full Moby Dick text and current defaults..."
           ./scripts/run-indexing-benchmarks \
             --output-dir benchmark_results \
-            test_data/the_hobbit.txt
+            test_data/moby_dick.txt
           
           # Run query benchmark (optimized configuration)
           echo "Running query performance benchmark..."
