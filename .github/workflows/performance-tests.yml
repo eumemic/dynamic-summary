@@ -10,98 +10,182 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write      # Need write to push temporary branches
+  contents: read
   pull-requests: write
-  actions: read
 
 jobs:
   benchmark:
     name: Performance Report
     runs-on: ubuntu-latest
-    # Only run when /benchmark is in a comment on a PR by a human (not a bot)
+    # The phrase match only decides whether the job starts. The first step
+    # asks GitHub for the comment author's current permission and refuses
+    # pull requests whose head commit is not in this repository. The script
+    # is inlined because issue comments load this file from the default branch.
     if: |
       github.event.comment.user.type != 'Bot' &&
-      github.event_name == 'issue_comment' && 
-      contains(github.event.comment.body, '/benchmark') && 
+      github.event_name == 'issue_comment' &&
+      contains(github.event.comment.body, '/benchmark') &&
       github.event.issue.pull_request
-    
-    env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-    
+
     steps:
-      - name: Get PR branch
+      - name: Authorize commenter and pull request head
         id: pr-info
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
-            const pr_number = context.issue.number;
-            
+            const comment = context.payload.comment;
+            if (!comment || !comment.user || !comment.user.login) {
+              throw new Error("This event has no comment author.");
+            }
+            const commenter = comment.user.login;
+            if (comment.user.type === "Bot") {
+              throw new Error("Refusing to run for bot " + commenter + ".");
+            }
+
+            let permission = "";
+            try {
+              const response = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: commenter,
+              });
+              permission = response.data.permission;
+            } catch (error) {
+              const status =
+                typeof error === "object" && error !== null && "status" in error
+                  ? error.status
+                  : undefined;
+              if (status === 404) {
+                throw new Error(
+                  "User " + commenter + " is not a collaborator. Refusing to run."
+                );
+              }
+              const message = error instanceof Error ? error.message : String(error);
+              throw new Error(
+                "Could not verify repository permission for " +
+                  commenter +
+                  ": " +
+                  message
+              );
+            }
+
+            const allowed = new Set(["admin", "maintain", "write"]);
+            if (!allowed.has(permission)) {
+              throw new Error(
+                "User " +
+                  commenter +
+                  " has repository permission '" +
+                  permission +
+                  "'. This workflow requires admin, maintain, or write."
+              );
+            }
+            core.info(
+              "Commenter " + commenter + " has permission '" + permission + "'."
+            );
+
+            let prNumber;
+            if (context.eventName === "pull_request_review_comment") {
+              prNumber =
+                context.payload.pull_request && context.payload.pull_request.number;
+            } else {
+              prNumber = context.issue.number;
+            }
+            if (!prNumber) {
+              throw new Error("Could not determine the pull request number.");
+            }
+
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: pr_number
+              pull_number: prNumber,
             });
-            
-            core.setOutput('head_ref', pr.head.ref);
-            core.setOutput('pr_number', pr_number);
-            
-      - name: Checkout PR branch
-        uses: actions/checkout@v4
+
+            const baseRepo = context.repo.owner + "/" + context.repo.repo;
+            const headRepo = pr.head.repo ? pr.head.repo.full_name : "";
+            if (headRepo !== baseRepo) {
+              throw new Error(
+                "Refusing to run on pull request head '" +
+                  (headRepo || "unknown") +
+                  "'. Only heads in " +
+                  baseRepo +
+                  " may be checked out."
+              );
+            }
+
+            const sha = pr.head.sha;
+            if (!/^[0-9a-f]{40}$/.test(sha)) {
+              throw new Error(
+                "Refusing to check out unexpected head SHA '" + sha + "'."
+              );
+            }
+
+            core.setOutput("head_sha", sha);
+            core.setOutput("pr_number", String(prNumber));
+
+      - name: Checkout pull request head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ steps.pr-info.outputs.head_ref }}
+          ref: ${{ steps.pr-info.outputs.head_sha }}
+          persist-credentials: false
           submodules: recursive
       
       - name: Create PR comment with initial status
         id: create-comment
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        env:
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         with:
           script: |
-            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-            
-            // Create new comment for each benchmark run
-            const body = `## 📊 Performance Report (${timestamp} UTC)
-            
-            _View [workflow run](${workflowUrl})_
-            
-            ⏳ **Running performance benchmarks...**`;
-            
-            // Always create a new comment
+            const workflowUrl = process.env.WORKFLOW_URL;
+            if (!workflowUrl) {
+              throw new Error("WORKFLOW_URL is not set.");
+            }
+            const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
+            const body =
+              "## 📊 Performance Report (" + timestamp + " UTC)\n\n" +
+              "_View [workflow run](" + workflowUrl + ")_\n\n" +
+              "⏳ **Running performance benchmarks...**";
             const { data: newComment } = await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body
+              body,
             });
-            console.log(`Created new performance report comment: ${newComment.id}`);
-            
-            // Store comment ID for updates within this run
-            core.setOutput('comment_id', newComment.id);
+            core.info("Created performance report comment: " + newComment.id);
+            core.setOutput("comment_id", String(newComment.id));
       
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
-      
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml', 'requirements-dev.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-      
+
       - name: Install dependencies (locked)
+        env:
+          GITHUB_TOKEN: ""
+          ACTIONS_RUNTIME_TOKEN: ""
+          ACTIONS_CACHE_URL: ""
+          ACTIONS_RESULTS_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
         run: |
           python -m pip install --upgrade "pip<24.1"
           pip install pip-tools
           pip-sync requirements/dev.lock
+          # shellcheck disable=SC2102  # pip extras, not a glob
           pip install -e .[telemetry,chroma]
           pip install awscli
       
       - name: Setup baseline from S3
+        env:
+          GITHUB_TOKEN: ""
+          ACTIONS_RUNTIME_TOKEN: ""
+          ACTIONS_CACHE_URL: ""
+          ACTIONS_RESULTS_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
         run: |
           echo "🔄 Syncing baselines from S3..."
           
@@ -125,6 +209,12 @@ jobs:
       
       - name: Setup benchmark environment
         env:
+          GITHUB_TOKEN: ""
+          ACTIONS_RUNTIME_TOKEN: ""
+          ACTIONS_CACHE_URL: ""
+          ACTIONS_RESULTS_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           echo "Current directory: $(pwd)"
@@ -144,6 +234,12 @@ jobs:
       - name: Run indexing benchmark
         id: benchmark
         env:
+          GITHUB_TOKEN: ""
+          ACTIONS_RUNTIME_TOKEN: ""
+          ACTIONS_CACHE_URL: ""
+          ACTIONS_RESULTS_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -euo pipefail
@@ -157,40 +253,50 @@ jobs:
           if [ -f benchmark_results/ci-summary.json ]; then
             REGRESSION=$(jq -r '.regression_detected' benchmark_results/ci-summary.json)
             if [ "$REGRESSION" = "true" ]; then
-              echo "REGRESSION=true" >> $GITHUB_OUTPUT
+              echo "REGRESSION=true" >> "$GITHUB_OUTPUT"
               echo "⚠️ Performance regression detected"
             fi
           fi
       
       - name: Update comment - indexing complete
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        env:
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMENT_ID: ${{ steps.create-comment.outputs.comment_id }}
         with:
           script: |
-            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-            const comment_id = '${{ steps.create-comment.outputs.comment_id }}';
-            
-            const body = `## 📊 Performance Report (${timestamp} UTC)
-            
-            _View [workflow run](${workflowUrl})_
-            
-            ⏳ **Progress:**
-            - ✅ Indexing benchmark complete
-            - ⏱️ Running query benchmarks...`;
-            
-            if (comment_id) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: parseInt(comment_id),
-                body
-              });
+            const workflowUrl = process.env.WORKFLOW_URL;
+            const commentId = process.env.COMMENT_ID;
+            if (!workflowUrl) {
+              throw new Error("WORKFLOW_URL is not set.");
             }
+            if (!commentId || !/^[0-9]+$/.test(commentId)) {
+              throw new Error("Missing performance-report comment id.");
+            }
+            const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
+            const body =
+              "## 📊 Performance Report (" + timestamp + " UTC)\n\n" +
+              "_View [workflow run](" + workflowUrl + ")_\n\n" +
+              "⏳ **Progress:**\n" +
+              "- ✅ Indexing benchmark complete\n" +
+              "- ⏱️ Running query benchmarks...";
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: parseInt(commentId, 10),
+              body,
+            });
       
       - name: Run query benchmarks - subset
         id: query_benchmark
         env:
+          GITHUB_TOKEN: ""
+          ACTIONS_RUNTIME_TOKEN: ""
+          ACTIONS_CACHE_URL: ""
+          ACTIONS_RESULTS_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           QUERY_BENCHMARK_RUNS: 1
           QUERY_BENCHMARK_DOC_CHARS: 20000
@@ -225,8 +331,8 @@ jobs:
           
           if ! pytest tests/benchmarks/test_query_performance.py::test_query_performance -k "$config" -v --tb=short; then
             echo "❌ Query benchmark failed for: $config"
-            echo "QUERY_BENCHMARK_FAILED=true" >> $GITHUB_OUTPUT
-            echo "QUERY_FAILED_CONFIGS=$config" >> $GITHUB_OUTPUT
+            echo "QUERY_BENCHMARK_FAILED=true" >> "$GITHUB_OUTPUT"
+            echo "QUERY_FAILED_CONFIGS=$config" >> "$GITHUB_OUTPUT"
             echo "⚠️ Query benchmark failed"
           else
             echo "✅ Query benchmark passed"
@@ -247,34 +353,45 @@ jobs:
       
       - name: Update comment - benchmarks complete
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        env:
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMENT_ID: ${{ steps.create-comment.outputs.comment_id }}
         with:
           script: |
-            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-            const comment_id = '${{ steps.create-comment.outputs.comment_id }}';
-            
-            const body = `## 📊 Performance Report (${timestamp} UTC)
-            
-            _View [workflow run](${workflowUrl})_
-            
-            ⏳ **Progress:**
-            - ✅ Indexing benchmark complete
-            - ✅ Query benchmarks complete  
-            - ⏱️ Generating visualization...`;
-            
-            if (comment_id) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: parseInt(comment_id),
-                body
-              });
+            const workflowUrl = process.env.WORKFLOW_URL;
+            const commentId = process.env.COMMENT_ID;
+            if (!workflowUrl) {
+              throw new Error("WORKFLOW_URL is not set.");
             }
+            if (!commentId || !/^[0-9]+$/.test(commentId)) {
+              throw new Error("Missing performance-report comment id.");
+            }
+            const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
+            const body =
+              "## 📊 Performance Report (" + timestamp + " UTC)\n\n" +
+              "_View [workflow run](" + workflowUrl + ")_\n\n" +
+              "⏳ **Progress:**\n" +
+              "- ✅ Indexing benchmark complete\n" +
+              "- ✅ Query benchmarks complete\n" +
+              "- ⏱️ Generating visualization...";
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: parseInt(commentId, 10),
+              body,
+            });
       
       - name: Analyze telemetry for verbatim issues
         id: analyze_telemetry
         if: success()
+        env:
+          GITHUB_TOKEN: ""
+          ACTIONS_RUNTIME_TOKEN: ""
+          ACTIONS_CACHE_URL: ""
+          ACTIONS_RESULTS_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
         run: |
           echo "🔍 Analyzing telemetry for potential issues..."
           
@@ -290,7 +407,7 @@ jobs:
               # Check for verbatim issues in the output
               if grep -q "Verbatim Concatenation Issues" "analysis.txt"; then
                 echo "⚠️ VERBATIM ISSUES DETECTED in indexing benchmark!"
-                echo "VERBATIM_DETECTED=true" >> $GITHUB_OUTPUT
+                echo "VERBATIM_DETECTED=true" >> "$GITHUB_OUTPUT"
                 
                 # Extract verbatim details for report
                 grep -A 20 "Verbatim Concatenation Issues" "analysis.txt" > "verbatim_details.txt"
@@ -308,6 +425,19 @@ jobs:
       
       - name: Generate visualization
         id: visualize
+        env:
+          GITHUB_TOKEN: ""
+          ACTIONS_RUNTIME_TOKEN: ""
+          ACTIONS_CACHE_URL: ""
+          ACTIONS_RESULTS_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+          PR_NUMBER: ${{ steps.pr-info.outputs.pr_number }}
+          RUN_ID: ${{ github.run_id }}
+          BUCKET_NAME: ${{ vars.BASELINES_BUCKET || 'ragzoom' }}
         run: |
           # Generate side-by-side visualization if both files exist
           if [ -f "baseline_results/telemetry.json" ] && [ -f "benchmark_results/telemetry.json" ]; then
@@ -317,14 +447,13 @@ jobs:
             }
             if [ -f "comparison.png" ]; then
               echo "✅ Visualization generated successfully"
-              echo "VISUALIZATION_GENERATED=true" >> $GITHUB_OUTPUT
+              echo "VISUALIZATION_GENERATED=true" >> "$GITHUB_OUTPUT"
               
               # Upload visualization to S3 for immediate availability
               # Note: Consider configuring S3 lifecycle policy to auto-delete old visualizations:
               #   - Delete visualizations/ after 30-60 days to manage storage costs
               #   - Keep longer for merged PRs if needed for historical analysis
-              BUCKET_NAME="${{ vars.BASELINES_BUCKET || 'ragzoom' }}"
-              S3_PATH="visualizations/pr-${{ github.event.pull_request.number }}/run-${{ github.run_id }}/comparison.png"
+              S3_PATH="visualizations/pr-${PR_NUMBER}/run-${RUN_ID}/comparison.png"
               S3_URI="s3://${BUCKET_NAME}/${S3_PATH}"
               
               echo "📤 Uploading visualization to S3: ${S3_URI}"
@@ -348,41 +477,58 @@ jobs:
                 fi
               fi
               
-              echo "VISUALIZATION_URL=$VISUALIZATION_URL" >> $GITHUB_OUTPUT
+              delimiter="$(openssl rand -hex 16)"
+              {
+                echo "VISUALIZATION_URL<<${delimiter}"
+                printf '%s\n' "$VISUALIZATION_URL"
+                echo "${delimiter}"
+              } >> "$GITHUB_OUTPUT"
             fi
           else
             echo "⚠️ Skipping visualization - missing telemetry.json files"
           fi
       
       - name: Update comment - visualization complete
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        env:
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMENT_ID: ${{ steps.create-comment.outputs.comment_id }}
         with:
           script: |
-            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-            const comment_id = '${{ steps.create-comment.outputs.comment_id }}';
-            
-            const body = `## 📊 Performance Report (${timestamp} UTC)
-            
-            _View [workflow run](${workflowUrl})_
-            
-            ⏳ **Progress:**
-            - ✅ Indexing benchmark complete
-            - ✅ Query benchmarks complete  
-            - ✅ Visualization generated
-            - ⏱️ Generating comparison report...`;
-            
-            if (comment_id) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: parseInt(comment_id),
-                body
-              });
+            const workflowUrl = process.env.WORKFLOW_URL;
+            const commentId = process.env.COMMENT_ID;
+            if (!workflowUrl) {
+              throw new Error("WORKFLOW_URL is not set.");
             }
+            if (!commentId || !/^[0-9]+$/.test(commentId)) {
+              throw new Error("Missing performance-report comment id.");
+            }
+            const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
+            const body =
+              "## 📊 Performance Report (" + timestamp + " UTC)\n\n" +
+              "_View [workflow run](" + workflowUrl + ")_\n\n" +
+              "⏳ **Progress:**\n" +
+              "- ✅ Indexing benchmark complete\n" +
+              "- ✅ Query benchmarks complete\n" +
+              "- ✅ Visualization generated\n" +
+              "- ⏱️ Generating comparison report...";
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: parseInt(commentId, 10),
+              body,
+            });
       
       - name: Compare results
         id: compare
+        env:
+          GITHUB_TOKEN: ""
+          ACTIONS_RUNTIME_TOKEN: ""
+          ACTIONS_CACHE_URL: ""
+          ACTIONS_RESULTS_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
+          VERBATIM_DETECTED: ${{ steps.analyze_telemetry.outputs.VERBATIM_DETECTED }}
         run: |
           set +e  # Don't exit on error, we handle exit codes manually
           # Check if we have baseline results
@@ -400,7 +546,7 @@ jobs:
             echo "🧪 Testing ragzoom-telemetry installation..."
             ragzoom-telemetry --help > /dev/null || {
               echo "❌ ragzoom-telemetry command not found or failed" > report.md
-              echo "REGRESSION=true" >> $GITHUB_OUTPUT
+              echo "REGRESSION=true" >> "$GITHUB_OUTPUT"
               exit 1
             }
             
@@ -409,7 +555,7 @@ jobs:
             python -c "from ragzoom.telemetry_analysis import compute_simplified_metrics; print('✅ ragzoom imports OK')" || {
               echo "❌ Failed to import ragzoom.telemetry module" > report.md
               echo "Check that ragzoom package was installed correctly before ragzoom-telemetry" >> report.md
-              echo "REGRESSION=true" >> $GITHUB_OUTPUT
+              echo "REGRESSION=true" >> "$GITHUB_OUTPUT"
               exit 1
             }
             
@@ -429,21 +575,25 @@ jobs:
                 comparison_exit_code=1
               fi
             else
-              echo "❌ Indexing benchmark files not found" >> report.md
-              echo "" >> report.md
-              echo "Looking for:" >> report.md
-              echo "- baseline_results/telemetry.json" >> report.md  
-              echo "- benchmark_results/telemetry.json" >> report.md
-              echo "" >> report.md
+              {
+                echo "❌ Indexing benchmark files not found"
+                echo ""
+                echo "Looking for:"
+                echo "- baseline_results/telemetry.json"
+                echo "- benchmark_results/telemetry.json"
+                echo ""
+              } >> report.md
               comparison_exit_code=1
             fi
             
             # Compare query telemetry if available
             if [ -f "baseline_results/query-telemetry.json" ] && [ -f "benchmark_results/query-telemetry.json" ]; then
               echo "🔍 Running query benchmark comparison..."
-              echo "" >> report.md
-              echo "---" >> report.md
-              echo "" >> report.md
+              {
+                echo ""
+                echo "---"
+                echo ""
+              } >> report.md
               
               # Run query comparison and capture both output and exit code
               set +e
@@ -456,43 +606,49 @@ jobs:
               fi
             else
               if [ -f "benchmark_results/query-telemetry.json" ]; then
-                echo "" >> report.md
-                echo "### 📋 Query Performance Metrics" >> report.md
-                echo "" >> report.md
-                echo "Query telemetry was collected but no baseline is available for comparison." >> report.md
-                echo "This is expected for the first PR with query metrics after the baseline system was updated." >> report.md
-                echo "" >> report.md
+                {
+                  echo ""
+                  echo "### 📋 Query Performance Metrics"
+                  echo ""
+                  echo "Query telemetry was collected but no baseline is available for comparison."
+                  echo "This is expected for the first PR with query metrics after the baseline system was updated."
+                  echo ""
+                } >> report.md
               fi
             fi
             
             if [ $comparison_exit_code -ne 0 ]; then
-              echo "REGRESSION=true" >> $GITHUB_OUTPUT
+              echo "REGRESSION=true" >> "$GITHUB_OUTPUT"
             fi
           fi
           
           # Add verbatim warnings to report if detected
-          if [ "${{ steps.analyze_telemetry.outputs.VERBATIM_DETECTED }}" == "true" ]; then
-            echo "" >> report.md
-            echo "### ⚠️ Verbatim Concatenation Issues Detected" >> report.md
-            echo "" >> report.md
-            echo "The LLM is returning input text verbatim instead of creating proper summaries." >> report.md
-            echo "This indicates a potential issue with summarization quality." >> report.md
-            echo "" >> report.md
+          if [ "$VERBATIM_DETECTED" = "true" ]; then
+            {
+              echo ""
+              echo "### ⚠️ Verbatim Concatenation Issues Detected"
+              echo ""
+              echo "The LLM is returning input text verbatim instead of creating proper summaries."
+              echo "This indicates a potential issue with summarization quality."
+              echo ""
+            } >> report.md
             
             # Add details from verbatim analysis
             verbatim_file="verbatim_details.txt"
             if [ -f "$verbatim_file" ]; then
-              echo "**Indexing Benchmark Details**" >> report.md
-              echo '```' >> report.md
-              cat "$verbatim_file" >> report.md
-              echo '```' >> report.md
-              echo "" >> report.md
+              {
+                echo "**Indexing Benchmark Details**"
+                echo '```'
+                cat "$verbatim_file"
+                echo '```'
+                echo ""
+              } >> report.md
             fi
           fi
           
           # Save report for comment
           if [ -f report.md ]; then
-            cat report.md >> $GITHUB_STEP_SUMMARY
+            cat report.md >> "$GITHUB_STEP_SUMMARY"
             
             # Also save as output for PR comment
             # GitHub Actions requires a unique delimiter for multi-line outputs
@@ -503,103 +659,110 @@ jobs:
               cat report.md
               echo ""  # Ensure newline before delimiter
               echo "${delimiter}"
-            } >> $GITHUB_OUTPUT
+            } >> "$GITHUB_OUTPUT"
           fi
           
           # Exit with success - regression detection is handled by separate step
           exit 0
       
       - name: Update PR comment with final results
-        uses: actions/github-script@v7
-        if: always()
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        if: always() && steps.create-comment.outcome == 'success'
         env:
+          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMENT_ID: ${{ steps.create-comment.outputs.comment_id }}
           REPORT_CONTENT: ${{ steps.compare.outputs.report }}
+          VISUALIZATION_URL: ${{ steps.visualize.outputs.VISUALIZATION_URL }}
+          QUERY_BENCHMARK_FAILED: ${{ steps.query_benchmark.outputs.QUERY_BENCHMARK_FAILED }}
+          QUERY_FAILED_CONFIGS: ${{ steps.query_benchmark.outputs.QUERY_FAILED_CONFIGS }}
+          JOB_STATUS: ${{ job.status }}
         with:
           script: |
-            const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-            const workflowUrl = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-            const comment_id = '${{ steps.create-comment.outputs.comment_id }}';
-            // Get report from environment variable to avoid template literal issues
-            const report = process.env.REPORT_CONTENT || '';
-            const visualizationUrl = `${{ steps.visualize.outputs.VISUALIZATION_URL }}`;
-            
-            // Build final comment body
-            let body = `## 📊 Performance Report (${timestamp} UTC)\n\n`;
-            body += `_View [workflow run](${workflowUrl})_\n\n`;
-            
-            // Check for benchmark errors first
-            // If job reached here with failure, show a generic error
-            if ('${{ job.status }}' === 'failure') {
-              body += '## ❌ Benchmark Execution Error\n\n';
-              body += 'The benchmarks failed to run due to code errors.\n\n';
-              body += 'This typically means:\n';
-              body += '- Syntax errors in the code\n';
-              body += '- Missing dependencies\n';
-              body += '- Configuration issues\n\n';
-              body += 'Check the [workflow logs](' + workflowUrl + ') for details.\n\n';
-              body += '**This is not a performance regression - the code needs to be fixed.**';
+            const workflowUrl = process.env.WORKFLOW_URL;
+            const commentId = process.env.COMMENT_ID;
+            const report = process.env.REPORT_CONTENT || "";
+            const visualizationUrl = process.env.VISUALIZATION_URL || "";
+            const failedConfigs = process.env.QUERY_FAILED_CONFIGS || "";
+            const queryFailed = process.env.QUERY_BENCHMARK_FAILED === "true";
+            const jobStatus = process.env.JOB_STATUS;
+            if (!workflowUrl) {
+              throw new Error("WORKFLOW_URL is not set.");
+            }
+            if (!commentId || !/^[0-9]+$/.test(commentId)) {
+              throw new Error("Missing performance-report comment id.");
+            }
+
+            const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
+            let body = "## 📊 Performance Report (" + timestamp + " UTC)\n\n";
+            body += "_View [workflow run](" + workflowUrl + ")_\n\n";
+
+            if (jobStatus === "failure") {
+              body += "## ❌ Benchmark Execution Error\n\n";
+              body += "The benchmarks failed to run due to code errors.\n\n";
+              body += "This typically means:\n";
+              body += "- Syntax errors in the code\n";
+              body += "- Missing dependencies\n";
+              body += "- Configuration issues\n\n";
+              body += "Check the [workflow logs](" + workflowUrl + ") for details.\n\n";
+              body += "**This is not a performance regression - the code needs to be fixed.**";
             } else if (report) {
-              // Add the comparison report first (includes verbatim check)
               body += report;
-              
-              // Add query benchmark status if there were failures
-              const queryFailed = `${{ steps.query_benchmark.outputs.QUERY_BENCHMARK_FAILED }}` === 'true';
-              const failedConfigs = `${{ steps.query_benchmark.outputs.QUERY_FAILED_CONFIGS }}`;
-              
               if (queryFailed && failedConfigs) {
-                body += `\n### ⚠️ Query Benchmark Failures\n\n`;
-                body += `Some query performance benchmarks failed: **${failedConfigs}**\n\n`;
-                body += `This may indicate issues with query processing or API connectivity.\n\n`;
+                body += "\n### ⚠️ Query Benchmark Failures\n\n";
+                body += "Some query performance benchmarks failed: **" + failedConfigs + "**\n\n";
+                body += "This may indicate issues with query processing or API connectivity.\n\n";
               }
-              
-              // Add visualization after the report if it was generated
               if (visualizationUrl) {
-                body += `\n### Performance Visualization\n\n`;
-                body += `![Telemetry Comparison](${visualizationUrl})\n\n`;
+                body += "\n### Performance Visualization\n\n";
+                body += "![Telemetry Comparison](" + visualizationUrl + ")\n\n";
               }
             } else {
-              body += '❌ **Unable to generate performance report**\n\n';
-              body += 'Check the [workflow logs](' + workflowUrl + ') for details.';
+              body += "❌ **Unable to generate performance report**\n\n";
+              body += "Check the [workflow logs](" + workflowUrl + ") for details.";
             }
-            
-            if (comment_id) {
-              // Update the comment created at the beginning
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: parseInt(comment_id),
-                body
-              });
-              console.log(`Updated comment with final results: ${comment_id}`);
-            } else {
-              // Fallback: create new comment if somehow we don't have the initial comment ID
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body
-              });
-            }
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: parseInt(commentId, 10),
+              body,
+            });
+            core.info("Updated comment with final results: " + commentId);
       
       # Step removed: indexing step now fails directly on error, surfacing the root cause
       
       - name: Fail if query benchmarks failed
         if: steps.query_benchmark.outputs.QUERY_BENCHMARK_FAILED == 'true'
+        env:
+          GITHUB_TOKEN: ""
+          ACTIONS_RUNTIME_TOKEN: ""
+          ACTIONS_CACHE_URL: ""
+          ACTIONS_RESULTS_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
+          QUERY_FAILED_CONFIGS: ${{ steps.query_benchmark.outputs.QUERY_FAILED_CONFIGS }}
         run: |
           echo "❌ Query benchmark failures detected!"
-          echo "Failed configurations: ${{ steps.query_benchmark.outputs.QUERY_FAILED_CONFIGS }}"
+          echo "Failed configurations: $QUERY_FAILED_CONFIGS"
           echo "Query benchmarks must pass to ensure query performance is working correctly."
           echo "Check the workflow logs for details."
           exit 1
-      
+
       - name: Fail if regression detected
         if: steps.benchmark.outputs.REGRESSION == 'true'
+        env:
+          GITHUB_TOKEN: ""
+          ACTIONS_RUNTIME_TOKEN: ""
+          ACTIONS_CACHE_URL: ""
+          ACTIONS_RESULTS_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_URL: ""
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ""
         run: |
           echo "❌ Performance regression detected!"
           exit 1
-      
+
       - name: Upload benchmark artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: benchmark-results
